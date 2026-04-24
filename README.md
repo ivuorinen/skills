@@ -16,13 +16,13 @@ Hostile audit skills for Claude Code.
 
 ### Add the marketplace
 
-```shell
+```text
 /plugins marketplace add ivuorinen/skills
 ```
 
 ### Install the plugin
 
-```shell
+```text
 /plugins install ivuorinen-skills
 ```
 
@@ -50,4 +50,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## License
 
-[MIT](LICENSE) Ismo Vuorinen 2026
+This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ismo Vuorinen.
