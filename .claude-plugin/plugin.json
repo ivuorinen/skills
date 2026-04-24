@@ -1,7 +1,7 @@
 {
   "name": "ivuorinen-skills",
   "description": "Hostile audit skills for Claude Code: adversarial code review, architecture detection and auditing, and documentation verification.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Ismo Vuorinen",
     "email": "ismo@ivuorinen.net"
