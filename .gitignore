@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+*.local
+.claude/settings.local.json
+.ruff_cache/
+.venv
+__pycache__
