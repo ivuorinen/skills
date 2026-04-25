@@ -45,8 +45,9 @@ The body is a prompt written in imperative Markdown — define mindset, checklis
 1. Create a kebab-case directory under `skills/` (e.g., `skills/my-skill/`)
 2. Add `SKILL.md` with YAML frontmatter (`name` + `description`)
 3. Write the `description` following the three rules above
-4. Add a row to the Existing Skills table in this file
-5. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
+4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`
+5. Run `/skills pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
+6. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
 
 ## Conventions Observed in This Repo
 
