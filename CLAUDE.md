@@ -18,7 +18,7 @@ Skills live in `skills/` — each subdirectory is one skill.
 | `arch-auditor` | Audits codebase for architectural violations against detected or declared patterns |
 | `doc-auditor` | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
 | `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
-| `security-auditor` | Runs available security tools (grype, trivy, gitleaks, checkov, gosec, snyk, semgrep), parses results, and writes a consolidated findings report |
+| `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
 
 ## Skill File Format
 

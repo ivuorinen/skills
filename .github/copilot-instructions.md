@@ -69,6 +69,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Architecture violation auditor | `skills/arch-auditor/` |
 | Documentation accuracy auditor | `skills/doc-auditor/` |
 | PR review (stdout only, no findings file) | `skills/pr-reviewer/` |
+| Security audit with available local scanners | `skills/security-auditor/` |
 
 ## Adding a New Skill
 

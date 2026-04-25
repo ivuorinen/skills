@@ -11,6 +11,8 @@ Hostile audit skills for Claude Code.
 | `arch-detector` | Detects which architectural patterns a codebase uses (19 patterns, 8 canonical combinations) |
 | `arch-auditor` | Audits codebase for architectural violations against detected or declared patterns |
 | `doc-auditor` | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
+| `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
+| `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
 
 ## Installation
 
@@ -35,6 +37,8 @@ Invoke any skill by name in Claude Code:
 - `/arch-detector` — detect architecture patterns
 - `/arch-auditor` — audit architecture violations
 - `/doc-auditor` — verify documentation accuracy
+- `/pr-reviewer` — PR review (stdout only)
+- `/security-auditor` — security audit with available local scanners
 
 ## Versioning
 

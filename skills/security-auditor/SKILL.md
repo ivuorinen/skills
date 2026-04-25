@@ -1,6 +1,6 @@
 ---
 name: security-auditor
-description: Use when performing a security scan of the project using available local tools (semgrep, grype, trivy, gitleaks, checkov, gosec, snyk, npm audit), parsing their output, and generating a consolidated security findings report. Triggers: "security audit", "run security scan", "find vulnerabilities", "check for secrets", "scan dependencies", "run security-auditor".
+description: Use when performing a security scan of the project using available local security tools, parsing their output, and generating a consolidated security findings report. Triggers: "security audit", "run security scan", "find vulnerabilities", "check for secrets", "scan dependencies", "run security-auditor".
 ---
 
 # Security Auditor
