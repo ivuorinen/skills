@@ -6,7 +6,17 @@ disable-model-invocation: true
 
 # New Skill Scaffolder
 
-## Steps
+Creates a public skill under `skills/<name>/` and stress-tests it through the full
+RED → GREEN → REFACTOR → adversarial-review → validate cycle before declaring it done.
+
+## Phase 1 — TDD Baseline (RED)
+
+Before writing a single line of skill content, run `/skill-tester` to establish the
+baseline. The skill-tester dispatches a subagent **without** the new skill loaded and
+records every rationalization the agent uses to skip the rule you are encoding.
+Document those rationalizations — every one must be countered in the skill body.
+
+## Phase 2 — Scaffold
 
 1. Choose a kebab-case name (e.g. `dep-auditor`).
 
@@ -31,13 +41,52 @@ disable-model-invocation: true
    - `## Fix Strategy` — what may be auto-applied, what requires user approval
    - `## Common Mistakes` — what the skill must NOT do
 
-5. Add a row to the Existing Skills table in `CLAUDE.md`.
+5. Counter every RED-phase rationalization explicitly in the skill body — add a rule or
+   a Common Mistakes entry for each one.
 
-6. Add a row to the Available Skills table in `.claude/skills/skills/SKILL.md` — this is the launcher skill users invoke to discover and route to public skills. Keep it in sync.
+## Phase 3 — Verify Behaviour (GREEN)
 
-7. Run the validator:
+Run `/skill-tester` again, this time with the skill loaded. Confirm the agent
+complies with every rule. If the agent finds a new loophole, add an explicit counter
+and re-run until no loopholes remain.
+
+## Phase 4 — Adversarial Review
+
+Run `/adversarial-reviewer` against the new `skills/<name>/SKILL.md` file. Treat the
+skill body as code under review — hunt for ambiguous rules, missing edge-case
+coverage, hedged language, and instructions that permit rationalisation. Fix every
+HIGH or CRITICAL finding. Re-run until adversarial-reviewer reports no findings at
+HIGH or above.
+
+## Phase 5 — Structural Validation
+
+6. Add a row to the Existing Skills table in `CLAUDE.md`.
+
+7. Add a row to the Available Skills table in `.claude/skills/skills/SKILL.md` — this is the launcher skill users invoke to discover and route to public skills. Keep it in sync.
+
+8. Add a row to the "Existing Public Skills" table in `.github/copilot-instructions.md`.
+   If `README.md` contains a mirrored skills table, update it too.
+
+9. Run the validator:
    ```
    uv run scripts/validate-skill.py skills/<name>/SKILL.md
    ```
 
-8. Run `/validate-skills` to check all skills remain consistent.
+10. Run `/validate-skills` to confirm all skills remain consistent.
+
+## Phase 6 — PR Review
+
+11. Run `/pr-reviewer` on the staged diff. Fix all findings at HIGH or above.
+    Re-run until pr-reviewer reports no findings at HIGH or above.
+
+12. Commit with `feat: add <name> skill` — this triggers a minor version bump.
+
+## Skill Quality Gate
+
+A skill is **not done** until all of these pass:
+
+- [ ] skill-tester GREEN phase: agent complies with every rule
+- [ ] adversarial-reviewer: no HIGH or CRITICAL findings remain
+- [ ] `uv run scripts/validate-skill.py skills/<name>/SKILL.md` exits 0 with no errors
+- [ ] `/validate-skills` exits clean
+- [ ] pr-reviewer: no HIGH or CRITICAL findings in the diff
