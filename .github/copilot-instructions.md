@@ -57,7 +57,7 @@ Validation checks and repository guidance from `scripts/validate-skill.py` (and 
 - `description` must start with `"Use when"` — describes triggering conditions, not what the skill does
 - `description` must be ≤ 500 characters
 - Header levels in the body must not skip (e.g., h2 → h4 is an error)
-- Avoid referencing legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
+- Do not reference legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
   instead; `scripts/validate-skill.py` currently warns on these references
 
 Body-only (no frontmatter) is a **legacy pattern** — never create new skills without frontmatter.
