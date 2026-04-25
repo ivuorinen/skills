@@ -85,7 +85,7 @@ HIGH or above.
 
 9. Add a row to the Skill Catalogue table and all relevant Mermaid diagrams in
    `.claude/skills/README.md` (the wiring guide). Update the Quick Reference
-   Input/Output table and the New Skill Registration Checklist as needed.
+   Input/Output table as needed.
 
 10. Run the validator:
     ```

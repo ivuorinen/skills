@@ -129,7 +129,7 @@ flowchart TD
     D --> E[skill-tester GREEN phase\nsubagent with skill loaded\nconfirm compliance]
     E --> F{New loophole\nfound?}
     F -->|Yes| D
-    F -->|No| REFACTOR[Refactor skill body\nremove hedging, tighten rules\nre-run skill-tester to confirm no regression]
+    F -->|No| REFACTOR[Phase 4: Refactor]
     REFACTOR --> G[adversarial-reviewer\non skills/name/SKILL.md]
     G --> H{HIGH or CRITICAL\nfindings?}
     H -->|Yes — fix| D
