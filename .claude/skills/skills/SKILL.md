@@ -23,6 +23,7 @@ Lists and invokes the public skills in this repository.
 | `arch-detector` | `/arch-detector` | Detect which architectural patterns the codebase uses; writes `docs/audit/arch-profile.md` |
 | `arch-auditor` | `/arch-auditor` | Audit for architectural violations against detected or declared patterns |
 | `doc-auditor` | `/doc-auditor` | Verify all documentation against the codebase; find stale, missing, or incorrect docs |
+| `security-auditor` | `/security-auditor` | Run available security tools, parse output, write consolidated vulnerability and secret findings report |
 
 ## Routing Guide
 
@@ -34,6 +35,7 @@ If the user says… → invoke this skill:
 - "what architecture is this / detect patterns" → `/arch-detector`
 - "audit the architecture / find violations" → `/arch-auditor`
 - "check the docs / find stale docs / verify documentation" → `/doc-auditor`
+- "security audit / run security scan / find vulnerabilities / check for secrets / scan dependencies" → `/security-auditor`
 
 ## If Unclear
 
