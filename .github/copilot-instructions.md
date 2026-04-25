@@ -20,14 +20,14 @@ skills/                    # Public skills (shipped with the plugin)
   plugin.json              # Plugin identity + version
   marketplace.json         # Marketplace listing
 scripts/
-  validate-skill.py        # Validates all SKILL.md files (run via `make validate`)
+  validate-skill.py        # Validates public skill `SKILL.md` files by default (run via `make validate`)
   check-version-sync.py    # Verifies version is in sync across all manifests
   bump-version.py          # Manual version bump utility
   list-skills.py           # Lists all skills with their descriptions
   common.py                # Shared helpers for scripts
 .github/
   workflows/
-    validate-skills.yml    # CI: validates skills + version sync on every push/PR
+    validate-skills.yml    # CI: validates skills + version sync when SKILL.md files or scripts/validate-skill.py change
     release-please.yml     # CI: automated releases from main
 docs/
   audit/                   # Output directory for skill findings (auto-created by skills)
@@ -88,11 +88,11 @@ make lint           # ruff check on scripts/
 make list           # print all skills with descriptions
 ```
 
-CI runs `make validate` + version sync on every push/PR that touches `SKILL.md` or scripts.
+CI runs `make validate` + version sync on every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
 
-## Versioning — Four Files Must Stay in Sync
+## Versioning — Five Files Must Stay in Sync
 
-The canonical version lives in `package.json`. All four must match:
+The canonical version lives in `package.json`. All five must match:
 
 | File | Field |
 |------|-------|
