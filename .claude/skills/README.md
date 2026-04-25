@@ -183,9 +183,9 @@ flowchart TD
     H2 -->|No| I[nitpicker release-gate\nthreshold: High]
     I --> I2{Critical/High\nfindings?}
     I2 -->|Yes — stop| STOP6([Stop: report code findings])
-    I2 -->|No| J[review CHANGELOG\nentry exists for branch changes]
-    J --> J2{Entry\nmissing?}
-    J2 -->|Yes — stop| STOP7([Stop: instruct user to update CHANGELOG])
+    I2 -->|No| J[conventional commits\nrelease-please can generate notes]
+    J --> J2{Commits\ninvalid?}
+    J2 -->|Yes — stop| STOP7([Stop: fix commit messages for release-please])
     J2 -->|No| K[CI green check\nvalidate-skills.yml passes]
     K --> K2{CI\nfailing?}
     K2 -->|Yes — stop| STOP8([Stop: report failed checks])
