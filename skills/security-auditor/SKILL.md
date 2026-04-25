@@ -33,6 +33,8 @@ Before running any scan, probe for each tool with `which <tool>` or equivalent. 
 | gosec | `which gosec` | Go-specific security issues |
 | snyk | `which snyk` | Dependency vulnerabilities (SCA) |
 | npm | `which npm` | Node.js dependency vulnerabilities via `npm audit` |
+| yarn | `which yarn` | Node.js dependency vulnerabilities via `yarn audit` |
+| pnpm | `which pnpm` | Node.js dependency vulnerabilities via `pnpm audit` |
 
 If a tool is found but fails to run (e.g., broken Python environment), record it under "Errored" in the report header with the error message. Always capture stderr separately — never redirect to `/dev/null` — so the error message is available for the report.
 
@@ -45,13 +47,13 @@ If a tool is found but fails to run (e.g., broken Python environment), record it
      tool-specific exit code rules defined in the Tool Execution section (e.g., snyk exit 2 = error)
 4. Parse each tool's JSON output into normalized findings
 5. Deduplicate findings from multiple tools into a single finding (list all sources under Tool:):
-     - Dependency vulnerability: match on CVE ID + package name
+     - Dependency vulnerability: match on vulnerability identifier + package name (CVE, GHSA, RUSTSEC, OSV, or vendor advisory ID)
      - Secret: match on file path + line number (±2) — rule ID and redacted excerpt are not match components (rule ID names differ across tools)
      - SAST / IaC: match on rule ID + file path
 6. Assign severity using the Severity Mapping table
 7. If docs/audit/security-findings.md exists:
      Re-validate each OPEN finding using these match keys:
-     - Dependency vulnerability: CVE/rule ID + package name
+     - Dependency vulnerability: vulnerability identifier + package name (CVE, GHSA, RUSTSEC, OSV, or vendor advisory ID)
      - SAST / gosec: rule ID + file path (ignore line number drift of ±10 lines)
      - Secret: file path + line number (±2) — do NOT use rule ID or redacted excerpt (rule IDs differ across tools; re-redacting inconsistently would prevent matching)
      - IaC misconfiguration: check ID + file path
@@ -69,9 +71,16 @@ If a tool is found but fails to run (e.g., broken Python environment), record it
 
 Run each tool with JSON output using the capture form below. Always capture stdout into a variable and stderr into a temp file so both are available for error detection. Never discard either stream.
 
+Before running any tool, create a per-run temp directory and clean it up after writing the report:
+```bash
+_sa_tmp=$(mktemp -d)   # e.g. /tmp/security-auditor.XXXXXX
+# ... run all tools, writing stderr to $_sa_tmp/<tool>-err.txt ...
+rm -rf "$_sa_tmp"       # cleanup after docs/audit/security-findings.md is written
+```
+
 Capture pattern (use for every tool):
 ```bash
-tool_out=$(command 2>/tmp/tool-err.txt)
+tool_out=$(command 2>"$_sa_tmp/tool-err.txt")
 tool_exit=$?
 # tool_out is empty → record as Errored (regardless of exit code)
 # tool_out is not valid JSON → record as Errored (regardless of exit code)
@@ -82,11 +91,11 @@ tool_exit=$?
 ### semgrep / opengrep
 
 ```bash
-semgrep_out=$(semgrep --json --config=auto --quiet . 2>/tmp/semgrep-err.txt)
+semgrep_out=$(semgrep --json --config=auto --quiet . 2>$_sa_tmp/semgrep-err.txt)
 semgrep_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/semgrep-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/semgrep-err.txt | head -3)".
 
 Parse `$semgrep_out`: `.results[]` → each has `.check_id`, `.path`, `.start.line`, `.extra.severity`, `.extra.message`
 
@@ -95,22 +104,22 @@ Parse `$semgrep_out`: `.results[]` → each has `.check_id`, `.path`, `.start.li
 **Precondition:** Check for a supported manifest before running. Look for `go.sum`, `package-lock.json`, `requirements.txt`, `Gemfile.lock`, `Cargo.lock`, `composer.lock`, `yarn.lock`, `pnpm-lock.yaml`. If none found, record grype as "Not applicable (no supported manifest)" and skip.
 
 ```bash
-grype_out=$(grype dir:. --output json 2>/tmp/grype-err.txt)
+grype_out=$(grype dir:. --output json 2>$_sa_tmp/grype-err.txt)
 grype_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/grype-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/grype-err.txt | head -3)".
 
 Parse `$grype_out`: `.matches[]` → each has `.vulnerability.id`, `.vulnerability.severity`, `.vulnerability.description`, `.artifact.name`, `.artifact.version`
 
 ### trivy
 
 ```bash
-trivy_out=$(trivy fs . --format json --quiet 2>/tmp/trivy-err.txt)
+trivy_out=$(trivy fs . --format json --quiet 2>$_sa_tmp/trivy-err.txt)
 trivy_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/trivy-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/trivy-err.txt | head -3)".
 
 Parse `$trivy_out`: `.Results[].Vulnerabilities[]` → each has `.VulnerabilityID`, `.Severity`, `.Title`, `.PkgName`, `.InstalledVersion`, `.FixedVersion`
 
@@ -119,22 +128,22 @@ Also parse: `.Results[].Misconfigurations[]` for IaC issues and `.Results[].Secr
 ### gitleaks
 
 ```bash
-gitleaks_out=$(gitleaks detect --source . --report-format json --exit-code 0 2>/tmp/gitleaks-err.txt)
+gitleaks_out=$(gitleaks detect --source . --report-format json --exit-code 0 2>$_sa_tmp/gitleaks-err.txt)
 gitleaks_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/gitleaks-err.txt | head -3)". Note: gitleaks uses `--exit-code 0`, so a non-zero exit always indicates a genuine crash, not "found secrets". `null` output (no secrets found) is valid JSON — do not treat it as an error.
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/gitleaks-err.txt | head -3)". Note: gitleaks uses `--exit-code 0`, so a non-zero exit always indicates a genuine crash, not "found secrets". `null` output (no secrets found) is valid JSON — do not treat it as an error.
 
 Parse `$gitleaks_out`: gitleaks outputs `null` (not `[]`) when no secrets are found — treat `null` as an empty findings array. Otherwise: `.[].RuleID`, `.[].Description`, `.[].File`, `.[].StartLine`, `.[].Commit`, `.[].Secret` (redact actual secret value in report).
 
 ### checkov
 
 ```bash
-checkov_out=$(checkov -d . --output json --quiet 2>/tmp/checkov-err.txt)
+checkov_out=$(checkov -d . --output json --quiet 2>$_sa_tmp/checkov-err.txt)
 checkov_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/checkov-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/checkov-err.txt | head -3)".
 
 Parse `$checkov_out`: output may be a JSON object (single framework) or a JSON array (multiple frameworks). Normalize before parsing:
 - If top-level is an array: collect `.results.failed_checks[]` from each element
@@ -147,11 +156,11 @@ Each failed check has `.check_id`, `.check_result.result`, `.resource`, `.file_p
 **Precondition:** Only run if the project contains Go source files. Check with `find . -name "*.go" -not -path "*/vendor/*" | head -1`. If no .go files found, record gosec as "Not applicable (no Go source files)" and skip.
 
 ```bash
-gosec_out=$(gosec -fmt json ./... 2>/tmp/gosec-err.txt)
+gosec_out=$(gosec -fmt json ./... 2>$_sa_tmp/gosec-err.txt)
 gosec_exit=$?
 ```
 
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/gosec-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/gosec-err.txt | head -3)".
 
 Parse `$gosec_out`: `.issues[]` → each has `.rule_id`, `.details`, `.severity`, `.confidence`, `.file`, `.line`
 
@@ -160,11 +169,11 @@ Parse `$gosec_out`: `.issues[]` → each has `.rule_id`, `.details`, `.severity`
 Snyk exits 0 (clean), 1 (vulnerabilities found OR unsupported project), or 2 (auth/network failure). Check for an `.error` field in the JSON before parsing vulnerabilities — its presence indicates failure regardless of exit code.
 
 ```bash
-snyk_out=$(snyk test --json 2>/tmp/snyk-err.txt)
+snyk_out=$(snyk test --json 2>$_sa_tmp/snyk-err.txt)
 snyk_exit=$?
 ```
 
-- `snyk_exit == 2`: record as "Errored: $(cat /tmp/snyk-err.txt | head -1)" (common cause: `snyk auth` not run)
+- `snyk_exit == 2`: record as "Errored: $(cat $_sa_tmp/snyk-err.txt | head -1)" (common cause: `snyk auth` not run)
 - `snyk_exit == 0 or 1` AND `$snyk_out` contains `.error` field: record as "Errored: {.error value}"
 - `snyk_exit == 0 or 1` AND no `.error` field: parse normally
 
@@ -172,24 +181,25 @@ Parse `$snyk_out`: snyk outputs a single object for single-project repos and a J
 
 ### npm / yarn / pnpm audit
 
-**Precondition:** Requires a lockfile. Determine which package manager is in use:
-- `package-lock.json` or `npm-shrinkwrap.json` present → use npm
-- `yarn.lock` present (and no npm lockfile) → use yarn
-- `pnpm-lock.yaml` present → use pnpm
-- None present → record as "Not applicable (no lockfile)" and skip
+**Precondition:** Requires both a lockfile and the corresponding binary. Determine which package manager applies:
+- `package-lock.json` or `npm-shrinkwrap.json` present AND `which npm` succeeds → use npm
+- `yarn.lock` present (no npm lockfile) AND `which yarn` succeeds → use yarn
+- `pnpm-lock.yaml` present AND `which pnpm` succeeds → use pnpm
+- Lockfile present but binary absent → record as "Not available (lockfile found but binary missing)"
+- No lockfile present → record as "Not applicable (no lockfile)" and skip
 
 **npm:**
 ```bash
-npm_out=$(npm audit --json 2>/tmp/npm-err.txt)
+npm_out=$(npm audit --json 2>$_sa_tmp/npm-err.txt)
 npm_exit=$?
 ```
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/npm-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/npm-err.txt | head -3)".
 
 Parse `$npm_out`: `.vulnerabilities` (object, keys are package names) → each has `.severity`, `.via[]`, `.effects[]`, `.fixAvailable`. Note: `.fixAvailable` may be `false`, `true`, or an object `{name, version, isSemVerMajor}` — when it is an object, use `.fixAvailable.version` as the fix version.
 
 **yarn:**
 ```bash
-yarn_out=$(yarn audit --json 2>/tmp/yarn-err.txt)
+yarn_out=$(yarn audit --json 2>$_sa_tmp/yarn-err.txt)
 yarn_exit=$?
 ```
 Note: yarn audit outputs NDJSON (not single-document JSON), so the generic "invalid JSON → Errored" check does NOT apply. For yarn, record as Errored only if `$yarn_out` is empty. Non-zero exit with non-empty output is normal when vulnerabilities are found.
@@ -198,10 +208,10 @@ Parse `$yarn_out` as NDJSON (one JSON object per line). Filter lines where `.typ
 
 **pnpm:**
 ```bash
-pnpm_out=$(pnpm audit --json 2>/tmp/pnpm-err.txt)
+pnpm_out=$(pnpm audit --json 2>$_sa_tmp/pnpm-err.txt)
 pnpm_exit=$?
 ```
-If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat /tmp/pnpm-err.txt | head -3)".
+If output is empty or not valid JSON (regardless of exit code): record as "Errored: $(cat $_sa_tmp/pnpm-err.txt | head -3)".
 
 Parse `$pnpm_out`: `.advisories` (object, keyed by advisory ID) → each has `.severity`, `.title`, `.module_name`, `.patched_versions`, `.overview`.
 
