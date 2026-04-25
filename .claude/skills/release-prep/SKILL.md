@@ -1,12 +1,18 @@
 ---
 name: release-prep
-description: Use when preparing a release of this plugin — verifies skills, versions, changelog, and CI before tagging.
+description: Use when validating that all changes in the current branch are ready to be included in a release PR managed by release-please automation.
 disable-model-invocation: true
 ---
 
 # Release Prep Checklist
 
-Run these steps in order. Every step must pass before proceeding to the next.
+Validates that the repository is in a clean, releasable state. Does **not** create
+tags, bump versions, or push commits — release-please automation manages all of that
+from `main`. The only action this skill takes beyond validation is offering to open a
+PR, and only after every gate passes and the user explicitly approves.
+
+Run these steps in order. **Stop immediately and report findings to the user if any
+step fails.** Do not proceed to the next step.
 
 ## Step 1 — Validate All Skills
 
@@ -14,8 +20,10 @@ Run these steps in order. Every step must pass before proceeding to the next.
 uv run scripts/validate-skill.py
 ```
 
-All errors must be resolved. Warnings must be reviewed; fix any that relate to skills
-being released in this version.
+If any **errors** are reported: stop. Report the list of errors to the user. Do not
+proceed until they are resolved.
+
+Warnings must be reviewed; fix any that relate to skills being changed in this branch.
 
 ## Step 2 — Check Version Sync
 
@@ -27,71 +35,81 @@ All five files must agree on the same version: `package.json`,
 `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
 `.release-please-manifest.json`, and `pyproject.toml`.
 
+If any file is out of sync: stop. Report which files differ and what their versions
+are. Do not proceed.
+
 ## Step 3 — Security Scan
 
-Run `/security-auditor`. Fix or document every Critical and High finding before
-proceeding. A release with an open Critical security finding is blocked.
+Run `/security-auditor`. If any Critical or High finding remains open after the scan:
+stop. Report the findings to the user. Do not proceed.
 
 ## Step 4 — Documentation Accuracy
 
-Run `/doc-auditor`. Fix every Critical finding (actively misleads) and every High
-finding (missing API/boundary docs). Medium and below may be deferred but must be
-tracked in `docs/audit/doc-findings.md`.
+Run `/doc-auditor`. If any Critical finding remains open: stop. Report the findings.
+High findings (missing API/boundary docs) must also be resolved before proceeding.
+Medium and below may be deferred but must be tracked in `docs/audit/doc-findings.md`.
 
 ## Step 5 — Architecture Integrity
 
-If `docs/audit/arch-profile.md` does not exist or is older than the current release
-cycle, run `/arch-detector` first. Then run `/arch-auditor`. Fix every Critical and
-High finding before proceeding.
+If `docs/audit/arch-profile.md` does not exist or is stale for the current branch,
+run `/arch-detector` first to refresh it. Then run `/arch-auditor`. If any Critical
+or High finding remains open: stop. Report the findings. Do not proceed.
 
 ## Step 6 — Exhaustive Code Review
 
-Run `/nitpicker` in `release-gate` mode (threshold: High). The release is blocked if
-any Critical or High findings remain open after fixes are applied.
+Run `/nitpicker` in `release-gate` mode (threshold: High). If any Critical or High
+finding remains open after fixes are applied: stop. Report the findings. Do not
+proceed.
 
 ## Step 7 — Review CHANGELOG
 
-Confirm an entry exists for the version being released with accurate feature and fix
-descriptions. Run `/doc-auditor CHANGELOG.md` if the release notes are substantive.
+Confirm an entry exists for the changes in this branch with accurate feature and fix
+descriptions. If no entry exists, or the entry is inaccurate: stop. Instruct the user
+to update `CHANGELOG.md` before proceeding.
+
+Run `/doc-auditor CHANGELOG.md` if the release notes are substantive.
 
 ## Step 8 — Confirm CI Is Green
 
-Check `.github/workflows/validate-skills.yml` passed on the current commit. Do not
-tag a release with a failing CI run.
+Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
+failing: stop. Report which checks failed. Do not proceed.
 
-## Step 9 — Bump Version (if needed)
+## Gate Summary
 
-```bash
-./scripts/bump-version.py [major|minor|patch]
+After all steps pass, present this summary to the user:
+
+```
+✅ All release gates passed.
+
+Steps completed:
+  [✓] validate-skill.py — no errors
+  [✓] check-version-sync.py — all 5 files agree on vX.Y.Z
+  [✓] security-auditor — no Critical/High findings
+  [✓] doc-auditor — no Critical/High findings
+  [✓] arch-auditor — no Critical/High findings
+  [✓] nitpicker release-gate — no Critical/High findings
+  [✓] CHANGELOG.md — entry present for this version
+  [✓] CI — validate-skills.yml passing
+
+Release-please automation will create the Release PR when these changes are merged
+to main. No manual version bump or tagging is needed.
 ```
 
-| Prefix | Version bump |
-|--------|-------------|
-| `feat:` | minor |
-| `fix:` | patch |
-| `feat!:` / `BREAKING CHANGE:` | major |
-| `chore:`, `docs:`, `refactor:` | none |
+Then ask:
 
-## Step 10 — Stage and Commit
+> **Create a PR for these changes? (y/n) [default: n]**
 
-User does this manually:
+If the user answers `n` or gives no answer: stop. Inform the user that no PR was
+created and the branch is ready whenever they choose to open one.
 
-```bash
-git add -A
-git commit -m "chore: release v<version>"
-git tag v<version>
-git push && git push --tags
-```
+If the user answers `y`: open a PR using the conventional commit messages on the
+branch to populate the title and description. Do **not** bump versions, create tags,
+or push commits beyond what is already staged.
 
-## Release Gate Summary
+## What This Skill Does NOT Do
 
-A release is **blocked** if any of the following are open:
-
-- [ ] Validation errors from `validate-skill.py`
-- [ ] Version sync mismatch
-- [ ] Critical or High security findings (security-auditor)
-- [ ] Critical documentation findings (doc-auditor)
-- [ ] Critical or High architecture violations (arch-auditor)
-- [ ] Critical or High code findings (nitpicker release-gate)
-- [ ] Missing CHANGELOG entry for this version
-- [ ] Failing CI on the current commit
+- Does not bump version numbers (release-please reads conventional commits and bumps
+  automatically when the release PR is merged)
+- Does not create git tags (release-please creates the tag when the Release PR merges)
+- Does not push commits or tags
+- Does not create a GitHub Release (release-please creates it after the tag)

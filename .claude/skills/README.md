@@ -15,7 +15,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `new-skill` | Orchestrator — scaffolds + drives the full new-skill lifecycle |
 | `skill-tester` | Validator — TDD pressure-testing for new skill behaviour |
 | `validate-skills` | Leaf — structural linting of SKILL.md frontmatter and format |
-| `release-prep` | Orchestrator — drives the full release gate sequence |
+| `release-prep` | Orchestrator — validates release readiness and offers to open a PR; never tags or bumps versions |
 | `skills` | Router — helps users discover and invoke the right public skill |
 
 ### Public Skills (`skills/`)
@@ -147,26 +147,47 @@ findings, and validate-skills exits clean.
 
 ## Workflow: Release Preparation
 
-The `release-prep` orchestrator runs these skills in sequence. Each step is a gate —
-the release is blocked if any critical/high findings remain after fixing.
+The `release-prep` orchestrator validates readiness and then — **only with explicit
+user approval** — offers to open a PR. It never bumps versions, creates tags, or
+pushes commits; release-please automation handles all of that when the PR merges to
+`main`.
+
+If any gate fails, `release-prep` stops immediately and reports findings. It does not
+continue to the next step.
 
 ```mermaid
 flowchart TD
-    A([Start: prepare release]) --> B[validate-skills\nno structural errors]
-    B --> C[version sync check\nall 5 files agree]
-    C --> D[security-auditor\nno Critical/High open]
-    D --> E[doc-auditor\nno Critical open]
-    E --> F{arch-profile.md\nfresh?}
+    A([Start: prepare for release PR]) --> B[validate-skills\nno structural errors]
+    B --> B2{Errors?}
+    B2 -->|Yes — stop| STOP1([Stop: report errors to user])
+    B2 -->|No| C[version sync check\nall 5 files agree]
+    C --> C2{Out of sync?}
+    C2 -->|Yes — stop| STOP2([Stop: report mismatched files])
+    C2 -->|No| D[security-auditor\nno Critical/High open]
+    D --> D2{Critical/High\nfindings?}
+    D2 -->|Yes — stop| STOP3([Stop: report security findings])
+    D2 -->|No| E[doc-auditor\nno Critical/High open]
+    E --> E2{Critical/High\nfindings?}
+    E2 -->|Yes — stop| STOP4([Stop: report doc findings])
+    E2 -->|No| F{arch-profile.md\nfresh?}
     F -->|No| G[arch-detector\nwrite arch-profile.md]
     G --> H[arch-auditor\nno Critical/High open]
     F -->|Yes| H
-    H --> I[nitpicker release-gate\nthreshold: High\nmust be zero open]
-    I --> J[review CHANGELOG\nentry exists for version]
-    J --> K[CI green check\nvalidate-skills.yml passes]
-    K --> L{Version\nbump needed?}
-    L -->|Yes| M[bump-version.py\nminor/patch/major]
-    M --> N([Tag and push])
-    L -->|No| N
+    H --> H2{Critical/High\nfindings?}
+    H2 -->|Yes — stop| STOP5([Stop: report arch findings])
+    H2 -->|No| I[nitpicker release-gate\nthreshold: High]
+    I --> I2{Critical/High\nfindings?}
+    I2 -->|Yes — stop| STOP6([Stop: report code findings])
+    I2 -->|No| J[review CHANGELOG\nentry exists for branch changes]
+    J --> J2{Entry\nmissing?}
+    J2 -->|Yes — stop| STOP7([Stop: instruct user to update CHANGELOG])
+    J2 -->|No| K[CI green check\nvalidate-skills.yml passes]
+    K --> K2{CI\nfailing?}
+    K2 -->|Yes — stop| STOP8([Stop: report failed checks])
+    K2 -->|No| L[Present gate summary]
+    L --> M{"Create PR?\ndefault: n"}
+    M -->|n / no answer| DONE1([Done: branch ready, no PR created])
+    M -->|y| DONE2([Open PR using branch commit messages])
 ```
 
 ---
@@ -280,8 +301,9 @@ Skills that loop must terminate:
 - `nitpicker` — single-shot re-validation of existing findings plus one new scan
   pass. Does not loop indefinitely.
 
-- `release-prep` — each gate either passes or blocks; it never retries a gate
-  automatically. User must fix findings and re-invoke the skill.
+- `release-prep` — each gate either passes (continue) or fails (stop and report). It
+  never retries automatically. User must fix findings and re-invoke the skill. If all
+  gates pass, the user is asked once whether to open a PR; the default answer is **no**.
 
 ### New Skill Registration Checklist
 
@@ -313,5 +335,5 @@ When adding a new skill, verify:
 | `validate-skills` | all `SKILL.md` files | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
-| `release-prep` | all of the above | none (delegates to each skill) |
+| `release-prep` | all of the above | none (delegates to each skill; optionally opens a PR on user approval) |
 | `skills` (router) | user intent | routes to one public skill |
