@@ -2,7 +2,9 @@
 
 ## What This Repository Is
 
-A **Claude Code plugin** (`ivuorinen-skills`) containing hostile audit skills. Each skill is a self-contained prompt file (`SKILL.md`) that Claude Code loads when a user invokes it. The repo is installable via `/plugins` and is versioned with semantic versioning using release-please automation.
+A **Claude Code plugin** (`ivuorinen-skills`) containing hostile audit skills. Each skill is a self-contained
+prompt file (`SKILL.md`) that Claude Code loads when a user invokes it. The repo is installable via `/plugins`
+and is versioned with semantic versioning using release-please automation.
 
 ## Repository Layout
 
@@ -55,7 +57,8 @@ Validation checks and repository guidance from `scripts/validate-skill.py` (and 
 - `description` must start with `"Use when"` — describes triggering conditions, not what the skill does
 - `description` must be ≤ 500 characters
 - Header levels in the body must not skip (e.g., h2 → h4 is an error)
-- Avoid referencing legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/` instead; `scripts/validate-skill.py` currently warns on these references
+- Avoid referencing legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
+  instead; `scripts/validate-skill.py` currently warns on these references
 
 Body-only (no frontmatter) is a **legacy pattern** — never create new skills without frontmatter.
 
@@ -74,10 +77,12 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 ## Adding a New Skill
 
 1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
-2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in `.github/copilot-instructions.md` (these are the source of truth for the public skill list). If `README.md` includes a mirrored skills table, update it too so it stays in sync.
-3. Run `make validate` to confirm the new skill passes validation
-4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
-5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
+2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in
+   `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
+   If `README.md` includes a mirrored skills table, update it too so it stays in sync.
+4. Run `make validate` to confirm the new skill passes validation
+5. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
+6. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
 
@@ -89,7 +94,8 @@ make lint           # ruff check on scripts/
 make list           # print all skills with descriptions
 ```
 
-CI runs `uv run scripts/validate-skill.py` (twice) and `uv run scripts/check-version-sync.py` on every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
+CI runs `uv run scripts/validate-skill.py` (twice) and `uv run scripts/check-version-sync.py` on
+every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
 
 ## Versioning — Five Files Must Stay in Sync
 
@@ -103,7 +109,8 @@ The canonical version lives in `package.json`. All five must match:
 | `.release-please-manifest.json` | `"."` |
 | `pyproject.toml` | `project.version` |
 
-Use `scripts/bump-version.py [major|minor|patch]` for manual bumps — it updates all files atomically. Never update version fields by hand in individual files.
+Use `scripts/bump-version.py [major|minor|patch]` for manual bumps — it updates all files atomically.
+Never update version fields by hand in individual files.
 
 ## Commit Message Convention (Controls Release Automation)
 
@@ -122,7 +129,8 @@ All skills follow these conventions — new skills must too:
 
 - **Hostile, deterministic agents** — no hedging ("might", "could", "potential"), no compliments
 - **Silence = approval** — if a finding is not filed, it is implicitly accepted
-- **Output destinations are explicit**: skills that write files write to `docs/audit/<skill>-findings.md`; `pr-reviewer` writes to stdout only and never writes a file
+- **Output destinations are explicit**: skills that write files write to `docs/audit/<skill>-findings.md`;
+  `pr-reviewer` writes to stdout only and never writes a file
 - **Severity levels are enumerated** (Critical / High / Medium / Low, sometimes Advisory)
 - **Every finding must include evidence** and a concrete fix — no abstract advice
 
