@@ -15,7 +15,7 @@ skills/                    # Public skills (shipped with the plugin)
     <skill-name>/
       SKILL.md
   agents/                  # Claude Code sub-agent definitions — do NOT read or modify
-  settings.json            # Claude Code local settings
+  settings.json            # Claude Code project settings / shared hooks
 .claude-plugin/
   plugin.json              # Plugin identity + version
   marketplace.json         # Marketplace listing
@@ -73,7 +73,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 ## Adding a New Skill
 
 1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
-2. Add a row to the skills table in `CLAUDE.md`, `README.md`, and the "Existing Public Skills" table in `.github/copilot-instructions.md`
+2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in `.github/copilot-instructions.md` (these are the source of truth for the public skill list). If `README.md` includes a mirrored skills table, update it too so it stays in sync.
 3. Run `make validate` to confirm the new skill passes validation
 4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
 5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
