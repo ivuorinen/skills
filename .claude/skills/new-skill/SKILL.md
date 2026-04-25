@@ -7,7 +7,8 @@ disable-model-invocation: true
 # New Skill Scaffolder
 
 Creates a public skill under `skills/<name>/` and stress-tests it through the full
-RED → GREEN → REFACTOR → adversarial-review → validate cycle before declaring it done.
+RED → GREEN → REFACTOR → adversarial-review → validate cycle before declaring it
+done.
 
 ## Phase 1 — TDD Baseline (RED)
 
@@ -51,7 +52,21 @@ Run `/skill-tester` again, this time with the skill loaded. Confirm the agent
 complies with every rule. If the agent finds a new loophole, add an explicit counter
 and re-run until no loopholes remain.
 
-## Phase 4 — Adversarial Review
+## Phase 4 — Refactor
+
+With the GREEN phase clean, refactor the skill body for clarity and hostile
+precision:
+
+- Remove hedging language ("might", "could", "potential") — every statement must be
+  unconditional
+- Tighten rule wording so each rule can be tested by a single scenario
+- Consolidate duplicate or overlapping rules
+- Ensure the Common Mistakes section names the exact rationalizations captured in the
+  RED phase
+- Re-run `/skill-tester` after refactoring to confirm no regression — all GREEN
+  scenarios must still pass
+
+## Phase 5 — Adversarial Review
 
 Run `/adversarial-reviewer` against the new `skills/<name>/SKILL.md` file. Treat the
 skill body as code under review — hunt for ambiguous rules, missing edge-case
@@ -59,7 +74,7 @@ coverage, hedged language, and instructions that permit rationalization. Fix eve
 HIGH or CRITICAL finding. Re-run until adversarial-reviewer reports no findings at
 HIGH or above.
 
-## Phase 5 — Structural Validation
+## Phase 6 — Structural Validation
 
 6. Add a row to the Existing Skills table in `CLAUDE.md`.
 
@@ -68,19 +83,23 @@ HIGH or above.
 8. Add a row to the "Existing Public Skills" table in `.github/copilot-instructions.md`.
    If `README.md` contains a mirrored skills table, update it too.
 
-9. Run the validator:
-   ```
-   uv run scripts/validate-skill.py skills/<name>/SKILL.md
-   ```
+9. Add a row to the Skill Catalogue table and all relevant Mermaid diagrams in
+   `.claude/skills/README.md` (the wiring guide). Update the Quick Reference
+   Input/Output table and the New Skill Registration Checklist as needed.
 
-10. Run `/validate-skills` to confirm all skills remain consistent.
+10. Run the validator:
+    ```
+    uv run scripts/validate-skill.py skills/<name>/SKILL.md
+    ```
 
-## Phase 6 — PR Review
+11. Run `/validate-skills` to confirm all skills remain consistent.
 
-11. Run `/pr-reviewer` on the staged diff. Fix all findings at HIGH or above.
+## Phase 7 — PR Review
+
+12. Run `/pr-reviewer` on the staged diff. Fix all findings at HIGH or above.
     Re-run until pr-reviewer reports no findings at HIGH or above.
 
-12. Commit with `feat: add <name> skill` — this triggers a minor version bump.
+13. Commit with `feat: add <name> skill` — this triggers a minor version bump.
 
 ## Skill Quality Gate
 

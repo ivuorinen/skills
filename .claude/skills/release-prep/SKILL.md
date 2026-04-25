@@ -16,9 +16,8 @@ step fails.** Do not proceed to the next step.
 
 ## Step 1 — Validate All Skills
 
-```bash
-uv run scripts/validate-skill.py
-```
+Run `/validate-skills`. This validates both public skills (`skills/*/SKILL.md`) and
+internal skills (`.claude/skills/*/SKILL.md`).
 
 If any **errors** are reported: stop. Report the list of errors to the user. Do not
 proceed until they are resolved.

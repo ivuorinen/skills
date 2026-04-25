@@ -48,11 +48,29 @@ Nitpicker must analyze:
 | default | Full repository review |
 | inline | Return findings in response instead of file; do NOT write `docs/audit/nitpicker-findings.md` |
 | changed-files | Limit review to modified files + their dependencies |
-| security | Prioritize security analysis |
+| security | Invoke `/security-auditor`; incorporate its findings; focus remaining review on security and trust boundaries |
 | tests | Focus on test quality |
-| docs | Focus on documentation |
-| architecture | Focus on design and boundaries |
+| docs | Invoke `/doc-auditor`; incorporate its findings; focus remaining review on documentation accuracy and completeness |
+| architecture | Invoke `/arch-detector` (if `docs/audit/arch-profile.md` is absent or stale), then invoke `/arch-auditor`; incorporate its findings; focus remaining review on design and boundary violations |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
+
+### Mode delegation detail
+
+In `security` mode, run `/security-auditor` first. Read
+`docs/audit/security-findings.md` after it completes. Incorporate all open
+Critical/High findings directly into the Nitpicker findings file (deduplicated by
+area and problem statement). Do not re-run the same scanner checks; extend the review
+with trust-boundary and auth logic analysis that the scanner does not cover.
+
+In `docs` mode, run `/doc-auditor` first. Read `docs/audit/doc-findings.md` after it
+completes. Incorporate all open Critical/High findings. Extend with coverage of
+inline code comments, example code correctness, and cross-reference accuracy.
+
+In `architecture` mode, run `/arch-detector` if `docs/audit/arch-profile.md` does
+not exist or was last updated before the current branch's oldest commit. Then run
+`/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes. Incorporate
+all open Critical/High findings. Extend with module coupling analysis and layering
+violations not covered by arch-auditor.
 
 ## Single-Shot Behavior
 

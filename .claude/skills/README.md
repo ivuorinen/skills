@@ -14,7 +14,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 |-------|------|
 | `new-skill` | Orchestrator — scaffolds + drives the full new-skill lifecycle |
 | `skill-tester` | Validator — TDD pressure-testing for new skill behaviour |
-| `validate-skills` | Leaf — structural linting of SKILL.md frontmatter and format |
+| `validate-skills` | Leaf — structural linting of SKILL.md frontmatter and format; validates all skills (public + internal) by default |
 | `release-prep` | Orchestrator — validates release readiness and offers to open a PR; never tags or bumps versions |
 | `skills` | Router — helps users discover and invoke the right public skill |
 
@@ -23,7 +23,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | Skill | Role | Output |
 |-------|------|--------|
 | `adversarial-reviewer` | Leaf — hostile bug hunt on specific code or content | stdout |
-| `nitpicker` | Orchestrator — exhaustive whole-repo audit with fix integration | `docs/audit/nitpicker-findings.md` |
+| `nitpicker` | Orchestrator — exhaustive whole-repo audit; delegates to specialist skills in focused modes | `docs/audit/nitpicker-findings.md` |
 | `arch-detector` | Leaf — detects architectural patterns | `docs/audit/arch-profile.md` |
 | `arch-auditor` | Consumer — validates against detected architecture | `docs/audit/arch-findings.md` |
 | `doc-auditor` | Leaf — verifies documentation accuracy against codebase | `docs/audit/doc-findings.md` |
@@ -78,8 +78,12 @@ graph TD
     %% security-auditor
     SA -->|writes| SF
 
-    %% nitpicker writes its own findings
+    %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
+    NP -->|security mode: invokes| SA
+    NP -->|docs mode: invokes| DA
+    NP -->|architecture mode: invokes| AD
+    NP -->|architecture mode: invokes| AA
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -125,11 +129,12 @@ flowchart TD
     D --> E[skill-tester GREEN phase\nsubagent with skill loaded\nconfirm compliance]
     E --> F{New loophole\nfound?}
     F -->|Yes| D
-    F -->|No| G[adversarial-reviewer\non skills/name/SKILL.md]
+    F -->|No| REFACTOR[Refactor skill body\nremove hedging, tighten rules\nre-run skill-tester to confirm no regression]
+    REFACTOR --> G[adversarial-reviewer\non skills/name/SKILL.md]
     G --> H{HIGH or CRITICAL\nfindings?}
     H -->|Yes — fix| D
-    H -->|No| I[Update CLAUDE.md\nskills/SKILL.md\ncopilot-instructions.md\nREADME.md]
-    I --> J[validate-skills\nuv run scripts/validate-skill.py]
+    H -->|No| I[Update CLAUDE.md\nskills/SKILL.md\ncopilot-instructions.md\nREADME.md\n.claude/skills/README.md]
+    I --> J[validate-skills\nboth public + internal]
     J --> K{Errors?}
     K -->|Yes — fix| D
     K -->|No| L[pr-reviewer on diff]
@@ -262,15 +267,16 @@ graph LR
     RP --> AA
     RP --> NP
 
-    NP -.->|architecture mode: invokes| AA
-    NP -.->|docs mode: invokes| DA
-    NP -.->|security mode: invokes| SA
+    NP -->|architecture mode| AA
+    NP -->|architecture mode| AD
+    NP -->|docs mode| DA
+    NP -->|security mode| SA
 ```
 
-`nitpicker` in focused modes conditionally delegates to the specialist skill. These
-are mode-gated invocations: nitpicker invokes the specialist only when explicitly run
-in the corresponding mode (`architecture`, `docs`, or `security`). In default mode
-nitpicker covers all areas internally and does not invoke the specialist skills.
+`nitpicker` in focused modes delegates to the matching specialist skill before
+extending the review with additional analysis that the specialist does not cover.
+In default mode, nitpicker covers all areas internally and does not invoke the
+specialist skills.
 
 ---
 
@@ -315,7 +321,8 @@ When adding a new skill, verify:
    or `docs/audit/arch-profile.md` (arch-detector only).
 3. If it reads another skill's artifact, that predecessor skill is documented as a
    prerequisite in this file and in the new skill's `## When to Use` section.
-4. Add it to the Skill Catalogue table and all relevant Mermaid diagrams in this file.
+4. Add it to the Skill Catalogue table and all relevant Mermaid diagrams in this file
+   (`.claude/skills/README.md`). Update the Quick Reference Input/Output table too.
 5. Add it to the "Existing Public Skills" table in `.github/copilot-instructions.md`
    and the skills table in `CLAUDE.md` and `README.md`.
 
@@ -332,7 +339,7 @@ When adding a new skill, verify:
 | `doc-auditor` | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | git diff / staged changes | stdout only |
 | `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
-| `validate-skills` | all `SKILL.md` files | stdout (errors/warnings) |
+| `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal) | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
 | `release-prep` | all of the above | none (delegates to each skill; optionally opens a PR on user approval) |

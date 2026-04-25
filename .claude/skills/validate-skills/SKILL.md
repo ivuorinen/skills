@@ -8,9 +8,20 @@ disable-model-invocation: true
 
 ## Steps
 
-1. Run the validator across all skills:
+1. Run the validator across all skills — public and internal:
    ```bash
    uv run scripts/validate-skill.py
+   uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
+   ```
+
+   To validate only public skills:
+   ```bash
+   uv run scripts/validate-skill.py
+   ```
+
+   To validate only internal skills:
+   ```bash
+   uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
    ```
 
 2. If any **errors** are reported, fix them before proceeding. Errors are blocking.
