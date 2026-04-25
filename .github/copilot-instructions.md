@@ -49,13 +49,13 @@ description: Use when [triggering conditions and symptoms].
 ---
 ```
 
-Validation rules enforced by `scripts/validate-skill.py` (and CI):
+Validation checks and repository guidance from `scripts/validate-skill.py` (and CI):
 
 - `name` must match the **directory name exactly** (kebab-case)
 - `description` must start with `"Use when"` — describes triggering conditions, not what the skill does
 - `description` must be ≤ 500 characters
 - Header levels in the body must not skip (e.g., h2 → h4 is an error)
-- Do not reference legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/` instead
+- Avoid referencing legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/` instead; `scripts/validate-skill.py` currently warns on these references
 
 Body-only (no frontmatter) is a **legacy pattern** — never create new skills without frontmatter.
 
@@ -89,7 +89,7 @@ make lint           # ruff check on scripts/
 make list           # print all skills with descriptions
 ```
 
-CI runs `make validate` + version sync on every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
+CI runs `uv run scripts/validate-skill.py` (twice) and `uv run scripts/check-version-sync.py` on every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
 
 ## Versioning — Five Files Must Stay in Sync
 
