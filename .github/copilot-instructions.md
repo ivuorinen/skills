@@ -80,9 +80,9 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in
    `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
    If `README.md` includes a mirrored skills table, update it too so it stays in sync.
-4. Run `make validate` to confirm the new skill passes validation
-5. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
-6. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
+3. Run `make validate` to confirm the new skill passes validation
+4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
+5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
 
@@ -129,8 +129,8 @@ All skills follow these conventions — new skills must too:
 
 - **Hostile, deterministic agents** — no hedging ("might", "could", "potential"), no compliments
 - **Silence = approval** — if a finding is not filed, it is implicitly accepted
-- **Output destinations are explicit**: skills that write files write to `docs/audit/<skill>-findings.md`;
-  `pr-reviewer` writes to stdout only and never writes a file
+- **Output destinations are explicit**: skills that write files write findings under `docs/audit/`
+  using a skill-specific filename; `pr-reviewer` writes to stdout only and never writes a file
 - **Severity levels are enumerated** (Critical / High / Medium / Low, sometimes Advisory)
 - **Every finding must include evidence** and a concrete fix — no abstract advice
 
