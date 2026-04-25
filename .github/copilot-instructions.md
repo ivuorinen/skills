@@ -75,7 +75,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
 2. Add a row to the skills table in `CLAUDE.md`, `README.md`, and the "Existing Public Skills" table in `.github/copilot-instructions.md`
 3. Run `make validate` to confirm the new skill passes validation
-4. Run `/skills pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
+4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
 5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
