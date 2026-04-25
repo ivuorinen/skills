@@ -65,7 +65,7 @@ Plugin identity lives in `.claude-plugin/`:
 | `.claude-plugin/plugin.json` | Plugin name, version, author, keywords |
 | `.claude-plugin/marketplace.json` | Marketplace listing (used by `/plugins`) |
 
-Version must be kept in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, and `.release-please-manifest.json`. Use `scripts/bump-version.py` for manual bumps; release-please handles it automatically on CI.
+Version must be kept in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it automatically on CI.
 
 ## Versioning
 
