@@ -60,13 +60,29 @@ Run `/nitpicker` in `release-gate` mode (threshold: High). If any Critical or Hi
 finding remains open after fixes are applied: stop. Report the findings. Do not
 proceed.
 
-## Step 7 — Review CHANGELOG
+## Step 7 — Verify Conventional Commits
 
-Confirm an entry exists for the changes in this branch with accurate feature and fix
-descriptions. If no entry exists, or the entry is inaccurate: stop. Instruct the user
-to update `CHANGELOG.md` before proceeding.
+Confirm every commit on this branch follows the conventional commits format that
+release-please uses to determine the version bump and generate release notes:
 
-Run `/doc-auditor CHANGELOG.md` if the release notes are substantive.
+- `feat:` — new feature (minor bump)
+- `fix:` — bug fix (patch bump)
+- `feat!:` or `BREAKING CHANGE:` footer — breaking change (major bump)
+- `chore:`, `docs:`, `refactor:` — no version bump
+
+Check the commit log with:
+
+```bash
+git log main..HEAD --oneline
+```
+
+If any commit message does not follow conventional commits format: stop. Instruct the
+user to amend the commit message before proceeding. Do not proceed until all commit
+messages are valid — release-please generates `CHANGELOG.md` and the version bump
+automatically from these messages when the PR merges to `main`.
+
+Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
+manages the changelog.
 
 ## Step 8 — Confirm CI Is Green
 
@@ -87,7 +103,7 @@ Steps completed:
   [✓] doc-auditor — no Critical/High findings
   [✓] arch-auditor — no Critical/High findings
   [✓] nitpicker release-gate — no Critical/High findings
-  [✓] CHANGELOG.md — entry present for this version
+  [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 
 Release-please automation will create the Release PR when these changes are merged

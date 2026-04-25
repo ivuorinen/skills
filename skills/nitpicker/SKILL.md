@@ -56,21 +56,28 @@ Nitpicker must analyze:
 
 ### Mode delegation detail
 
-In `security` mode, run `/security-auditor` first. Read
+Modes `security`, `docs`, and `architecture` are incompatible with `inline` mode. If
+`inline` is combined with any of these, treat the combined mode as `inline` only: run
+the full internal review without invoking specialist skills, and return findings in
+the response. Never write `docs/audit/nitpicker-findings.md` when `inline` is active,
+regardless of which other mode flags are present.
+
+In `security` mode (without `inline`), run `/security-auditor` first. Read
 `docs/audit/security-findings.md` after it completes. Incorporate all open
 Critical/High findings directly into the Nitpicker findings file (deduplicated by
 area and problem statement). Do not re-run the same scanner checks; extend the review
 with trust-boundary and auth logic analysis that the scanner does not cover.
 
-In `docs` mode, run `/doc-auditor` first. Read `docs/audit/doc-findings.md` after it
-completes. Incorporate all open Critical/High findings. Extend with coverage of
-inline code comments, example code correctness, and cross-reference accuracy.
+In `docs` mode (without `inline`), run `/doc-auditor` first. Read
+`docs/audit/doc-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with coverage of inline code comments, example code correctness, and
+cross-reference accuracy.
 
-In `architecture` mode, run `/arch-detector` if `docs/audit/arch-profile.md` does
-not exist or was last updated before the current branch's oldest commit. Then run
-`/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes. Incorporate
-all open Critical/High findings. Extend with module coupling analysis and layering
-violations not covered by arch-auditor.
+In `architecture` mode (without `inline`), run `/arch-detector` if
+`docs/audit/arch-profile.md` does not exist or was last updated before the current
+branch's oldest commit. Then run `/arch-auditor`. Read `docs/audit/arch-findings.md`
+after it completes. Incorporate all open Critical/High findings. Extend with module
+coupling analysis and layering violations not covered by arch-auditor.
 
 ## Single-Shot Behavior
 
