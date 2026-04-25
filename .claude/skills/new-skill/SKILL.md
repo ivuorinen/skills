@@ -42,7 +42,8 @@ Document those rationalizations — every one must be countered in the skill bod
    - `## Common Mistakes` — what the skill must NOT do
 
 5. Counter every RED-phase rationalization explicitly in the skill body — add a rule or
-   a Common Mistakes entry for each one.
+   a Common Mistakes entry for each one. "Rationalisation" and "rationalization" refer
+   to the same thing; use "rationalization" (US spelling) consistently throughout.
 
 ## Phase 3 — Verify Behaviour (GREEN)
 
@@ -54,7 +55,7 @@ and re-run until no loopholes remain.
 
 Run `/adversarial-reviewer` against the new `skills/<name>/SKILL.md` file. Treat the
 skill body as code under review — hunt for ambiguous rules, missing edge-case
-coverage, hedged language, and instructions that permit rationalisation. Fix every
+coverage, hedged language, and instructions that permit rationalization. Fix every
 HIGH or CRITICAL finding. Re-run until adversarial-reviewer reports no findings at
 HIGH or above.
 

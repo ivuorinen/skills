@@ -106,8 +106,10 @@ graph TD
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
-operate correctly. Dashed arrows (`-.->`) are soft dependencies — the consuming skill
-works without the predecessor but produces better output with it.
+operate correctly, or the invoking skill explicitly calls the target. Dashed arrows
+(`-.->`) are soft dependencies — the consuming skill works without the predecessor
+but produces better output with it, or the invocation is conditional on a specific
+mode or the presence of an artifact.
 
 ---
 
@@ -239,15 +241,15 @@ graph LR
     RP --> AA
     RP --> NP
 
-    NP -.->|architecture mode| AA
-    NP -.->|docs mode| DA
-    NP -.->|security mode| SA
+    NP -.->|architecture mode: invokes| AA
+    NP -.->|docs mode: invokes| DA
+    NP -.->|security mode: invokes| SA
 ```
 
-`nitpicker` in focused modes delegates to the specialist skill rather than
-re-implementing the same logic. These are soft invocations — nitpicker notes the
-specialised skill should be run and its findings incorporated, rather than silently
-skipping areas it delegates.
+`nitpicker` in focused modes conditionally delegates to the specialist skill. These
+are mode-gated invocations: nitpicker invokes the specialist only when explicitly run
+in the corresponding mode (`architecture`, `docs`, or `security`). In default mode
+nitpicker covers all areas internally and does not invoke the specialist skills.
 
 ---
 

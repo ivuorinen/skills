@@ -52,8 +52,7 @@ any Critical or High findings remain open after fixes are applied.
 ## Step 7 — Review CHANGELOG
 
 Confirm an entry exists for the version being released with accurate feature and fix
-descriptions. Run `/doc-auditor` inline on CHANGELOG.md if the release notes are
-substantive.
+descriptions. Run `/doc-auditor CHANGELOG.md` if the release notes are substantive.
 
 ## Step 8 — Confirm CI Is Green
 
