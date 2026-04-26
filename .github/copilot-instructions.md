@@ -142,7 +142,7 @@ All skills follow these conventions — new skills must too:
 - **Do not** use `feat:` for a bug fix or `fix:` for a new skill — the commit prefix controls the release bump
 - **Do not** reference `codereview.md` or `fixreport.md` as output paths — use `docs/audit/`
 - **Do not** read or modify anything under `.claude/agents/` — those are restricted
-- **Do not** commit findings files (`docs/audit/*.md`) unless explicitly asked — skills always ask first
+- **Do not** commit findings files (`docs/audit/*.md`) silently — every audit skill must ask "Commit findings to git? (y/n)" before staging them. Findings files **are** tracked in this repo as the canonical audit history; the rule is "always ask first", not "never commit"
 
 ## Development Environment
 
