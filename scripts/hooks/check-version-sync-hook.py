@@ -2,7 +2,11 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""PostToolUse hook — warn on version mismatch after editing a version-bearing JSON."""
+"""PostToolUse hook — warn on version mismatch after editing a version-bearing manifest.
+
+Covers JSON manifests (package.json, plugin.json, marketplace.json,
+.release-please-manifest.json) and pyproject.toml.
+"""
 
 import json
 import os

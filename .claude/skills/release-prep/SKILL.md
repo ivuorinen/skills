@@ -41,10 +41,15 @@ Medium and below may be deferred but must be tracked in `docs/audit/doc-findings
 
 ## Step 4 — Architecture Integrity
 
-If `docs/audit/arch-profile.md` does not exist or is stale for the current branch
-(file's modification timestamp predates the branch's oldest commit),
-run `/arch-detector` first to refresh it. Then run `/arch-auditor`. If any Critical
-or High finding remains open: stop. Report the findings. Do not proceed.
+If `docs/audit/arch-profile.md` does not exist or is stale for the current branch,
+run `/arch-detector` first to refresh it. Determine staleness from Git metadata, not
+filesystem mtime (which git checkouts do not preserve): the profile is stale when
+the most recent commit touching it
+(`git log -1 --format=%ct -- docs/audit/arch-profile.md`) is older than the branch's
+oldest commit (`git log --format=%ct main..HEAD | tail -1`), or — if git has no
+record of the file — when the `Generated:` date inside it predates that commit.
+Then run `/arch-auditor`. If any Critical or High finding remains open: stop. Report
+the findings. Do not proceed.
 
 ## Step 5 — Exhaustive Code Review
 

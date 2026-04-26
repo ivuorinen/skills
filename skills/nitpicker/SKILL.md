@@ -74,10 +74,15 @@ findings. Extend with coverage of inline code comments, example code correctness
 cross-reference accuracy.
 
 In `architecture` mode (without `inline`), run `/arch-detector` if
-`docs/audit/arch-profile.md` does not exist or was last updated before the current
-branch's oldest commit. Then run `/arch-auditor`. Read `docs/audit/arch-findings.md`
-after it completes. Incorporate all open Critical/High findings. Extend with module
-coupling analysis and layering violations not covered by arch-auditor.
+`docs/audit/arch-profile.md` does not exist or is stale. Determine staleness from
+Git metadata, not filesystem mtime (which git checkouts do not preserve): the
+profile is stale when the most recent commit touching it
+(`git log -1 --format=%ct -- docs/audit/arch-profile.md`) is older than the branch's
+oldest commit (`git log --format=%ct main..HEAD | tail -1`), or — if git has no
+record of the file — when the `Generated:` date inside it predates that commit.
+Then run `/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes.
+Incorporate all open Critical/High findings. Extend with module coupling analysis
+and layering violations not covered by arch-auditor.
 
 ## Single-Shot Behavior
 
