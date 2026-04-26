@@ -20,6 +20,7 @@ check: validate version-sync lint
 
 validate:
 	$(UV) scripts/validate-skill.py
+	$(UV) scripts/validate-skill.py .claude/skills/*/SKILL.md
 
 version-sync:
 	$(UV) scripts/check-version-sync.py

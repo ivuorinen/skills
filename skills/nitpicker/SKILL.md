@@ -48,11 +48,41 @@ Nitpicker must analyze:
 | default | Full repository review |
 | inline | Return findings in response instead of file; do NOT write `docs/audit/nitpicker-findings.md` |
 | changed-files | Limit review to modified files + their dependencies |
-| security | Prioritize security analysis |
+| security | Invoke `/security-auditor`; incorporate its findings; focus remaining review on security and trust boundaries |
 | tests | Focus on test quality |
-| docs | Focus on documentation |
-| architecture | Focus on design and boundaries |
+| docs | Invoke `/doc-auditor`; incorporate its findings; focus remaining review on documentation accuracy and completeness |
+| architecture | Invoke `/arch-detector` (if `docs/audit/arch-profile.md` is absent or stale), then invoke `/arch-auditor`; incorporate its findings; focus remaining review on design and boundary violations |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
+
+### Mode delegation detail
+
+Modes `security`, `docs`, and `architecture` are incompatible with `inline` mode. If
+`inline` is combined with any of these, treat the combined mode as `inline` only: run
+the full internal review without invoking specialist skills, and return findings in
+the response. Never write `docs/audit/nitpicker-findings.md` when `inline` is active,
+regardless of which other mode flags are present.
+
+In `security` mode (without `inline`), run `/security-auditor` first. Read
+`docs/audit/security-findings.md` after it completes. Incorporate all open
+Critical/High findings directly into the Nitpicker findings file (deduplicated by
+area and problem statement). Do not re-run the same scanner checks; extend the review
+with trust-boundary and auth logic analysis that the scanner does not cover.
+
+In `docs` mode (without `inline`), run `/doc-auditor` first. Read
+`docs/audit/doc-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with coverage of inline code comments, example code correctness, and
+cross-reference accuracy.
+
+In `architecture` mode (without `inline`), run `/arch-detector` if
+`docs/audit/arch-profile.md` does not exist or is stale. Determine staleness from
+Git metadata, not filesystem mtime (which git checkouts do not preserve): the
+profile is stale when the most recent commit touching it
+(`git log -1 --format=%ct -- docs/audit/arch-profile.md`) is older than the branch's
+oldest commit (`git log --format=%ct main..HEAD | tail -1`), or — if git has no
+record of the file — when the `Generated:` date inside it predates that commit.
+Then run `/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes.
+Incorporate all open Critical/High findings. Extend with module coupling analysis
+and layering violations not covered by arch-auditor.
 
 ## Single-Shot Behavior
 
@@ -63,13 +93,13 @@ Nitpicker must analyze:
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. Review codebase per current mode (default: full repository)
+3. If in security/docs/architecture mode AND NOT inline mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"
    If a/c/s: apply fixes in severity order (Critical first), then re-run in
    changed-files mode to confirm finding count decreases, re-validate, update file
-7. Write docs/audit/nitpicker-findings.md
+7. If NOT in inline mode: Write docs/audit/nitpicker-findings.md
 8. Ask: "Commit findings to git? (y/n)" — never commit silently
 ```
 
@@ -129,11 +159,15 @@ Fix: <concrete remediation>
 
 ## Fixed
 
+### Pass N — YYYY-MM-DD
+
 #### [ID] Short title
 Fixed: YYYY-MM-DD
 Notes: <what changed>
 
 ## Invalid
+
+### Pass N — YYYY-MM-DD
 
 #### [ID] Short title
 Notes: <why this finding was wrong>
@@ -163,3 +197,5 @@ Notes: <why this finding was wrong>
 **Approving by omission then later adding findings:** Decide during the review pass. Silence = approval.
 
 **Flagging style when content is correct:** Severity must reflect actual risk, not preference.
+
+**Wrong section structure:** All fixed findings go under one `## Fixed` h2; all invalid findings go under one `## Invalid` h2. Sub-divide each by `### Pass N — YYYY-MM-DD` h3 headers. Never create `## Fixed — pass N` h2 variants. Never skip header levels (h2 → h4 with no h3 is a structural gap that the audit-findings hook will flag and autofix).

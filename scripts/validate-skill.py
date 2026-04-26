@@ -4,6 +4,7 @@
 # ///
 """Validate SKILL.md files for the ivuorinen-skills plugin."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -64,9 +65,12 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
             err(f"header level jumps from h{prev_level} to h{level}: '{'#' * level} {title}'")
         prev_level = level
 
-    # Legacy output paths
+    # Legacy output paths — scan prose and inline code, but skip fenced code blocks
+    # (example/format documentation) and table rows (behavior documentation).
+    body_no_doc = re.sub(r"```[\s\S]*?```", "", body)
+    body_no_doc = re.sub(r"^\|.*\|$", "", body_no_doc, flags=re.MULTILINE)
     for legacy in ("./codereview.md", "./fixreport.md", "codereview.md", "fixreport.md"):
-        if legacy in body:
+        if legacy in body_no_doc:
             warn(f"references legacy output path '{legacy}' — use docs/audit/ instead")
 
 
