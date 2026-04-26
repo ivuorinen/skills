@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.3.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.2.0...ivuorinen-skills-v1.3.0) (2026-04-26)
+
+
+### Features
+
+* wire internal skills together and add skill wiring README ([#9](https://github.com/ivuorinen/skills/issues/9)) ([554d719](https://github.com/ivuorinen/skills/commit/554d7196440d8faa3016e9daef6fe5ad26fdb226))
+
 ## [1.2.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.1.0...ivuorinen-skills-v1.2.0) (2026-04-25)
 
 
