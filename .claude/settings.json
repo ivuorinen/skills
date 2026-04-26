@@ -36,6 +36,15 @@
             "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/ruff-hook.py"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/validate-audit-findings-hook.py"
+          }
+        ]
       }
     ],
     "Stop": [

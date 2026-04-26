@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A Claude Code plugin containing hostile audit skills. Each skill lives under `skills/<name>/SKILL.md`. The repo is installable via `/plugins` and versioned with semantic versioning + release-please automation.
+A Claude Code plugin containing hostile audit skills. Each skill lives under `skills/<name>/SKILL.md`. The repo is installable via `/plugins` and versioned with semantic versioning + release-please automation. Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are used during development only — not shipped to plugin consumers.
+
+## Development Commands
+
+```bash
+make check        # validate all skills + version sync + ruff lint (run before every commit)
+make validate     # SKILL.md structure only (public + internal)
+make list         # list all skills with descriptions
+make lint         # ruff check on scripts/
+make format       # ruff format on scripts/
+```
 
 ## Existing Skills
 
@@ -46,8 +56,8 @@ The body is a prompt written in imperative Markdown — define mindset, checklis
 1. Create a kebab-case directory under `skills/` (e.g., `skills/my-skill/`)
 2. Add `SKILL.md` with YAML frontmatter (`name` + `description`)
 3. Write the `description` following the three rules above
-4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`
-5. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
+4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`; also update the Skill Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`
+5. Use `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip phases.
 6. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
 
 ## Conventions Observed in This Repo
@@ -98,3 +108,10 @@ git push && git push --tags
 ## Configuration
 
 `.claude/settings.local.json` — Claude Code local settings (tool permissions, etc.). Not shared; gitignored.
+
+`.claude/settings.json` — Shared PostToolUse hooks that run automatically after every Write or Edit:
+- `validate-skill-hook.py` — validates SKILL.md structure on any edited SKILL.md
+- `validate-json-hook.py` — validates JSON syntax on any edited `.json` file
+- `check-version-sync-hook.py` — warns if editing a version file causes a mismatch across the five manifests
+- `ruff-hook.py` — auto-fixes and lints any edited `.py` file
+- `validate-audit-findings-hook.py` — validates and autofixes `docs/audit/*-findings.md` structure (single Fixed/Invalid h2, `### Pass N — YYYY-MM-DD` h3 sub-sections) and summary counts
