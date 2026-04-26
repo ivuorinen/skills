@@ -14,7 +14,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 |-------|------|
 | `new-skill` | Orchestrator — scaffolds + drives the full new-skill lifecycle |
 | `skill-tester` | Validator — TDD pressure-testing for new skill behaviour |
-| `validate-skills` | Leaf — structural linting of SKILL.md frontmatter and format; validates all skills (public + internal) by default |
+| `validate-skills` | Leaf — validates SKILL.md frontmatter/format for all skills (public + internal) and checks repository version sync |
 | `release-prep` | Orchestrator — validates release readiness and offers to open a PR; never tags or bumps versions |
 | `skills` | Router — helps users discover and invoke the right public skill |
 
@@ -133,7 +133,7 @@ flowchart TD
     REFACTOR --> G[adversarial-reviewer\non skills/name/SKILL.md]
     G --> H{HIGH or CRITICAL\nfindings?}
     H -->|Yes — fix| D
-    H -->|No| I[Update CLAUDE.md\nskills/SKILL.md\ncopilot-instructions.md\nREADME.md\n.claude/skills/README.md]
+    H -->|No| I[Update CLAUDE.md\n.claude/skills/skills/SKILL.md\ncopilot-instructions.md\nREADME.md\n.claude/skills/README.md]
     I --> J[validate-skills\nboth public + internal]
     J --> K{Errors?}
     K -->|Yes — fix| D
@@ -162,13 +162,10 @@ continue to the next step.
 
 ```mermaid
 flowchart TD
-    A([Start: prepare for release PR]) --> B[validate-skills\nno structural errors]
-    B --> B2{Errors?}
+    A([Start: prepare for release PR]) --> B[validate-skills\nno structural errors\nall 5 version files agree]
+    B --> B2{Errors or\nversion mismatch?}
     B2 -->|Yes — stop| STOP1([Stop: report errors to user])
-    B2 -->|No| C[version sync check\nall 5 files agree]
-    C --> C2{Out of sync?}
-    C2 -->|Yes — stop| STOP2([Stop: report mismatched files])
-    C2 -->|No| D[security-auditor\nno Critical/High open]
+    B2 -->|No| D[security-auditor\nno Critical/High open]
     D --> D2{Critical/High\nfindings?}
     D2 -->|Yes — stop| STOP3([Stop: report security findings])
     D2 -->|No| E[doc-auditor\nno Critical/High open]

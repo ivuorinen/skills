@@ -13,8 +13,8 @@ done.
 ## Phase 1 — TDD Baseline (RED)
 
 Before writing a single line of skill content, run `/skill-tester` to establish the
-baseline. The skill-tester dispatches a subagent **without** the new skill loaded and
-records every rationalization the agent uses to skip the rule you are encoding.
+baseline. Use its checklist to have a subagent run **without** the new skill loaded
+and record every rationalization the agent uses to skip the rule you are encoding.
 Document those rationalizations — every one must be countered in the skill body.
 
 ## Phase 2 — Scaffold

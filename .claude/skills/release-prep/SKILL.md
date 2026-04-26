@@ -14,53 +14,44 @@ PR, and only after every gate passes and the user explicitly approves.
 Run these steps in order. **Stop immediately and report findings to the user if any
 step fails.** Do not proceed to the next step.
 
-## Step 1 — Validate All Skills
+## Step 1 — Validate All Skills and Version Sync
 
 Run `/validate-skills`. This validates both public skills (`skills/*/SKILL.md`) and
-internal skills (`.claude/skills/*/SKILL.md`).
+internal skills (`.claude/skills/*/SKILL.md`), and also runs the version-sync check
+(`scripts/check-version-sync.py`).
 
-If any **errors** are reported: stop. Report the list of errors to the user. Do not
-proceed until they are resolved.
+If any **errors** are reported from skill validation: stop. Report the list of errors
+to the user. Do not proceed until they are resolved.
 
 Warnings must be reviewed; fix any that relate to skills being changed in this branch.
 
-## Step 2 — Check Version Sync
+If version sync fails: stop. Report which files differ and what their versions are.
+Do not proceed.
 
-```bash
-uv run scripts/check-version-sync.py
-```
-
-All five files must agree on the same version: `package.json`,
-`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
-`.release-please-manifest.json`, and `pyproject.toml`.
-
-If any file is out of sync: stop. Report which files differ and what their versions
-are. Do not proceed.
-
-## Step 3 — Security Scan
+## Step 2 — Security Scan
 
 Run `/security-auditor`. If any Critical or High finding remains open after the scan:
 stop. Report the findings to the user. Do not proceed.
 
-## Step 4 — Documentation Accuracy
+## Step 3 — Documentation Accuracy
 
 Run `/doc-auditor`. If any Critical finding remains open: stop. Report the findings.
 High findings (missing API/boundary docs) must also be resolved before proceeding.
 Medium and below may be deferred but must be tracked in `docs/audit/doc-findings.md`.
 
-## Step 5 — Architecture Integrity
+## Step 4 — Architecture Integrity
 
 If `docs/audit/arch-profile.md` does not exist or is stale for the current branch,
 run `/arch-detector` first to refresh it. Then run `/arch-auditor`. If any Critical
 or High finding remains open: stop. Report the findings. Do not proceed.
 
-## Step 6 — Exhaustive Code Review
+## Step 5 — Exhaustive Code Review
 
 Run `/nitpicker` in `release-gate` mode (threshold: High). If any Critical or High
 finding remains open after fixes are applied: stop. Report the findings. Do not
 proceed.
 
-## Step 7 — Verify Conventional Commits
+## Step 6 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -84,7 +75,7 @@ automatically from these messages when the PR merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 8 — Confirm CI Is Green
+## Step 7 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -97,8 +88,7 @@ After all steps pass, present this summary to the user:
 ✅ All release gates passed.
 
 Steps completed:
-  [✓] validate-skill.py — no errors
-  [✓] check-version-sync.py — all 5 files agree on vX.Y.Z
+  [✓] validate-skills — no skill errors; all 5 version files in sync at vX.Y.Z
   [✓] security-auditor — no Critical/High findings
   [✓] doc-auditor — no Critical/High findings
   [✓] arch-auditor — no Critical/High findings
