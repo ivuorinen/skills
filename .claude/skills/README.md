@@ -26,17 +26,17 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `nitpicker` | Orchestrator — exhaustive whole-repo audit; delegates to specialist skills in focused modes | `docs/audit/nitpicker-findings.md` |
 | `arch-detector` | Leaf — detects architectural patterns | `docs/audit/arch-profile.md` |
 | `arch-auditor` | Consumer — validates against detected architecture | `docs/audit/arch-findings.md` |
-| `doc-auditor` | Leaf — verifies documentation accuracy against codebase | `docs/audit/doc-findings.md` |
+| `doc-auditor` | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
 | `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
-**Consumer skills** depend on the output of a specific predecessor.
+**Consumer skills** are a specialised Leaf that optionally reads a specific predecessor's artifact; they call nothing and appear in the Leaves and Consumers subgraph of the Master Invocation Map.
 
 ---
 
-## Dependency Graph (static — what reads what)
+## Dependency Graph (static — invocations, reads, and writes)
 
 ```mermaid
 graph TD
@@ -68,7 +68,7 @@ graph TD
 
     %% arch chain
     AD -->|writes| APF
-    AA -->|reads| APF
+    AA -.->|reads if present| APF
     AA -->|writes| AFF
 
     %% doc-auditor reads arch profile for architecture descriptions
@@ -130,7 +130,10 @@ flowchart TD
     E --> F{New loophole\nfound?}
     F -->|Yes| D
     F -->|No| REFACTOR[Phase 4: Refactor]
-    REFACTOR --> G[adversarial-reviewer\non skills/name/SKILL.md]
+    REFACTOR --> ST2[skill-tester REFACTOR verify\nre-run with skill loaded\nconfirm no regression]
+    ST2 --> ST2Q{Regression\nfound?}
+    ST2Q -->|Yes — fix| D
+    ST2Q -->|No| G[adversarial-reviewer\non skills/name/SKILL.md]
     G --> H{HIGH or CRITICAL\nfindings?}
     H -->|Yes — fix| D
     H -->|No| I[Update CLAUDE.md\n.claude/skills/skills/SKILL.md\ncopilot-instructions.md\nREADME.md\n.claude/skills/README.md]
@@ -241,7 +244,7 @@ graph LR
         NP[nitpicker]
     end
 
-    subgraph leaves["Leaves (called, never call)"]
+    subgraph leaves["Leaves and Consumers (called, never call)"]
         AR[adversarial-reviewer]
         VS[validate-skills]
         AD[arch-detector]
@@ -250,6 +253,7 @@ graph LR
         PR[pr-reviewer]
         SA[security-auditor]
         ST[skill-tester]
+        SK[skills / router]
     end
 
     NS --> ST
@@ -336,7 +340,7 @@ When adding a new skill, verify:
 | `doc-auditor` | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | git diff / staged changes | stdout only |
 | `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
-| `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal) | stdout (errors/warnings) |
+| `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
 | `release-prep` | all of the above | none (delegates to each skill; optionally opens a PR on user approval) |

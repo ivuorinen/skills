@@ -37,6 +37,12 @@ If the user says… → invoke this skill:
 - "check the docs / find stale docs / verify documentation" → `/doc-auditor`
 - "security audit / run security scan / find vulnerabilities / check for secrets / scan dependencies" → `/security-auditor`
 
+## Rules
+
+- Select exactly one skill per request. Do NOT invoke multiple skills simultaneously.
+- If the request matches multiple skills, pick the most comprehensive one (e.g., `/nitpicker` covers code, architecture, and docs).
+- Never chain skills — the router hands off to one skill and stops.
+
 ## If Unclear
 
 Run `make list` (or `uv run scripts/list-skills.py`) to print the current skill list with full descriptions, then ask the user which one fits.

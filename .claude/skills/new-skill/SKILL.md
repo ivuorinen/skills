@@ -38,7 +38,7 @@ Document those rationalizations — every one must be countered in the skill bod
    - `## Overview` — one paragraph: what it does, hostile framing, single-shot behaviour
    - `## When to Use` — bullet list of triggering conditions and situations
    - `## Process` — numbered steps (find → ask → fix → re-validate)
-   - `## Output Format` — findings grouped by severity: Critical / High / Medium / Low / Advisory; Fixed section at bottom; output path `docs/audit/<name>-findings.md`
+   - `## Findings Format` — findings grouped by severity: Critical / High / Medium / Low / Advisory; Fixed and Invalid sections group entries under `### Pass N — YYYY-MM-DD` h3 headers; output path `docs/audit/<name>-findings.md`. (Non-audit skills that write only to stdout may use `## Output Format` instead.)
    - `## Fix Strategy` — what may be auto-applied, what requires user approval
    - `## Common Mistakes` — what the skill must NOT do
 
@@ -81,7 +81,7 @@ HIGH or above.
 7. Add a row to the Available Skills table in `.claude/skills/skills/SKILL.md` — this is the launcher skill users invoke to discover and route to public skills. Keep it in sync.
 
 8. Add a row to the "Existing Public Skills" table in `.github/copilot-instructions.md`.
-   If `README.md` contains a mirrored skills table, update it too.
+   Also update `README.md` — it always contains a mirrored skills table.
 
 9. Add a row to the Skill Catalogue table and all relevant Mermaid diagrams in
    `.claude/skills/README.md` (the wiring guide). Update the Quick Reference
@@ -106,6 +106,7 @@ HIGH or above.
 A skill is **not done** until all of these pass:
 
 - [ ] skill-tester GREEN phase: agent complies with every rule
+- [ ] skill-tester REFACTOR verify: re-run with skill loaded after refactoring; no new loopholes
 - [ ] adversarial-reviewer: no HIGH or CRITICAL findings remain
 - [ ] `uv run scripts/validate-skill.py skills/<name>/SKILL.md` exits 0 with no errors
 - [ ] `/validate-skills` exits clean

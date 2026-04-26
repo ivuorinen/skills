@@ -45,6 +45,5 @@ disable-model-invocation: true
 | Description starts with "Use when" | Error |
 | Description ≤ 500 chars | Error |
 | Skill name matches directory name | Error |
-| `## Overview` or `## Mindset` section | Warning |
-| `## When to Use` or `## Operating Rules` section | Warning |
+| Header level progression (no skipping levels) | Error |
 | Legacy output paths (`./codereview.md` etc.) | Warning |

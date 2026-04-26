@@ -29,7 +29,7 @@ scripts/
   common.py                # Shared helpers for scripts
 .github/
   workflows/
-    validate-skills.yml    # CI: validates skills + version sync when SKILL.md files or scripts/validate-skill.py change
+    validate-skills.yml    # CI: validates skills + version sync; triggers on SKILL.md files, version files, and validation scripts
     release-please.yml     # CI: automated releases from main
 docs/
   audit/                   # Output directory for skill findings (auto-created by skills)
@@ -79,7 +79,8 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
 2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in
    `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
-   If `README.md` includes a mirrored skills table, update it too so it stays in sync.
+   Also update `README.md` (it always contains a mirrored skills table) and update the Skill
+   Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`.
 3. Run `make validate` to confirm the new skill passes validation
 4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
 5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please

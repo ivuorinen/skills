@@ -26,17 +26,18 @@ Pressure types to combine:
 
 Record exact rationalizations the agent uses to skip the rule.
 
-## GREEN phase — write the skill
+## GREEN phase — write and verify
 
-Write `skills/<skill-name>/SKILL.md`. Address each rationalization from RED explicitly.
+Write `skills/<skill-name>/SKILL.md`. Address each rationalization from RED explicitly. Then dispatch the same subagent again, this time with the skill loaded. Confirm each RED rationalization is blocked. If a new loophole emerges, add an explicit counter to the skill and re-run.
 
-## REFACTOR phase — verify
+## REFACTOR phase — verify after refactoring
 
-Dispatch the same subagent again, this time with the skill loaded. Confirm compliance. If the agent finds a new loophole, add an explicit counter and re-run.
+Refactor the skill body for clarity and precision. Then dispatch the same scenario again (skill still loaded). Confirm all GREEN scenarios still pass and no new loopholes have appeared. If they have, add counters and re-run.
 
 ## Checklist
 
 - [ ] RED scenario run and rationalizations documented
 - [ ] Skill written addressing each rationalization
 - [ ] GREEN scenario confirms compliance
+- [ ] REFACTOR scenario re-run confirms no regression and no new loopholes
 - [ ] Validator passes: `uv run scripts/validate-skill.py skills/<skill-name>/SKILL.md`

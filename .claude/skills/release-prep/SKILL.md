@@ -41,7 +41,8 @@ Medium and below may be deferred but must be tracked in `docs/audit/doc-findings
 
 ## Step 4 — Architecture Integrity
 
-If `docs/audit/arch-profile.md` does not exist or is stale for the current branch,
+If `docs/audit/arch-profile.md` does not exist or is stale for the current branch
+(file's modification timestamp predates the branch's oldest commit),
 run `/arch-detector` first to refresh it. Then run `/arch-auditor`. If any Critical
 or High finding remains open: stop. Report the findings. Do not proceed.
 
@@ -67,10 +68,16 @@ Check the commit log with:
 git log main..HEAD --oneline
 ```
 
-If any commit message does not follow conventional commits format: stop. Instruct the
-user to amend the commit message before proceeding. Do not proceed until all commit
-messages are valid — release-please generates `CHANGELOG.md` and the version bump
-automatically from these messages when the PR merges to `main`.
+If any commit message does not follow conventional commits format: stop. Instruct the user to fix all non-conforming messages using:
+
+```bash
+git rebase -i main..HEAD
+# Mark each bad commit as 'reword' to rename it.
+```
+
+Do not proceed until all commit messages are valid — release-please generates
+`CHANGELOG.md` and the version bump automatically from these messages when the PR
+merges to `main`.
 
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
