@@ -71,7 +71,7 @@ git log main..HEAD --oneline
 If any commit message does not follow conventional commits format: stop. Instruct the user to fix all non-conforming messages using:
 
 ```bash
-git rebase -i main..HEAD
+git rebase -i main
 # Mark each bad commit as 'reword' to rename it.
 ```
 

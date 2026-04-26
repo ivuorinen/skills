@@ -88,7 +88,7 @@ coupling analysis and layering violations not covered by arch-auditor.
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in security/docs/architecture mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
+3. If in security/docs/architecture mode AND NOT inline mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"

@@ -268,7 +268,8 @@ def main() -> None:
         return
 
     file_path = data.get("file_path") or data.get("path") or ""
-    path = Path(file_path)
+    raw = Path(file_path)
+    path = raw if raw.is_absolute() else REPO_ROOT / raw
 
     if not is_findings_file(path):
         return

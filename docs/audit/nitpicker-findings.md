@@ -3,13 +3,35 @@ Generated: 2026-04-24
 Last validated: 2026-04-26
 
 ## Summary
-- Total: 36 | Open: 0 | Fixed: 36 | Invalid: 0
+- Total: 41 | Open: 0 | Fixed: 41 | Invalid: 0
 
 ## Open Findings
 
 (none)
 
 ## Fixed
+
+### Pass 8 — 2026-04-26
+
+#### [N-041] release-readiness-reviewer.md step 6 uses broken shell quoting in git tag check
+Fixed: 2026-04-26
+Notes: Replaced nested double-quoted `python3 -c "..."` inside `grep "v$(…)"` with single-quoted `-c '...'` so the shell command is syntactically valid. Broken form: `grep "v$(python3 -c "import json; ...")"`. Fixed form: `grep "v$(python3 -c 'import json; ...')"`.
+
+#### [N-040] release-prep/SKILL.md uses invalid git rebase range syntax
+Fixed: 2026-04-26
+Notes: `git rebase -i main..HEAD` is not a valid interactive rebase invocation (expects an upstream branch, not a range). Changed to `git rebase -i main`.
+
+#### [N-039] nitpicker/SKILL.md step 3 missing inline-mode exclusion condition
+Fixed: 2026-04-26
+Notes: Single-shot step 3 said "If in security/docs/architecture mode: invoke specialist skill..." without the `AND NOT inline mode` guard. This contradicts the Mode delegation detail section which explicitly prohibits specialist invocation when `inline` is active. Added "AND NOT inline mode" to step 3.
+
+#### [N-038] validate-skill.py legacy-path check strips inline code spans, creating false negatives
+Fixed: 2026-04-26
+Notes: The legacy-output-path check stripped all inline backtick spans before scanning, so a skill that referenced `codereview.md` inside an instruction code span would not be flagged. Changed to strip only fenced code blocks and table rows (documentation/example context) while leaving inline code in prose untouched.
+
+#### [N-037] validate-audit-findings-hook.py does not resolve relative file_path against REPO_ROOT
+Fixed: 2026-04-26
+Notes: `path = Path(file_path)` with a relative path fails `path.exists()` when the hook is invoked from a directory other than the repo root. Fixed to `path = raw if raw.is_absolute() else REPO_ROOT / raw`. `REPO_ROOT` was already defined at module level.
 
 ### Pass 7 — 2026-04-26
 
