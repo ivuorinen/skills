@@ -339,3 +339,5 @@ Never apply fixes without user confirmation. Never commit anything silently.
 **Deduplication by title instead of ID:** Match on CVE ID or rule ID, not on description strings, which differ across tools.
 
 **Offering fixes for secrets in git history without warning:** Filter-repo operations are destructive and require force-push. Always warn before suggesting them.
+
+**Wrong section structure:** All fixed findings go under one `## Fixed` h2; all invalid findings go under one `## Invalid` h2. Sub-divide each by `### Pass N — YYYY-MM-DD` h3 headers. Never create `## Fixed — pass N` h2 variants. Never skip header levels (h2 → h4 with no h3 is a structural gap that the audit-findings hook will flag and autofix).

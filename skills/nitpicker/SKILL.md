@@ -88,13 +88,13 @@ coupling analysis and layering violations not covered by arch-auditor.
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. Review codebase per current mode (default: full repository)
+3. If in security/docs/architecture mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"
    If a/c/s: apply fixes in severity order (Critical first), then re-run in
    changed-files mode to confirm finding count decreases, re-validate, update file
-7. Write docs/audit/nitpicker-findings.md
+7. If NOT in inline mode: Write docs/audit/nitpicker-findings.md
 8. Ask: "Commit findings to git? (y/n)" — never commit silently
 ```
 
@@ -154,11 +154,15 @@ Fix: <concrete remediation>
 
 ## Fixed
 
+### Pass N — YYYY-MM-DD
+
 #### [ID] Short title
 Fixed: YYYY-MM-DD
 Notes: <what changed>
 
 ## Invalid
+
+### Pass N — YYYY-MM-DD
 
 #### [ID] Short title
 Notes: <why this finding was wrong>
@@ -188,3 +192,5 @@ Notes: <why this finding was wrong>
 **Approving by omission then later adding findings:** Decide during the review pass. Silence = approval.
 
 **Flagging style when content is correct:** Severity must reflect actual risk, not preference.
+
+**Wrong section structure:** All fixed findings go under one `## Fixed` h2; all invalid findings go under one `## Invalid` h2. Sub-divide each by `### Pass N — YYYY-MM-DD` h3 headers. Never create `## Fixed — pass N` h2 variants. Never skip header levels (h2 → h4 with no h3 is a structural gap that the audit-findings hook will flag and autofix).

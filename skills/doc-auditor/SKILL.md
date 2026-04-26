@@ -112,11 +112,15 @@ Fix: <minimal correction>
 
 ## Fixed
 
+### Pass N — YYYY-MM-DD
+
 #### [ID] Short title
 Fixed: YYYY-MM-DD
 Notes: <what changed>
 
 ## Invalid
+
+### Pass N — YYYY-MM-DD
 
 #### [ID] Short title
 Notes: <why this finding was wrong>
@@ -129,3 +133,4 @@ Notes: <why this finding was wrong>
 - Silence = approval — if something is not flagged, that IS your approval
 - Apply only minimal fixes — correct the claim, do not rewrite the document
 - Do not flag style or tone — only factual accuracy and completeness
+- **Wrong section structure:** All fixed findings go under one `## Fixed` h2; all invalid findings go under one `## Invalid` h2. Sub-divide each by `### Pass N — YYYY-MM-DD` h3 headers. Never create `## Fixed — pass N` h2 variants. Never skip header levels (h2 → h4 with no h3 is a structural gap).
