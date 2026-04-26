@@ -18,6 +18,7 @@ VERSION_FILES = {
     "plugin.json",
     "marketplace.json",
     ".release-please-manifest.json",
+    "pyproject.toml",
 }
 
 

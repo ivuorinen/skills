@@ -6,11 +6,23 @@ on:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
+      - 'scripts/check-version-sync.py'
+      - 'package.json'
+      - 'pyproject.toml'
+      - '.claude-plugin/plugin.json'
+      - '.claude-plugin/marketplace.json'
+      - '.release-please-manifest.json'
   pull_request:
     paths:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
+      - 'scripts/check-version-sync.py'
+      - 'package.json'
+      - 'pyproject.toml'
+      - '.claude-plugin/plugin.json'
+      - '.claude-plugin/marketplace.json'
+      - '.release-please-manifest.json'
 
 jobs:
   validate:
