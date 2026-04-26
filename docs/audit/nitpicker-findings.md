@@ -3,13 +3,27 @@ Generated: 2026-04-24
 Last validated: 2026-04-26
 
 ## Summary
-- Total: 41 | Open: 0 | Fixed: 41 | Invalid: 0
+- Total: 44 | Open: 0 | Fixed: 44 | Invalid: 0
 
 ## Open Findings
 
 (none)
 
 ## Fixed
+
+### Pass 9 — 2026-04-26
+
+#### [N-044] validate-audit-findings-hook.py contains dead else-branch summary recount
+Fixed: 2026-04-26
+Notes: After `parse_and_fix` runs, the `else` branch (lines 288-326) recounted h4 findings and rewrote the summary if the input numbers disagreed. But `parse_and_fix` already derives the summary from the same h4 counts when reconstructing the file, so if `fixed == original` the summary was already correct and the inner mismatch check could never fire. Verified by running the hook on a structurally-correct findings file: md5 unchanged before and after. Removed the dead else branch (-39 lines).
+
+#### [N-043] stop-reminder.py misses untracked new SKILL.md files
+Fixed: 2026-04-26
+Notes: The hook used `git diff --name-only HEAD`, which sees tracked-modified and staged paths but not brand-new untracked files. A freshly-created `skills/foo/SKILL.md` not yet `git add`-ed was invisible — exactly the case where the validate-skills reminder matters most. Switched to `git status --porcelain -uall` (the `-uall` flag is required because the default `-u normal` shows untracked directories as `?? skills/` rather than recursing to the file). Also folded the no-commits fallback path away — `git status --porcelain` works without prior commits — and added explicit handling for rename entries (`R  old -> new`).
+
+#### [N-042] release-readiness-reviewer.md step 6 uses unanchored grep for tag presence check
+Fixed: 2026-04-26
+Notes: `git tag | grep "v$(...)"` does substring matching. With version `1.2.0`, the grep also matches `v1.2.0-rc1`, `v1.2.10`, etc., causing false "tag exists" verdicts that would block a legitimate release. Verified: `printf 'v1.2.0\nv1.2.0-rc1\n' | grep "v1.2.0"` returns both lines. Replaced with `git rev-parse --verify "refs/tags/v$(...)" 2>/dev/null` which is the canonical exact-match tag-existence check.
 
 ### Pass 8 — 2026-04-26
 

@@ -285,45 +285,6 @@ def main() -> None:
         print(f"  audit-findings hook: fixed {path.name}", flush=True)
         for msg in messages:
             print(msg, flush=True)
-    else:
-        # Verify summary counts are correct even without structural changes
-        m = SUMMARY_RE.search(original)
-        if m:
-            total_d = int(m.group(2))
-            open_d, fixed_d, invalid_d = int(m.group(3)), int(m.group(4)), int(m.group(5))
-            lines = original.splitlines()
-            # Quick count to verify
-            cur = ""
-            oc = fc = ic = 0
-            for ln in lines:
-                if H2_OPEN.match(ln):
-                    cur = "open"
-                elif H2_FIXED.match(ln):
-                    cur = "fixed"
-                elif H2_INVALID.match(ln):
-                    cur = "invalid"
-                elif ln.startswith("## "):
-                    cur = ""
-                if H4_FINDING.match(ln):
-                    if cur == "open":
-                        oc += 1
-                    elif cur == "fixed":
-                        fc += 1
-                    elif cur == "invalid":
-                        ic += 1
-            tc = oc + fc + ic
-            if (tc, oc, fc, ic) != (total_d, open_d, fixed_d, invalid_d):
-                # Rewrite just the summary line
-                prefix = m.group(1)
-                new_summary = f"{prefix}Total: {tc} | Open: {oc} | Fixed: {fc} | Invalid: {ic}"
-                fixed2 = SUMMARY_RE.sub(new_summary, original, count=1)
-                path.write_text(fixed2, encoding="utf-8")
-                print(
-                    f"  audit-findings hook: corrected summary in {path.name} "
-                    f"(was Total:{total_d}|Open:{open_d}|Fixed:{fixed_d}|Invalid:{invalid_d}, "
-                    f"now Total:{tc}|Open:{oc}|Fixed:{fc}|Invalid:{ic})",
-                    flush=True,
-                )
 
 
 if __name__ == "__main__":

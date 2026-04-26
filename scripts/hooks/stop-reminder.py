@@ -13,24 +13,27 @@ REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT"
 
 
 def main() -> None:
+    # Use `git status --porcelain -uall` so the hook also sees individual
+    # untracked SKILL.md files — without `-uall`, an untracked directory shows
+    # as just `?? skills/` (trailing slash) and the SKILL.md filter misses it.
     result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "status", "--porcelain", "-uall"],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        # No commits yet — fall back to porcelain status
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-        )
-        lines = [line[3:] for line in result.stdout.splitlines()]
-    else:
-        lines = result.stdout.splitlines()
-    changed = [f for f in lines if "skills/" in f and f.endswith("SKILL.md")]
+        return
+    paths: list[str] = []
+    for line in result.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:]
+        # Renames look like "R  old -> new"; keep only the new path.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path)
+    changed = [f for f in paths if "skills/" in f and f.endswith("SKILL.md")]
     if changed:
         print("Modified skills detected:", flush=True)
         for f in changed:

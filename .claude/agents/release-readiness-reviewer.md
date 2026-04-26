@@ -16,7 +16,7 @@ Audit the repository and report a pass/fail verdict with a punch list. Be terse.
 3. **Conventional commits** — run `git log main..HEAD --oneline` and confirm every message follows `feat:`, `fix:`, `feat!:`, `chore:`, `docs:`, or `refactor:` prefixes; release-please generates the changelog from these automatically
 4. **CI workflow exists** — confirm `.github/workflows/validate-skills.yml` exists
 5. **No uncommitted changes** — run `git status --short` and flag any dirty files (other than intentional pre-release edits)
-6. **Git tag absent** — confirm `git tag | grep "v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"` returns nothing (tag not yet created)
+6. **Git tag absent** — confirm `git rev-parse --verify "refs/tags/v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')" 2>/dev/null` exits non-zero (tag not yet created); using `grep` for this check would substring-match adjacent tags like `v1.2.0-rc1`
 
 ## Output format
 
