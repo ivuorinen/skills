@@ -50,7 +50,7 @@ The body is a prompt written in imperative Markdown — define mindset, checklis
 1. Start with "Use when..." — describe triggering conditions, not what the skill does
 2. Write in third person — the description is injected into the system prompt
 3. Never summarize the skill's workflow — if the description contains a workflow summary, Claude may follow it instead of reading the full skill body
-4. If the description contains `: ` (colon + space), wrap the entire value in single quotes — Go's `yaml.v3` (used by Copilot CLI) rejects unquoted `: ` in plain scalars
+4. If the description contains `": "` (colon + space), wrap the entire value in single quotes — Go's `yaml.v3` (used by Copilot CLI) rejects unquoted `": "` in plain scalars
 
 ## Adding a New Skill
 

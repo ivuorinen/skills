@@ -49,7 +49,7 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     for line in text[4:end_fm].splitlines():
         if line.startswith("description: "):
             raw_val = line[len("description: "):]
-            if ": " in raw_val and not (raw_val.startswith("'") or raw_val.startswith('"')):
+            if ": " in raw_val and not (raw_val.startswith("'") and raw_val.endswith("'")):
                 err(
                     "description contains ': ' but is not quoted"
                     " — wrap in single quotes for yaml.v3 compatibility"
