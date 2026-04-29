@@ -29,7 +29,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `doc-auditor` | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
 | `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
-| `cr-implementer` | Leaf — fetches and implements unresolved GitHub PR review comments | stdout + GitHub thread replies |
+| `cr-implementer` | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.

@@ -40,6 +40,7 @@ Invoke any skill by name in Claude Code:
 - `/doc-auditor` — verify documentation accuracy
 - `/pr-reviewer` — PR review (stdout only)
 - `/security-auditor` — security audit with available local scanners
+- `/cr-implementer` — implement PR review comments
 
 ## Versioning
 
