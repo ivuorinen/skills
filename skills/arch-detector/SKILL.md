@@ -1,6 +1,6 @@
 ---
 name: arch-detector
-description: Use when you need to identify which architectural patterns a codebase uses, understand its structural boundaries, or generate an architecture profile before auditing. Triggers: "what architecture is this?", "detect the architecture", "profile this codebase", "what pattern does this follow?", "run arch-detector".
+description: 'Use when you need to identify which architectural patterns a codebase uses, understand its structural boundaries, or generate an architecture profile before auditing. Triggers: "what architecture is this?", "detect the architecture", "profile this codebase", "what pattern does this follow?", "run arch-detector".'
 ---
 
 # Architecture Detector
