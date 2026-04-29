@@ -1,6 +1,6 @@
 ---
 name: cr-implementer
-description: Use when implementing unresolved GitHub PR review comments. Invoke when told "fix the cr comments", "implement review feedback", "address pr comments", or when a PR has unresolved reviewer comments that need addressing.
+description: 'Use when implementing unresolved GitHub PR review comments. Invoke when told "fix the cr comments", "implement review feedback", "address pr comments", or when a PR has unresolved reviewer comments that need addressing.'
 ---
 
 # CR Implementer
@@ -152,7 +152,7 @@ Hold all drafts until Step 6.
 
 After all comments are processed, emit a summary including the drafted reply for each comment:
 
-```
+```text
 Implemented:   N
 Pushed back:   N
 Skipped:       N
@@ -164,7 +164,7 @@ Drafted replies:
 
 **If there are Implemented verdicts** (code was changed):
 
-```
+```text
 What next?
   1. Leave it (no commit, no replies posted)
   2. Commit only (no push, no replies posted)
@@ -176,7 +176,7 @@ What next?
 
 **If there are no Implemented verdicts** (only Pushed Back and Skipped — no code was changed):
 
-```
+```text
 Post replies now? (y/n)
 ```
 
