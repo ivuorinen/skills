@@ -29,6 +29,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `doc-auditor` | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
 | `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
+| `cr-implementer` | Leaf — fetches and implements unresolved GitHub PR review comments | stdout + GitHub thread replies |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -56,6 +57,7 @@ graph TD
         DA[doc-auditor]
         PR[pr-reviewer]
         SA[security-auditor]
+        CRI[cr-implementer]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -107,6 +109,7 @@ graph TD
     SK -.->|routes to| DA
     SK -.->|routes to| PR
     SK -.->|routes to| SA
+    SK -.->|routes to| CRI
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -228,6 +231,7 @@ flowchart TD
     R -->|"audit the architecture / find violations"| AA[arch-auditor]
     R -->|"check the docs / stale documentation"| DA[doc-auditor]
     R -->|"security scan / vulnerabilities / secrets"| SA[security-auditor]
+    R -->|"implement cr comments / fix review feedback"| CRI[cr-implementer]
 ```
 
 ---
@@ -252,6 +256,7 @@ graph LR
         DA[doc-auditor]
         PR[pr-reviewer]
         SA[security-auditor]
+        CRI[cr-implementer]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -340,6 +345,7 @@ When adding a new skill, verify:
 | `doc-auditor` | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
 | `pr-reviewer` | git diff / staged changes | stdout only |
 | `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
+| `cr-implementer` | GitHub PR review comments (via `gh` CLI), codebase files | stdout + GitHub thread replies |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |

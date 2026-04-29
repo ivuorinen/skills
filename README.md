@@ -13,6 +13,7 @@ Hostile audit skills for Claude Code.
 | `doc-auditor` | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
 | `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
+| `cr-implementer` | Fetches unresolved GitHub PR review comments, evaluates and implements valid ones one at a time, verifies with tests and linting, and asks user whether to leave/commit/push |
 
 ## Installation
 

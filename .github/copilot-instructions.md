@@ -73,6 +73,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Documentation accuracy auditor | `skills/doc-auditor/` |
 | PR review (stdout only, no findings file) | `skills/pr-reviewer/` |
 | Security audit with available local scanners | `skills/security-auditor/` |
+| GitHub PR review comment implementer | `skills/cr-implementer/` |
 
 ## Adding a New Skill
 
