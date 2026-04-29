@@ -17,7 +17,10 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     for line in text[4:end].splitlines():
         if ": " in line:
             k, _, v = line.partition(": ")
-            fm[k.strip()] = v.strip()
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                v = v[1:-1]
+            fm[k.strip()] = v
     return fm, text[end + 5 :]
 
 

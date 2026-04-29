@@ -45,6 +45,17 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     if len(description) > 500:
         err(f"description is {len(description)} chars; must be ≤500")
 
+    end_fm = text.find("\n---\n", 4)
+    for line in text[4:end_fm].splitlines():
+        if line.startswith("description: "):
+            raw_val = line[len("description: "):]
+            if ": " in raw_val and not (raw_val.startswith("'") and raw_val.endswith("'")):
+                err(
+                    "description contains ': ' but is not quoted"
+                    " — wrap in single quotes for yaml.v3 compatibility"
+                )
+            break
+
     expected_name = path.parent.name
     if name and name != expected_name:
         err(f"name '{name}' does not match directory '{expected_name}'")
