@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.3.1](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.3.0...ivuorinen-skills-v1.3.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* quote descriptions containing ': ' to fix yaml.v3 parsing ([#12](https://github.com/ivuorinen/skills/issues/12)) ([0178132](https://github.com/ivuorinen/skills/commit/01781324f062836d7d21ff29ff23bd54b22edf4b))
+
 ## [1.3.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.2.0...ivuorinen-skills-v1.3.0) (2026-04-26)
 
 
