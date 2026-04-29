@@ -29,7 +29,7 @@ Skills live in `skills/` — each subdirectory is one skill.
 | `doc-auditor` | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
 | `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
-| `cr-implementer` | Fetches unresolved GitHub PR review comments, evaluates and implements valid ones one at a time, verifies with tests and linting, scans for similar issues, and asks user whether to leave/commit/push |
+| `cr-implementer` | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, scans for similar issues, and asks user whether to leave/commit/push |
 
 ## Skill File Format
 

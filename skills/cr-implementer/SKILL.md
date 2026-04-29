@@ -32,17 +32,12 @@ Run these before touching any code:
 
 - **Method B — `GITHUB_TOKEN` + available HTTP client:**
   ```bash
-  echo $GITHUB_TOKEN
+  [ -n "$GITHUB_TOKEN" ]
   ```
-  If the token is set, verify it with a test request:
-  ```
-  GET https://api.github.com/user
-  Authorization: Bearer $GITHUB_TOKEN
-  ```
-  If the test request returns a non-200 status, the token is invalid — do not proceed with Method B; fall through to Method C. If it returns 200, use `curl`, context-mode `ctx_execute` JavaScript `fetch`, or any other HTTP tool in the environment for all subsequent API calls.
+  If the token is present (non-empty), use `curl`, context-mode `ctx_execute` JavaScript `fetch`, or any other HTTP tool for all subsequent API calls. Do not validate with `GET /user` — GitHub Actions tokens and App installation tokens return 403 on that endpoint even when valid. The Step 2 API call will surface any auth failure.
 
 - **Method C — GraphQL via any HTTP client:**
-  All operations in this skill have GraphQL equivalents (see steps below). Use `https://api.github.com/graphql` with `Authorization: Bearer $GITHUB_TOKEN`.
+  All operations in this skill have GraphQL equivalents (see steps below). Use `https://api.github.com/graphql` with `Authorization: Bearer $GITHUB_TOKEN`. Requires `GITHUB_TOKEN` — not an independent fallback when no token is available.
 
 If none yield an authenticated GitHub API connection, stop and report: "GitHub API access requires one of: `gh` CLI, `GITHUB_TOKEN` + an HTTP client, or context-mode MCP with `GITHUB_TOKEN`."
 
@@ -81,18 +76,20 @@ Note the prefix convention in use (e.g. `fix:`, `feat:`, `chore:`).
 
 Fetch all inline review comments from the PR using the method chosen in Step 1:
 
-- **Method A:** `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments`
-- **Method B:** `GET https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/comments`
+- **Method A:** `gh api --paginate repos/{owner}/{repo}/pulls/{pr_number}/comments`
+- **Method B:** `GET https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/comments?per_page=100` — paginated; follow `Link: <url>; rel="next"` response headers until no `next` link remains.
 - **Method C (GraphQL):**
   ```graphql
   query {
     repository(owner: "{owner}", name: "{repo}") {
       pullRequest(number: {pr_number}) {
         reviewThreads(first: 100) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             id
             isResolved
             comments(first: 50) {
+              pageInfo { hasNextPage endCursor }
               nodes { id body path diffHunk createdAt author { login } }
             }
           }
@@ -101,6 +98,8 @@ Fetch all inline review comments from the PR using the method chosen in Step 1:
     }
   }
   ```
+  If `pageInfo.hasNextPage` is true, re-query with `reviewThreads(first: 100, after: "{endCursor}")` (and similarly for `comments`) until `hasNextPage` is false.
+
   GraphQL `reviewThreads` exposes `isResolved` — use it to skip already-resolved threads.
 
 The GitHub REST API (Methods A and B) does not expose a resolved/unresolved state on individual comments. When using Method A or B, process every comment — Step 3 assigns the Skipped verdict when the flagged code no longer exists.

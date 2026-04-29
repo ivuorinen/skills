@@ -24,7 +24,7 @@ Lists and invokes the public skills in this repository.
 | `arch-auditor` | `/arch-auditor` | Audit for architectural violations against detected or declared patterns |
 | `doc-auditor` | `/doc-auditor` | Verify all documentation against the codebase; find stale, missing, or incorrect docs |
 | `security-auditor` | `/security-auditor` | Run available security tools, parse output, write consolidated vulnerability and secret findings report |
-| `cr-implementer` | `/cr-implementer` | Fetch unresolved GitHub PR review comments, evaluate, implement valid ones with validation, ask user to leave/commit/push |
+| `cr-implementer` | `/cr-implementer` | Fetch GitHub PR review comments (unresolved where available via GraphQL), evaluate, implement valid ones with validation, ask user to leave/commit/push |
 
 ## Routing Guide
 
