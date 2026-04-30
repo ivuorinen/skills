@@ -48,12 +48,9 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     end_fm = text.find("\n---\n", 4)
     for line in text[4:end_fm].splitlines():
         if line.startswith("description: "):
-            raw_val = line[len("description: "):]
-            if ": " in raw_val and not (raw_val.startswith("'") and raw_val.endswith("'")):
-                err(
-                    "description contains ': ' but is not quoted"
-                    " — wrap in single quotes for yaml.v3 compatibility"
-                )
+            raw_val = line[len("description: "):].strip()
+            if ": " in raw_val and not re.fullmatch(r"['\"].*['\"]", raw_val):
+                err("description contains ': ' — wrap in single quotes (project convention)")
             break
 
     expected_name = path.parent.name
