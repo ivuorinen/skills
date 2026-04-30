@@ -89,8 +89,9 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 ## Validation — Run Before Every Commit
 
 ```bash
-make check          # validate + version-sync + ruff lint (all three must pass)
+make check          # validate + version-sync + lint + pytest (all must pass)
 make validate       # SKILL.md frontmatter + structure only
+make test           # run pytest unit tests for scripts/
 make version-sync   # version consistency across manifests
 make lint           # ruff check on scripts/
 make list           # print all skills with descriptions

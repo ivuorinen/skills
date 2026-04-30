@@ -7,6 +7,8 @@ on:
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
       - 'scripts/check-version-sync.py'
+      - 'scripts/common.py'
+      - 'tests/**'
       - 'package.json'
       - 'pyproject.toml'
       - '.claude-plugin/plugin.json'
@@ -18,6 +20,8 @@ on:
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
       - 'scripts/check-version-sync.py'
+      - 'scripts/common.py'
+      - 'tests/**'
       - 'package.json'
       - 'pyproject.toml'
       - '.claude-plugin/plugin.json'
@@ -40,3 +44,6 @@ jobs:
 
       - name: Check version sync
         run: uv run scripts/check-version-sync.py
+
+      - name: Run tests
+        run: uv run --with pytest pytest tests/
