@@ -1,15 +1,43 @@
 # Nitpicker Findings
 Generated: 2026-04-24
-Last validated: 2026-04-26
+Last validated: 2026-04-30
 
 ## Summary
-- Total: 44 | Open: 0 | Fixed: 44 | Invalid: 0
+- Total: 50 | Open: 0 | Fixed: 50 | Invalid: 0
 
 ## Open Findings
 
 (none)
 
 ## Fixed
+
+### Pass 11 — 2026-04-30
+
+#### [N-050] `make test` missing from CLAUDE.md and copilot-instructions.md command tables
+Fixed: 2026-04-30
+Notes: Added `make test — run pytest unit tests for scripts/` to the Development Commands block in `CLAUDE.md` and to the Validation section in `.github/copilot-instructions.md`. Also updated the `make check` description in both files to reflect that tests now run as part of the default gate.
+
+#### [N-049] `make check` excludes `test` target — pre-commit gate incomplete
+Fixed: 2026-04-30
+Notes: Changed `check: validate version-sync lint` to `check: validate version-sync lint test`. `make check` now runs all 35 unit tests as part of the pre-commit gate. Updated the help string from "validate + version-sync + lint" to "validate + version-sync + lint + test". All 35 tests pass with the updated gate.
+
+### Pass 10 — 2026-04-30
+
+#### [N-048] `validate-skill.py` description `': '` check rejects double-quoted values with inaccurate error message
+Fixed: 2026-04-30
+Notes: Changed regex from `re.fullmatch(r"'.*'", raw_val)` to `re.fullmatch(r"['\"].*['\"]", raw_val)` to accept both single- and double-quoted descriptions (consistent with `parse_frontmatter` which already strips both quote styles). Updated error message from "wrap in single quotes for yaml.v3 compatibility" to "wrap in single quotes (project convention)" to accurately reflect the reason. The compatibility concern applies only to unquoted plain scalars; double-quoted YAML strings are equally valid in yaml.v3.
+
+#### [N-047] No unit tests for validator and hook scripts
+Fixed: 2026-04-30
+Notes: Created `tests/` directory with 35 tests covering `parse_frontmatter` (10 cases), `validate()` (14 cases), `_ensure_pass_header` (6 cases, including the N-046 regression case), and `parse_and_fix` (5 cases). Added `[project.optional-dependencies] dev = ["pytest"]` and `[tool.pytest.ini_options]` to `pyproject.toml`. Added `test` target to Makefile (`uv run --with pytest pytest tests/`). Added `tests/**` to CI paths filter and a `Run tests` step to `validate-skills.yml`.
+
+#### [N-046] `_ensure_pass_header` produces duplicate `### Pass 1` when existing minimum pass is 1
+Fixed: 2026-04-30
+Notes: When `min(existing) - 1 < 1`, the function now falls back to `max(existing) + 1` instead of clamping to 1. If orphaned h4s appear before an existing `### Pass 1`, they are wrapped in `### Pass 2` (or `max+1`), avoiding a duplicate `### Pass 1` sub-section. Covered by `test_n046_orphaned_h4_before_pass_1_no_duplicate` and `test_n046_orphaned_before_pass_1_and_2_uses_pass_3`.
+
+#### [N-045] CI path filter missing `scripts/common.py`
+Fixed: 2026-04-30
+Notes: Added `'scripts/common.py'` to both `push` and `pull_request` paths filters in `.github/workflows/validate-skills.yml`. A PR that only modifies `common.py` (e.g., a breaking change to `parse_frontmatter`) now triggers CI.
 
 ### Pass 9 — 2026-04-26
 
