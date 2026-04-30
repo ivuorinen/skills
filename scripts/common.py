@@ -18,6 +18,8 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         if ": " in line:
             k, _, v = line.partition(": ")
             v = v.strip()
+            # Strip exactly one matching quote character from each end (e.g. name: "foo" → foo).
+            # Index slicing is intentional: lstrip/rstrip would strip multiple quote chars.
             if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
                 v = v[1:-1]
             fm[k.strip()] = v

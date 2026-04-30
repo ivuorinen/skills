@@ -234,11 +234,16 @@ def _ensure_pass_header(
         if m:
             date = m.group(1)
             break
-    # Determine pass number: one less than the lowest existing Pass N
+    # Determine pass number: prefer one less than the lowest existing Pass N so orphaned
+    # findings sort before the existing passes. If min is already 1, that would produce a
+    # duplicate Pass 1, so fall back to max(existing) + 1 instead.
     existing = [int(m.group(1)) for ln in stripped if (m := re.match(r"^### Pass (\d+)", ln))]
-    pass_n = (min(existing) - 1) if existing else 1
-    if pass_n < 1:
+    if not existing:
         pass_n = 1
+    else:
+        pass_n = min(existing) - 1
+        if pass_n < 1:
+            pass_n = max(existing) + 1
     header = f"### Pass {pass_n} — {date}"
     messages.append(f"  added missing pass header {header!r} under ## {section}")
     return [header, ""] + stripped

@@ -9,8 +9,9 @@ A Claude Code plugin containing hostile audit skills. Each skill lives under `sk
 ## Development Commands
 
 ```bash
-make check        # validate all skills + version sync + ruff lint (run before every commit)
+make check        # validate all skills + version sync + ruff lint + pytest (run before every commit)
 make validate     # SKILL.md structure only (public + internal)
+make test         # run pytest unit tests for scripts/
 make list         # list all skills with descriptions
 make lint         # ruff check on scripts/
 make format       # ruff format on scripts/
