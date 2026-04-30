@@ -72,9 +72,10 @@ class TestValidate:
         text = "---\nname: my-skill\ndescription: 'Use when the task requires: deep inspection'\n---\nbody\n"
         assert not _has(_errors(tmp_path, text), "contains ': '")
 
-    def test_description_double_quoted_colon_space_ok(self, tmp_path):
+    def test_description_double_quoted_colon_space_errors(self, tmp_path):
+        # Convention is single quotes; double-quoted values must also be flagged
         text = '---\nname: my-skill\ndescription: "Use when the task requires: deep inspection"\n---\nbody\n'
-        assert not _has(_errors(tmp_path, text), "contains ': '")
+        assert _has(_errors(tmp_path, text), "contains ': '")
 
     def test_name_mismatch_errors(self, tmp_path):
         text = "---\nname: wrong-name\ndescription: Use when testing\n---\nbody\n"
