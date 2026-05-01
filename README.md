@@ -14,6 +14,7 @@ Hostile audit skills for Claude Code.
 | `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
 | `cr-implementer` | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, and asks user whether to leave/commit/push |
+| `claude-rules-auditor` | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
 
 ## Installation
 
@@ -41,6 +42,7 @@ Invoke any skill by name in Claude Code:
 - `/pr-reviewer` — PR review (stdout only)
 - `/security-auditor` — security audit with available local scanners
 - `/cr-implementer` — implement PR review comments
+- `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
 
 ## Versioning
 

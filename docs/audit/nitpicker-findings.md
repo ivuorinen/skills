@@ -1,15 +1,59 @@
 # Nitpicker Findings
 Generated: 2026-04-24
-Last validated: 2026-04-30
+Last validated: 2026-05-01
 
 ## Summary
-- Total: 50 | Open: 0 | Fixed: 50 | Invalid: 0
+- Total: 60 | Open: 0 | Fixed: 60 | Invalid: 0
 
 ## Open Findings
 
 (none)
 
 ## Fixed
+
+### Pass 13 — 2026-05-01
+
+#### [N-060] `copilot-instructions.md` validation table missing `make validate-rules`
+Fixed: 2026-05-01
+Notes: Added `make validate-rules # validate .claude/rules/ files (structure + path freshness)` after `make validate` in the Validation section of `.github/copilot-instructions.md`.
+
+#### [N-059] `skill-format.md` rule stricter than validator on quote style
+Fixed: 2026-05-01
+Notes: Updated `.claude/rules/skill-format.md` to say "single or double quotes" — matching the behavior of `validate-skill.py` which accepts both after fix N-048.
+
+#### [N-058] CRA-003 and CRA-004 marked Fixed when artifacts still absent
+Fixed: 2026-05-01
+Notes: Moved CRA-003 and CRA-004 from `## Fixed` to `## Invalid` in `docs/audit/claude-rules-auditor-findings.md` with a note that the artifact gaps persist and the findings were informational, not violations requiring remediation.
+
+#### [N-057] CI paths filter missing `.claude/rules/**`
+Fixed: 2026-05-01
+Notes: Added `'.claude/rules/**'` to both `push` and `pull_request` paths lists in `.github/workflows/validate-skills.yml`. A commit adding or modifying a rule file now triggers the `validate-rules` CI step.
+
+### Pass 12 — 2026-05-01
+
+#### [N-056] Auto-discovery silently skipped dangling symlinks
+Fixed: 2026-05-01
+Notes: Replaced `rglob("*.md")` in discovery with `_iter_rules_dir()` using `os.scandir` recursively, which explicitly detects dangling symlinks. Added `test_dangling_symlink_found_in_discovery` to confirm the fix.
+
+#### [N-055] `parse_rules_frontmatter` type annotation contradicted `None` sentinel return
+Fixed: 2026-05-01
+Notes: Changed return type from `tuple[dict, str]` to `tuple[dict | None, str]` and removed the `# type: ignore[return-value]` comment. Callers can now discover the error sentinel from the type signature.
+
+#### [N-054] CI workflow had no `validate-rules` step
+Fixed: 2026-05-01
+Notes: Added `- name: Validate rules files\n  run: uv run scripts/validate-rules.py` step to `.github/workflows/validate-skills.yml`, symmetric with the existing `validate-skill.py` step.
+
+#### [N-053] `make check` description stale in three files
+Fixed: 2026-05-01
+Notes: Updated help text in `Makefile`, `CLAUDE.md`, and `.github/copilot-instructions.md` to include `validate-rules` in the `make check` description.
+
+#### [N-052] `test_no_rules_dir_exits_clean` never called script code
+Fixed: 2026-05-01
+Notes: Replaced the no-op test (which only asserted empty Python lists) with two meaningful tests: `test_empty_rules_dir_returns_no_targets` calls `_discover_targets()` on an empty `.claude/rules/` directory, and `test_dangling_symlink_found_in_discovery` verifies dangling symlinks appear in discovery output.
+
+#### [N-051] CI paths filter missing `scripts/validate-rules.py`
+Fixed: 2026-05-01
+Notes: Added `'scripts/validate-rules.py'` to both `push` and `pull_request` paths lists in `.github/workflows/validate-skills.yml`. A PR modifying the validator now triggers CI.
 
 ### Pass 11 — 2026-04-30
 
