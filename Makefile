@@ -1,4 +1,4 @@
-.PHONY: all check validate version-sync lint format list test help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync lint format list test help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,8 +6,9 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + version-sync + lint + test (default)"
+	@echo "  check        — validate + validate-rules + version-sync + lint + test (default)"
 	@echo "  validate     — validate all SKILL.md files"
+	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
 	@echo "  lint         — ruff check on scripts/"
 	@echo "  format       — ruff format on scripts/"
@@ -17,11 +18,14 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate version-sync lint test
+check: validate validate-rules version-sync lint test
 
 validate:
 	$(UV) scripts/validate-skill.py
 	$(UV) scripts/validate-skill.py .claude/skills/*/SKILL.md
+
+validate-rules:
+	$(UV) scripts/validate-rules.py
 
 version-sync:
 	$(UV) scripts/check-version-sync.py

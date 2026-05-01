@@ -6,9 +6,11 @@ on:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
+      - 'scripts/validate-rules.py'
       - 'scripts/check-version-sync.py'
       - 'scripts/common.py'
       - 'tests/**'
+      - '.claude/rules/**'
       - 'package.json'
       - 'pyproject.toml'
       - '.claude-plugin/plugin.json'
@@ -19,9 +21,11 @@ on:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/validate-skill.py'
+      - 'scripts/validate-rules.py'
       - 'scripts/check-version-sync.py'
       - 'scripts/common.py'
       - 'tests/**'
+      - '.claude/rules/**'
       - 'package.json'
       - 'pyproject.toml'
       - '.claude-plugin/plugin.json'
@@ -41,6 +45,9 @@ jobs:
         run: |
           uv run scripts/validate-skill.py
           uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
+
+      - name: Validate rules files
+        run: uv run scripts/validate-rules.py
 
       - name: Check version sync
         run: uv run scripts/check-version-sync.py

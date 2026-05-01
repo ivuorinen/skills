@@ -25,6 +25,7 @@ Lists and invokes the public skills in this repository.
 | `doc-auditor` | `/doc-auditor` | Verify all documentation against the codebase; find stale, missing, or incorrect docs |
 | `security-auditor` | `/security-auditor` | Run available security tools, parse output, write consolidated vulnerability and secret findings report |
 | `cr-implementer` | `/cr-implementer` | Fetch GitHub PR review comments (unresolved where available via GraphQL), evaluate, implement valid ones with validation, ask user to leave/commit/push |
+| `claude-rules-auditor` | `/claude-rules-auditor` | Audit `.claude/rules/` files for quality, check CLAUDE.md for misplaced rules, suggest new rules from project conventions |
 
 ## Routing Guide
 
@@ -38,6 +39,7 @@ If the user says… → invoke this skill:
 - "check the docs / find stale docs / verify documentation" → `/doc-auditor`
 - "security audit / run security scan / find vulnerabilities / check for secrets / scan dependencies" → `/security-auditor`
 - "implement cr comments / fix review feedback / address pr comments" → `/cr-implementer`
+- "audit rules / check .claude/rules / rules placement / CLAUDE.md rules" → `/claude-rules-auditor`
 
 ## Rules
 

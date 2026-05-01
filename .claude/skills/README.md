@@ -30,6 +30,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
 | `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
 | `cr-implementer` | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
+| `claude-rules-auditor` | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -58,6 +59,7 @@ graph TD
         PR[pr-reviewer]
         SA[security-auditor]
         CRI[cr-implementer]
+        CRA[claude-rules-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -66,6 +68,7 @@ graph TD
         DF[doc-findings.md]
         SF[security-findings.md]
         NF[nitpicker-findings.md]
+        CRF[claude-rules-findings.md]
     end
 
     %% arch chain
@@ -79,6 +82,13 @@ graph TD
 
     %% security-auditor
     SA -->|writes| SF
+
+    %% claude-rules-auditor reads all artifacts
+    CRA -.->|reads if present| APF
+    CRA -.->|reads if present| AFF
+    CRA -.->|reads if present| SF
+    CRA -.->|reads if present| NF
+    CRA -->|writes| CRF
 
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
@@ -110,6 +120,7 @@ graph TD
     SK -.->|routes to| PR
     SK -.->|routes to| SA
     SK -.->|routes to| CRI
+    SK -.->|routes to| CRA
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -232,6 +243,7 @@ flowchart TD
     R -->|"check the docs / stale documentation"| DA[doc-auditor]
     R -->|"security scan / vulnerabilities / secrets"| SA[security-auditor]
     R -->|"implement cr comments / fix review feedback"| CRI[cr-implementer]
+    R -->|"audit rules / check .claude/rules / CLAUDE.md rules"| CRA[claude-rules-auditor]
 ```
 
 ---
@@ -257,6 +269,7 @@ graph LR
         PR[pr-reviewer]
         SA[security-auditor]
         CRI[cr-implementer]
+        CRA[claude-rules-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -346,6 +359,7 @@ When adding a new skill, verify:
 | `pr-reviewer` | git diff / staged changes | stdout only |
 | `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
 | `cr-implementer` | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
+| `claude-rules-auditor` | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |

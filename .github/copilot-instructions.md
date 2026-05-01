@@ -74,6 +74,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | PR review (stdout only, no findings file) | `skills/pr-reviewer/` |
 | Security audit with available local scanners | `skills/security-auditor/` |
 | GitHub PR review comment implementer | `skills/cr-implementer/` |
+| Claude rules and CLAUDE.md rule-placement auditor | `skills/claude-rules-auditor/` |
 
 ## Adding a New Skill
 
@@ -89,8 +90,9 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 ## Validation — Run Before Every Commit
 
 ```bash
-make check          # validate + version-sync + lint + pytest (all must pass)
+make check          # validate + validate-rules + version-sync + lint + pytest (all must pass)
 make validate       # SKILL.md frontmatter + structure only
+make validate-rules # validate .claude/rules/ files (structure + path freshness)
 make test           # run pytest unit tests for scripts/
 make version-sync   # version consistency across manifests
 make lint           # ruff check on scripts/

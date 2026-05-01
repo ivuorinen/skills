@@ -9,7 +9,7 @@ A Claude Code plugin containing hostile audit skills. Each skill lives under `sk
 ## Development Commands
 
 ```bash
-make check        # validate all skills + version sync + ruff lint + pytest (run before every commit)
+make check        # validate all skills + validate-rules + version sync + ruff lint + pytest (run before every commit)
 make validate     # SKILL.md structure only (public + internal)
 make test         # run pytest unit tests for scripts/
 make list         # list all skills with descriptions
@@ -31,6 +31,7 @@ Skills live in `skills/` — each subdirectory is one skill.
 | `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
 | `cr-implementer` | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, scans for similar issues, and asks user whether to leave/commit/push |
+| `claude-rules-auditor` | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
 
 ## Skill File Format
 
@@ -45,30 +46,20 @@ description: Use when [triggering conditions and symptoms].
 
 The body is a prompt written in imperative Markdown — define mindset, checklist, output format, and any constraints.
 
-**Body-only (no frontmatter)** is a legacy pattern; avoid it. Skills without frontmatter cannot be auto-discovered by Claude Code from user intent.
-
-### Description authoring rules
-
-1. Start with "Use when..." — describe triggering conditions, not what the skill does
-2. Write in third person — the description is injected into the system prompt
-3. Never summarize the skill's workflow — if the description contains a workflow summary, Claude may follow it instead of reading the full skill body
-4. If the description contains `": "` (colon + space), wrap the entire value in single quotes — Go's `yaml.v3` (used by Copilot CLI) rejects unquoted `": "` in plain scalars
+**Body-only (no frontmatter)** is a legacy pattern. Skills without frontmatter cannot be auto-discovered by Claude Code from user intent. Frontmatter requirements are enforced by `.claude/rules/skill-format.md`.
 
 ## Adding a New Skill
 
 1. Create a kebab-case directory under `skills/` (e.g., `skills/my-skill/`)
 2. Add `SKILL.md` with YAML frontmatter (`name` + `description`)
-3. Write the `description` following the four rules above
+3. Write the `description` per the format enforced by `.claude/rules/skill-format.md`
 4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`; also update the Skill Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`
-5. Use `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip phases.
+5. Use `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle.
 6. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
 
 ## Conventions Observed in This Repo
 
-- Skills are written as hostile/deterministic agents (no hedging, no "potential issue" language)
-- Output destinations are explicit (`docs/audit/<skill>-findings.md`, inline, etc.)
-- Severity levels and checklists are enumerated, not left to interpretation
-- Silence = approval: if something isn't flagged, it is implicitly accepted
+Skill writing style, output format, and lifecycle rules are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, and `use-uv-runner.md`.
 
 ## Plugin Metadata
 
