@@ -99,8 +99,9 @@ make lint           # ruff check on scripts/
 make list           # print all skills with descriptions
 ```
 
-CI runs `uv run scripts/validate-skill.py` (twice) and `uv run scripts/check-version-sync.py` on
-every push/PR that touches a `SKILL.md` file or `scripts/validate-skill.py`.
+CI runs `uv run --quiet scripts/validate-skill.py` (twice), `uv run --quiet scripts/validate-rules.py`,
+and `uv run --quiet scripts/check-version-sync.py` on every push/PR that touches a `SKILL.md` file,
+`scripts/validate-skill.py`, `scripts/validate-rules.py`, or `.claude/rules/**`.
 
 ## Versioning — Five Files Must Stay in Sync
 

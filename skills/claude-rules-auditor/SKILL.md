@@ -124,6 +124,10 @@ If no artifacts exist at all, run `arch-detector` first — it is the highest-yi
    any change without explicit per-change confirmation.
    After completing this step, re-write the findings file if any Pending Approval entries
    were added.
+
+9. Findings history commit gate
+   Ask: "Commit findings to git? (y/n)" before staging `docs/audit/claude-rules-auditor-findings.md`.
+   Never stage or commit findings silently.
 ```
 
 ## Rule Classification Reference

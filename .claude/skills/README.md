@@ -30,7 +30,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
 | `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
 | `cr-implementer` | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
-| `claude-rules-auditor` | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-findings.md` |
+| `claude-rules-auditor` | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -68,7 +68,7 @@ graph TD
         DF[doc-findings.md]
         SF[security-findings.md]
         NF[nitpicker-findings.md]
-        CRF[claude-rules-findings.md]
+        CRF[claude-rules-auditor-findings.md]
     end
 
     %% arch chain
@@ -359,7 +359,7 @@ When adding a new skill, verify:
 | `pr-reviewer` | git diff / staged changes | stdout only |
 | `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
 | `cr-implementer` | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
-| `claude-rules-auditor` | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-findings.md` |
+| `claude-rules-auditor` | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |

@@ -19,12 +19,21 @@ def parse_rules_frontmatter(text: str) -> tuple[dict | None, str]:
     if not text.startswith("---\n"):
         return {}, text
 
-    end = text.find("\n---\n", 4)
-    if end == -1:
+    lines = text.splitlines(keepends=True)
+    fm_lines: list[str] = []
+    body_start: int | None = None
+
+    for i, line in enumerate(lines[1:], start=1):
+        if line in {"---\n", "---"}:
+            body_start = i + 1
+            break
+        fm_lines.append(line)
+
+    if body_start is None:
         return None, text  # signals parse failure
 
-    fm_text = text[4:end]
-    body = text[end + 5:]
+    fm_text = "".join(fm_lines)
+    body = "".join(lines[body_start:])
 
     fm: dict = {}
     current_key: str | None = None
@@ -107,19 +116,33 @@ def validate(path: Path, errors: list[str], warnings: list[str], repo_root: Path
         if pattern.startswith("/"):
             err(f"'paths:' glob must be relative, not absolute: '{pattern}'")
             continue
-        matches = list(repo_root.glob(pattern))
-        if not matches:
+        if ".." in Path(pattern).parts:
+            err(f"'paths:' glob must not traverse outside repo root: '{pattern}'")
+            continue
+        matched = False
+        for _ in repo_root.glob(pattern):
+            matched = True
+            break
+        if not matched:
             warn(f"'paths:' glob matches no files — may be stale: '{pattern}'")
 
     if not body.strip():
         warn("body is empty after frontmatter")
 
 
-def _iter_rules_dir(rules_dir: Path) -> list[Path]:
+def _iter_rules_dir(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
     """Collect .md files and dangling symlinks from rules_dir recursively.
 
     Uses os.scandir instead of rglob so dangling symlinks are not silently skipped.
+    Tracks resolved real paths to prevent symlink loop hangs.
     """
+    if seen is None:
+        seen = set()
+    real_dir = rules_dir.resolve()
+    if real_dir in seen:
+        return []
+    seen.add(real_dir)
+
     results: list[Path] = []
     with os.scandir(rules_dir) as it:
         for entry in it:
@@ -127,7 +150,7 @@ def _iter_rules_dir(rules_dir: Path) -> list[Path]:
             if entry.is_symlink() and not p.exists():
                 results.append(p)
             elif entry.is_dir(follow_symlinks=True):
-                results.extend(_iter_rules_dir(p))
+                results.extend(_iter_rules_dir(p, seen))
             elif entry.name.endswith(".md"):
                 results.append(p)
     return results

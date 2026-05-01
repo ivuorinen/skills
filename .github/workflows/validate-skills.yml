@@ -43,14 +43,14 @@ jobs:
 
       - name: Validate all SKILL.md files
         run: |
-          uv run scripts/validate-skill.py
-          uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
+          uv run --quiet scripts/validate-skill.py
+          uv run --quiet scripts/validate-skill.py .claude/skills/*/SKILL.md
 
       - name: Validate rules files
-        run: uv run scripts/validate-rules.py
+        run: uv run --quiet scripts/validate-rules.py
 
       - name: Check version sync
-        run: uv run scripts/check-version-sync.py
+        run: uv run --quiet scripts/check-version-sync.py
 
       - name: Run tests
         run: uv run --with pytest pytest tests/
