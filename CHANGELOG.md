@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.4.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.3.1...ivuorinen-skills-v1.4.0) (2026-05-01)
+
+
+### Features
+
+* add claude-rules-auditor skill ([#17](https://github.com/ivuorinen/skills/issues/17)) ([1907359](https://github.com/ivuorinen/skills/commit/19073596f5ff15cceab7c365081917e66a72a62f))
+* add cr-implementer skill ([#14](https://github.com/ivuorinen/skills/issues/14)) ([aa2353c](https://github.com/ivuorinen/skills/commit/aa2353cc2ea4f73b30c091816330f7170485c5ec))
+
+
+### Bug Fixes
+
+* validator hardening — quote handling, duplicate pass header, pytest suite ([#16](https://github.com/ivuorinen/skills/issues/16)) ([3fc9fa9](https://github.com/ivuorinen/skills/commit/3fc9fa9ba58ec9e8060b3f27005ba026a7f0828d))
+
 ## [1.3.1](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.3.0...ivuorinen-skills-v1.3.1) (2026-04-29)
 
 
