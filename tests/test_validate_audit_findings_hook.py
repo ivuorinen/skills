@@ -242,3 +242,30 @@ Notes: done
         fixed, msgs = _text_to_fixed(text)
         assert "### Pass" in fixed
         assert any("added missing pass header" in m for m in msgs)
+
+    def test_custom_summary_not_overwritten(self):
+        text = (
+            "# Custom Findings\nGenerated: 2026-01-01\n\n"
+            "## Summary\n- Rules audited: 3\n- Errors: 0\n\n"
+            "## Open Findings\n\n(none)\n\n"
+            "## Fixed\n\n(none)\n\n"
+            "## Invalid\n\n(none)\n"
+        )
+        fixed, _ = _text_to_fixed(text)
+        assert "Total:" not in fixed
+        assert "Rules audited: 3" in fixed
+
+    def test_missing_blank_lines_before_sections_corrected(self):
+        """Bug 1: structural h2 headers not preceded by blank line must still be recognised."""
+        text = (
+            "# Findings\nGenerated: 2026-01-01\n"
+            "## Summary\n- Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0\n"
+            "## Open Findings\n#### [X-001] Finding\n"
+            "## Fixed\n(none)\n"
+            "## Invalid\n(none)\n"
+        )
+        fixed, _ = _text_to_fixed(text)
+        assert "## Open Findings" in fixed
+        assert "## Fixed" in fixed
+        assert "## Invalid" in fixed
+        assert "Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0" in fixed

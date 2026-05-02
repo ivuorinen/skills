@@ -41,6 +41,16 @@ def parse_and_fix(text: str) -> tuple[str, list[str]]:
     lines = text.splitlines()
     messages: list[str] = []
 
+    # Pre-pass: ensure structural h2 headers are preceded by a blank line so the
+    # prev_blank guard in the main loop recognises them even in non-canonical input.
+    _STRUCTURAL = (H2_SUMMARY, H2_OPEN, H2_FIXED, H2_INVALID)
+    normalized: list[str] = []
+    for line in lines:
+        if any(p.match(line) for p in _STRUCTURAL) and normalized and normalized[-1].strip():
+            normalized.append("")
+        normalized.append(line)
+    lines = normalized
+
     # Classify each line into buckets
     preamble: list[str] = []
     summary_prefix = "- "
@@ -161,7 +171,8 @@ def parse_and_fix(text: str) -> tuple[str, list[str]]:
     result.append("## Summary")
     summary_line = f"{summary_prefix}Total: {total} | Open: {open_count} | Fixed: {fixed_count}"
     summary_line += f" | Invalid: {invalid_count}"
-    result.append(summary_line)
+    if summary_found or not summary_extra:
+        result.append(summary_line)
     result.extend(summary_extra)
     result.append("")
 
