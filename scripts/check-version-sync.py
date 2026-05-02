@@ -45,14 +45,14 @@ try:
         fail = True
     else:
         print(f"  OK        pyproject.toml: {toml_ver}")
-except KeyError as e:
+except (KeyError, OSError) as e:
     print(f"  ERROR     pyproject.toml: {e}")
     fail = True
 
 for rel_path, extract in CHECKS:
     try:
         val = extract(read_json(rel_path))
-    except (KeyError, IndexError) as e:
+    except (KeyError, IndexError, OSError) as e:
         print(f"  ERROR     {rel_path}: cannot read version — {e}")
         fail = True
         continue
