@@ -1,3 +1,9 @@
+---
+paths:
+  - "skills/**/SKILL.md"
+  - ".claude/skills/**/SKILL.md"
+---
+
 # Skill Writing Style
 
 Write skills as hostile, deterministic agents. Use no hedging language ("might", "could", "potential", "consider") and no compliments.

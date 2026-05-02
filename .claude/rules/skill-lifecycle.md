@@ -1,3 +1,9 @@
+---
+paths:
+  - "skills/**/SKILL.md"
+  - ".claude/skills/**/SKILL.md"
+---
+
 # Skill Lifecycle
 
 When creating a new skill with `/new-skill`, complete every phase in sequence.
