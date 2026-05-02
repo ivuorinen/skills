@@ -1,15 +1,49 @@
 # Nitpicker Findings
 Generated: 2026-04-24
-Last validated: 2026-05-01
+Last validated: 2026-05-02
 
 ## Summary
-- Total: 60 | Open: 0 | Fixed: 60 | Invalid: 0
+- Total: 68 | Open: 0 | Fixed: 67 | Invalid: 1
 
 ## Open Findings
 
 (none)
 
 ## Fixed
+
+### Pass 17 — 2026-05-02
+
+#### [N-068] CI paths use individual script entries; `bump-version.py` and `list-skills.py` uncovered
+Fixed: 2026-05-02
+Notes: Replaced four individual `scripts/*.py` entries and `scripts/hooks/**` with a single `scripts/**` glob in both `push` and `pull_request` trigger paths. `copilot-instructions.md` line 104 now accurately describes the trigger paths.
+
+### Pass 16 — 2026-05-02
+
+#### [N-065] CI paths filter missing `scripts/hooks/**`
+Fixed: 2026-05-02
+Notes: Added `- 'scripts/hooks/**'` to both `push` and `pull_request` paths lists in `.github/workflows/validate-skills.yml`. A source-only hook change now triggers CI.
+
+#### [N-066] `test_validate_audit_findings_hook.py` missing test for N-063 custom-summary preservation
+Fixed: 2026-05-02
+Notes: Added `test_custom_summary_not_overwritten` to `TestParseAndFix`. Asserts that a file with custom summary lines and no `Total:` line emerges unchanged. 52 tests pass.
+
+#### [N-067] `copilot-instructions.md` CI section describes 3 steps; CI now has 5
+Fixed: 2026-05-02
+Notes: Replaced stale description with accurate 5-step list (validate-skill ×2, validate-rules, check-version-sync, pytest, ruff) and updated the trigger-paths summary.
+
+### Pass 15 — 2026-05-02
+
+#### [N-061] CI workflow missing ruff lint step
+Fixed: 2026-05-02
+Notes: Added `- name: Lint scripts / run: uv run --with ruff ruff check scripts/` step to `.github/workflows/validate-skills.yml` after the "Run tests" step.
+
+#### [N-062] `validate-skill.py` error message contradicts `skill-format.md` on quote style
+Fixed: 2026-05-02
+Notes: Updated `.claude/rules/skill-format.md` to say "single quotes" only (removing "or double quotes"), aligning the rule with the validator. `test_validate_skill.py::test_description_double_quoted_colon_space_errors` confirms double-quoted values intentionally produce errors — the validator behavior was correct, the rule was wrong.
+
+#### [N-063] `validate-audit-findings-hook.py` corrupts `claude-rules-auditor-findings.md` summary
+Fixed: 2026-05-02
+Notes: Guarded the `Total:` line reconstruction with `if summary_found or not summary_extra:` in `parse_and_fix`. Files with no `Total:` line but custom summary content (like `claude-rules-auditor-findings.md`) no longer have a spurious `Total:` line prepended on every save.
 
 ### Pass 13 — 2026-05-01
 
@@ -284,4 +318,7 @@ Notes: Replaced `bash scripts/check-version-sync.sh` with `uv run scripts/check-
 
 ## Invalid
 
-(none)
+### Pass 15 — 2026-05-02
+
+#### [N-064] `test_validate_rules.py` missing test for valid no-frontmatter rule file
+Notes: Invalid — `test_valid_plain_file_no_errors` already exercises this exact path using `VALID_PLAIN` (a file with no frontmatter). The no-frontmatter code path is covered; finding was filed in error.

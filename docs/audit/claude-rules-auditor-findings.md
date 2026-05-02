@@ -1,6 +1,6 @@
 # Claude Rules Audit Findings
 Generated: 2026-05-01
-Last validated: 2026-05-01
+Last validated: 2026-05-02
 
 ## Summary
 - Rules files audited: 4
@@ -12,6 +12,16 @@ Last validated: 2026-05-01
 (none)
 
 ## Fixed
+
+### Pass 2 — 2026-05-02
+
+#### [CRA-007] `skill-lifecycle.md` loaded unconditionally; applies only to skill creation
+Fixed: 2026-05-02
+Notes: Added `paths: ["skills/**/SKILL.md", ".claude/skills/**/SKILL.md"]` frontmatter. Rule now loads only when Claude reads a SKILL.md file, which covers the normal skill creation workflow.
+
+#### [CRA-006] `skill-style.md` loaded unconditionally; applies only to skill writing
+Fixed: 2026-05-02
+Notes: Added `paths: ["skills/**/SKILL.md", ".claude/skills/**/SKILL.md"]` frontmatter — identical scope to `skill-format.md`. Rule now loads only during skill file sessions.
 
 ### Pass 1 — 2026-05-01
 
