@@ -1,6 +1,6 @@
 ---
 name: arch-auditor
-description: 'Use when auditing a codebase for architectural violations, dependency rule breaches, layer boundary violations, or pattern inconsistencies. Triggers: "audit the architecture", "find architecture violations", "check layer boundaries", "run arch-auditor", "are there any DDD violations?", "check hexagonal boundaries".'
+description: 'Audits a codebase for architectural violations against detected or declared patterns and writes a structured findings report. Use when auditing a codebase for architectural violations, dependency rule breaches, layer boundary violations, or pattern inconsistencies. Triggers: "audit the architecture", "find architecture violations", "check layer boundaries", "run arch-auditor", "are there any DDD violations?", "check hexagonal boundaries".'
 ---
 
 # Architecture Auditor

@@ -1,6 +1,6 @@
 ---
 name: claude-rules-auditor
-description: Use when auditing .claude/rules/ files for quality and completeness, checking CLAUDE.md for rules that belong in .claude/rules/ instead, or discovering new rules from project conventions and audit artifacts.
+description: Audits .claude/rules/ files for quality and suggests new rules from project conventions and audit artifacts. Use when auditing .claude/rules/ files for quality and completeness, checking CLAUDE.md for rules that belong in .claude/rules/ instead, or discovering new rules from project conventions and audit artifacts.
 ---
 
 # Claude Rules Auditor
@@ -33,9 +33,15 @@ If no artifacts exist at all, run `arch-detector` first — it is the highest-yi
 ## Process
 
 ```
+0. Re-validate existing findings
+   If docs/audit/claude-rules-auditor-findings.md exists, re-validate each OPEN finding:
+   - Issue now resolved → move to Fixed (record date)
+   - Finding was wrong → move to Invalid (record reason)
+   - Still present → leave Open
+
 1. Discovery
    a. Find all CLAUDE.md files in the project (root + any subdirectory)
-   b. List all files under .claude/rules/ (record empty directory as a finding)
+   b. If .claude/rules/ does not exist or is empty, record this as a finding; proceed to step 1c.
    c. Collect every available artifact from the Prerequisite Artifacts table
    d. Read .claude/settings.json, .claude/settings.local.json, and ~/.claude/settings.json
       for claudeMdExcludes patterns. Any .claude/rules/ file whose absolute path matches
@@ -239,6 +245,8 @@ Notes: <what changed>
 #### [ID] Short title
 Notes: <why this finding was wrong>
 ```
+
+Finding ID format: `CRA-NNN` (zero-padded to 3 digits, e.g. `CRA-001`). Assign sequentially; never reuse IDs.
 
 ## Severity Guide
 

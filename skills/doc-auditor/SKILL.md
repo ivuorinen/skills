@@ -1,6 +1,6 @@
 ---
 name: doc-auditor
-description: 'Use when verifying documentation accuracy against the codebase, finding stale or missing docs, detecting incorrect behavior descriptions, or applying documentation improvements. Triggers: "audit the docs", "find stale documentation", "verify docs against code", "run doc-auditor", "is the documentation accurate?", "find missing docs".'
+description: 'Verifies all documentation accuracy against the codebase and writes a structured findings report. Use when verifying documentation accuracy against the codebase, finding stale or missing docs, detecting incorrect behavior descriptions, or applying documentation improvements. Triggers: "audit the docs", "find stale documentation", "verify docs against code", "run doc-auditor", "is the documentation accurate?", "find missing docs".'
 ---
 
 # Documentation Auditor

@@ -1,6 +1,6 @@
 ---
 name: cr-implementer
-description: 'Use when implementing unresolved GitHub PR review comments, when told "fix the cr comments", "implement review feedback", "address pr comments", or when a PR has unresolved reviewer comments that need addressing.'
+description: 'Fetches GitHub PR review comments, evaluates validity, and implements valid ones one at a time with test verification. Use when implementing unresolved GitHub PR review comments, when told "fix the cr comments", "implement review feedback", "address pr comments", or when a PR has unresolved reviewer comments that need addressing.'
 ---
 
 # CR Implementer

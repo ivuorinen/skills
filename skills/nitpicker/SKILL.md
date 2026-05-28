@@ -1,6 +1,6 @@
 ---
 name: nitpicker
-description: Use when performing a comprehensive repository audit, reviewing code before a release, checking a PR for all bugs and defects, or when asked to "review the whole codebase", "audit this", "find all problems", "exhaustive review", or run a release gate check.
+description: Performs adversarial, exhaustive whole-repository code review across code, tests, docs, and config, and optionally applies fixes. Use when performing a comprehensive repository audit, reviewing code before a release, checking a PR for all bugs and defects, or when asked to "review the whole codebase", "audit this", "find all problems", "exhaustive review", or run a release gate check.
 ---
 
 # Nitpicker
