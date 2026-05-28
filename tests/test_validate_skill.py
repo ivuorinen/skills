@@ -37,7 +37,7 @@ def _has(items: list[str], fragment: str) -> bool:
     return any(fragment in item for item in items)
 
 
-VALID = "---\nname: my-skill\ndescription: Use when testing this skill\n---\n\n## Overview\n\nBody.\n"
+VALID = "---\nname: my-skill\ndescription: Performs a test action. Use when testing this skill.\n---\n\n## Overview\n\nBody.\n"
 
 
 class TestValidate:
@@ -55,14 +55,18 @@ class TestValidate:
         text = "---\nname: my-skill\n---\nbody\n"
         assert _has(_errors(tmp_path, text), "missing 'description'")
 
-    def test_description_must_start_with_use_when(self, tmp_path):
+    def test_description_must_contain_use_when(self, tmp_path):
         text = "---\nname: my-skill\ndescription: This skill does things\n---\nbody\n"
-        assert _has(_errors(tmp_path, text), "start with 'Use when'")
+        assert _has(_errors(tmp_path, text), "'Use when'")
+
+    def test_description_capability_prefix_with_use_when_passes(self, tmp_path):
+        text = "---\nname: my-skill\ndescription: Analyzes code and finds bugs. Use when reviewing a PR.\n---\nbody\n"
+        assert _errors(tmp_path, text) == []
 
     def test_description_too_long(self, tmp_path):
-        long_desc = "Use when " + "x" * 492
+        long_desc = "Use when " + "x" * 1016
         text = f"---\nname: my-skill\ndescription: {long_desc}\n---\nbody\n"
-        assert _has(_errors(tmp_path, text), "must be ≤500")
+        assert _has(_errors(tmp_path, text), "must be ≤1024")
 
     def test_description_unquoted_colon_space_errors(self, tmp_path):
         text = "---\nname: my-skill\ndescription: Use when the task requires: deep inspection\n---\nbody\n"
@@ -97,13 +101,7 @@ class TestValidate:
         text = VALID + "\n```\nWrite to codereview.md\n```\n"
         assert not _has(_warnings(tmp_path, text), "legacy output path")
 
-    def test_workflow_summary_in_description_warns(self, tmp_path):
-        text = (
-            "---\nname: my-skill\n"
-            "description: Use when reviewing a PR. Produces copy-paste-ready markdown.\n"
-            "---\n\n## Overview\n\nBody.\n"
-        )
-        assert _has(_warnings(tmp_path, text), "workflow summary")
-
-    def test_clean_description_no_workflow_warning(self, tmp_path):
-        assert not _has(_warnings(tmp_path, VALID), "workflow summary")
+    def test_body_too_long_warns(self, tmp_path):
+        long_body = "\n".join(["Line." for _ in range(502)])
+        text = f"---\nname: my-skill\ndescription: Does something. Use when needed.\n---\n\n{long_body}\n"
+        assert _has(_warnings(tmp_path, text), "500")
