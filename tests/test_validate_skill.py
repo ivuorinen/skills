@@ -96,3 +96,14 @@ class TestValidate:
     def test_legacy_path_in_fenced_block_no_warning(self, tmp_path):
         text = VALID + "\n```\nWrite to codereview.md\n```\n"
         assert not _has(_warnings(tmp_path, text), "legacy output path")
+
+    def test_workflow_summary_in_description_warns(self, tmp_path):
+        text = (
+            "---\nname: my-skill\n"
+            "description: Use when reviewing a PR. Produces copy-paste-ready markdown.\n"
+            "---\n\n## Overview\n\nBody.\n"
+        )
+        assert _has(_warnings(tmp_path, text), "workflow summary")
+
+    def test_clean_description_no_workflow_warning(self, tmp_path):
+        assert not _has(_warnings(tmp_path, VALID), "workflow summary")

@@ -269,3 +269,4 @@ Notes: done
         assert "## Fixed" in fixed
         assert "## Invalid" in fixed
         assert "Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0" in fixed
+        assert "[X-001] Finding" in fixed

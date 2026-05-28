@@ -11,6 +11,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from common import parse_frontmatter  # noqa: E402  # type: ignore[import-not-found]
 
+_WORKFLOW_VERBS = re.compile(
+    r"\.\s+(Produces|Finds|Writes|Generates|Scaffolds|Routes|Outputs|Applies)\b",
+    re.IGNORECASE,
+)
+
 
 def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     def err(msg: str) -> None:
@@ -53,6 +58,12 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
             if ": " in raw_val and not is_quoted:
                 err("description contains ': ' — wrap in single quotes (project convention)")
             break
+
+    if description and _WORKFLOW_VERBS.search(description):
+        warn(
+            "description may contain a workflow summary — describe triggering conditions only"
+            " (skill-format.md: 'Never summarize the skill\\'s workflow in the description')"
+        )
 
     expected_name = path.parent.name
     if name and name != expected_name:

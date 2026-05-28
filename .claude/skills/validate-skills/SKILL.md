@@ -46,4 +46,6 @@ disable-model-invocation: true
 | Description ≤ 500 chars | Error |
 | Skill name matches directory name | Error |
 | Header level progression (no skipping levels) | Error |
+| Description with `': '` must be single-quoted | Error |
 | Legacy output paths (`./codereview.md` etc.) | Warning |
+| Description contains workflow summary sentence | Warning |

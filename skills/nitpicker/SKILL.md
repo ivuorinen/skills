@@ -1,6 +1,6 @@
 ---
 name: nitpicker
-description: Use when performing a comprehensive repository audit, reviewing code before a release, checking a PR for all bugs and defects, or when asked to "review the whole codebase", "audit this", "find all problems", "exhaustive review", or run a release gate check. Finds defects and optionally applies fixes in a single run.
+description: Use when performing a comprehensive repository audit, reviewing code before a release, checking a PR for all bugs and defects, or when asked to "review the whole codebase", "audit this", "find all problems", "exhaustive review", or run a release gate check.
 ---
 
 # Nitpicker
@@ -16,7 +16,7 @@ Adversarial, exhaustive whole-repository code review with integrated fixing. Ass
 - Release gate enforcement (fail if findings exceed threshold)
 - When asked to "tear this apart", "find everything wrong", or "exhaustive review"
 
-**When NOT to use:** For a focused security-only scan, use `adversarial-reviewer` instead. For architecture boundary violations specifically, use `arch-auditor`.
+**When NOT to use:** For a focused security-only scan, use `security-auditor` instead. For architecture boundary violations specifically, use `arch-auditor`.
 
 ## Review Scope
 
