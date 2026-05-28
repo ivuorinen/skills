@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.5.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.4.0...ivuorinen-skills-v1.5.0) (2026-05-28)
+
+
+### Features
+
+* skill docs, description format, validator, and /goal examples ([#21](https://github.com/ivuorinen/skills/issues/21)) ([8ea6e5a](https://github.com/ivuorinen/skills/commit/8ea6e5ab4dbe48aef8bfdafdf9e0f5e6b1bce521))
+
 ## [1.4.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.3.1...ivuorinen-skills-v1.4.0) (2026-05-01)
 
 
