@@ -3,131 +3,59 @@ Generated: 2026-04-24
 Last validated: 2026-05-28
 
 ## Summary
-- Total: 85 | Open: 5 | Fixed: 79 | Invalid: 1
+- Total: 90 | Open: 1 | Fixed: 88 | Invalid: 1
 
 ## Open Findings
 
-### High
+### Advisory
 
-#### [N-079] `security-auditor/SKILL.md` step 7 silently marks all open findings Fixed when no tools run
-Category: correctness
-Area: skills/security-auditor/SKILL.md (Process, step 7)
-Problem: Step 7 re-validates open findings by checking whether the "current scan still reports a match." If no tools are installed, no scan runs and the current results are empty. Every existing open finding appears "no longer reported" and gets moved to Fixed — not because the vulnerability was fixed, but because no scanner ran.
-Evidence: Process step 7: "If current scan no longer reports a match → move to Fixed." If grype, semgrep, gitleaks, etc. are all absent, `which <tool>` fails for all, zero tools execute, and the match check trivially passes for every existing finding.
-Impact: Running the skill on a machine without scanners silently invalidates the entire historical security audit. A previously found Critical CVE would be closed with "Fixed" even though the vulnerable dependency was never updated.
-Fix: Add a guard before step 7: "If fewer tools ran successfully than reported findings reference, skip re-validation of those findings — do not move findings whose detecting tool did not run. Emit a warning: 'Re-validation skipped for findings from tools not available in this run: <list>.'"
-
-### Medium
-
-#### [N-078] `claude-rules-auditor/SKILL.md` Process section has no step to re-validate existing open findings
-Category: correctness
-Area: skills/claude-rules-auditor/SKILL.md (Process, steps 1–9)
-Problem: All other audit skills (nitpicker, arch-auditor, doc-auditor, security-auditor) include a step: "If findings file exists, re-validate each OPEN finding — resolved → Fixed, wrong → Invalid, still present → leave Open." `claude-rules-auditor` has no such step. On repeated runs, fixed rule violations would remain Open indefinitely and previously filed findings would not get closed.
-Evidence: Process steps 1–9 checked line-by-line: step 2 validates existing rule files (structural), step 3 audits CLAUDE.md, steps 4–5 extract suggestions — none re-validate previously filed findings against current state.
-Impact: Accumulated stale open findings; no convergence to a clean state even after issues are resolved.
-Fix: Insert a step after step 1 (Discovery): "If `docs/audit/claude-rules-auditor-findings.md` exists, re-validate each OPEN finding: if the flagged issue is now resolved → move to Fixed (record date); if the finding was wrong → move to Invalid (record reason); otherwise leave Open."
-
-### Low
-
-#### [N-080] `claude-rules-auditor/SKILL.md` Findings Format uses `[ID]` placeholder without defining the `CRA-NNN` prefix
-Category: docs
-Area: skills/claude-rules-auditor/SKILL.md (Findings Format)
-Problem: The Findings Format shows `#### [ID] Short title` without specifying the ID format or prefix. In practice the skill uses `CRA-NNN` (as seen in `docs/audit/claude-rules-auditor-findings.md`), but this is not defined in the skill. Compare with `security-auditor` which explicitly states "Finding ID format: `SEC-NNN` (zero-padded to 3 digits)."
-Evidence: `docs/audit/claude-rules-auditor-findings.md` uses IDs `CRA-001` through `CRA-007`. `claude-rules-auditor/SKILL.md` Findings Format section has no ID format statement.
-Impact: Without a defined prefix, a new run of the skill might choose a different prefix, breaking ID uniqueness across runs.
-Fix: Add after the Findings Format code block: "Finding ID format: `CRA-NNN` (zero-padded to 3 digits, e.g. `CRA-001`). Assign sequentially; never reuse IDs."
-
-#### [N-084] `arch-detector/SKILL.md` does not define output behavior when no architectural patterns are detected
-Category: docs
-Area: skills/arch-detector/SKILL.md (Output)
-Problem: The `## Output` section shows a profile template with pattern sections, but says nothing about what to write if no patterns match any of the 19 catalogued architectures. The `## Behavior` section adds only re-detection and commit-ask rules. An unrecognized architecture produces no guidance on what to include in the profile.
-Evidence: `## Behavior` (L101–L105) covers re-detection and commit gate only. No "if no patterns matched" clause anywhere in the skill body.
-Impact: An ambiguous codebase would produce an empty or misleading `arch-profile.md` with no inferred rules, which arch-auditor then uses as its source of truth — resulting in an audit against zero rules.
-Fix: Add to `## Behavior`: "If no catalogued pattern matches with ≥ Medium confidence, write the profile with `Detected: none` and `Inferred Structural Rules: none` and flag the profile as `Confidence: none — manual review required`. Do not invent rules."
-
-#### [N-085] `claude-rules-auditor/SKILL.md` step 1b does not distinguish absent `.claude/rules/` from empty
-Category: docs
-Area: skills/claude-rules-auditor/SKILL.md (Process, step 1b)
-Problem: Step 1b says "List all files under `.claude/rules/` (record empty directory as a finding)." If the directory does not exist, this instruction is ambiguous — the skill should treat absent and empty directories identically (both produce zero rule files), but the wording only covers the empty case.
-Evidence: L38: "b. List all files under `.claude/rules/` (record empty directory as a finding)." No mention of the absent directory case, despite the "When to Use" section explicitly listing `.claude/rules/ is absent` as a trigger.
-Impact: Ambiguity about whether an absent directory is treated as empty (and filed as a finding) or as an error condition.
-Fix: Change step 1b to: "b. If `.claude/rules/` does not exist or is empty, record this as a finding; proceed to step 1c."
-Category: docs
-Area: skills/nitpicker/SKILL.md:19
-Problem: The "When NOT to use" line says "For a focused security-only scan, use `adversarial-reviewer` instead." `adversarial-reviewer` is a code-review skill — it does not run CVE scanners, secrets detection, or dependency audits. Users following this instruction get code-level analysis only and miss tool-detected findings entirely.
-Evidence: L19: `**When NOT to use:** For a focused security-only scan, use \`adversarial-reviewer\` instead.` The adversarial-reviewer description confirms: "Use when asked to review code, find bugs, audit for correctness" — no scanner tooling.
-Impact: Users needing a security scan (CVEs, leaked secrets, vulnerable dependencies) are silently directed to a skill that cannot produce those findings.
-Fix: Change `adversarial-reviewer` to `security-auditor` on line 19.
-
-### Medium
-
-#### [N-070] `nitpicker/SKILL.md` description summarizes workflow in violation of `skill-format.md`
+#### [N-090] `claude-rules-auditor` skill name contains reserved word "claude"
 Category: conventions
-Area: skills/nitpicker/SKILL.md:3
-Problem: The description ends with "Finds defects and optionally applies fixes in a single run." This describes what the skill does, not when to use it — a direct violation of the rule "Never summarize the skill's workflow in the description — describe triggering conditions only."
-Evidence: L3 (raw): `description: Use when performing … run a release gate check. Finds defects and optionally applies fixes in a single run.`
-Impact: The auto-discovery signal is polluted with capability description. The validator does not catch this, so the violation persists silently.
-Fix: Remove the trailing sentence "Finds defects and optionally applies fixes in a single run." from the description.
-
-#### [N-071] `pr-reviewer/SKILL.md` description summarizes workflow in violation of `skill-format.md`
-Category: conventions
-Area: skills/pr-reviewer/SKILL.md:3
-Problem: The second sentence of the description — "Produces copy-paste-ready markdown code review with constructive criticism — problems, severity, and suggested fixes — formatted for GitHub PR comments." — describes the skill's output format and workflow, not a triggering condition.
-Evidence: L3 (raw): `description: Use when reviewing a pull request, staged changes, or a specific diff. Produces copy-paste-ready markdown code review with constructive criticism — problems, severity, and suggested fixes — formatted for GitHub PR comments.`
-Impact: Same as N-070 — capability description in the trigger field; not caught by validator.
-Fix: Remove everything after "a specific diff." from the description.
-
-#### [N-072] `.claude/skills/new-skill/SKILL.md` description summarizes workflow
-Category: conventions
-Area: .claude/skills/new-skill/SKILL.md:3
-Problem: The description ends with "Scaffolds the correct directory structure, frontmatter, and required sections." — describing the skill's actions rather than triggering conditions. `skill-format.md` applies to `.claude/skills/**/SKILL.md` paths (per its frontmatter `paths:` field).
-Evidence: L3: `description: Use when creating a new hostile audit skill for this repository. Scaffolds the correct directory structure, frontmatter, and required sections.`
-Impact: Same pattern as N-070/N-071 — undiscovered by validator.
-Fix: Remove "Scaffolds the correct directory structure, frontmatter, and required sections." from the description.
-
-#### [N-073] `.claude/skills/skills/SKILL.md` description summarizes workflow
-Category: conventions
-Area: .claude/skills/skills/SKILL.md:3
-Problem: The description ends with "Routes to the correct public skill based on the request." — describing the action performed, not a trigger condition.
-Evidence: L3: `description: Use when the user wants to run one of the hostile audit skills in this repo, or asks what skills are available. Routes to the correct public skill based on the request.`
-Impact: Same pattern as N-070/N-071.
-Fix: Remove "Routes to the correct public skill based on the request." from the description.
-
-#### [N-074] No tests for `bump-version.py` `update_toml` rewrite
-Category: tests
-Area: scripts/bump-version.py, tests/
-Problem: The branch rewrites `update_toml()` from a single `re.sub` into a line-by-line state machine that tracks `[project]` section boundaries. The new logic handles `[project.sub]` sections, comments, and multiple `[...]` headers. No test file for `bump-version.py` exists; the rewrite has zero test coverage.
-Evidence: `ls tests/` shows no `test_bump_version.py`. Diff shows `update_toml` changed from a 6-line regex to a 16-line state machine. Failure scenario: if `in_project` tracking is wrong, `version` in `[tool.poetry]` or `[project.scripts]` could be updated, or `[project]` version missed, and `sys.exit(1)` only fires when `replaced` remains `False` — silent wrong-section updates are not caught.
-Impact: Version bumps could silently update the wrong TOML section on unusual `pyproject.toml` layouts.
-Fix: Add `tests/test_bump_version.py` covering: (a) standard single `[project]` version update, (b) `[project.scripts]` version not touched, (c) `[project]` after other sections is still found, (d) missing `[project]` exits with code 1.
-
-### Low
-
-#### [N-075] `test_missing_blank_lines_before_sections_corrected` does not assert finding content preserved
-Category: tests
-Area: tests/test_validate_audit_findings_hook.py:258
-Problem: The test verifies that `## Open Findings`, `## Fixed`, `## Invalid` appear in the output and the summary line is preserved, but it never asserts that `[X-001] Finding` (the h4 finding in `## Open Findings`) survives. If the pre-pass or section classifier silently drops findings, the test still passes.
-Evidence: L263: `"## Open Findings\n#### [X-001] Finding\n"` is in the input. Assertions on L268-L271 check for section headers and summary count but not for `[X-001]`.
-Impact: A regression in finding-content preservation through the pre-pass would not be caught by this test.
-Fix: Add `assert "[X-001] Finding" in fixed` to the test body.
-
-#### [N-076] `validate-skill.py` does not enforce "never summarize workflow" rule from `skill-format.md`
-Category: conventions
-Area: scripts/validate-skill.py
-Problem: `skill-format.md` states "Never summarize the skill's workflow in the description — describe triggering conditions only." The validator checks that descriptions start with "Use when", are ≤500 chars, and that `': '`-containing values are single-quoted — but performs no check for workflow-summary sentences appended after the trigger conditions. N-070/N-071/N-072/N-073 all pass `make validate` undetected.
-Evidence: Running `make validate` on the current tree reports zero errors despite four descriptions with workflow summaries. The description check in `validate-skill.py` has no pattern for "Produces", "Scaffolds", "Routes", "Finds", "Writes", "Generates".
-Impact: The rule is written but unenforced — authors can violate it without any CI feedback.
-Fix: Add a warn-level check: if the description contains a sentence not beginning with "Use when" that starts with a verb pattern (`Produces`, `Finds`, `Writes`, `Generates`, `Scaffolds`, `Routes`, `Outputs`, `Applies`), emit a warning "description may contain workflow summary — describe triggering conditions only."
-
-#### [N-077] `.claude/skills/validate-skills/SKILL.md` "What is checked" table missing the `': '` → single-quote check
-Category: docs
-Area: .claude/skills/validate-skills/SKILL.md
-Problem: The "What is checked" table lists 8 checks, but omits the check that is implemented in `validate-skill.py` L51-L54: "If description contains `': '`, it must be wrapped in single quotes." This check is an Error-level validation that has been enforced since at least N-048/N-062 iterations.
-Evidence: Table ends at `| Legacy output paths (\`./codereview.md\` etc.) | Warning |` — no row for the quote-style check. The validator at L51: `raw_val = line[len("description: "):].strip()` and L52-L54 confirm the check exists.
-Impact: Users reading the validate-skills documentation believe descriptions with `': '` are valid unquoted, leading to preventable CI failures.
-Fix: Add `| Description with \`': '\` must be single-quoted | Error |` row to the "What is checked" table.
+Area: skills/claude-rules-auditor/SKILL.md (frontmatter name field)
+Problem: The official Anthropic skill authoring spec states: "name: Cannot contain reserved words: 'anthropic', 'claude'." The name `claude-rules-auditor` contains the reserved word "claude."
+Evidence: Official docs (platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices): "name: Cannot contain reserved words: 'anthropic', 'claude'." Current frontmatter: `name: claude-rules-auditor`.
+Impact: Platform enforcement may reject the skill name in certain deployment contexts. Behavior varies by deployment.
+Fix: Rename to `rules-auditor` in a future major version bump. Renaming is a breaking change for all plugin consumers — defer to next major release.
 
 ## Fixed
+
+### Pass 20 — 2026-05-28
+
+#### [N-086] `skill-format.md` "starts with Use when" rule contradicts official Anthropic best practices
+Fixed: 2026-05-28
+Notes: Official best practices require descriptions to include both a capability summary AND "Use when" trigger conditions ("capability sentence. Use when trigger."). Our rule said "must start with Use when" and "never summarize workflow" — the exact opposite. Updated `skill-format.md`: description must *contain* "Use when"; must open with a brief capability summary. Also updated the description field to "must contain 'Use when' trigger clause" in the rule file.
+
+#### [N-087] `_WORKFLOW_VERBS` validator check warns on officially-correct capability-summary descriptions
+Fixed: 2026-05-28
+Notes: N-076 (Pass 19) added `_WORKFLOW_VERBS` to warn when descriptions contain `. Produces`, `. Finds`, etc. Official best-practice examples use exactly those verbs in capability summaries ("Generate descriptive commit messages by analyzing git diffs. Use when..."). Removed `_WORKFLOW_VERBS` from `validate-skill.py`. Replaced `test_workflow_summary_in_description_warns` and `test_clean_description_no_workflow_warning` tests with `test_body_too_long_warns`. 64 tests pass.
+
+#### [N-088] All 9 public skills missing capability summary in description
+Fixed: 2026-05-28
+Notes: Prepended capability summary sentences to all 9 skills: adversarial-reviewer, arch-auditor, arch-detector, claude-rules-auditor, cr-implementer, doc-auditor, nitpicker, pr-reviewer, security-auditor. All now follow the official format: "capability. Use when trigger." `make validate` reports 9 skills OK.
+
+#### [N-089] Validator does not check SKILL.md body line count (500-line official limit)
+Fixed: 2026-05-28
+Notes: Official best practices: "Keep SKILL.md body under 500 lines for optimal performance." Added body-length warning to `validate-skill.py`: emits a warning when body (excluding frontmatter) exceeds 500 lines. Added `test_body_too_long_warns` test. Updated description char limit from 500 to 1024 to match official spec. 64 tests pass.
+
+#### [N-078] `claude-rules-auditor/SKILL.md` Process section has no step to re-validate existing open findings
+Fixed: 2026-05-28
+Notes: Inserted step 0 before Discovery: "If docs/audit/claude-rules-auditor-findings.md exists, re-validate each OPEN finding — resolved → Fixed, wrong → Invalid, still present → Open." All other audit skills already had this step.
+
+#### [N-079] `security-auditor/SKILL.md` step 7 silently marks all open findings Fixed when no tools run
+Fixed: 2026-05-28
+Notes: Added guard before step 7 re-validation: "Identify which tools ran successfully this pass. For any OPEN finding whose detecting tool did not run, skip re-validation — leave the finding Open. Emit: 'Re-validation skipped for N finding(s) from tools not run in this pass: <list>.'" Prevents zero-tool runs from silently closing all historical CVE findings.
+
+#### [N-080] `claude-rules-auditor/SKILL.md` Findings Format uses `[ID]` placeholder without defining `CRA-NNN` prefix
+Fixed: 2026-05-28
+Notes: Added "Finding ID format: `CRA-NNN` (zero-padded to 3 digits, e.g. `CRA-001`). Assign sequentially; never reuse IDs." after the Findings Format code block in `claude-rules-auditor/SKILL.md`.
+
+#### [N-084] `arch-detector/SKILL.md` does not define output behavior when no architectural patterns are detected
+Fixed: 2026-05-28
+Notes: Added to `## Behavior`: "If no catalogued pattern matches with ≥ Medium confidence, write the profile with `Detected: none` and `Inferred Structural Rules: none` and flag the profile as `Confidence: none — manual review required`. Do not invent rules."
+
+#### [N-085] `claude-rules-auditor/SKILL.md` step 1b does not distinguish absent `.claude/rules/` from empty
+Fixed: 2026-05-28
+Notes: Changed step 1b from "List all files under `.claude/rules/` (record empty directory as a finding)" to "If `.claude/rules/` does not exist or is empty, record this as a finding; proceed to step 1c." Absent and empty directories are now explicitly treated identically.
 
 ### Pass 19 — 2026-05-28
 
