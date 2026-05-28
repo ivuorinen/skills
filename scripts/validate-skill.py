@@ -40,10 +40,10 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
         err("frontmatter missing 'description' field")
         return
 
-    if not description.startswith("Use when"):
-        err("description must start with 'Use when'")
-    if len(description) > 500:
-        err(f"description is {len(description)} chars; must be ≤500")
+    if "Use when" not in description:
+        err("description must contain 'Use when' trigger clause")
+    if len(description) > 1024:
+        err(f"description is {len(description)} chars; must be ≤1024")
 
     end_fm = text.find("\n---\n", 4)
     for line in text[4:end_fm].splitlines():
@@ -73,6 +73,14 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
         if level > prev_level + 1:
             err(f"header level jumps from h{prev_level} to h{level}: '{'#' * level} {title}'")
         prev_level = level
+
+    # Body length — official best-practices recommend ≤500 lines for optimal performance
+    body_lines = len(body.splitlines())
+    if body_lines > 500:
+        warn(
+            f"SKILL.md body is {body_lines} lines; "
+            "official best-practices recommend ≤500 — split into separate files"
+        )
 
     # Legacy output paths — scan prose and inline code, but skip fenced code blocks
     # (example/format documentation) and table rows (behavior documentation).

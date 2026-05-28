@@ -22,15 +22,15 @@ chain, and the rules that keep the graph acyclic and terminating.
 
 | Skill | Role | Output |
 |-------|------|--------|
-| `adversarial-reviewer` | Leaf — hostile bug hunt on specific code or content | stdout |
-| `nitpicker` | Orchestrator — exhaustive whole-repo audit; delegates to specialist skills in focused modes | `docs/audit/nitpicker-findings.md` |
-| `arch-detector` | Leaf — detects architectural patterns | `docs/audit/arch-profile.md` |
-| `arch-auditor` | Consumer — validates against detected architecture | `docs/audit/arch-findings.md` |
-| `doc-auditor` | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
-| `pr-reviewer` | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
-| `security-auditor` | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
-| `cr-implementer` | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
-| `claude-rules-auditor` | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
+| [`nitpicker`][nitpicker] | Orchestrator — exhaustive whole-repo audit; delegates to specialist skills in focused modes | `docs/audit/nitpicker-findings.md` |
+| [`arch-detector`][arch-detector] | Leaf — detects architectural patterns | `docs/audit/arch-profile.md` |
+| [`arch-auditor`][arch-auditor] | Consumer — validates against detected architecture | `docs/audit/arch-findings.md` |
+| [`doc-auditor`][doc-auditor] | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
+| [`security-auditor`][security-auditor] | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
+| [`adversarial-reviewer`][adversarial-reviewer] | Leaf — hostile bug hunt on specific code or content | stdout |
+| [`pr-reviewer`][pr-reviewer] | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
+| [`cr-implementer`][cr-implementer] | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
+| [`claude-rules-auditor`][claude-rules-auditor] | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -162,7 +162,7 @@ flowchart TD
 
 **Termination guarantee:** Each iteration through the fix loop (`D`) directly
 addresses a specific finding. Skills do not loop unless new findings are introduced.
-The loop terminates when adversarial-reviewer and pr-reviewer each return no HIGH/CRITICAL
+The loop terminates when [adversarial-reviewer] and [pr-reviewer] each return no HIGH/CRITICAL
 findings, and validate-skills exits clean.
 
 ---
@@ -222,8 +222,8 @@ flowchart LR
     B -->|writes docs/audit/arch-findings.md| C([findings reviewed])
 ```
 
-`doc-auditor` reads `arch-profile.md` when updating architecture descriptions in
-docs. Run `arch-detector` before `doc-auditor` if the architecture docs have changed.
+[doc-auditor] reads `arch-profile.md` when updating architecture descriptions in
+docs. Run [arch-detector] before [doc-auditor] if the architecture docs have changed.
 
 ---
 
@@ -292,9 +292,9 @@ graph LR
     NP -->|security mode| SA
 ```
 
-`nitpicker` in focused modes delegates to the matching specialist skill before
+[nitpicker] in focused modes delegates to the matching specialist skill before
 extending the review with additional analysis that the specialist does not cover.
-In default mode, nitpicker covers all areas internally and does not invoke the
+In default mode, [nitpicker] covers all areas internally and does not invoke the
 specialist skills.
 
 ---
@@ -307,10 +307,10 @@ These rules must be maintained whenever skills are modified or new skills are ad
 
 | Rule | Rationale |
 |------|-----------|
-| `arch-auditor` never invokes `arch-detector` | arch-detector is a prerequisite, not a dependent |
+| [`arch-auditor`][arch-auditor] never invokes [`arch-detector`][arch-detector] | arch-detector is a prerequisite, not a dependent |
 | `validate-skills` never invokes any audit skill | It is a pure linter; audit logic lives in the audit skills |
-| `adversarial-reviewer` never invokes any other skill | It is a single-purpose leaf |
-| `pr-reviewer` never invokes any other skill | It outputs to stdout only; no chaining |
+| [`adversarial-reviewer`][adversarial-reviewer] never invokes any other skill | It is a single-purpose leaf |
+| [`pr-reviewer`][pr-reviewer] never invokes any other skill | It outputs to stdout only; no chaining |
 | `skill-tester` never invokes itself | TDD loops are controlled by the caller (`new-skill`), not the tester |
 | `release-prep` is never invoked by other skills | It is the terminal orchestrator in the release chain |
 
@@ -351,17 +351,27 @@ When adding a new skill, verify:
 
 | Skill | Reads | Writes |
 |-------|-------|--------|
-| `adversarial-reviewer` | code / content passed as argument | stdout |
-| `nitpicker` | whole repo | `docs/audit/nitpicker-findings.md` |
-| `arch-detector` | repo directory tree + file naming | `docs/audit/arch-profile.md` |
-| `arch-auditor` | `docs/audit/arch-profile.md` (optional), codebase | `docs/audit/arch-findings.md` |
-| `doc-auditor` | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
-| `pr-reviewer` | git diff / staged changes | stdout only |
-| `security-auditor` | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
-| `cr-implementer` | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
-| `claude-rules-auditor` | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
+| [`nitpicker`][nitpicker] | whole repo | `docs/audit/nitpicker-findings.md` |
+| [`arch-detector`][arch-detector] | repo directory tree + file naming | `docs/audit/arch-profile.md` |
+| [`arch-auditor`][arch-auditor] | `docs/audit/arch-profile.md` (optional), codebase | `docs/audit/arch-findings.md` |
+| [`doc-auditor`][doc-auditor] | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
+| [`security-auditor`][security-auditor] | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
+| [`adversarial-reviewer`][adversarial-reviewer] | code / content passed as argument | stdout |
+| [`pr-reviewer`][pr-reviewer] | git diff / staged changes | stdout only |
+| [`cr-implementer`][cr-implementer] | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
+| [`claude-rules-auditor`][claude-rules-auditor] | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
 | `release-prep` | all of the above | none (delegates to each skill; optionally opens a PR on user approval) |
 | `skills` (router) | user intent | routes to one public skill |
+
+[nitpicker]: ../../skills/nitpicker/README.md
+[arch-detector]: ../../skills/arch-detector/README.md
+[arch-auditor]: ../../skills/arch-auditor/README.md
+[doc-auditor]: ../../skills/doc-auditor/README.md
+[security-auditor]: ../../skills/security-auditor/README.md
+[adversarial-reviewer]: ../../skills/adversarial-reviewer/README.md
+[pr-reviewer]: ../../skills/pr-reviewer/README.md
+[cr-implementer]: ../../skills/cr-implementer/README.md
+[claude-rules-auditor]: ../../skills/claude-rules-auditor/README.md

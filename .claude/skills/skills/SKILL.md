@@ -1,6 +1,6 @@
 ---
 name: skills
-description: Use when the user wants to run one of the hostile audit skills in this repo, or asks what skills are available. Routes to the correct public skill based on the request.
+description: Use when the user wants to run one of the hostile audit skills in this repo, or asks what skills are available.
 ---
 
 # Skills Launcher

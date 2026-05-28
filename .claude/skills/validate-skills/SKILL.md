@@ -42,8 +42,10 @@ disable-model-invocation: true
 | Frontmatter present | Error |
 | `name` field present | Error |
 | `description` field present | Error |
-| Description starts with "Use when" | Error |
-| Description ≤ 500 chars | Error |
+| Description contains "Use when" trigger clause | Error |
+| Description ≤ 1024 chars | Error |
 | Skill name matches directory name | Error |
 | Header level progression (no skipping levels) | Error |
+| Description with `': '` must be single-quoted | Error |
 | Legacy output paths (`./codereview.md` etc.) | Warning |
+| Body exceeds 500 lines | Warning |

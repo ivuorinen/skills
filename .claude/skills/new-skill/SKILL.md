@@ -1,6 +1,6 @@
 ---
 name: new-skill
-description: Use when creating a new hostile audit skill for this repository. Scaffolds the correct directory structure, frontmatter, and required sections.
+description: Use when creating a new hostile audit skill for this repository.
 disable-model-invocation: true
 ---
 

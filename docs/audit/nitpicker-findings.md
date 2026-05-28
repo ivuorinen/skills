@@ -1,15 +1,145 @@
 # Nitpicker Findings
 Generated: 2026-04-24
-Last validated: 2026-05-01
+Last validated: 2026-05-28
 
 ## Summary
-- Total: 60 | Open: 0 | Fixed: 60 | Invalid: 0
+- Total: 90 | Open: 1 | Fixed: 88 | Invalid: 1
 
 ## Open Findings
 
-(none)
+### Advisory
+
+#### [N-090] `claude-rules-auditor` skill name contains reserved word "claude"
+Category: conventions
+Area: skills/claude-rules-auditor/SKILL.md (frontmatter name field)
+Problem: The official Anthropic skill authoring spec states: "name: Cannot contain reserved words: 'anthropic', 'claude'." The name `claude-rules-auditor` contains the reserved word "claude."
+Evidence: Official docs (platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices): "name: Cannot contain reserved words: 'anthropic', 'claude'." Current frontmatter: `name: claude-rules-auditor`.
+Impact: Platform enforcement may reject the skill name in certain deployment contexts. Behavior varies by deployment.
+Fix: Rename to `rules-auditor` in a future major version bump. Renaming is a breaking change for all plugin consumers — defer to next major release.
 
 ## Fixed
+
+### Pass 20 — 2026-05-28
+
+#### [N-086] `skill-format.md` "starts with Use when" rule contradicts official Anthropic best practices
+Fixed: 2026-05-28
+Notes: Official best practices require descriptions to include both a capability summary AND "Use when" trigger conditions ("capability sentence. Use when trigger."). Our rule said "must start with Use when" and "never summarize workflow" — the exact opposite. Updated `skill-format.md`: description must *contain* "Use when"; must open with a brief capability summary. Also updated the description field to "must contain 'Use when' trigger clause" in the rule file.
+
+#### [N-087] `_WORKFLOW_VERBS` validator check warns on officially-correct capability-summary descriptions
+Fixed: 2026-05-28
+Notes: N-076 (Pass 19) added `_WORKFLOW_VERBS` to warn when descriptions contain `. Produces`, `. Finds`, etc. Official best-practice examples use exactly those verbs in capability summaries ("Generate descriptive commit messages by analyzing git diffs. Use when..."). Removed `_WORKFLOW_VERBS` from `validate-skill.py`. Replaced `test_workflow_summary_in_description_warns` and `test_clean_description_no_workflow_warning` tests with `test_body_too_long_warns`. 64 tests pass.
+
+#### [N-088] All 9 public skills missing capability summary in description
+Fixed: 2026-05-28
+Notes: Prepended capability summary sentences to all 9 skills: adversarial-reviewer, arch-auditor, arch-detector, claude-rules-auditor, cr-implementer, doc-auditor, nitpicker, pr-reviewer, security-auditor. All now follow the official format: "capability. Use when trigger." `make validate` reports 9 skills OK.
+
+#### [N-089] Validator does not check SKILL.md body line count (500-line official limit)
+Fixed: 2026-05-28
+Notes: Official best practices: "Keep SKILL.md body under 500 lines for optimal performance." Added body-length warning to `validate-skill.py`: emits a warning when body (excluding frontmatter) exceeds 500 lines. Added `test_body_too_long_warns` test. Updated description char limit from 500 to 1024 to match official spec. 64 tests pass.
+
+#### [N-078] `claude-rules-auditor/SKILL.md` Process section has no step to re-validate existing open findings
+Fixed: 2026-05-28
+Notes: Inserted step 0 before Discovery: "If docs/audit/claude-rules-auditor-findings.md exists, re-validate each OPEN finding — resolved → Fixed, wrong → Invalid, still present → Open." All other audit skills already had this step.
+
+#### [N-079] `security-auditor/SKILL.md` step 7 silently marks all open findings Fixed when no tools run
+Fixed: 2026-05-28
+Notes: Added guard before step 7 re-validation: "Identify which tools ran successfully this pass. For any OPEN finding whose detecting tool did not run, skip re-validation — leave the finding Open. Emit: 'Re-validation skipped for N finding(s) from tools not run in this pass: <list>.'" Prevents zero-tool runs from silently closing all historical CVE findings.
+
+#### [N-080] `claude-rules-auditor/SKILL.md` Findings Format uses `[ID]` placeholder without defining `CRA-NNN` prefix
+Fixed: 2026-05-28
+Notes: Added "Finding ID format: `CRA-NNN` (zero-padded to 3 digits, e.g. `CRA-001`). Assign sequentially; never reuse IDs." after the Findings Format code block in `claude-rules-auditor/SKILL.md`.
+
+#### [N-084] `arch-detector/SKILL.md` does not define output behavior when no architectural patterns are detected
+Fixed: 2026-05-28
+Notes: Added to `## Behavior`: "If no catalogued pattern matches with ≥ Medium confidence, write the profile with `Detected: none` and `Inferred Structural Rules: none` and flag the profile as `Confidence: none — manual review required`. Do not invent rules."
+
+#### [N-085] `claude-rules-auditor/SKILL.md` step 1b does not distinguish absent `.claude/rules/` from empty
+Fixed: 2026-05-28
+Notes: Changed step 1b from "List all files under `.claude/rules/` (record empty directory as a finding)" to "If `.claude/rules/` does not exist or is empty, record this as a finding; proceed to step 1c." Absent and empty directories are now explicitly treated identically.
+
+### Pass 19 — 2026-05-28
+
+#### [N-069] `nitpicker/SKILL.md` "When NOT to use" redirects security scans to the wrong skill
+Fixed: 2026-05-28
+Notes: Changed `adversarial-reviewer` to `security-auditor` in the "When NOT to use" line of `skills/nitpicker/SKILL.md`. The security-auditor runs CVE scanners, secrets detection, and dependency audits; adversarial-reviewer is a code-logic review skill only.
+
+#### [N-070] `nitpicker/SKILL.md` description summarizes workflow
+Fixed: 2026-05-28
+Notes: Removed "Finds defects and optionally applies fixes in a single run." from the description. The description now ends at the last trigger condition (release gate check) with no workflow summary.
+
+#### [N-071] `pr-reviewer/SKILL.md` description summarizes workflow
+Fixed: 2026-05-28
+Notes: Removed "Produces copy-paste-ready markdown code review with constructive criticism — problems, severity, and suggested fixes — formatted for GitHub PR comments." from the description. The description is now trigger-only.
+
+#### [N-072] `.claude/skills/new-skill/SKILL.md` description summarizes workflow
+Fixed: 2026-05-28
+Notes: Removed "Scaffolds the correct directory structure, frontmatter, and required sections." from the description.
+
+#### [N-073] `.claude/skills/skills/SKILL.md` description summarizes workflow
+Fixed: 2026-05-28
+Notes: Removed "Routes to the correct public skill based on the request." from the description.
+
+#### [N-074] No tests for `bump-version.py` `update_toml` rewrite
+Fixed: 2026-05-28
+Notes: Created `tests/test_bump_version.py` with 9 tests: 4 covering `bump_version()` (patch/minor/major/invalid-part) and 5 covering `update_toml()` (project section updated, tool section untouched, project after other section found, missing project exits with code 1 + file unchanged, project subscope not matched).
+
+#### [N-075] `test_missing_blank_lines_before_sections_corrected` does not assert finding content preserved
+Fixed: 2026-05-28
+Notes: Added `assert "[X-001] Finding" in fixed` to the test. The finding in `## Open Findings` is now verified to survive the pre-pass normalization.
+
+#### [N-076] `validate-skill.py` does not enforce "never summarize workflow" rule
+Fixed: 2026-05-28
+Notes: Added `_WORKFLOW_VERBS` regex (module-level) and a warn-level check: if the description contains `. <WorkflowVerb>` (period + space + one of Produces/Finds/Writes/Generates/Scaffolds/Routes/Outputs/Applies), emit a warning. Added `test_workflow_summary_in_description_warns` and `test_clean_description_no_workflow_warning` to `tests/test_validate_skill.py`. 64 tests pass.
+
+#### [N-077] `.claude/skills/validate-skills/SKILL.md` "What is checked" table missing `': '` → single-quote check
+Fixed: 2026-05-28
+Notes: Added `| Description with \`': '\` must be single-quoted | Error |` and `| Description contains workflow summary sentence | Warning |` rows to the "What is checked" table in `.claude/skills/validate-skills/SKILL.md`.
+
+#### [N-081] No test for workflow-summary warning in `validate-skill.py`
+Fixed: 2026-05-28
+Notes: Filed and fixed in the same pass. Added two tests: `test_workflow_summary_in_description_warns` and `test_clean_description_no_workflow_warning`.
+
+#### [N-082] `_WORKFLOW_VERBS` regex compiled inside `validate()` instead of at module level
+Fixed: 2026-05-28
+Notes: Moved `_WORKFLOW_VERBS = re.compile(...)` to module level in `scripts/validate-skill.py`. Eliminates redundant compilation on every `validate()` call.
+
+#### [N-083] `test_missing_project_version_exits` does not assert file is unchanged after failed update
+Fixed: 2026-05-28
+Notes: Added `assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8") == toml` after the `mock_exit.assert_called_once_with(1)` assertion. After `sys.exit(1)` (which is a no-op in tests), execution continues to `path.write_text(...)` — this assertion confirms the write preserves the original content.
+
+### Pass 17 — 2026-05-02
+
+#### [N-068] CI paths use individual script entries; `bump-version.py` and `list-skills.py` uncovered
+Fixed: 2026-05-02
+Notes: Replaced four individual `scripts/*.py` entries and `scripts/hooks/**` with a single `scripts/**` glob in both `push` and `pull_request` trigger paths. `copilot-instructions.md` line 104 now accurately describes the trigger paths.
+
+### Pass 16 — 2026-05-02
+
+#### [N-065] CI paths filter missing `scripts/hooks/**`
+Fixed: 2026-05-02
+Notes: Added `- 'scripts/hooks/**'` to both `push` and `pull_request` paths lists in `.github/workflows/validate-skills.yml`. A source-only hook change now triggers CI.
+
+#### [N-066] `test_validate_audit_findings_hook.py` missing test for N-063 custom-summary preservation
+Fixed: 2026-05-02
+Notes: Added `test_custom_summary_not_overwritten` to `TestParseAndFix`. Asserts that a file with custom summary lines and no `Total:` line emerges unchanged. 52 tests pass.
+
+#### [N-067] `copilot-instructions.md` CI section describes 3 steps; CI now has 5
+Fixed: 2026-05-02
+Notes: Replaced stale description with accurate 5-step list (validate-skill ×2, validate-rules, check-version-sync, pytest, ruff) and updated the trigger-paths summary.
+
+### Pass 15 — 2026-05-02
+
+#### [N-061] CI workflow missing ruff lint step
+Fixed: 2026-05-02
+Notes: Added `- name: Lint scripts / run: uv run --with ruff ruff check scripts/` step to `.github/workflows/validate-skills.yml` after the "Run tests" step.
+
+#### [N-062] `validate-skill.py` error message contradicts `skill-format.md` on quote style
+Fixed: 2026-05-02
+Notes: Updated `.claude/rules/skill-format.md` to say "single quotes" only (removing "or double quotes"), aligning the rule with the validator. `test_validate_skill.py::test_description_double_quoted_colon_space_errors` confirms double-quoted values intentionally produce errors — the validator behavior was correct, the rule was wrong.
+
+#### [N-063] `validate-audit-findings-hook.py` corrupts `claude-rules-auditor-findings.md` summary
+Fixed: 2026-05-02
+Notes: Guarded the `Total:` line reconstruction with `if summary_found or not summary_extra:` in `parse_and_fix`. Files with no `Total:` line but custom summary content (like `claude-rules-auditor-findings.md`) no longer have a spurious `Total:` line prepended on every save.
 
 ### Pass 13 — 2026-05-01
 
@@ -284,4 +414,7 @@ Notes: Replaced `bash scripts/check-version-sync.sh` with `uv run scripts/check-
 
 ## Invalid
 
-(none)
+### Pass 15 — 2026-05-02
+
+#### [N-064] `test_validate_rules.py` missing test for valid no-frontmatter rule file
+Notes: Invalid — `test_valid_plain_file_no_errors` already exercises this exact path using `VALID_PLAIN` (a file with no frontmatter). The no-frontmatter code path is covered; finding was filed in error.

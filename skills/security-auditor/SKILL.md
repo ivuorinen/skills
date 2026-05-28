@@ -1,6 +1,6 @@
 ---
 name: security-auditor
-description: 'Use when you need to check a project for vulnerabilities, exposed secrets, insecure dependencies, or other security issues. Triggers: "security audit", "run security scan", "find vulnerabilities", "check for secrets", "scan dependencies", "run security-auditor".'
+description: 'Runs available security scanners, parses results, and writes a consolidated security findings report. Use when you need to check a project for vulnerabilities, exposed secrets, insecure dependencies, or other security issues. Triggers: "security audit", "run security scan", "find vulnerabilities", "check for secrets", "scan dependencies", "run security-auditor".'
 ---
 
 # Security Auditor
@@ -52,7 +52,8 @@ If a tool is found but fails to run (e.g., broken Python environment), record it
      - SAST / IaC: match on rule ID + file path
 6. Assign severity using the Severity Mapping table
 7. If docs/audit/security-findings.md exists:
-     Re-validate each OPEN finding using these match keys:
+     Before re-validating: identify which tools ran successfully this pass (probe returned found AND tool did not error). For any OPEN finding whose detecting tool did not run in this pass, skip re-validation — leave the finding Open. Emit: "Re-validation skipped for N finding(s) from tools not run in this pass: <list>."
+     Re-validate remaining OPEN findings using these match keys:
      - Dependency vulnerability: vulnerability identifier + package name (CVE, GHSA, RUSTSEC, OSV, or vendor advisory ID)
      - SAST / gosec: rule ID + file path (ignore line number drift of ±10 lines)
      - Secret: file path + line number (±2) — do NOT use rule ID or redacted excerpt (rule IDs differ across tools; re-redacting inconsistently would prevent matching)

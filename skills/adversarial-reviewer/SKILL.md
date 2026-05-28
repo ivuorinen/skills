@@ -1,6 +1,6 @@
 ---
 name: adversarial-reviewer
-description: Use when asked to review code, find bugs, audit for correctness, stress-test a PR, or when someone says "tear this apart" or "what's wrong with this".
+description: Performs hostile code review assuming bugs exist, hunting for logic errors, edge cases, security flaws, and missing tests. Use when asked to review code, find bugs, audit for correctness, stress-test a PR, or when someone says "tear this apart" or "what's wrong with this".
 ---
 
 # Adversarial Code Reviewer

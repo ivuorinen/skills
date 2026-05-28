@@ -1,6 +1,6 @@
 ---
 name: pr-reviewer
-description: Use when reviewing a pull request, staged changes, or a specific diff. Produces copy-paste-ready markdown code review with constructive criticism — problems, severity, and suggested fixes — formatted for GitHub PR comments.
+description: Produces copy-paste-ready markdown code review with constructive criticism — problems, severity, and suggested fixes — formatted for GitHub PR comments. Use when reviewing a pull request, staged changes, or a specific diff.
 ---
 
 # PR Reviewer

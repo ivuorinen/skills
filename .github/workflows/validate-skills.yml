@@ -5,10 +5,7 @@ on:
     paths:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
-      - 'scripts/validate-skill.py'
-      - 'scripts/validate-rules.py'
-      - 'scripts/check-version-sync.py'
-      - 'scripts/common.py'
+      - 'scripts/**'
       - 'tests/**'
       - '.claude/rules/**'
       - 'package.json'
@@ -20,10 +17,7 @@ on:
     paths:
       - 'skills/**/SKILL.md'
       - '.claude/skills/**/SKILL.md'
-      - 'scripts/validate-skill.py'
-      - 'scripts/validate-rules.py'
-      - 'scripts/check-version-sync.py'
-      - 'scripts/common.py'
+      - 'scripts/**'
       - 'tests/**'
       - '.claude/rules/**'
       - 'package.json'
@@ -54,3 +48,6 @@ jobs:
 
       - name: Run tests
         run: uv run --with pytest pytest tests/
+
+      - name: Lint scripts
+        run: uv run --with ruff ruff check scripts/

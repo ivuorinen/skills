@@ -44,17 +44,23 @@ def update_file(rel_path: str, mutate, version: str) -> None:
 def update_toml(rel_path: str, version: str) -> None:
     path = REPO_ROOT / rel_path
     content = path.read_text(encoding="utf-8")
-    new_content = re.sub(
-        r'^(version\s*=\s*")[^"]+(")',
-        rf"\g<1>{version}\2",
-        content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if new_content == content:
-        print(f"  ERROR  {rel_path}: version line not found — file unchanged", file=sys.stderr)
+    # Only replace version inside the [project] section, not in [tool.*] sections.
+    in_project = False
+    replaced = False
+    result: list[str] = []
+    for line in content.splitlines(keepends=True):
+        if re.match(r"^\[project\]\s*$", line):
+            in_project = True
+        elif re.match(r"^\[", line):
+            in_project = False
+        if in_project and not replaced and re.match(r'^version\s*=\s*"', line):
+            line = re.sub(r'^(version\s*=\s*")[^"]+(")', rf"\g<1>{version}\2", line)
+            replaced = True
+        result.append(line)
+    if not replaced:
+        print(f"  ERROR  {rel_path}: [project] version not found — file unchanged", file=sys.stderr)
         sys.exit(1)
-    path.write_text(new_content, encoding="utf-8")
+    path.write_text("".join(result), encoding="utf-8")
     print(f"  updated {rel_path}")
 
 

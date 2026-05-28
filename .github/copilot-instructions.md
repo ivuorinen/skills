@@ -99,9 +99,10 @@ make lint           # ruff check on scripts/
 make list           # print all skills with descriptions
 ```
 
-CI runs `uv run --quiet scripts/validate-skill.py` (twice), `uv run --quiet scripts/validate-rules.py`,
-and `uv run --quiet scripts/check-version-sync.py` on every push/PR that touches a `SKILL.md` file,
-`scripts/validate-skill.py`, `scripts/validate-rules.py`, or `.claude/rules/**`.
+CI runs five steps on every push/PR that touches a relevant path: validate-skill (twice — public and internal
+skills), validate-rules, check-version-sync, `pytest tests/`, and `ruff check scripts/`. Trigger paths include
+`skills/**/SKILL.md`, `.claude/skills/**/SKILL.md`, `scripts/**`, `tests/**`, `.claude/rules/**`, and all
+five version manifest files.
 
 ## Versioning — Five Files Must Stay in Sync
 
