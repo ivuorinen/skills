@@ -232,8 +232,20 @@ def main() -> None:
             try:
                 threads = fetch_rest_gh(owner, repo, pr_number)
             except Exception as rest_err:
-                print(f"[error] gh REST failed: {rest_err}", file=sys.stderr)
-                sys.exit(1)
+                token = os.environ.get("GITHUB_TOKEN", "")
+                if token:
+                    print(
+                        f"[warn] gh REST failed ({rest_err}), falling back to token REST",
+                        file=sys.stderr,
+                    )
+                    try:
+                        threads = fetch_rest_token(owner, repo, pr_number, token)
+                    except Exception as token_err:
+                        print(f"[error] REST API failed: {token_err}", file=sys.stderr)
+                        sys.exit(1)
+                else:
+                    print(f"[error] gh REST failed: {rest_err}", file=sys.stderr)
+                    sys.exit(1)
     else:
         token = os.environ.get("GITHUB_TOKEN", "")
         if not token:

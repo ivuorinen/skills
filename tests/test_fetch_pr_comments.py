@@ -45,6 +45,7 @@ def _http_resp(body, link: str = "") -> MagicMock:
 
 # ── _gh_available ──────────────────────────────────────────────────────────────
 
+
 class TestGhAvailable:
     def test_gh_found_returns_true(self):
         with patch("subprocess.run", return_value=_proc(returncode=0)):
@@ -65,6 +66,7 @@ class TestGhAvailable:
 
 # ── _gh_graphql ────────────────────────────────────────────────────────────────
 
+
 class TestGhGraphql:
     def test_success_returns_parsed_json(self):
         payload = {"data": {"repository": {}}}
@@ -81,6 +83,7 @@ class TestGhGraphql:
 
 
 # ── _gh_rest_paginate ──────────────────────────────────────────────────────────
+
 
 class TestGhRestPaginate:
     def test_success_returns_parsed_json(self):
@@ -133,6 +136,7 @@ class TestTokenRestPaginate:
 
 # ── _build_thread / _build_comment ────────────────────────────────────────────
 
+
 class TestBuildHelpers:
     def test_build_thread_fields(self):
         comment = {"id": 42, "path": "src/foo.py", "diff_hunk": "@@ @@", "body": "x"}
@@ -176,23 +180,45 @@ class TestBuildHelpers:
 
 # ── _group_rest_comments ───────────────────────────────────────────────────────
 
+
 class TestGroupRestComments:
     def test_empty_list(self):
         assert _group_rest_comments([]) == []
 
     def test_single_root_comment(self):
-        raw = [{"id": 1, "path": "f.py", "diff_hunk": "@@ @@", "body": "x",
-                "user": {"login": "a"}, "created_at": "t"}]
+        raw = [
+            {
+                "id": 1,
+                "path": "f.py",
+                "diff_hunk": "@@ @@",
+                "body": "x",
+                "user": {"login": "a"},
+                "created_at": "t",
+            }
+        ]
         threads = _group_rest_comments(raw)
         assert len(threads) == 1
         assert len(threads[0]["comments"]) == 1
 
     def test_reply_grouped_with_parent(self):
         raw = [
-            {"id": 1, "path": "f.py", "diff_hunk": "@@ @@", "body": "root",
-             "user": {"login": "a"}, "created_at": "t"},
-            {"id": 2, "in_reply_to_id": 1, "path": "f.py", "diff_hunk": "@@ @@",
-             "body": "reply", "user": {"login": "b"}, "created_at": "t"},
+            {
+                "id": 1,
+                "path": "f.py",
+                "diff_hunk": "@@ @@",
+                "body": "root",
+                "user": {"login": "a"},
+                "created_at": "t",
+            },
+            {
+                "id": 2,
+                "in_reply_to_id": 1,
+                "path": "f.py",
+                "diff_hunk": "@@ @@",
+                "body": "reply",
+                "user": {"login": "b"},
+                "created_at": "t",
+            },
         ]
         threads = _group_rest_comments(raw)
         assert len(threads) == 1
@@ -200,16 +226,29 @@ class TestGroupRestComments:
 
     def test_multiple_threads(self):
         raw = [
-            {"id": 1, "path": "a.py", "diff_hunk": "@@ @@", "body": "c1",
-             "user": {"login": "a"}, "created_at": "t"},
-            {"id": 3, "path": "b.py", "diff_hunk": "@@ @@", "body": "c3",
-             "user": {"login": "b"}, "created_at": "t"},
+            {
+                "id": 1,
+                "path": "a.py",
+                "diff_hunk": "@@ @@",
+                "body": "c1",
+                "user": {"login": "a"},
+                "created_at": "t",
+            },
+            {
+                "id": 3,
+                "path": "b.py",
+                "diff_hunk": "@@ @@",
+                "body": "c3",
+                "user": {"login": "b"},
+                "created_at": "t",
+            },
         ]
         threads = _group_rest_comments(raw)
         assert len(threads) == 2
 
 
 # ── fetch_graphql ──────────────────────────────────────────────────────────────
+
 
 class TestFetchGraphql:
     def _graphql_response(self, nodes: list, has_next: bool = False, cursor: str = "") -> dict:
@@ -228,8 +267,13 @@ class TestFetchGraphql:
 
     def _thread_node(self, resolved: bool = False, comments: list | None = None) -> dict:
         default_comments = [
-            {"id": "C_1", "body": "Please fix this.", "createdAt": "2026-01-01",
-             "author": {"login": "reviewer"}, "diffHunk": "@@ @@"}
+            {
+                "id": "C_1",
+                "body": "Please fix this.",
+                "createdAt": "2026-01-01",
+                "author": {"login": "reviewer"},
+                "diffHunk": "@@ @@",
+            }
         ]
         return {
             "id": "T_1",
@@ -284,11 +328,20 @@ class TestFetchGraphql:
 
     def test_null_author_handled(self):
         node = {
-            "id": "T_1", "isResolved": False, "path": "f.py",
-            "comments": {"nodes": [
-                {"id": "C_1", "body": "x", "createdAt": "2026-01-01",
-                 "author": None, "diffHunk": "@@ @@"}
-            ]},
+            "id": "T_1",
+            "isResolved": False,
+            "path": "f.py",
+            "comments": {
+                "nodes": [
+                    {
+                        "id": "C_1",
+                        "body": "x",
+                        "createdAt": "2026-01-01",
+                        "author": None,
+                        "diffHunk": "@@ @@",
+                    }
+                ]
+            },
         }
         resp = self._graphql_response([node])
         with patch.object(_mod, "_gh_graphql", return_value=resp):
@@ -298,10 +351,19 @@ class TestFetchGraphql:
 
 # ── fetch_rest_gh / fetch_rest_token ──────────────────────────────────────────
 
+
 class TestFetchRestGh:
     def test_calls_rest_paginate(self):
-        raw = [{"id": 1, "path": "f.py", "diff_hunk": "@@ @@", "body": "x",
-                "user": {"login": "a"}, "created_at": "t"}]
+        raw = [
+            {
+                "id": 1,
+                "path": "f.py",
+                "diff_hunk": "@@ @@",
+                "body": "x",
+                "user": {"login": "a"},
+                "created_at": "t",
+            }
+        ]
         with patch.object(_mod, "_gh_rest_paginate", return_value=raw):
             threads = fetch_rest_gh("owner", "repo", 1)
         assert len(threads) == 1
@@ -309,8 +371,16 @@ class TestFetchRestGh:
 
 class TestFetchRestToken:
     def test_calls_token_paginate(self):
-        raw = [{"id": 1, "path": "f.py", "diff_hunk": "@@ @@", "body": "x",
-                "user": {"login": "a"}, "created_at": "t"}]
+        raw = [
+            {
+                "id": 1,
+                "path": "f.py",
+                "diff_hunk": "@@ @@",
+                "body": "x",
+                "user": {"login": "a"},
+                "created_at": "t",
+            }
+        ]
         with patch.object(_mod, "_token_rest_paginate", return_value=raw):
             threads = fetch_rest_token("owner", "repo", 1, "tok")
         assert len(threads) == 1
@@ -318,9 +388,17 @@ class TestFetchRestToken:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 class TestMain:
-    _THREADS = [{"thread_id": "T_1", "path": "f.py", "is_resolved": False,
-                 "diff_hunk": "@@ @@", "comments": []}]
+    _THREADS = [
+        {
+            "thread_id": "T_1",
+            "path": "f.py",
+            "is_resolved": False,
+            "diff_hunk": "@@ @@",
+            "comments": [],
+        }
+    ]
 
     def test_owner_repo_pr_format(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner", "repo", "42"])
@@ -369,12 +447,38 @@ class TestMain:
             _mod.main()
         assert json.loads(capsys.readouterr().out)
 
-    def test_gh_rest_fails_exits_1(self, monkeypatch):
+    def test_gh_rest_fails_no_token_exits_1(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         with (
             patch.object(_mod, "_gh_available", return_value=True),
             patch.object(_mod, "fetch_graphql", side_effect=RuntimeError("gql")),
             patch.object(_mod, "fetch_rest_gh", side_effect=RuntimeError("rest")),
+            pytest.raises(SystemExit) as exc,
+        ):
+            _mod.main()
+        assert exc.value.code == 1
+
+    def test_gh_rest_fails_falls_back_to_token(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])
+        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        with (
+            patch.object(_mod, "_gh_available", return_value=True),
+            patch.object(_mod, "fetch_graphql", side_effect=RuntimeError("gql")),
+            patch.object(_mod, "fetch_rest_gh", side_effect=RuntimeError("rest")),
+            patch.object(_mod, "fetch_rest_token", return_value=self._THREADS),
+        ):
+            _mod.main()
+        assert json.loads(capsys.readouterr().out)
+
+    def test_gh_rest_fails_token_rest_also_fails_exits_1(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])
+        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        with (
+            patch.object(_mod, "_gh_available", return_value=True),
+            patch.object(_mod, "fetch_graphql", side_effect=RuntimeError("gql")),
+            patch.object(_mod, "fetch_rest_gh", side_effect=RuntimeError("rest")),
+            patch.object(_mod, "fetch_rest_token", side_effect=RuntimeError("token fail")),
             pytest.raises(SystemExit) as exc,
         ):
             _mod.main()

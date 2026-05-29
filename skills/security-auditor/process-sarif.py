@@ -78,8 +78,7 @@ def _normalize_severity(
                 return "High"
             if score >= 4.0:
                 return "Medium"
-            if score > 0.0:
-                return "Low"
+            return "Low"
         except ValueError:
             pass
 
@@ -149,9 +148,9 @@ def _extract_findings(run: dict, source_file: str) -> list[dict]:
         # Use message as location key when uri is absent so distinct location-less
         # findings (e.g. different vulnerable packages from grype) don't collapse.
         location_key = f"{uri}:{start_line}:{start_col}" if uri else message[:100]
-        fingerprint = hashlib.sha256(
-            f"{tool_name}|{rule_id}|{location_key}".encode()
-        ).hexdigest()[:16]
+        fingerprint = hashlib.sha256(f"{tool_name}|{rule_id}|{location_key}".encode()).hexdigest()[
+            :16
+        ]
 
         findings.append(
             {

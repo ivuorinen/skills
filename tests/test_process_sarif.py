@@ -58,6 +58,7 @@ def _result(
 
 # ── _normalize_severity ────────────────────────────────────────────────────────
 
+
 class TestNormalizeSeverity:
     def test_tool_severity_critical(self):
         assert _normalize_severity(None, None, "CRITICAL") == "Critical"
@@ -101,9 +102,9 @@ class TestNormalizeSeverity:
     def test_cvss_low(self):
         assert _normalize_severity(None, "2.0", None) == "Low"
 
-    def test_cvss_zero_falls_through(self):
-        # score == 0.0 → falls through to SARIF level
-        assert _normalize_severity("error", "0.0", None) == "High"
+    def test_cvss_zero_maps_to_low(self):
+        # score == 0.0 → explicit CVSS score, maps to Low (not SARIF level)
+        assert _normalize_severity("error", "0.0", None) == "Low"
 
     def test_cvss_invalid_string_falls_through(self):
         assert _normalize_severity("warning", "not-a-number", None) == "Medium"
@@ -128,6 +129,7 @@ class TestNormalizeSeverity:
 
 
 # ── _extract_rules ─────────────────────────────────────────────────────────────
+
 
 class TestExtractRules:
     def test_empty_run(self):
@@ -165,6 +167,7 @@ class TestExtractRules:
 
 # ── _extract_findings ──────────────────────────────────────────────────────────
 
+
 class TestExtractFindings:
     def test_basic_finding(self):
         run = _run("semgrep", results=[_result("r1", "warning", "Found issue", "src/a.py", 10)])
@@ -179,7 +182,10 @@ class TestExtractFindings:
 
     def test_finding_without_location(self):
         result = {
-            "ruleId": "cve-001", "level": "error", "message": {"text": "Vuln"}, "locations": []
+            "ruleId": "cve-001",
+            "level": "error",
+            "message": {"text": "Vuln"},
+            "locations": [],
         }
         run = _run("grype", results=[result])
         findings = _extract_findings(run, "grype.sarif")
@@ -223,10 +229,18 @@ class TestExtractFindings:
         assert findings[0]["severity"] == "High"
 
     def test_fingerprint_uses_message_when_no_uri(self):
-        r1 = {"ruleId": "CVE-001", "level": "error",
-              "message": {"text": "pkg-a@1.0"}, "locations": []}
-        r2 = {"ruleId": "CVE-001", "level": "error",
-              "message": {"text": "pkg-b@2.0"}, "locations": []}
+        r1 = {
+            "ruleId": "CVE-001",
+            "level": "error",
+            "message": {"text": "pkg-a@1.0"},
+            "locations": [],
+        }
+        r2 = {
+            "ruleId": "CVE-001",
+            "level": "error",
+            "message": {"text": "pkg-b@2.0"},
+            "locations": [],
+        }
         run = _run("grype", results=[r1, r2])
         findings = _extract_findings(run, "x.sarif")
         # Different messages → different fingerprints → no dedup
@@ -240,10 +254,14 @@ class TestExtractFindings:
 
     def test_fingerprint_different_column_different_key(self):
         def _loc(col):
-            return [{"physicalLocation": {
-                "artifactLocation": {"uri": "f.py"},
-                "region": {"startLine": 5, "startColumn": col},
-            }}]
+            return [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": "f.py"},
+                        "region": {"startLine": 5, "startColumn": col},
+                    }
+                }
+            ]
 
         r1 = {"ruleId": "r1", "level": "warning", "message": {"text": "x"}, "locations": _loc(1)}
         r2 = {"ruleId": "r1", "level": "warning", "message": {"text": "x"}, "locations": _loc(10)}
@@ -258,6 +276,7 @@ class TestExtractFindings:
 
 
 # ── _parse_sarif ───────────────────────────────────────────────────────────────
+
 
 class TestParseSarif:
     def test_valid_sarif_file(self, tmp_path):
@@ -281,10 +300,12 @@ class TestParseSarif:
         _parse_sarif(f)
 
     def test_multiple_runs(self, tmp_path):
-        data = _sarif([
-            _run("tool-a", results=[_result("r1")]),
-            _run("tool-b", results=[_result("r2")]),
-        ])
+        data = _sarif(
+            [
+                _run("tool-a", results=[_result("r1")]),
+                _run("tool-b", results=[_result("r2")]),
+            ]
+        )
         f = tmp_path / "multi.sarif"
         f.write_text(json.dumps(data), encoding="utf-8")
         findings = _parse_sarif(f)
@@ -297,6 +318,7 @@ class TestParseSarif:
 
 
 # ── _deduplicate ───────────────────────────────────────────────────────────────
+
 
 class TestDeduplicate:
     def test_no_duplicates(self):
@@ -341,6 +363,7 @@ class TestDeduplicate:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 class TestMain:
     def _write_sarif(self, path: Path, runs: list | None = None) -> None:
         path.write_text(json.dumps(_sarif(runs or [])), encoding="utf-8")
@@ -371,9 +394,18 @@ class TestMain:
 
     def test_output_severity_counts(self, tmp_path, capsys, monkeypatch):
         f = tmp_path / "scan.sarif"
-        self._write_sarif(f, [_run("t", results=[
-            _result("r1", "error"), _result("r2", "warning"),
-        ])])
+        self._write_sarif(
+            f,
+            [
+                _run(
+                    "t",
+                    results=[
+                        _result("r1", "error"),
+                        _result("r2", "warning"),
+                    ],
+                )
+            ],
+        )
         monkeypatch.setattr(sys, "argv", ["prog", str(f)])
         _mod.main()
         out, _ = capsys.readouterr()
@@ -408,10 +440,18 @@ class TestMain:
 
     def test_findings_sorted_by_severity(self, tmp_path, capsys, monkeypatch):
         f = tmp_path / "scan.sarif"
-        self._write_sarif(f, [_run("t", results=[
-            _result("low", "note"),
-            _result("high", "error"),
-        ])])
+        self._write_sarif(
+            f,
+            [
+                _run(
+                    "t",
+                    results=[
+                        _result("low", "note"),
+                        _result("high", "error"),
+                    ],
+                )
+            ],
+        )
         monkeypatch.setattr(sys, "argv", ["prog", str(f)])
         _mod.main()
         out, _ = capsys.readouterr()
