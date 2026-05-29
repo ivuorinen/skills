@@ -3,7 +3,7 @@ Generated: 2026-04-24
 Last validated: 2026-05-29
 
 ## Summary
-- Total: 99 | Open: 1 | Fixed: 97 | Invalid: 1
+- Total: 101 | Open: 1 | Fixed: 99 | Invalid: 1
 
 ### Advisory
 
@@ -16,6 +16,16 @@ Impact: Platform enforcement may reject the skill name in certain deployment con
 Fix: Rename to `rules-auditor` in a future major version bump. Renaming is a breaking change for all plugin consumers — defer to next major release.
 
 ## Fixed
+
+### Pass 23 — 2026-05-29
+
+#### [N-100] CI trigger paths missing `skills/**/*.py` — Python tool scripts don't trigger CI
+Fixed: 2026-05-29
+Notes: Added `- 'skills/**/*.py'` to both `push` and `pull_request` paths lists in `.github/workflows/validate-skills.yml`. Changes to `skills/cr-implementer/fetch-pr-comments.py` and `skills/security-auditor/process-sarif.py` (and any future skill utility scripts) now trigger CI. Also updated the copilot-instructions.md trigger-paths description (N-101).
+
+#### [N-101] `copilot-instructions.md` CI description says "five steps" — now six, omits `ruff format --check`
+Fixed: 2026-05-29
+Notes: Updated copilot-instructions.md Validation section to "six steps" and added `ruff format --check scripts/ tests/ skills/` to the step list. Also added `skills/**/*.py` to the trigger-paths description. `make check` clean: 236 tests pass.
 
 ### Pass 22 — 2026-05-29
 

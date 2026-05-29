@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'skills/**/SKILL.md'
+      - 'skills/**/*.py'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/**'
       - 'tests/**'
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - 'skills/**/SKILL.md'
+      - 'skills/**/*.py'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/**'
       - 'tests/**'
