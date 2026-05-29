@@ -68,19 +68,13 @@ class TestUpdateToml:
         assert 'version = "2.0.0"' in result
 
     def test_tool_section_version_untouched(self, tmp_path):
-        toml = (
-            '[project]\nname = "foo"\nversion = "1.0.0"\n\n'
-            '[tool.poetry]\nversion = "9.9.9"\n'
-        )
+        toml = '[project]\nname = "foo"\nversion = "1.0.0"\n\n[tool.poetry]\nversion = "9.9.9"\n'
         result = self._run(tmp_path, toml, "2.0.0")
         assert 'version = "2.0.0"' in result
         assert 'version = "9.9.9"' in result
 
     def test_project_after_other_section_found(self, tmp_path):
-        toml = (
-            '[build-system]\nrequires = ["setuptools"]\n\n'
-            '[project]\nversion = "1.0.0"\n'
-        )
+        toml = '[build-system]\nrequires = ["setuptools"]\n\n[project]\nversion = "1.0.0"\n'
         result = self._run(tmp_path, toml, "3.0.0")
         assert 'version = "3.0.0"' in result
 

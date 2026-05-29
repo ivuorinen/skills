@@ -48,7 +48,7 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     end_fm = text.find("\n---\n", 4)
     for line in text[4:end_fm].splitlines():
         if line.startswith("description: "):
-            raw_val = line[len("description: "):].strip()
+            raw_val = line[len("description: ") :].strip()
             is_quoted = len(raw_val) >= 2 and raw_val[0] == "'" and raw_val[-1] == "'"
             if ": " in raw_val and not is_quoted:
                 err("description contains ': ' — wrap in single quotes (project convention)")

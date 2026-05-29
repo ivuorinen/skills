@@ -84,9 +84,8 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
    `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
    Also update `README.md` (it always contains a mirrored skills table) and update the Skill
    Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`.
-3. Run `make validate` to confirm the new skill passes validation
-4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
-5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
+3. Run `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip this; it enforces the TDD baseline and rationalization protection.
+4. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
 
@@ -96,12 +95,12 @@ make validate       # SKILL.md frontmatter + structure only
 make validate-rules # validate .claude/rules/ files (structure + path freshness)
 make test           # run pytest unit tests for scripts/
 make version-sync   # version consistency across manifests
-make lint           # ruff check on scripts/
+make lint           # ruff check on scripts/, tests/, skills/
 make list           # print all skills with descriptions
 ```
 
 CI runs five steps on every push/PR that touches a relevant path: validate-skill (twice — public and internal
-skills), validate-rules, check-version-sync, `pytest tests/`, and `ruff check scripts/`. Trigger paths include
+skills), validate-rules, check-version-sync, `pytest tests/`, and `ruff check scripts/ tests/ skills/`. Trigger paths include
 `skills/**/SKILL.md`, `.claude/skills/**/SKILL.md`, `scripts/**`, `tests/**`, `.claude/rules/**`, and all
 five version manifest files.
 

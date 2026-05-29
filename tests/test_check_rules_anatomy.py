@@ -30,6 +30,7 @@ def _severity(findings: list[dict], code: str) -> str | None:
 
 # ── _parse_frontmatter ────────────────────────────────────────────────────────
 
+
 class TestParseFrontmatter:
     def test_no_frontmatter_returns_empty_dict_and_full_text(self):
         text = "# Title\n\nNever use grep.\n"
@@ -66,6 +67,7 @@ class TestParseFrontmatter:
 
 
 # ── _check_file ────────────────────────────────────────────────────────────────
+
 
 class TestCheckFile:
     def test_valid_plain_rule_no_findings(self, tmp_path):
@@ -136,7 +138,7 @@ class TestCheckFile:
 
     def test_empty_glob(self, tmp_path):
         f = tmp_path / "empty-glob.md"
-        f.write_text("---\npaths:\n  - \"\"\n---\n\nAlways add types.\n", encoding="utf-8")
+        f.write_text('---\npaths:\n  - ""\n---\n\nAlways add types.\n', encoding="utf-8")
         findings = _check_file(f, tmp_path)
         assert _has(findings, "empty_glob")
 
@@ -219,6 +221,7 @@ class TestCheckFile:
 
 # ── _iter_rules ────────────────────────────────────────────────────────────────
 
+
 class TestIterRules:
     def test_empty_directory(self, tmp_path):
         rules_dir = tmp_path / ".claude" / "rules"
@@ -277,6 +280,7 @@ class TestIterRules:
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
+
 
 class TestMain:
     def _setup_rules(self, tmp_path: Path, rules: dict[str, str]) -> None:
@@ -353,6 +357,7 @@ class TestMain:
 
 
 # ── edge cases not covered above ─────────────────────────────────────────────
+
 
 class TestAdditionalCoverage:
     """Cover lines missed by the main test classes."""

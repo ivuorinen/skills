@@ -3,9 +3,7 @@ Generated: 2026-04-24
 Last validated: 2026-05-29
 
 ## Summary
-- Total: 95 | Open: 1 | Fixed: 93 | Invalid: 1
-
-## Open Findings
+- Total: 99 | Open: 1 | Fixed: 97 | Invalid: 1
 
 ### Advisory
 
@@ -18,6 +16,24 @@ Impact: Platform enforcement may reject the skill name in certain deployment con
 Fix: Rename to `rules-auditor` in a future major version bump. Renaming is a breaking change for all plugin consumers — defer to next major release.
 
 ## Fixed
+
+### Pass 22 — 2026-05-29
+
+#### [N-096] CI `ruff check` covers only `scripts/`; `make lint` covers `scripts/ tests/ skills/`
+Fixed: 2026-05-29
+Notes: Updated CI "Lint scripts" step from `uv run --with ruff ruff check scripts/` to `uv run --with ruff ruff check scripts/ tests/ skills/` to match `make lint` after N-094 extended the Makefile scope. Added a new "Check script formatting" CI step running `ruff format --check scripts/ tests/ skills/` (N-099 fix). Exposed 10 pre-existing formatting violations across `scripts/hooks/validate-audit-findings-hook.py`, `scripts/validate-skill.py`, `skills/security-auditor/process-sarif.py`, and 7 test files — all reformatted by `ruff format`. `make check` now clean: 234 tests pass.
+
+#### [N-097] CLAUDE.md `make lint` and `make format` descriptions stale after N-094
+Fixed: 2026-05-29
+Notes: Updated CLAUDE.md Development Commands comments from "ruff check on scripts/" to "ruff check on scripts/, tests/, skills/" for `make lint`, and same for `make format`. Also updated `make check` comment to include "ruff format check". Updated matching stale descriptions in `.github/copilot-instructions.md` Validation section (`make lint` and CI step description).
+
+#### [N-098] `copilot-instructions.md` "Adding a New Skill" omits `/new-skill` orchestrator
+Fixed: 2026-05-29
+Notes: Replaced steps 3-4 ("Run `make validate`" + "Run `/pr-reviewer`") with a single step: "Run `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip this; it enforces the TDD baseline and rationalization protection."
+
+#### [N-099] CI and `make check` both omit `ruff format --check`
+Fixed: 2026-05-29
+Notes: Added `format-check` Makefile target (`uv run ruff format --check scripts/ tests/ skills/`) and inserted it into the `check` dependency chain. Added a matching "Check script formatting" step to CI. Fixed in the same pass as N-096 (format check exposed 10 violations; all resolved by `ruff format`).
 
 ### Pass 21 — 2026-05-29
 

@@ -50,4 +50,7 @@ jobs:
         run: uv run --with pytest pytest tests/
 
       - name: Lint scripts
-        run: uv run --with ruff ruff check scripts/
+        run: uv run --with ruff ruff check scripts/ tests/ skills/
+
+      - name: Check script formatting
+        run: uv run --with ruff ruff format --check scripts/ tests/ skills/

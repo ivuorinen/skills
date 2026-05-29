@@ -80,6 +80,7 @@ Last validated: 2026-01-01
 
 # ── check_file: valid inputs ───────────────────────────────────────────────────
 
+
 class TestCheckFileValid:
     def test_valid_findings_no_errors(self, tmp_path):
         f = tmp_path / "nitpicker-findings.md"
@@ -102,6 +103,7 @@ class TestCheckFileValid:
 
 # ── check_file: unreadable ─────────────────────────────────────────────────────
 
+
 class TestCheckFileUnreadable:
     def test_unreadable_file_produces_error(self, tmp_path):
         missing = tmp_path / "missing.md"
@@ -110,6 +112,7 @@ class TestCheckFileUnreadable:
 
 
 # ── check_file: missing sections ──────────────────────────────────────────────
+
 
 class TestMissingSections:
     def test_missing_summary(self, tmp_path):
@@ -142,6 +145,7 @@ class TestMissingSections:
 
 
 # ── check_file: summary count mismatch ────────────────────────────────────────
+
 
 class TestSummaryMismatch:
     def test_wrong_open_count(self, tmp_path):
@@ -183,6 +187,7 @@ class TestSummaryMismatch:
 
 
 # ── check_file: ID uniqueness ──────────────────────────────────────────────────
+
 
 class TestIdUniqueness:
     def test_duplicate_id_in_open(self, tmp_path):
@@ -272,6 +277,7 @@ Last validated: 2026-01-01
 
 # ── check_file: pass header enforcement ───────────────────────────────────────
 
+
 class TestPassHeaders:
     def test_fixed_without_pass_header_errors(self, tmp_path):
         content = """\
@@ -328,6 +334,7 @@ Last validated: 2026-01-01
 
 # ── check_file: header level jumps ────────────────────────────────────────────
 
+
 class TestHeaderLevelJumps:
     def test_header_jump_h2_to_h4_errors(self, tmp_path):
         content = """\
@@ -365,6 +372,7 @@ class TestHeaderLevelJumps:
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
+
 
 class TestMain:
     def test_main_with_explicit_valid_file(self, tmp_path, capsys, monkeypatch):
