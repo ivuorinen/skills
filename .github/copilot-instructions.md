@@ -12,6 +12,7 @@ and is versioned with semantic versioning using release-please automation.
 skills/                    # Public skills (shipped with the plugin)
   <skill-name>/
     SKILL.md               # Skill definition (YAML frontmatter + prompt body)
+    <tool>.py              # (optional) bundled executable script for the skill
 .claude/
   skills/                  # Internal/dev skills (used during development only)
     <skill-name>/
@@ -47,15 +48,15 @@ Every `SKILL.md` **must** start with YAML frontmatter:
 ```yaml
 ---
 name: skill-name
-description: Use when [triggering conditions and symptoms].
+description: '<Capability summary sentence>. Use when <triggering conditions>.'
 ---
 ```
 
 Validation checks and repository guidance from `scripts/validate-skill.py` (and CI):
 
 - `name` must match the **directory name exactly** (kebab-case)
-- `description` must start with `"Use when"` — describes triggering conditions, not what the skill does
-- `description` must be ≤ 500 characters
+- `description` must contain `"Use when"` (trigger clause); recommended format: `"<capability summary>. Use when <trigger conditions>."`
+- `description` must be ≤ 1024 characters
 - Header levels in the body must not skip (e.g., h2 → h4 is an error)
 - Do not reference legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
   instead; `scripts/validate-skill.py` currently warns on these references

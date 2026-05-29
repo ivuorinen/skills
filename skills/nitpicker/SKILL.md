@@ -103,6 +103,16 @@ and layering violations not covered by arch-auditor.
 8. Ask: "Commit findings to git? (y/n)" — never commit silently
 ```
 
+## Utility scripts
+
+**check-audit-consistency.py**: Validate `docs/audit/*-findings.md` files for structural consistency.
+
+```bash
+uv run --quiet check-audit-consistency.py [<findings-file>...]
+```
+
+Checks: required sections present, Summary counts match actual findings, IDs unique and not reused, Fixed/Invalid under `### Pass N — YYYY-MM-DD` headers, no header-level jumps. Run before Step 2 re-validation to surface structural issues programmatically.
+
 ## Fix Strategy
 
 When applying fixes:

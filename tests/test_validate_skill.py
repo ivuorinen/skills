@@ -37,7 +37,11 @@ def _has(items: list[str], fragment: str) -> bool:
     return any(fragment in item for item in items)
 
 
-VALID = "---\nname: my-skill\ndescription: Performs a test action. Use when testing this skill.\n---\n\n## Overview\n\nBody.\n"
+VALID = (
+    "---\nname: my-skill\n"
+    "description: Performs a test action. Use when testing this skill.\n"
+    "---\n\n## Overview\n\nBody.\n"
+)
 
 
 class TestValidate:
@@ -60,7 +64,11 @@ class TestValidate:
         assert _has(_errors(tmp_path, text), "'Use when'")
 
     def test_description_capability_prefix_with_use_when_passes(self, tmp_path):
-        text = "---\nname: my-skill\ndescription: Analyzes code and finds bugs. Use when reviewing a PR.\n---\nbody\n"
+        text = (
+            "---\nname: my-skill\n"
+            "description: Analyzes code and finds bugs. Use when reviewing a PR.\n"
+            "---\nbody\n"
+        )
         assert _errors(tmp_path, text) == []
 
     def test_description_too_long(self, tmp_path):
@@ -69,16 +77,25 @@ class TestValidate:
         assert _has(_errors(tmp_path, text), "must be ≤1024")
 
     def test_description_unquoted_colon_space_errors(self, tmp_path):
-        text = "---\nname: my-skill\ndescription: Use when the task requires: deep inspection\n---\nbody\n"
+        text = (
+            "---\nname: my-skill\n"
+            "description: Use when the task requires: deep inspection\n---\nbody\n"
+        )
         assert _has(_errors(tmp_path, text), "contains ': '")
 
     def test_description_single_quoted_colon_space_ok(self, tmp_path):
-        text = "---\nname: my-skill\ndescription: 'Use when the task requires: deep inspection'\n---\nbody\n"
+        text = (
+            "---\nname: my-skill\n"
+            "description: 'Use when the task requires: deep inspection'\n---\nbody\n"
+        )
         assert not _has(_errors(tmp_path, text), "contains ': '")
 
     def test_description_double_quoted_colon_space_errors(self, tmp_path):
         # Convention is single quotes; double-quoted values must also be flagged
-        text = '---\nname: my-skill\ndescription: "Use when the task requires: deep inspection"\n---\nbody\n'
+        text = (
+            "---\nname: my-skill\n"
+            'description: "Use when the task requires: deep inspection"\n---\nbody\n'
+        )
         assert _has(_errors(tmp_path, text), "contains ': '")
 
     def test_name_mismatch_errors(self, tmp_path):
@@ -103,5 +120,9 @@ class TestValidate:
 
     def test_body_too_long_warns(self, tmp_path):
         long_body = "\n".join(["Line." for _ in range(502)])
-        text = f"---\nname: my-skill\ndescription: Does something. Use when needed.\n---\n\n{long_body}\n"
+        text = (
+            "---\nname: my-skill\n"
+            "description: Does something. Use when needed.\n---\n\n"
+            f"{long_body}\n"
+        )
         assert _has(_warnings(tmp_path, text), "500")

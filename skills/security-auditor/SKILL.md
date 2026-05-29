@@ -216,6 +216,16 @@ If output is empty or not valid JSON (regardless of exit code): record as "Error
 
 Parse `$pnpm_out`: `.advisories` (object, keyed by advisory ID) → each has `.severity`, `.title`, `.module_name`, `.patched_versions`, `.overview`.
 
+## Utility scripts
+
+**process-sarif.py**: Parse SARIF 2.1.0 output, deduplicate findings, and group by severity and tool.
+
+```bash
+uv run --quiet process-sarif.py <sarif-file> [<sarif-file>...]
+```
+
+Outputs JSON with `meta` (counts), `by_severity`, `by_tool`, and `findings` arrays. Deduplicates by `(tool + rule_id + uri + start_line)` fingerprint. Normalizes severity using CVSS `security-severity` property first, then SARIF `level`. Use after step 5 (run tools) to consolidate multi-tool SARIF output before writing the findings report.
+
 ## Severity Mapping
 
 Normalize all tool-specific severities to the standard five levels:

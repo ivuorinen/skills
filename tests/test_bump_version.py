@@ -57,7 +57,7 @@ class TestBumpVersion:
 class TestUpdateToml:
     def _run(self, tmp_path, toml_content, new_version):
         mod = _load_mod()
-        setattr(mod, "REPO_ROOT", tmp_path)
+        mod.REPO_ROOT = tmp_path
         (tmp_path / "pyproject.toml").write_text(toml_content, encoding="utf-8")
         mod.update_toml("pyproject.toml", new_version)
         return (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
@@ -86,7 +86,7 @@ class TestUpdateToml:
 
     def test_missing_project_version_exits(self, tmp_path):
         mod = _load_mod()
-        setattr(mod, "REPO_ROOT", tmp_path)
+        mod.REPO_ROOT = tmp_path
         toml = '[build-system]\nrequires = ["setuptools"]\n'
         (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
         with patch.object(sys, "exit") as mock_exit:

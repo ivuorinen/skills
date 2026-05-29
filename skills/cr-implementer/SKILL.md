@@ -199,6 +199,16 @@ Post replies immediately on confirmation — no push is needed because no code c
 
 Results are presented inline to the user. No findings file is written. Replies are drafted locally and posted to GitHub PR threads only after the user confirms in Step 6.
 
+## Utility scripts
+
+**fetch-pr-comments.py**: Fetch unresolved review threads from a GitHub PR.
+
+```bash
+uv run --quiet fetch-pr-comments.py <owner>/<repo> <pr_number>
+```
+
+Outputs a JSON array of thread objects. Use this in Step 2 instead of running `gh` commands manually. GraphQL is attempted first (gives `isResolved`); falls back to REST via `gh` CLI or `GITHUB_TOKEN`.
+
 ## Fix Strategy
 
 - **One comment → one fix → one validation cycle.** Never batch multiple comments before running the check.

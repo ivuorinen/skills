@@ -10,8 +10,8 @@ help:
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
-	@echo "  lint         — ruff check on scripts/"
-	@echo "  format       — ruff format on scripts/"
+	@echo "  lint         — ruff check on scripts/, tests/, skills/"
+	@echo "  format       — ruff format on scripts/, tests/, skills/"
 	@echo "  list         — list all skills with descriptions"
 	@echo "  test         — run pytest unit tests"
 	@echo "  bump-patch   — bump patch version"
@@ -37,10 +37,10 @@ test:
 	uv run --with pytest pytest tests/
 
 lint:
-	uv run ruff check scripts/
+	uv run ruff check scripts/ tests/ skills/
 
 format:
-	uv run ruff format scripts/
+	uv run ruff format scripts/ tests/ skills/
 
 bump-patch:
 	$(UV) scripts/bump-version.py patch
