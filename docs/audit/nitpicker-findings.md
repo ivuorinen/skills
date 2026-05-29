@@ -5,6 +5,8 @@ Last validated: 2026-05-29
 ## Summary
 - Total: 101 | Open: 1 | Fixed: 99 | Invalid: 1
 
+## Open Findings
+
 ### Advisory
 
 #### [N-090] `claude-rules-auditor` skill name contains reserved word "claude"

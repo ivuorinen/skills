@@ -86,13 +86,14 @@ def _gh_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
 
 def _gh_rest_paginate(path: str) -> list[Any]:
     result = subprocess.run(
-        ["gh", "api", "--paginate", path],
+        ["gh", "api", "--paginate", "--slurp", path],
         capture_output=True,
         timeout=60,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.decode().strip())
-    return json.loads(result.stdout)
+    pages: list[list[Any]] = json.loads(result.stdout)
+    return [item for page in pages for item in page]
 
 
 def _token_rest_paginate(base_url: str, token: str) -> list[Any]:

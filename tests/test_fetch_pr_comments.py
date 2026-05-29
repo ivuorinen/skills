@@ -86,11 +86,30 @@ class TestGhGraphql:
 
 
 class TestGhRestPaginate:
-    def test_success_returns_parsed_json(self):
-        data = [{"id": 1}, {"id": 2}]
-        with patch("subprocess.run", return_value=_proc(stdout=json.dumps(data).encode())):
+    def test_success_single_page_flattened(self):
+        # --slurp wraps each page in outer array: [[item1, item2]]
+        page = [{"id": 1}, {"id": 2}]
+        slurp_output = json.dumps([page]).encode()
+        with patch("subprocess.run", return_value=_proc(stdout=slurp_output)):
             result = _gh_rest_paginate("repos/o/r/pulls/1/comments")
-        assert result == data
+        assert result == page
+
+    def test_success_multi_page_flattened(self):
+        # Two pages: [[item1], [item2, item3]] → [item1, item2, item3]
+        page1 = [{"id": 1}]
+        page2 = [{"id": 2}, {"id": 3}]
+        slurp_output = json.dumps([page1, page2]).encode()
+        with patch("subprocess.run", return_value=_proc(stdout=slurp_output)):
+            result = _gh_rest_paginate("repos/o/r/pulls/1/comments")
+        assert result == [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    def test_uses_slurp_flag(self):
+        page = [{"id": 1}]
+        slurp_out = json.dumps([page]).encode()
+        with patch("subprocess.run", return_value=_proc(stdout=slurp_out)) as mock_run:
+            _gh_rest_paginate("repos/o/r/pulls/1/comments")
+        cmd = mock_run.call_args[0][0]
+        assert "--slurp" in cmd
 
     def test_nonzero_raises_runtime_error(self):
         with (
