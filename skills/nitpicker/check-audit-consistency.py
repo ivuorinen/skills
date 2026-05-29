@@ -47,7 +47,13 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
 
     # Required h2 sections
     h2_sections = set()
+    in_fence = False
     for line in lines:
+        stripped = line.rstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
         m = re.match(r"^##\s+(.*)", line)
         if m:
             h2_sections.add(m.group(1).strip())
@@ -69,8 +75,14 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
     ids_invalid: list[str] = []
     in_open = in_fixed = in_invalid = False
     under_pass_fixed = under_pass_invalid = False
+    in_fence = False
 
     for lineno, line in enumerate(lines, 1):
+        stripped = line.rstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        if in_fence:
+            continue
         h2 = re.match(r"^##\s+(.*)", line)
         if h2:
             name = h2.group(1).strip()

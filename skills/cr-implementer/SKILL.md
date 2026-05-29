@@ -89,7 +89,6 @@ Fetch all inline review comments from the PR using the method chosen in Step 1:
             id
             isResolved
             comments(first: 50) {
-              pageInfo { hasNextPage endCursor }
               nodes { id body path diffHunk createdAt author { login } }
             }
           }
@@ -98,7 +97,9 @@ Fetch all inline review comments from the PR using the method chosen in Step 1:
     }
   }
   ```
-  If `pageInfo.hasNextPage` is true, re-query with `reviewThreads(first: 100, after: "{endCursor}")` (and similarly for `comments`) until `hasNextPage` is false.
+  If `pageInfo.hasNextPage` is true, re-query with `reviewThreads(first: 100, after: "{endCursor}")` until `hasNextPage` is false.
+
+  **Note:** `comments(first: 50)` is not paginated — threads with more than 50 comments are truncated to the first 50. This is an accepted limitation; PR review threads with >50 comments are outside the normal use case for this tool.
 
   GraphQL `reviewThreads` exposes `isResolved` — use it to skip already-resolved threads.
 

@@ -367,8 +367,18 @@ class TestHeaderLevelJumps:
         f = tmp_path / "x-findings.md"
         f.write_text(content, encoding="utf-8")
         errors, _ = _run(f)
-        # The fence content may affect counts but not cause header-jump error
         assert not _has(errors, "header jumps")
+
+    def test_finding_id_inside_fence_not_counted(self, tmp_path):
+        content = VALID_NO_FINDINGS.replace(
+            "## Open Findings\n",
+            "## Open Findings\n\n```\n#### [N-001] Fenced finding\n```\n\n",
+        )
+        f = tmp_path / "x-findings.md"
+        f.write_text(content, encoding="utf-8")
+        errors, _ = _run(f)
+        assert not _has(errors, "Summary Open:")
+        assert not _has(errors, "duplicate ID")
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
