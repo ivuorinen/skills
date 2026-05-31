@@ -240,7 +240,7 @@ def _ensure_pass_header(
         return lines  # h3 comes first — structure is fine
     # Orphaned h4s found — determine date from first Fixed: line, then fall back
     date = fallback_date
-    for ln in stripped[:first_h4 + 5]:
+    for ln in stripped[: first_h4 + 5]:
         m = _DATE_FROM_FIXED.match(ln)
         if m:
             date = m.group(1)
@@ -261,8 +261,18 @@ def _ensure_pass_header(
 
 
 # Patterns like "### 2026-04-26, third pass" or "### 2026-04-24, first pass"
-_ORDINAL_TO_N = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
-                 "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10}
+_ORDINAL_TO_N = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
 _OLD_H3 = re.compile(r"^### (\d{4}-\d{2}-\d{2}),?\s+(\w+)\s+pass\s*$", re.IGNORECASE)
 
 

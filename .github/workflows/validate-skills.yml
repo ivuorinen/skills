@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'skills/**/SKILL.md'
+      - 'skills/**/*.py'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/**'
       - 'tests/**'
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - 'skills/**/SKILL.md'
+      - 'skills/**/*.py'
       - '.claude/skills/**/SKILL.md'
       - 'scripts/**'
       - 'tests/**'
@@ -50,4 +52,7 @@ jobs:
         run: uv run --with pytest pytest tests/
 
       - name: Lint scripts
-        run: uv run --with ruff ruff check scripts/
+        run: uv run --with ruff ruff check scripts/ tests/ skills/
+
+      - name: Check script formatting
+        run: uv run --with ruff ruff format --check scripts/ tests/ skills/

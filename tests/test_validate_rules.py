@@ -32,7 +32,7 @@ def _has(items: list[str], fragment: str) -> bool:
 
 
 VALID_PLAIN = "# No Commits\n\nNever run `git commit` without explicit user instruction.\n"
-VALID_SCOPED = "---\npaths:\n  - \"src/**/*.ts\"\n---\n\nAlways add explicit return types.\n"
+VALID_SCOPED = '---\npaths:\n  - "src/**/*.ts"\n---\n\nAlways add explicit return types.\n'
 
 
 class TestValidate:
@@ -62,16 +62,16 @@ class TestValidate:
         assert _has(_errors(tmp_path, content), "must be a list")
 
     def test_empty_glob_string_errors(self, tmp_path):
-        content = "---\npaths:\n  - \"\"\n---\n\nBody.\n"
+        content = '---\npaths:\n  - ""\n---\n\nBody.\n'
         assert _has(_errors(tmp_path, content), "empty glob string")
 
     def test_absolute_glob_errors(self, tmp_path):
-        content = "---\npaths:\n  - \"/src/**/*.ts\"\n---\n\nBody.\n"
+        content = '---\npaths:\n  - "/src/**/*.ts"\n---\n\nBody.\n'
         assert _has(_errors(tmp_path, content), "must be relative")
 
     def test_invalid_glob_no_match_warns(self, tmp_path):
         # Python's Path.glob() is lenient — [unclosed matches nothing → stale WARN
-        content = "---\npaths:\n  - \"[unclosed\"\n---\n\nBody.\n"
+        content = '---\npaths:\n  - "[unclosed"\n---\n\nBody.\n'
         errors, warnings = _run(tmp_path, content)
         assert errors == []
         assert _has(warnings, "stale")
@@ -83,13 +83,13 @@ class TestValidate:
         assert _has(warnings, "stale")
 
     def test_body_empty_after_frontmatter_warns(self, tmp_path):
-        content = "---\npaths:\n  - \"src/**/*.ts\"\n---\n\n"
+        content = '---\npaths:\n  - "src/**/*.ts"\n---\n\n'
         errors, warnings = _run(tmp_path, content)
         assert errors == []
         assert _has(warnings, "empty")
 
     def test_unclosed_frontmatter_errors(self, tmp_path):
-        content = "---\npaths:\n  - \"src/**/*.ts\"\n"
+        content = '---\npaths:\n  - "src/**/*.ts"\n'
         assert _has(_errors(tmp_path, content), "never closed")
 
     def test_dangling_symlink_errors(self, tmp_path):
@@ -117,7 +117,7 @@ class TestValidate:
         ts_dir = tmp_path / "src"
         ts_dir.mkdir()
         (ts_dir / "app.ts").write_text("export const x = 1;", encoding="utf-8")
-        content = "---\npaths:\n  - \"src/**/*.ts\"\n---\n\nAlways add explicit return types.\n"
+        content = '---\npaths:\n  - "src/**/*.ts"\n---\n\nAlways add explicit return types.\n'
         errors, warnings = _run(tmp_path, content)
         assert errors == []
         assert not _has(warnings, "stale")

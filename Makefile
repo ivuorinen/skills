@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync lint format list test help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync lint format format-check list test help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,19 +6,20 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + lint + test (default)"
+	@echo "  check        — validate + validate-rules + version-sync + lint + format-check + test (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
-	@echo "  lint         — ruff check on scripts/"
-	@echo "  format       — ruff format on scripts/"
+	@echo "  lint         — ruff check on scripts/, tests/, skills/"
+	@echo "  format       — ruff format on scripts/, tests/, skills/"
+	@echo "  format-check — ruff format --check (CI-safe, no writes)"
 	@echo "  list         — list all skills with descriptions"
 	@echo "  test         — run pytest unit tests"
 	@echo "  bump-patch   — bump patch version"
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync lint test
+check: validate validate-rules version-sync lint format-check test
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -37,10 +38,13 @@ test:
 	uv run --with pytest pytest tests/
 
 lint:
-	uv run ruff check scripts/
+	uv run ruff check scripts/ tests/ skills/
 
 format:
-	uv run ruff format scripts/
+	uv run ruff format scripts/ tests/ skills/
+
+format-check:
+	uv run ruff format --check scripts/ tests/ skills/
 
 bump-patch:
 	$(UV) scripts/bump-version.py patch

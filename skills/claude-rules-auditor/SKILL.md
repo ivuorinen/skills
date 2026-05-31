@@ -136,6 +136,16 @@ If no artifacts exist at all, run `arch-detector` first — it is the highest-yi
    Never stage or commit findings silently.
 ```
 
+## Utility scripts
+
+**check-rules-anatomy.py**: Check `.claude/rules/` files for good rule file anatomy.
+
+```bash
+uv run --quiet check-rules-anatomy.py [<project_root>]
+```
+
+Outputs JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. Use in Process step 2 to get a programmatic report before writing findings.
+
 ## Rule Classification Reference
 
 **Move to `.claude/rules/`** — atomic behavioral mandates for Claude's conduct:

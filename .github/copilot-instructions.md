@@ -12,6 +12,7 @@ and is versioned with semantic versioning using release-please automation.
 skills/                    # Public skills (shipped with the plugin)
   <skill-name>/
     SKILL.md               # Skill definition (YAML frontmatter + prompt body)
+    <tool>.py              # (optional) bundled executable script for the skill
 .claude/
   skills/                  # Internal/dev skills (used during development only)
     <skill-name>/
@@ -47,15 +48,15 @@ Every `SKILL.md` **must** start with YAML frontmatter:
 ```yaml
 ---
 name: skill-name
-description: Use when [triggering conditions and symptoms].
+description: '<Capability summary sentence>. Use when <triggering conditions>.'
 ---
 ```
 
 Validation checks and repository guidance from `scripts/validate-skill.py` (and CI):
 
 - `name` must match the **directory name exactly** (kebab-case)
-- `description` must start with `"Use when"` — describes triggering conditions, not what the skill does
-- `description` must be ≤ 500 characters
+- `description` must contain `"Use when"` (trigger clause); recommended format: `"<capability summary>. Use when <trigger conditions>."`
+- `description` must be ≤ 1024 characters
 - Header levels in the body must not skip (e.g., h2 → h4 is an error)
 - Do not reference legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
   instead; `scripts/validate-skill.py` currently warns on these references
@@ -83,9 +84,8 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
    `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
    Also update `README.md` (it always contains a mirrored skills table) and update the Skill
    Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`.
-3. Run `make validate` to confirm the new skill passes validation
-4. Run `/pr-reviewer` and fix all findings; repeat until `pr-reviewer` reports no findings
-5. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
+3. Run `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip this; it enforces the TDD baseline and rationalization protection.
+4. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
 
@@ -95,13 +95,14 @@ make validate       # SKILL.md frontmatter + structure only
 make validate-rules # validate .claude/rules/ files (structure + path freshness)
 make test           # run pytest unit tests for scripts/
 make version-sync   # version consistency across manifests
-make lint           # ruff check on scripts/
+make lint           # ruff check on scripts/, tests/, skills/
 make list           # print all skills with descriptions
 ```
 
-CI runs five steps on every push/PR that touches a relevant path: validate-skill (twice — public and internal
-skills), validate-rules, check-version-sync, `pytest tests/`, and `ruff check scripts/`. Trigger paths include
-`skills/**/SKILL.md`, `.claude/skills/**/SKILL.md`, `scripts/**`, `tests/**`, `.claude/rules/**`, and all
+CI runs six steps on every push/PR that touches a relevant path: validate-skill (twice — public and internal
+skills), validate-rules, check-version-sync, `pytest tests/`, `ruff check scripts/ tests/ skills/`, and
+`ruff format --check scripts/ tests/ skills/`. Trigger paths include `skills/**/SKILL.md`,
+`skills/**/*.py`, `.claude/skills/**/SKILL.md`, `scripts/**`, `tests/**`, `.claude/rules/**`, and all
 five version manifest files.
 
 ## Versioning — Five Files Must Stay in Sync

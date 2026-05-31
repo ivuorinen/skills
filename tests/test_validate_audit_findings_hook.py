@@ -86,11 +86,7 @@ class TestEnsurePassHeader:
         ]
         msgs: list[str] = []
         result = ensure_pass_header(lines, msgs, "Fixed", "2026-01-05")
-        pass_nums = [
-            int(m.group(1))
-            for ln in result
-            if (m := re.match(r"^### Pass (\d+)", ln))
-        ]
+        pass_nums = [int(m.group(1)) for ln in result if (m := re.match(r"^### Pass (\d+)", ln))]
         assert len(pass_nums) == len(set(pass_nums)), f"Duplicate pass numbers: {pass_nums}"
 
 

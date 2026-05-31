@@ -57,7 +57,7 @@ class TestBumpVersion:
 class TestUpdateToml:
     def _run(self, tmp_path, toml_content, new_version):
         mod = _load_mod()
-        setattr(mod, "REPO_ROOT", tmp_path)
+        mod.REPO_ROOT = tmp_path
         (tmp_path / "pyproject.toml").write_text(toml_content, encoding="utf-8")
         mod.update_toml("pyproject.toml", new_version)
         return (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
@@ -68,25 +68,19 @@ class TestUpdateToml:
         assert 'version = "2.0.0"' in result
 
     def test_tool_section_version_untouched(self, tmp_path):
-        toml = (
-            '[project]\nname = "foo"\nversion = "1.0.0"\n\n'
-            '[tool.poetry]\nversion = "9.9.9"\n'
-        )
+        toml = '[project]\nname = "foo"\nversion = "1.0.0"\n\n[tool.poetry]\nversion = "9.9.9"\n'
         result = self._run(tmp_path, toml, "2.0.0")
         assert 'version = "2.0.0"' in result
         assert 'version = "9.9.9"' in result
 
     def test_project_after_other_section_found(self, tmp_path):
-        toml = (
-            '[build-system]\nrequires = ["setuptools"]\n\n'
-            '[project]\nversion = "1.0.0"\n'
-        )
+        toml = '[build-system]\nrequires = ["setuptools"]\n\n[project]\nversion = "1.0.0"\n'
         result = self._run(tmp_path, toml, "3.0.0")
         assert 'version = "3.0.0"' in result
 
     def test_missing_project_version_exits(self, tmp_path):
         mod = _load_mod()
-        setattr(mod, "REPO_ROOT", tmp_path)
+        mod.REPO_ROOT = tmp_path
         toml = '[build-system]\nrequires = ["setuptools"]\n'
         (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
         with patch.object(sys, "exit") as mock_exit:
