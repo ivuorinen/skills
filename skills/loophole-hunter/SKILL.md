@@ -17,7 +17,7 @@ This is not `claude-rules-auditor`. That skill checks whether rules are well-for
 - A new rule, hook, skill, or settings change was added and you want to confirm it actually binds
 - Before a release, to prove the enforcement surface has no silent gaps
 - When asked to "close the loopholes", "harden the Claude Code setup", or "find ways our rules can be bypassed"
-- Invoked by `nitpicker` in `loophole` mode
+- Invoked by `nitpicker` in `loophole` mode, or by `release-prep` as a release gate
 
 **When NOT to use:** For rule *quality and placement* (kebab-case, grab-bags, misplaced CLAUDE.md rules), use `claude-rules-auditor`. For application source security, use `security-auditor`.
 

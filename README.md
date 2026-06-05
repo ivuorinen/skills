@@ -17,7 +17,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`pr-reviewer`][pr-reviewer] | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | [`cr-implementer`][cr-implementer] | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, and asks user whether to leave/commit/push |
 | [`claude-rules-auditor`][claude-rules-auditor] | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
-| [`loophole-hunter`][loophole-hunter] | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode |
+| [`loophole-hunter`][loophole-hunter] | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
 
 ## Installation
 

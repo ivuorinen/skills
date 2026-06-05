@@ -7,7 +7,7 @@ Hostile audit of a Claude Code project's enforcement surface — `.claude/rules/
 - "Close the loopholes" / "harden the Claude Code setup" / "find ways our rules can be bypassed"
 - After adding a rule, hook, skill, or settings change, to confirm it actually binds
 - Before a release, to prove the enforcement surface has no silent gaps
-- When invoked by [nitpicker] in `loophole` mode
+- When invoked by [nitpicker] in `loophole` mode or by `release-prep` as a release gate
 
 **When NOT to use:**
 - Rule *quality and placement* (kebab-case, grab-bags, misplaced CLAUDE.md rules) → use [claude-rules-auditor]
