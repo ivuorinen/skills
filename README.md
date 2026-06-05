@@ -17,6 +17,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`pr-reviewer`][pr-reviewer] | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
 | [`cr-implementer`][cr-implementer] | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, and asks user whether to leave/commit/push |
 | [`claude-rules-auditor`][claude-rules-auditor] | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
+| [`loophole-hunter`][loophole-hunter] | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode |
 
 ## Installation
 
@@ -45,6 +46,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/pr-reviewer` — PR review (stdout only)
 - `/cr-implementer` — implement PR review comments
 - `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
+- `/loophole-hunter` — audit the Claude Code enforcement surface and close loopholes
 
 ## Examples
 
@@ -154,5 +156,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [pr-reviewer]: skills/pr-reviewer/README.md
 [cr-implementer]: skills/cr-implementer/README.md
 [claude-rules-auditor]: skills/claude-rules-auditor/README.md
+[loophole-hunter]: skills/loophole-hunter/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
