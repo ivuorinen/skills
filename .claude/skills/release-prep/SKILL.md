@@ -64,7 +64,15 @@ Run `/loophole-hunter`. This audits the repository's own Claude Code enforcement
 `SKILL.md`) for bypassable or unenforced constraints. If any Critical or High finding
 remains open after fixes are applied: stop. Report the findings. Do not proceed.
 
-## Step 7 — Verify Conventional Commits
+## Step 7 — Hook Coverage
+
+Run `/hooks-enforcer`. This audits hook *coverage* against the repository's evidence base
+(current hook wiring, the `docs/audit/*-findings.md` history, git history, and project
+memory) for recurring failures no hook guards and context-discipline gaps where large-output
+work bypasses a context-saving tool. If any Critical or High finding remains open after fixes
+are applied: stop. Report the findings. Do not proceed.
+
+## Step 8 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -94,7 +102,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 8 — Confirm CI Is Green
+## Step 9 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -113,6 +121,7 @@ Steps completed:
   [✓] arch-auditor — no Critical/High findings
   [✓] nitpicker release-gate — no Critical/High findings
   [✓] loophole-hunter — no Critical/High enforcement-surface findings
+  [✓] hooks-enforcer — no Critical/High hook-coverage findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

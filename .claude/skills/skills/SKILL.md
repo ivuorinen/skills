@@ -27,6 +27,7 @@ Lists and invokes the public skills in this repository.
 | `cr-implementer` | `/cr-implementer` | Fetch GitHub PR review comments (unresolved where available via GraphQL), evaluate, implement valid ones with validation, ask user to leave/commit/push |
 | `claude-rules-auditor` | `/claude-rules-auditor` | Audit `.claude/rules/` files for quality, check CLAUDE.md for misplaced rules, suggest new rules from project conventions |
 | `loophole-hunter` | `/loophole-hunter` | Audit the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable or unenforced constraints and close them |
+| `hooks-enforcer` | `/hooks-enforcer` | Audit hook *coverage* against the project's evidence base (findings history, git, memory); find recurring failures no hook guards and context-discipline gaps; specify and wire the missing hooks in the harness's correct shape |
 
 ## Routing Guide
 
@@ -42,6 +43,7 @@ If the user says… → invoke this skill:
 - "implement cr comments / fix review feedback / address pr comments" → `/cr-implementer`
 - "audit rules / check .claude/rules / rules placement / CLAUDE.md rules" → `/claude-rules-auditor`
 - "close loopholes / harden the Claude Code setup / find ways our rules can be bypassed" → `/loophole-hunter`
+- "enforce hooks / harden hook coverage / add the hooks we keep needing / make sure context-mode is used" → `/hooks-enforcer`
 
 ## Rules
 

@@ -108,6 +108,7 @@ Finding ID format: `LH-NNN` (zero-padded to 3 digits). IDs are assigned sequenti
 ## Related Skills
 
 - [nitpicker] — invokes this skill in `loophole` mode and incorporates its open Critical/High findings
+- [hooks-enforcer] — the complementary skill: this one audits existing constraints for *evasion*; hooks-enforcer audits the evidence base for *missing* hooks and context-discipline gaps
 - [claude-rules-auditor] — checks rule *quality and placement*; this skill checks rule *enforceability*
 - [security-auditor] — application-source security; complementary surface
 
@@ -115,5 +116,6 @@ Finding ID format: `LH-NNN` (zero-padded to 3 digits). IDs are assigned sequenti
 
 [skill-source]: SKILL.md
 [nitpicker]: ../nitpicker/README.md
+[hooks-enforcer]: ../hooks-enforcer/README.md
 [claude-rules-auditor]: ../claude-rules-auditor/README.md
 [security-auditor]: ../security-auditor/README.md

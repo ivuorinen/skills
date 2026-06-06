@@ -32,6 +32,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`cr-implementer`][cr-implementer] | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
 | [`claude-rules-auditor`][claude-rules-auditor] | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
 | [`loophole-hunter`][loophole-hunter] | Leaf — audits the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable constraints; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/loophole-hunter-findings.md` |
+| [`hooks-enforcer`][hooks-enforcer] | Leaf — audits hook *coverage* against the project's evidence base (findings history, git, memory) for recurring failures no hook guards and context-discipline gaps; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/hooks-enforcer-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -62,6 +63,7 @@ graph TD
         CRI[cr-implementer]
         CRA[claude-rules-auditor]
         LH[loophole-hunter]
+        HE[hooks-enforcer]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -72,6 +74,7 @@ graph TD
         NF[nitpicker-findings.md]
         CRF[claude-rules-auditor-findings.md]
         LHF[loophole-hunter-findings.md]
+        HEF[hooks-enforcer-findings.md]
     end
 
     %% arch chain
@@ -96,6 +99,9 @@ graph TD
     %% loophole-hunter writes its own findings
     LH -->|writes| LHF
 
+    %% hooks-enforcer writes its own findings
+    HE -->|writes| HEF
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -103,6 +109,7 @@ graph TD
     NP -->|architecture mode: invokes| AD
     NP -->|architecture mode: invokes| AA
     NP -->|loophole mode: invokes| LH
+    NP -->|loophole mode: invokes| HE
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -118,6 +125,7 @@ graph TD
     RP -->|invokes| AA
     RP -->|invokes| NP
     RP -->|invokes| LH
+    RP -->|invokes| HE
 
     %% router
     SK -.->|routes to| AR
@@ -130,6 +138,7 @@ graph TD
     SK -.->|routes to| CRI
     SK -.->|routes to| CRA
     SK -.->|routes to| LH
+    SK -.->|routes to| HE
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -209,7 +218,10 @@ flowchart TD
     I2 -->|No| LHG[loophole-hunter\nenforcement surface]
     LHG --> LHG2{Critical/High\nfindings?}
     LHG2 -->|Yes — stop| STOP6b([Stop: report loophole findings])
-    LHG2 -->|No| J[conventional commits\nrelease-please can generate notes]
+    LHG2 -->|No| HEG[hooks-enforcer\nhook coverage]
+    HEG --> HEG2{Critical/High\nfindings?}
+    HEG2 -->|Yes — stop| STOP6c([Stop: report hook-coverage findings])
+    HEG2 -->|No| J[conventional commits\nrelease-please can generate notes]
     J --> J2{Commits\ninvalid?}
     J2 -->|Yes — stop| STOP7([Stop: fix commit messages for release-please])
     J2 -->|No| K[CI green check\nvalidate-skills.yml passes]
@@ -257,6 +269,7 @@ flowchart TD
     R -->|"implement cr comments / fix review feedback"| CRI[cr-implementer]
     R -->|"audit rules / check .claude/rules / CLAUDE.md rules"| CRA[claude-rules-auditor]
     R -->|"close loopholes / harden the Claude Code setup"| LH[loophole-hunter]
+    R -->|"enforce hooks / harden hook coverage / use context-mode"| HE[hooks-enforcer]
 ```
 
 ---
@@ -284,6 +297,7 @@ graph LR
         CRI[cr-implementer]
         CRA[claude-rules-auditor]
         LH[loophole-hunter]
+        HE[hooks-enforcer]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -300,12 +314,14 @@ graph LR
     RP --> AA
     RP --> NP
     RP --> LH
+    RP --> HE
 
     NP -->|architecture mode| AA
     NP -->|architecture mode| AD
     NP -->|docs mode| DA
     NP -->|security mode| SA
     NP -->|loophole mode| LH
+    NP -->|loophole mode| HE
 ```
 
 [nitpicker] in focused modes delegates to the matching specialist skill before
@@ -377,6 +393,7 @@ When adding a new skill, verify:
 | [`cr-implementer`][cr-implementer] | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
 | [`claude-rules-auditor`][claude-rules-auditor] | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
 | [`loophole-hunter`][loophole-hunter] | `.claude/rules/**`, hook scripts, `.claude/settings.json` + `.claude/settings.local.json` (hooks, permissions, excludes), all `SKILL.md` files | `docs/audit/loophole-hunter-findings.md` |
+| [`hooks-enforcer`][hooks-enforcer] | `.claude/settings.json` + `.claude/settings.local.json` hooks, hook scripts, `docs/audit/*-findings.md` history, git history, project memory, available context-saving tools, harness markers | `docs/audit/hooks-enforcer-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -393,3 +410,4 @@ When adding a new skill, verify:
 [cr-implementer]: ../../skills/cr-implementer/README.md
 [claude-rules-auditor]: ../../skills/claude-rules-auditor/README.md
 [loophole-hunter]: ../../skills/loophole-hunter/README.md
+[hooks-enforcer]: ../../skills/hooks-enforcer/README.md
