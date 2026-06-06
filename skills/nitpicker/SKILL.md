@@ -52,7 +52,7 @@ Nitpicker must analyze:
 | tests | Focus on test quality |
 | docs | Invoke `/doc-auditor`; incorporate its findings; focus remaining review on documentation accuracy and completeness |
 | architecture | Invoke `/arch-detector` (if `docs/audit/arch-profile.md` is absent or stale), then invoke `/arch-auditor`; incorporate its findings; focus remaining review on design and boundary violations |
-| loophole | Invoke `/loophole-hunter`; incorporate its findings; focus remaining review on the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) |
+| loophole | Invoke `/loophole-hunter` and `/hooks-enforcer`; incorporate both findings sets; focus remaining review on the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) and on hook coverage |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
 
 ### Mode delegation detail
@@ -85,12 +85,14 @@ Then run `/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes.
 Incorporate all open Critical/High findings. Extend with module coupling analysis
 and layering violations not covered by arch-auditor.
 
-In `loophole` mode (without `inline`), run `/loophole-hunter` first. Read
-`docs/audit/loophole-hunter-findings.md` after it completes. Incorporate all open
-Critical/High findings (deduplicated by area and problem statement). Do not re-run its
-enforcement-path traces; extend the review with code-level analysis of the hook scripts
-and skills themselves (logic correctness, error handling) that loophole-hunter does not
-cover.
+In `loophole` mode (without `inline`), run `/loophole-hunter` and `/hooks-enforcer`. Read
+`docs/audit/loophole-hunter-findings.md` and `docs/audit/hooks-enforcer-findings.md` after
+they complete. Incorporate all open Critical/High findings from both (deduplicated by area
+and problem statement). The two are complementary: loophole-hunter checks whether existing
+constraints can be evaded; hooks-enforcer checks whether the project's evidence base reveals
+missing hooks and context-discipline gaps. Do not re-run either skill's analysis; extend the
+review with code-level analysis of the hook scripts and skills themselves (logic correctness,
+error handling) that neither specialist covers.
 
 ## Single-Shot Behavior
 
@@ -101,7 +103,7 @@ cover.
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in security/docs/architecture/loophole mode AND NOT inline mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
+3. If in security/docs/architecture/loophole mode AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"

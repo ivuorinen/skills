@@ -33,6 +33,7 @@ Skills live in `skills/` — each subdirectory is one skill.
 | `cr-implementer` | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, scans for similar issues, and asks user whether to leave/commit/push |
 | `claude-rules-auditor` | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
 | `loophole-hunter` | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
+| `hooks-enforcer` | Audits an agent project's hook *coverage* against its evidence base (current hooks, audit-findings history, git history, project memory); finds recurring failures no hook guards and context-discipline gaps where large-output work bypasses a context-saving tool; specifies and wires the missing hooks in the host harness's correct shape; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
 
 ## Skill File Format
 

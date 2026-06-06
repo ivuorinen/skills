@@ -42,7 +42,7 @@ Adversarial, exhaustive whole-repository code review with integrated fixing. Ass
 | `tests` | Focus on test quality and coverage |
 | `docs` | Invoke [doc-auditor]; incorporate findings; extend with inline comments and cross-references |
 | `architecture` | Invoke [arch-detector] (if profile absent or stale), then [arch-auditor]; extend with coupling analysis |
-| `loophole` | Invoke [loophole-hunter]; incorporate findings; extend with code-level analysis of hook scripts and skills |
+| `loophole` | Invoke [loophole-hunter] and [hooks-enforcer]; incorporate both findings sets; extend with code-level analysis of hook scripts and skills |
 | `release-gate` | Fail if any findings at or above the threshold exist (default threshold: High) |
 
 `inline` is incompatible with `security`, `docs`, `architecture`, and `loophole` — when combined, only the inline behavior applies (no specialist skills invoked, no file written).
@@ -129,7 +129,8 @@ Finding ID format: `N-NNN` (zero-padded to 3 digits, e.g. `N-001`). IDs are assi
 - [doc-auditor] — invoked by nitpicker in docs mode; also usable standalone
 - [arch-detector] — invoked by nitpicker in architecture mode if profile is missing or stale
 - [arch-auditor] — invoked by nitpicker in architecture mode
-- [loophole-hunter] — invoked by nitpicker in loophole mode; also usable standalone
+- [loophole-hunter] — invoked by nitpicker in loophole mode; audits existing constraints for evasion; also usable standalone
+- [hooks-enforcer] — invoked by nitpicker in loophole mode; audits the evidence base for missing hooks and context-discipline gaps; also usable standalone
 - [adversarial-reviewer] — focused hostile review of a specific file or component
 
 ---
@@ -140,4 +141,5 @@ Finding ID format: `N-NNN` (zero-padded to 3 digits, e.g. `N-001`). IDs are assi
 [arch-detector]: ../arch-detector/README.md
 [arch-auditor]: ../arch-auditor/README.md
 [loophole-hunter]: ../loophole-hunter/README.md
+[hooks-enforcer]: ../hooks-enforcer/README.md
 [adversarial-reviewer]: ../adversarial-reviewer/README.md
