@@ -42,9 +42,10 @@ Adversarial, exhaustive whole-repository code review with integrated fixing. Ass
 | `tests` | Focus on test quality and coverage |
 | `docs` | Invoke [doc-auditor]; incorporate findings; extend with inline comments and cross-references |
 | `architecture` | Invoke [arch-detector] (if profile absent or stale), then [arch-auditor]; extend with coupling analysis |
+| `loophole` | Invoke [loophole-hunter]; incorporate findings; extend with code-level analysis of hook scripts and skills |
 | `release-gate` | Fail if any findings at or above the threshold exist (default threshold: High) |
 
-`inline` is incompatible with `security`, `docs`, and `architecture` — when combined, only the inline behavior applies (no specialist skills invoked, no file written).
+`inline` is incompatible with `security`, `docs`, `architecture`, and `loophole` — when combined, only the inline behavior applies (no specialist skills invoked, no file written).
 
 ## Review Scope
 
@@ -77,7 +78,7 @@ Nitpicker covers all eight areas in every run:
      - Resolved → move to Fixed (record date)
      - Was wrong → move to Invalid (record reason)
      - Still present → leave Open
-3. In security/docs/architecture mode (not inline): invoke specialist skill;
+3. In security/docs/architecture/loophole mode (not inline): invoke specialist skill;
      read its output file; incorporate Critical/High findings
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
@@ -128,6 +129,7 @@ Finding ID format: `N-NNN` (zero-padded to 3 digits, e.g. `N-001`). IDs are assi
 - [doc-auditor] — invoked by nitpicker in docs mode; also usable standalone
 - [arch-detector] — invoked by nitpicker in architecture mode if profile is missing or stale
 - [arch-auditor] — invoked by nitpicker in architecture mode
+- [loophole-hunter] — invoked by nitpicker in loophole mode; also usable standalone
 - [adversarial-reviewer] — focused hostile review of a specific file or component
 
 ---
@@ -137,4 +139,5 @@ Finding ID format: `N-NNN` (zero-padded to 3 digits, e.g. `N-001`). IDs are assi
 [doc-auditor]: ../doc-auditor/README.md
 [arch-detector]: ../arch-detector/README.md
 [arch-auditor]: ../arch-auditor/README.md
+[loophole-hunter]: ../loophole-hunter/README.md
 [adversarial-reviewer]: ../adversarial-reviewer/README.md

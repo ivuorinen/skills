@@ -76,6 +76,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Security audit with available local scanners | `skills/security-auditor/` |
 | GitHub PR review comment implementer | `skills/cr-implementer/` |
 | Claude rules and CLAUDE.md rule-placement auditor | `skills/claude-rules-auditor/` |
+| Claude Code enforcement-surface loophole hunter | `skills/loophole-hunter/` |
 
 ## Adding a New Skill
 

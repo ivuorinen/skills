@@ -52,15 +52,16 @@ Nitpicker must analyze:
 | tests | Focus on test quality |
 | docs | Invoke `/doc-auditor`; incorporate its findings; focus remaining review on documentation accuracy and completeness |
 | architecture | Invoke `/arch-detector` (if `docs/audit/arch-profile.md` is absent or stale), then invoke `/arch-auditor`; incorporate its findings; focus remaining review on design and boundary violations |
+| loophole | Invoke `/loophole-hunter`; incorporate its findings; focus remaining review on the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
 
 ### Mode delegation detail
 
-Modes `security`, `docs`, and `architecture` are incompatible with `inline` mode. If
-`inline` is combined with any of these, treat the combined mode as `inline` only: run
-the full internal review without invoking specialist skills, and return findings in
-the response. Never write `docs/audit/nitpicker-findings.md` when `inline` is active,
-regardless of which other mode flags are present.
+Modes `security`, `docs`, `architecture`, and `loophole` are incompatible with `inline`
+mode. If `inline` is combined with any of these, treat the combined mode as `inline`
+only: run the full internal review without invoking specialist skills, and return
+findings in the response. Never write `docs/audit/nitpicker-findings.md` when `inline`
+is active, regardless of which other mode flags are present.
 
 In `security` mode (without `inline`), run `/security-auditor` first. Read
 `docs/audit/security-findings.md` after it completes. Incorporate all open
@@ -84,6 +85,13 @@ Then run `/arch-auditor`. Read `docs/audit/arch-findings.md` after it completes.
 Incorporate all open Critical/High findings. Extend with module coupling analysis
 and layering violations not covered by arch-auditor.
 
+In `loophole` mode (without `inline`), run `/loophole-hunter` first. Read
+`docs/audit/loophole-hunter-findings.md` after it completes. Incorporate all open
+Critical/High findings (deduplicated by area and problem statement). Do not re-run its
+enforcement-path traces; extend the review with code-level analysis of the hook scripts
+and skills themselves (logic correctness, error handling) that loophole-hunter does not
+cover.
+
 ## Single-Shot Behavior
 
 ```
@@ -93,7 +101,7 @@ and layering violations not covered by arch-auditor.
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in security/docs/architecture mode AND NOT inline mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
+3. If in security/docs/architecture/loophole mode AND NOT inline mode: invoke specialist skill and read its output file per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"

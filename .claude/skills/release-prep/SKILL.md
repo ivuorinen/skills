@@ -57,7 +57,14 @@ Run `/nitpicker` in `release-gate` mode (threshold: High). If any Critical or Hi
 finding remains open after fixes are applied: stop. Report the findings. Do not
 proceed.
 
-## Step 6 — Verify Conventional Commits
+## Step 6 — Enforcement Surface Loopholes
+
+Run `/loophole-hunter`. This audits the repository's own Claude Code enforcement surface
+(`.claude/rules/`, hook scripts, `.claude/settings.json` wiring, permissions, and every
+`SKILL.md`) for bypassable or unenforced constraints. If any Critical or High finding
+remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 7 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -87,7 +94,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 7 — Confirm CI Is Green
+## Step 8 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -105,6 +112,7 @@ Steps completed:
   [✓] doc-auditor — no Critical/High findings
   [✓] arch-auditor — no Critical/High findings
   [✓] nitpicker release-gate — no Critical/High findings
+  [✓] loophole-hunter — no Critical/High enforcement-surface findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 
