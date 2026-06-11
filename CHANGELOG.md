@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.6.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.5.0...ivuorinen-skills-v1.6.0) (2026-06-06)
+
+
+### Features
+
+* add hooks-enforcer skill ([#28](https://github.com/ivuorinen/skills/issues/28)) ([6173a60](https://github.com/ivuorinen/skills/commit/6173a6033e0f48cbc2143ec44d7241653ad956cb))
+* add loophole-hunter skill ([#25](https://github.com/ivuorinen/skills/issues/25)) ([99e8472](https://github.com/ivuorinen/skills/commit/99e8472f3a3c91478dd6469f57bc66b053f4b09f))
+* add Python skill tools with tests and nitpicker pass 21 ([#23](https://github.com/ivuorinen/skills/issues/23)) ([4709777](https://github.com/ivuorinen/skills/commit/47097772a06bd3b064e65f553dc0d3d69671a13f))
+
 ## [1.5.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.4.0...ivuorinen-skills-v1.5.0) (2026-05-28)
 
 
