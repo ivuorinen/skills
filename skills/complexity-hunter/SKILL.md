@@ -54,7 +54,7 @@ Writes to stdout only — no findings file.
 [code] → skipped: [X], add when [Y].
 ```
 
-**When reviewing a diff, plan, or design (no code to write):** one line per finding — `tag: location — what to cut (the quoted construct) — what replaces it (rung N)` — ordered worst-first: worst = most code deleted by the fix, ties broken by lower replacement rung. The order is the ranking; findings carry no severity labels by design. Every finding names its evidence and its concrete replacement in that one line. Nothing to cut → output "Nothing to delete." and stop. Silence on a construct is approval.
+**When reviewing a diff, plan, or design (no code to write):** one line per finding — `tag: location — what to cut (the quoted construct) — what replaces it (rung N)` — ordered worst-first: worst = most code deleted by the fix, ties broken by lower replacement rung, remaining ties by location (file path, then line, ascending). The order is the ranking; findings carry no severity labels by design. Every finding names its evidence and its concrete replacement in that one line. Nothing to cut → output "Nothing to delete." and stop. Silence on a construct is approval.
 
 Every review and audit finding opens with the tag naming its cut class:
 
