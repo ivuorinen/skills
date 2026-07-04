@@ -2,7 +2,7 @@
 
 ## What This Repository Is
 
-A **Claude Code plugin** (`ivuorinen-skills`) containing hostile audit skills. Each skill is a self-contained
+A **Claude Code plugin** (`ivuorinen-skills`) containing hostile audit and enforcement skills. Each skill is a self-contained
 prompt file (`SKILL.md`) that Claude Code loads when a user invokes it. The repo is installable via `/plugins`
 and is versioned with semantic versioning using release-please automation.
 
@@ -78,6 +78,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Claude rules and CLAUDE.md rule-placement auditor | `skills/claude-rules-auditor/` |
 | Claude Code enforcement-surface loophole hunter | `skills/loophole-hunter/` |
 | Agent hook-coverage enforcer (evidence-driven) | `skills/hooks-enforcer/` |
+| Anti-over-engineering enforcement (lazy-senior mode) | `skills/complexity-hunter/` |
 
 ## Adding a New Skill
 
