@@ -33,6 +33,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`claude-rules-auditor`][claude-rules-auditor] | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
 | [`loophole-hunter`][loophole-hunter] | Leaf — audits the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable constraints; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/loophole-hunter-findings.md` |
 | [`hooks-enforcer`][hooks-enforcer] | Leaf — audits hook *coverage* against the project's evidence base (findings history, git, memory) for recurring failures no hook guards and context-discipline gaps; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/hooks-enforcer-findings.md` |
+| [`complexity-hunter`][complexity-hunter] | Leaf — persistent anti-over-engineering mode; forces the laziest working solution via a reuse-first ladder on every coding task; also audits a diff or whole repo for over-engineering (tagged, ranked findings, applies nothing); invokes nothing and reads no audit artifacts | stdout |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -64,6 +65,7 @@ graph TD
         CRA[claude-rules-auditor]
         LH[loophole-hunter]
         HE[hooks-enforcer]
+        CH[complexity-hunter]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -139,6 +141,7 @@ graph TD
     SK -.->|routes to| CRA
     SK -.->|routes to| LH
     SK -.->|routes to| HE
+    SK -.->|routes to| CH
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -270,6 +273,7 @@ flowchart TD
     R -->|"audit rules / check .claude/rules / CLAUDE.md rules"| CRA[claude-rules-auditor]
     R -->|"close loopholes / harden the Claude Code setup"| LH[loophole-hunter]
     R -->|"enforce hooks / harden hook coverage / use context-mode"| HE[hooks-enforcer]
+    R -->|"be lazy / YAGNI / do less / stop over-engineering / find bloat"| CH[complexity-hunter]
 ```
 
 ---
@@ -298,6 +302,7 @@ graph LR
         CRA[claude-rules-auditor]
         LH[loophole-hunter]
         HE[hooks-enforcer]
+        CH[complexity-hunter]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -394,6 +399,7 @@ When adding a new skill, verify:
 | [`claude-rules-auditor`][claude-rules-auditor] | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
 | [`loophole-hunter`][loophole-hunter] | `.claude/rules/**`, hook scripts, `.claude/settings.json` + `.claude/settings.local.json` (hooks, permissions, excludes), all `SKILL.md` files | `docs/audit/loophole-hunter-findings.md` |
 | [`hooks-enforcer`][hooks-enforcer] | `.claude/settings.json` + `.claude/settings.local.json` hooks, hook scripts, `docs/audit/*-findings.md` history, git history, project memory, available context-saving tools, harness markers | `docs/audit/hooks-enforcer-findings.md` |
+| [`complexity-hunter`][complexity-hunter] | the task, files the change touches, project manifest, existing codebase helpers and patterns; whole repo in audit mode | stdout only |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -411,3 +417,4 @@ When adding a new skill, verify:
 [claude-rules-auditor]: ../../skills/claude-rules-auditor/README.md
 [loophole-hunter]: ../../skills/loophole-hunter/README.md
 [hooks-enforcer]: ../../skills/hooks-enforcer/README.md
+[complexity-hunter]: ../../skills/complexity-hunter/README.md

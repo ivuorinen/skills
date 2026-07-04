@@ -19,6 +19,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`claude-rules-auditor`][claude-rules-auditor] | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
 | [`loophole-hunter`][loophole-hunter] | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
 | [`hooks-enforcer`][hooks-enforcer] | Audits an agent project's hook *coverage* against its evidence base (current hooks, audit-findings history, git history, project memory); finds recurring failures no hook guards and context-discipline gaps where large-output work bypasses a context-saving tool; specifies and wires the missing hooks in the host harness's correct shape; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
+| [`complexity-hunter`][complexity-hunter] | Forces the laziest solution that actually works on every coding task — climbs a reuse-first ladder (YAGNI, codebase, stdlib, platform, installed dependency, one line) before writing new code; stays active on every coding response once invoked; also audits a diff or a whole repo for over-engineering with tagged, ranked findings; never simplifies away trust-boundary validation, data-loss error handling, security, or accessibility |
 
 ## Installation
 
@@ -49,6 +50,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
 - `/loophole-hunter` — audit the Claude Code enforcement surface and close loopholes
 - `/hooks-enforcer` — audit hook coverage against the project's evidence base and wire the missing hooks
+- `/complexity-hunter` — force the laziest working solution on every coding task (sticky mode); also audits a diff or repo for over-engineering
 
 ## Examples
 
@@ -145,6 +147,10 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
+## Credits
+
+[`complexity-hunter`][complexity-hunter] is adapted from [ponytail](https://github.com/DietrichGebert/ponytail) by Dietrich Gebert — the lazy-senior mindset, the ladder, the output pattern, and the audit tags originate there, reshaped to this repo's skill conventions.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ismo Vuorinen.
@@ -160,5 +166,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [claude-rules-auditor]: skills/claude-rules-auditor/README.md
 [loophole-hunter]: skills/loophole-hunter/README.md
 [hooks-enforcer]: skills/hooks-enforcer/README.md
+[complexity-hunter]: skills/complexity-hunter/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
