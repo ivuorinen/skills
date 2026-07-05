@@ -52,7 +52,8 @@ Hostile audit of every commit message in a range against the diff it labels. It 
    `!`/`BREAKING CHANGE:` footer → major, every other type → none). The
    divergence sets severity. Classify each
    finding's commit as pushed (reachable from any remote ref —
-   `git branch -r --contains <sha>`) or unpushed; the fix shape depends on it.
+   `git for-each-ref --contains <sha> refs/remotes refs/tags`) or unpushed; the
+   fix shape depends on it.
 5. File findings
    Assign the next CM-NNN id. Every finding records class, the SHA, the quoted
    message, the contradicting hunks, the version consequence, and the exact fix.
