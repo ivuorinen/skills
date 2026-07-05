@@ -21,6 +21,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`hooks-enforcer`][hooks-enforcer] | Audits an agent project's hook *coverage* against its evidence base (current hooks, audit-findings history, git history, project memory); finds recurring failures no hook guards and context-discipline gaps where large-output work bypasses a context-saving tool; specifies and wires the missing hooks in the host harness's correct shape; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
 | [`complexity-hunter`][complexity-hunter] | Forces the laziest solution that actually works on every coding task — climbs a reuse-first ladder (YAGNI, codebase, stdlib, platform, installed dependency, one line) before writing new code; stays active on every coding response once invoked; also audits a diff or a whole repo for over-engineering with tagged, ranked findings; never simplifies away trust-boundary validation, data-loss error handling, security, or accessibility |
 | [`perf-auditor`][perf-auditor] | Hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, loop-invariant work redone per iteration, and chatty per-item I/O; every finding names the code path, the growth driver, and a concrete fix; uses installed measurement tools, never adds a dependency |
+| [`test-auditor`][test-auditor] | Hostile audit of the test suite itself; assumes the tests are weaker than they look and proves it — assertion-free and tautological tests, mocks of the unit under test, over-mocking that severs the code path, flaky patterns, untracked skips, coverage holes on money/security/data-loss paths, and mutation-blind spots; fixes add or strengthen tests only, never production source |
 
 ## Installation
 
@@ -53,6 +54,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/hooks-enforcer` — audit hook coverage against the project's evidence base and wire the missing hooks
 - `/complexity-hunter` — force the laziest working solution on every coding task (sticky mode); also audits a diff or repo for over-engineering
 - `/perf-auditor` — performance audit with growth-driver evidence; writes findings to `docs/audit/perf-auditor-findings.md`
+- `/test-auditor` — audit the test suite itself for tests that cannot fail, severed code paths, flaky patterns, and critical-path coverage holes
 
 ## Examples
 
@@ -168,6 +170,7 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [claude-rules-auditor]: skills/claude-rules-auditor/README.md
 [loophole-hunter]: skills/loophole-hunter/README.md
 [hooks-enforcer]: skills/hooks-enforcer/README.md
+[test-auditor]: skills/test-auditor/README.md
 [complexity-hunter]: skills/complexity-hunter/README.md
 [perf-auditor]: skills/perf-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
