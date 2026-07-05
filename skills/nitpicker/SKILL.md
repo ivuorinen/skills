@@ -49,19 +49,30 @@ Nitpicker must analyze:
 | inline | Return findings in response instead of file; do NOT write `docs/audit/nitpicker-findings.md` |
 | changed-files | Limit review to modified files + their dependencies |
 | security | Invoke `/security-auditor`; incorporate its findings; focus remaining review on security and trust boundaries |
-| tests | Focus on test quality |
+| tests | Invoke `/test-auditor`; incorporate its findings; focus remaining review on test structure and behavioral coverage |
 | docs | Invoke `/doc-auditor`; incorporate its findings; focus remaining review on documentation accuracy and completeness |
 | architecture | Invoke `/arch-detector` (if `docs/audit/arch-profile.md` is absent or stale), then invoke `/arch-auditor`; incorporate its findings; focus remaining review on design and boundary violations |
 | loophole | Invoke `/loophole-hunter` and `/hooks-enforcer`; incorporate both findings sets; focus remaining review on the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) and on hook coverage |
+| perf | Invoke `/perf-auditor`; incorporate its findings; focus remaining review on algorithmic complexity and resource lifecycle |
+| deps | Invoke `/dep-auditor`; incorporate its findings; focus remaining review on how the flagged dependencies are used in code |
+| errors | Invoke `/silent-failure-hunter`; incorporate its findings; focus remaining review on error propagation and recovery paths |
+| ci | Invoke `/ci-auditor`; incorporate its findings; focus remaining review on the pipeline's build and deploy logic |
+| commits | Invoke `/commit-auditor`; incorporate its findings; focus remaining review on commit granularity and history hygiene |
+| migrations | Invoke `/migration-auditor`; incorporate its findings; focus remaining review on migration/application-code coupling |
+| observability | Invoke `/observability-auditor`; incorporate its findings; focus remaining review on the log and metric call sites in code |
+| contract | Invoke `/api-contract-auditor`; incorporate its findings; focus remaining review on the implementation behind the declared surface |
+| a11y | Invoke `/a11y-auditor`; incorporate its findings; focus remaining review on the UI logic behind the WCAG conformance defects |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
 
 ### Mode delegation detail
 
-Modes `security`, `docs`, `architecture`, and `loophole` are incompatible with `inline`
-mode. If `inline` is combined with any of these, treat the combined mode as `inline`
-only: run the full internal review without invoking specialist skills, and return
-findings in the response. Never write `docs/audit/nitpicker-findings.md` when `inline`
-is active, regardless of which other mode flags are present.
+The specialist-invoking modes — `security`, `tests`, `docs`, `architecture`, `loophole`,
+`perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`, and
+`a11y` — are incompatible with `inline` mode. If `inline` is combined with any of these,
+treat the combined mode as `inline` only: run the full internal review without invoking
+specialist skills, and return findings in the response. Never write
+`docs/audit/nitpicker-findings.md` when `inline` is active, regardless of which other mode
+flags are present.
 
 In `security` mode (without `inline`), run `/security-auditor` first. Read
 `docs/audit/security-findings.md` after it completes. Incorporate all open
@@ -94,6 +105,52 @@ missing hooks and context-discipline gaps. Do not re-run either skill's analysis
 review with code-level analysis of the hook scripts and skills themselves (logic correctness,
 error handling) that neither specialist covers.
 
+In `tests` mode (without `inline`), run `/test-auditor` first. Read
+`docs/audit/test-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of test structure and behavioral coverage on the changed code
+paths that test-auditor's suite pass does not surface.
+
+In `perf` mode (without `inline`), run `/perf-auditor` first. Read
+`docs/audit/perf-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with algorithmic-complexity and resource-lifecycle review beyond the hot
+paths perf-auditor measures.
+
+In `deps` mode (without `inline`), run `/dep-auditor` first. Read
+`docs/audit/dep-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of how the flagged dependencies are used at their call sites.
+
+In `errors` mode (without `inline`), run `/silent-failure-hunter` first. Read
+`docs/audit/silent-failure-hunter-findings.md` after it completes. Incorporate all open
+Critical/High findings. Extend with review of error-propagation and recovery logic beyond the
+swallowed-failure sites.
+
+In `ci` mode (without `inline`), run `/ci-auditor` first. Read
+`docs/audit/ci-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of the pipeline's build and deploy logic beyond the security
+defects ci-auditor flags.
+
+In `commits` mode (without `inline`), run `/commit-auditor` first. Read
+`docs/audit/commit-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of the branch's commit granularity and history hygiene.
+
+In `migrations` mode (without `inline`), run `/migration-auditor` first. Read
+`docs/audit/migration-auditor-findings.md` after it completes. Incorporate all open
+Critical/High findings. Extend with review of migration/application-code coupling beyond the
+schema safety migration-auditor covers.
+
+In `observability` mode (without `inline`), run `/observability-auditor` first. Read
+`docs/audit/observability-auditor-findings.md` after it completes. Incorporate all open
+Critical/High findings. Extend with review of the log and metric call sites in the changed
+code.
+
+In `contract` mode (without `inline`), run `/api-contract-auditor` first. Read
+`docs/audit/api-contract-auditor-findings.md` after it completes. Incorporate all open
+Critical/High findings. Extend with review of the implementation behind the declared surface.
+
+In `a11y` mode (without `inline`), run `/a11y-auditor` first. Read
+`docs/audit/a11y-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of the UI logic behind the WCAG conformance defects.
+
 ## Single-Shot Behavior
 
 ```
@@ -103,7 +160,7 @@ error handling) that neither specialist covers.
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in security/docs/architecture/loophole mode AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
+3. If in any specialist-invoking mode (security/tests/docs/architecture/loophole/perf/deps/errors/ci/commits/migrations/observability/contract/a11y) AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"
