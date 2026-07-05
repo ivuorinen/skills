@@ -42,6 +42,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history | `docs/audit/commit-auditor-findings.md` |
 | [`migration-auditor`][migration-auditor] | Leaf — hostile audit of database schema and data migrations; reads every migration up-and-down, cross-checks ORM models against the sum of migrations and the schema dump; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited | `docs/audit/migration-auditor-findings.md` |
 | [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only | `docs/audit/observability-auditor-findings.md` |
+| [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals | `docs/audit/api-contract-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -82,6 +83,7 @@ graph TD
         CMA[commit-auditor]
         MA[migration-auditor]
         OBA[observability-auditor]
+        ACA[api-contract-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -101,6 +103,7 @@ graph TD
         CMF[commit-auditor-findings.md]
         MGF[migration-auditor-findings.md]
         OBF[observability-auditor-findings.md]
+        ACF[api-contract-auditor-findings.md]
     end
 
     %% arch chain
@@ -152,6 +155,9 @@ graph TD
     %% observability-auditor writes its own findings
     OBA -->|writes| OBF
 
+    %% api-contract-auditor writes its own findings
+    ACA -->|writes| ACF
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -195,6 +201,7 @@ graph TD
     SK -.->|routes to| CIA
     SK -.->|routes to| CMA
     SK -.->|routes to| MA
+    SK -.->|routes to| ACA
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -335,6 +342,7 @@ flowchart TD
     R -->|"audit the commits / check commit messages / verify conventional commits"| CMA[commit-auditor]
     R -->|"audit the migrations / is this migration safe / review the schema changes"| MA[migration-auditor]
     R -->|"audit observability / check our logging / can we debug this at 3am"| OBA[observability-auditor]
+    R -->|"audit the api contract / does the spec match the code / is this change breaking"| ACA[api-contract-auditor]
 ```
 
 ---
@@ -372,6 +380,7 @@ graph LR
         CMA[commit-auditor]
         MA[migration-auditor]
         OBA[observability-auditor]
+        ACA[api-contract-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -477,6 +486,7 @@ When adding a new skill, verify:
 | [`commit-auditor`][commit-auditor] | every commit message and diff in the audit range (`git log`, `git show`), the last release tag, the project's convention table (CLAUDE.md, CONTRIBUTING, release-please config), remote refs, PR commits via `gh` when given a PR | `docs/audit/commit-auditor-findings.md` |
 | [`migration-auditor`][migration-auditor] | every migration file per detected system (Django/Alembic/Rails/Flyway/Liquibase/Prisma/knex/raw SQL), ORM models/entities, committed schema dumps, engine config/connection strings, git branch/tag state for applied-status | `docs/audit/migration-auditor-findings.md` |
 | [`observability-auditor`][observability-auditor] | project-maintained source (critical paths, jobs, boundary crossings, log statements, metric labels), logging/metrics/tracing config, in-repo alert/monitor/recording-rule configs | `docs/audit/observability-auditor-findings.md` |
+| [`api-contract-auditor`][api-contract-auditor] | OpenAPI/Swagger/AsyncAPI files, GraphQL schema, `package.json` exports + published `.d.ts`, `__all__`, public headers, CLI parser + `--help` text, route tables, git tags + diff since the release baseline, commit messages | `docs/audit/api-contract-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -503,3 +513,4 @@ When adding a new skill, verify:
 [commit-auditor]: ../../skills/commit-auditor/README.md
 [migration-auditor]: ../../skills/migration-auditor/README.md
 [observability-auditor]: ../../skills/observability-auditor/README.md
+[api-contract-auditor]: ../../skills/api-contract-auditor/README.md
