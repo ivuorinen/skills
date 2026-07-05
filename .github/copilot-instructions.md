@@ -80,6 +80,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Agent hook-coverage enforcer (evidence-driven) | `skills/hooks-enforcer/` |
 | Anti-over-engineering enforcement (lazy-senior mode) | `skills/complexity-hunter/` |
 | Performance audit (growth-driver evidence) | `skills/perf-auditor/` |
+| Test-suite weakness auditor (tests only, never production source) | `skills/test-auditor/` |
 
 ## Adding a New Skill
 
