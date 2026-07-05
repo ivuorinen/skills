@@ -72,7 +72,79 @@ memory) for recurring failures no hook guards and context-discipline gaps where 
 work bypasses a context-saving tool. If any Critical or High finding remains open after fixes
 are applied: stop. Report the findings. Do not proceed.
 
-## Step 8 — Verify Conventional Commits
+## Step 8 — Performance
+
+Run `/perf-auditor`. This hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking
+calls in async contexts, unbounded caches/queues/retries, missing pagination, and chatty
+per-item I/O. If any Critical or High finding remains open after fixes are applied: stop. Report
+the findings. Do not proceed.
+
+## Step 9 — Test-Suite Strength
+
+Run `/test-auditor`. This audits the test suite itself for assertion-free and tautological tests,
+mocks of the unit under test, severed code paths, flaky patterns, untracked skips, and coverage
+holes on money/security/data-loss paths. If any Critical or High finding remains open after fixes
+are applied: stop. Report the findings. Do not proceed.
+
+## Step 10 — Dependency Health
+
+Run `/dep-auditor`. This audits dependency health beyond CVEs — unused, phantom, duplicate,
+heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies. If any
+Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not
+proceed.
+
+## Step 11 — Error Handling
+
+Run `/silent-failure-hunter`. This audits application error handling for swallowed exceptions,
+fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries,
+and cause-destroying rethrows. If any Critical or High finding remains open after fixes are
+applied: stop. Report the findings. Do not proceed.
+
+## Step 12 — Migration Safety
+
+Run `/migration-auditor`. This audits database schema and data migrations for destructive ops
+with no rollout story, irreversible downs, long-lock operations, missing FK indexes, schema-model
+drift, unbatched data migrations, and deploy-order breaks. If any Critical or High finding remains
+open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 13 — Observability
+
+Run `/observability-auditor`. This audits the emitted signal surface for dark paths, missing
+correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, and
+context-free errors. If any Critical or High finding remains open after fixes are applied: stop.
+Report the findings. Do not proceed.
+
+## Step 14 — API Contract
+
+Run `/api-contract-auditor`. This audits the declared public contract surface (OpenAPI/GraphQL
+specs, package exports, published types, CLI flags) against the implementation, and every surface
+change since the last release tag against the semver bump the commits declare. If any Critical or
+High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 15 — Accessibility
+
+Run `/a11y-auditor`. This audits the UI layer against WCAG 2.2 AA — missing alternatives,
+unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, contrast violations,
+structure breaks, and motion hazards. A repo with no UI surface returns the explicit verdict "no
+auditable UI surface". If any Critical or High finding remains open after fixes are applied: stop.
+Report the findings. Do not proceed.
+
+## Step 16 — CI/CD Pipeline
+
+Run `/ci-auditor`. This audits CI/CD pipeline definitions for unpinned actions, over-broad token
+permissions, script injection via untrusted interpolation, privileged-trigger misuse, secrets
+leakage, non-gating checks, masked failures, missing concurrency, cache poisoning, and self-hosted
+runner exposure. If any Critical or High finding remains open after fixes are applied: stop. Report
+the findings. Do not proceed.
+
+## Step 17 — Commit Discipline
+
+Run `/commit-auditor`. This audits every commit message on the branch against its actual diff for
+type-understatement, type-overstatement, unmarked and spurious breaking changes, squash-title
+scope-lies, and malformed convention that mis-version a release-please release. If any Critical or
+High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 18 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -102,7 +174,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 9 — Confirm CI Is Green
+## Step 19 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -122,6 +194,16 @@ Steps completed:
   [✓] nitpicker release-gate — no Critical/High findings
   [✓] loophole-hunter — no Critical/High enforcement-surface findings
   [✓] hooks-enforcer — no Critical/High hook-coverage findings
+  [✓] perf-auditor — no Critical/High findings
+  [✓] test-auditor — no Critical/High findings
+  [✓] dep-auditor — no Critical/High findings
+  [✓] silent-failure-hunter — no Critical/High findings
+  [✓] migration-auditor — no Critical/High findings
+  [✓] observability-auditor — no Critical/High findings
+  [✓] api-contract-auditor — no Critical/High findings
+  [✓] a11y-auditor — no Critical/High findings
+  [✓] ci-auditor — no Critical/High findings
+  [✓] commit-auditor — no Critical/High findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

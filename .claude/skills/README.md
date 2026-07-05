@@ -34,16 +34,16 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`loophole-hunter`][loophole-hunter] | Leaf — audits the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable constraints; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/loophole-hunter-findings.md` |
 | [`hooks-enforcer`][hooks-enforcer] | Leaf — audits hook *coverage* against the project's evidence base (findings history, git, memory) for recurring failures no hook guards and context-discipline gaps; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/hooks-enforcer-findings.md` |
 | [`complexity-hunter`][complexity-hunter] | Leaf — persistent anti-over-engineering mode; forces the laziest working solution via a reuse-first ladder on every coding task; also audits a diff or whole repo for over-engineering (tagged, ranked findings, applies nothing); invokes nothing and reads no audit artifacts | stdout |
-| [`perf-auditor`][perf-auditor] | Leaf — hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots, sync-in-async, unbounded growth, missing pagination, loop-invariant work, and chatty I/O with growth-driver evidence per finding; receives performance findings routed (by prose, not invocation) from complexity-hunter | `docs/audit/perf-auditor-findings.md` |
-| [`test-auditor`][test-auditor] | Leaf — hostile audit of the test suite itself; finds tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, and mutation-blind spots; fixes touch tests only, never production source | `docs/audit/test-auditor-findings.md` |
-| [`dep-auditor`][dep-auditor] | Leaf — audits dependency health beyond CVEs (unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, misclassified) by cross-referencing manifest, lockfile, and a full import/usage scan; never installs anything; CVEs route to security-auditor | `docs/audit/dep-auditor-findings.md` |
-| [`silent-failure-hunter`][silent-failure-hunter] | Leaf — hostile audit of application error handling; enumerates every handler, ignored error signal, async site, retry, and fallback, proves which failures pass silently, and on approval fixes the error path only | `docs/audit/silent-failure-hunter-findings.md` |
-| [`ci-auditor`][ci-auditor] | Leaf — hostile audit of CI/CD pipeline definitions (GitHub Actions first-class; other pipeline YAML by the same principles); runs actionlint/zizmor when installed and verifies gating via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
-| [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history | `docs/audit/commit-auditor-findings.md` |
-| [`migration-auditor`][migration-auditor] | Leaf — hostile audit of database schema and data migrations; reads every migration up-and-down, cross-checks ORM models against the sum of migrations and the schema dump; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited | `docs/audit/migration-auditor-findings.md` |
-| [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only | `docs/audit/observability-auditor-findings.md` |
-| [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals | `docs/audit/api-contract-auditor-findings.md` |
-| [`a11y-auditor`][a11y-auditor] | Leaf — hostile accessibility audit of the UI layer against WCAG 2.2 AA; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, then the manual sweep tools cannot do (focus order, ARIA semantics, contrast math from design tokens); verifies the accessibility floor complexity-hunter never simplifies away | `docs/audit/a11y-auditor-findings.md` |
+| [`perf-auditor`][perf-auditor] | Leaf — hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots, sync-in-async, unbounded growth, missing pagination, loop-invariant work, and chatty I/O with growth-driver evidence per finding; receives performance findings routed (by prose, not invocation) from complexity-hunter; invoked by nitpicker in `perf` mode and by release-prep as a gate | `docs/audit/perf-auditor-findings.md` |
+| [`test-auditor`][test-auditor] | Leaf — hostile audit of the test suite itself; finds tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, and mutation-blind spots; fixes touch tests only, never production source; invoked by nitpicker in `tests` mode and by release-prep as a gate | `docs/audit/test-auditor-findings.md` |
+| [`dep-auditor`][dep-auditor] | Leaf — audits dependency health beyond CVEs (unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, misclassified) by cross-referencing manifest, lockfile, and a full import/usage scan; never installs anything; CVEs route to security-auditor; invoked by nitpicker in `deps` mode and by release-prep as a gate | `docs/audit/dep-auditor-findings.md` |
+| [`silent-failure-hunter`][silent-failure-hunter] | Leaf — hostile audit of application error handling; enumerates every handler, ignored error signal, async site, retry, and fallback, proves which failures pass silently, and on approval fixes the error path only; invoked by nitpicker in `errors` mode and by release-prep as a gate | `docs/audit/silent-failure-hunter-findings.md` |
+| [`ci-auditor`][ci-auditor] | Leaf — hostile audit of CI/CD pipeline definitions (GitHub Actions first-class; other pipeline YAML by the same principles); runs actionlint/zizmor when installed and verifies gating via `gh api` when authenticated; invoked by nitpicker in `ci` mode and by release-prep as a gate | `docs/audit/ci-auditor-findings.md` |
+| [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history; invoked by nitpicker in `commits` mode and by release-prep as a gate | `docs/audit/commit-auditor-findings.md` |
+| [`migration-auditor`][migration-auditor] | Leaf — hostile audit of database schema and data migrations; reads every migration up-and-down, cross-checks ORM models against the sum of migrations and the schema dump; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited; invoked by nitpicker in `migrations` mode and by release-prep as a gate | `docs/audit/migration-auditor-findings.md` |
+| [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only; invoked by nitpicker in `observability` mode and by release-prep as a gate | `docs/audit/observability-auditor-findings.md` |
+| [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals; invoked by nitpicker in `contract` mode and by release-prep as a gate | `docs/audit/api-contract-auditor-findings.md` |
+| [`a11y-auditor`][a11y-auditor] | Leaf — hostile accessibility audit of the UI layer against WCAG 2.2 AA; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, then the manual sweep tools cannot do (focus order, ARIA semantics, contrast math from design tokens); verifies the accessibility floor complexity-hunter never simplifies away; invoked by nitpicker in `a11y` mode and by release-prep as a gate | `docs/audit/a11y-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -167,11 +167,21 @@ graph TD
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
+    NP -->|tests mode: invokes| TA
     NP -->|docs mode: invokes| DA
     NP -->|architecture mode: invokes| AD
     NP -->|architecture mode: invokes| AA
     NP -->|loophole mode: invokes| LH
     NP -->|loophole mode: invokes| HE
+    NP -->|perf mode: invokes| PA
+    NP -->|deps mode: invokes| DEP
+    NP -->|errors mode: invokes| SFH
+    NP -->|ci mode: invokes| CIA
+    NP -->|commits mode: invokes| CMA
+    NP -->|migrations mode: invokes| MA
+    NP -->|observability mode: invokes| OBA
+    NP -->|contract mode: invokes| ACA
+    NP -->|a11y mode: invokes| AY
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -188,6 +198,16 @@ graph TD
     RP -->|invokes| NP
     RP -->|invokes| LH
     RP -->|invokes| HE
+    RP -->|invokes| PA
+    RP -->|invokes| TA
+    RP -->|invokes| DEP
+    RP -->|invokes| SFH
+    RP -->|invokes| MA
+    RP -->|invokes| OBA
+    RP -->|invokes| ACA
+    RP -->|invokes| AY
+    RP -->|invokes| CIA
+    RP -->|invokes| CMA
 
     %% router
     SK -.->|routes to| AR
@@ -291,7 +311,37 @@ flowchart TD
     LHG2 -->|No| HEG[hooks-enforcer\nhook coverage]
     HEG --> HEG2{Critical/High\nfindings?}
     HEG2 -->|Yes — stop| STOP6c([Stop: report hook-coverage findings])
-    HEG2 -->|No| J[conventional commits\nrelease-please can generate notes]
+    HEG2 -->|No| PAG[perf-auditor\nperformance]
+    PAG --> PAG2{Critical/High\nfindings?}
+    PAG2 -->|Yes — stop| STOP9([Stop: report perf findings])
+    PAG2 -->|No| TAG[test-auditor\ntest-suite strength]
+    TAG --> TAG2{Critical/High\nfindings?}
+    TAG2 -->|Yes — stop| STOP10([Stop: report test findings])
+    TAG2 -->|No| DEPG[dep-auditor\ndependency health]
+    DEPG --> DEPG2{Critical/High\nfindings?}
+    DEPG2 -->|Yes — stop| STOP11([Stop: report dependency findings])
+    DEPG2 -->|No| SFHG[silent-failure-hunter\nerror handling]
+    SFHG --> SFHG2{Critical/High\nfindings?}
+    SFHG2 -->|Yes — stop| STOP12([Stop: report error-handling findings])
+    SFHG2 -->|No| MAG[migration-auditor\nmigration safety]
+    MAG --> MAG2{Critical/High\nfindings?}
+    MAG2 -->|Yes — stop| STOP13([Stop: report migration findings])
+    MAG2 -->|No| OBAG[observability-auditor\nsignal surface]
+    OBAG --> OBAG2{Critical/High\nfindings?}
+    OBAG2 -->|Yes — stop| STOP14([Stop: report observability findings])
+    OBAG2 -->|No| ACAG[api-contract-auditor\ncontract surface]
+    ACAG --> ACAG2{Critical/High\nfindings?}
+    ACAG2 -->|Yes — stop| STOP15([Stop: report contract findings])
+    ACAG2 -->|No| AYG[a11y-auditor\nWCAG 2.2 AA]
+    AYG --> AYG2{Critical/High\nfindings?}
+    AYG2 -->|Yes — stop| STOP16([Stop: report accessibility findings])
+    AYG2 -->|No| CIAG[ci-auditor\nCI/CD pipeline]
+    CIAG --> CIAG2{Critical/High\nfindings?}
+    CIAG2 -->|Yes — stop| STOP17([Stop: report CI findings])
+    CIAG2 -->|No| CMAG[commit-auditor\ncommit discipline]
+    CMAG --> CMAG2{Critical/High\nfindings?}
+    CMAG2 -->|Yes — stop| STOP18([Stop: report commit findings])
+    CMAG2 -->|No| J[conventional commits\nrelease-please can generate notes]
     J --> J2{Commits\ninvalid?}
     J2 -->|Yes — stop| STOP7([Stop: fix commit messages for release-please])
     J2 -->|No| K[CI green check\nvalidate-skills.yml passes]
@@ -407,13 +457,33 @@ graph LR
     RP --> NP
     RP --> LH
     RP --> HE
+    RP --> PA
+    RP --> TA
+    RP --> DEP
+    RP --> SFH
+    RP --> MA
+    RP --> OBA
+    RP --> ACA
+    RP --> AY
+    RP --> CIA
+    RP --> CMA
 
     NP -->|architecture mode| AA
     NP -->|architecture mode| AD
     NP -->|docs mode| DA
     NP -->|security mode| SA
+    NP -->|tests mode| TA
     NP -->|loophole mode| LH
     NP -->|loophole mode| HE
+    NP -->|perf mode| PA
+    NP -->|deps mode| DEP
+    NP -->|errors mode| SFH
+    NP -->|ci mode| CIA
+    NP -->|commits mode| CMA
+    NP -->|migrations mode| MA
+    NP -->|observability mode| OBA
+    NP -->|contract mode| ACA
+    NP -->|a11y mode| AY
 ```
 
 [nitpicker] in focused modes delegates to the matching specialist skill before
