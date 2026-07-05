@@ -41,6 +41,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`ci-auditor`][ci-auditor] | Leaf — hostile audit of CI/CD pipeline definitions (GitHub Actions first-class; other pipeline YAML by the same principles); runs actionlint/zizmor when installed and verifies gating via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
 | [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history | `docs/audit/commit-auditor-findings.md` |
 | [`migration-auditor`][migration-auditor] | Leaf — hostile audit of database schema and data migrations; reads every migration up-and-down, cross-checks ORM models against the sum of migrations and the schema dump; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited | `docs/audit/migration-auditor-findings.md` |
+| [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only | `docs/audit/observability-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -80,6 +81,7 @@ graph TD
         CIA[ci-auditor]
         CMA[commit-auditor]
         MA[migration-auditor]
+        OBA[observability-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -98,6 +100,7 @@ graph TD
         CIF[ci-auditor-findings.md]
         CMF[commit-auditor-findings.md]
         MGF[migration-auditor-findings.md]
+        OBF[observability-auditor-findings.md]
     end
 
     %% arch chain
@@ -145,6 +148,9 @@ graph TD
 
     %% migration-auditor writes its own findings
     MA -->|writes| MGF
+
+    %% observability-auditor writes its own findings
+    OBA -->|writes| OBF
 
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
@@ -328,6 +334,7 @@ flowchart TD
     R -->|"audit the CI / audit workflows / check GitHub Actions security"| CIA[ci-auditor]
     R -->|"audit the commits / check commit messages / verify conventional commits"| CMA[commit-auditor]
     R -->|"audit the migrations / is this migration safe / review the schema changes"| MA[migration-auditor]
+    R -->|"audit observability / check our logging / can we debug this at 3am"| OBA[observability-auditor]
 ```
 
 ---
@@ -364,6 +371,7 @@ graph LR
         CIA[ci-auditor]
         CMA[commit-auditor]
         MA[migration-auditor]
+        OBA[observability-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -468,6 +476,7 @@ When adding a new skill, verify:
 | [`ci-auditor`][ci-auditor] | `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml` + includes, other pipeline YAML; actionlint/zizmor output when installed; branch protection/rulesets via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
 | [`commit-auditor`][commit-auditor] | every commit message and diff in the audit range (`git log`, `git show`), the last release tag, the project's convention table (CLAUDE.md, CONTRIBUTING, release-please config), remote refs, PR commits via `gh` when given a PR | `docs/audit/commit-auditor-findings.md` |
 | [`migration-auditor`][migration-auditor] | every migration file per detected system (Django/Alembic/Rails/Flyway/Liquibase/Prisma/knex/raw SQL), ORM models/entities, committed schema dumps, engine config/connection strings, git branch/tag state for applied-status | `docs/audit/migration-auditor-findings.md` |
+| [`observability-auditor`][observability-auditor] | project-maintained source (critical paths, jobs, boundary crossings, log statements, metric labels), logging/metrics/tracing config, in-repo alert/monitor/recording-rule configs | `docs/audit/observability-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -493,3 +502,4 @@ When adding a new skill, verify:
 [ci-auditor]: ../../skills/ci-auditor/README.md
 [commit-auditor]: ../../skills/commit-auditor/README.md
 [migration-auditor]: ../../skills/migration-auditor/README.md
+[observability-auditor]: ../../skills/observability-auditor/README.md

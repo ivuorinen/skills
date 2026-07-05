@@ -86,6 +86,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | CI/CD pipeline-definition auditor (GitHub Actions first-class) | `skills/ci-auditor/` |
 | Commit-message-vs-diff discipline auditor (release-please truth) | `skills/commit-auditor/` |
 | Database schema/data migration auditor (static, never runs migrations) | `skills/migration-auditor/` |
+| Observability / signal-surface auditor (logs, metrics, traces, alerts) | `skills/observability-auditor/` |
 
 ## Adding a New Skill
 

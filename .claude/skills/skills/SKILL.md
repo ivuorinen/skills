@@ -36,6 +36,7 @@ Lists and invokes the public skills in this repository.
 | `ci-auditor` | `/ci-auditor` | Audit CI/CD pipeline definitions (GitHub Actions first-class; GitLab CI and other pipeline YAML) for unpinned actions, over-broad permissions, script injection, privileged-trigger misuse, secrets leakage, non-gating checks, masked failures, missing concurrency, cache poisoning, and self-hosted runner exposure |
 | `commit-auditor` | `/commit-auditor` | Audit commit-message discipline against the actual diffs — type-understatement, type-overstatement, unmarked and spurious breaking changes, squash-title scope-lies, malformed convention — with the version consequence release-please takes vs the bump each diff earns; amends unpushed messages on approval, never rewrites pushed history |
 | `migration-auditor` | `/migration-auditor` | Audit database schema and data migrations: destructive ops, irreversible downs, long-lock operations (engine-specific safe forms), missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited |
+| `observability-auditor` | `/observability-auditor` | Audit the signal surface a codebase emits — dark paths with no emissions, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic |
 
 ## Routing Guide
 
@@ -60,6 +61,7 @@ If the user says… → invoke this skill:
 - "audit the CI / audit workflows / check GitHub Actions security / harden the pipelines" → `/ci-auditor`
 - "audit the commits / check commit messages / verify conventional commits" → `/commit-auditor`
 - "audit the migrations / is this migration safe / review the schema changes / will this migration lock the table" → `/migration-auditor`
+- "audit observability / check our logging / can we debug this at 3am / are our alerts real" → `/observability-auditor`
 
 ## Rules
 
