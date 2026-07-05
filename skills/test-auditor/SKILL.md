@@ -53,8 +53,9 @@ Hostile audit of the test suite itself. It assumes every test is weaker than it 
    code for what the tests fail to cover; it never modifies it.
 
 4. Mutation spot-checks
-   Pick at least 3 functions on critical paths that contain branching logic — never
-   branchless getters or pass-throughs (all such functions when fewer than 3 exist).
+   Pick at least 3 functions on critical paths that contain branching logic — all of
+   them when fewer than 3 such branching functions exist. Never count branchless
+   getters or pass-throughs toward the minimum.
    For each, mentally apply one mutation — invert a branch condition, drop a guard clause,
    change a boundary operator — and name the specific test that fails under it. No test
    fails → mutation-blind finding citing the function, the mutation, and the surviving
