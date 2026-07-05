@@ -39,6 +39,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`dep-auditor`][dep-auditor] | Leaf — audits dependency health beyond CVEs (unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, misclassified) by cross-referencing manifest, lockfile, and a full import/usage scan; never installs anything; CVEs route to security-auditor | `docs/audit/dep-auditor-findings.md` |
 | [`silent-failure-hunter`][silent-failure-hunter] | Leaf — hostile audit of application error handling; enumerates every handler, ignored error signal, async site, retry, and fallback, proves which failures pass silently, and on approval fixes the error path only | `docs/audit/silent-failure-hunter-findings.md` |
 | [`ci-auditor`][ci-auditor] | Leaf — hostile audit of CI/CD pipeline definitions (GitHub Actions first-class; other pipeline YAML by the same principles); runs actionlint/zizmor when installed and verifies gating via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
+| [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history | `docs/audit/commit-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -76,6 +77,7 @@ graph TD
         DEP[dep-auditor]
         SFH[silent-failure-hunter]
         CIA[ci-auditor]
+        CMA[commit-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -92,6 +94,7 @@ graph TD
         DEPF[dep-auditor-findings.md]
         SFF[silent-failure-hunter-findings.md]
         CIF[ci-auditor-findings.md]
+        CMF[commit-auditor-findings.md]
     end
 
     %% arch chain
@@ -134,6 +137,9 @@ graph TD
     %% ci-auditor writes its own findings
     CIA -->|writes| CIF
 
+    %% commit-auditor writes its own findings
+    CMA -->|writes| CMF
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -175,6 +181,7 @@ graph TD
     SK -.->|routes to| PA
     SK -.->|routes to| DEP
     SK -.->|routes to| CIA
+    SK -.->|routes to| CMA
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -312,6 +319,7 @@ flowchart TD
     R -->|"audit dependencies / unused deps / prune deps / dependency health"| DEP[dep-auditor]
     R -->|"find silent failures / audit error handling / what errors are we swallowing"| SFH[silent-failure-hunter]
     R -->|"audit the CI / audit workflows / check GitHub Actions security"| CIA[ci-auditor]
+    R -->|"audit the commits / check commit messages / verify conventional commits"| CMA[commit-auditor]
 ```
 
 ---
@@ -346,6 +354,7 @@ graph LR
         DEP[dep-auditor]
         SFH[silent-failure-hunter]
         CIA[ci-auditor]
+        CMA[commit-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -448,6 +457,7 @@ When adding a new skill, verify:
 | [`dep-auditor`][dep-auditor] | every manifest + lockfile pair, full source tree (all import forms), config plugin references, scripts/Makefiles/CI files, read-only registry metadata | `docs/audit/dep-auditor-findings.md` |
 | [`silent-failure-hunter`][silent-failure-hunter] | every project-maintained source file: error handlers, error callbacks, async call sites, discarded error returns, retry loops, fallback branches | `docs/audit/silent-failure-hunter-findings.md` |
 | [`ci-auditor`][ci-auditor] | `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml` + includes, other pipeline YAML; actionlint/zizmor output when installed; branch protection/rulesets via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
+| [`commit-auditor`][commit-auditor] | every commit message and diff in the audit range (`git log`, `git show`), the last release tag, the project's convention table (CLAUDE.md, CONTRIBUTING, release-please config), remote refs, PR commits via `gh` when given a PR | `docs/audit/commit-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -471,3 +481,4 @@ When adding a new skill, verify:
 [dep-auditor]: ../../skills/dep-auditor/README.md
 [silent-failure-hunter]: ../../skills/silent-failure-hunter/README.md
 [ci-auditor]: ../../skills/ci-auditor/README.md
+[commit-auditor]: ../../skills/commit-auditor/README.md
