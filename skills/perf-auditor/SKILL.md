@@ -1,6 +1,6 @@
 ---
 name: perf-auditor
-description: 'Hostile single-shot performance audit — hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, and chatty per-item I/O, each finding naming the growth driver and a concrete fix. Use when auditing a codebase for performance defects, asked why something is slow at scale, or when complexity-hunter routes a performance finding here. Triggers: "perf audit", "find performance issues", "run perf-auditor".'
+description: 'Hostile single-shot performance audit — hunts N+1 queries, O(n²)+ hotspots, sync-blocking calls in async code, unbounded caches/queues/retries, missing pagination, loop-invariant work in loops, and chatty per-item I/O, each finding naming the growth driver and a concrete fix. Use when auditing a codebase for performance defects, asked why something is slow at scale, or when complexity-hunter routes a performance finding here. Triggers: "perf audit", "find performance issues", "run perf-auditor".'
 ---
 
 # Perf Auditor
