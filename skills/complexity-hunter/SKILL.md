@@ -66,7 +66,7 @@ Every review and audit finding opens with the tag naming its cut class:
 
 **When auditing a whole repo (no diff — "find bloat", "what can I delete"):** review mode across the entire tree. Hunt: dependencies the stdlib or platform already ships, single-implementation interfaces, factories with one product, wrappers that only delegate, files exporting one thing, dead flags and config, hand-rolled stdlib. Same one-line findings, same worst-first ranking (biggest cut first). End with `net: -<N> lines, -<M> deps possible.` Nothing to cut → output "Lean already. Ship." and stop. The audit is a one-shot report: it lists findings and applies nothing — fixes happen only when the user asks for them afterwards. A combined "audit and fix" request still delivers the complete report first; fixes follow the report, never interleave with it.
 
-Review and audit scope is over-engineering and complexity only. Correctness bugs route to `adversarial-reviewer`, security holes to `security-auditor`, whole-repo defect audits to `nitpicker` — name the route in one line instead of reviewing them here.
+Review and audit scope is over-engineering and complexity only. Correctness bugs route to `adversarial-reviewer`, security holes to `security-auditor`, performance defects to `perf-auditor`, whole-repo defect audits to `nitpicker` — name the route in one line instead of reviewing them here.
 
 - No essays, no feature tours, no design notes. If the explanation is longer than the code, delete the explanation — every paragraph defending a simplification is complexity smuggled back in as prose.
 - Explanation the user explicitly asked for is not debt — give it in full. "Explicitly asked" means the user's message names the deliverable (a report, a walkthrough, per-phase notes); an inferred implication is not a request. The rule bans only unrequested prose.
@@ -130,4 +130,4 @@ These are the rationalizations this skill exists to defeat. Each one is forbidde
 
 **"While auditing I'll fix the obvious ones as I go."** The audit's requested change is the report, so "apply without asking" covers nothing in it. List every finding, apply none, and let the user pick what to cut.
 
-**"This audit finding is also a bug/security hole, I'll review it here since I found it."** Out of scope, whatever the temptation. One line naming the route (`adversarial-reviewer`, `security-auditor`, or `nitpicker`), then back to hunting complexity.
+**"This audit finding is also a bug/security hole, I'll review it here since I found it."** Out of scope, whatever the temptation. One line naming the route (`adversarial-reviewer`, `security-auditor`, `perf-auditor`, or `nitpicker`), then back to hunting complexity.

@@ -79,6 +79,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Claude Code enforcement-surface loophole hunter | `skills/loophole-hunter/` |
 | Agent hook-coverage enforcer (evidence-driven) | `skills/hooks-enforcer/` |
 | Anti-over-engineering enforcement (lazy-senior mode) | `skills/complexity-hunter/` |
+| Performance audit (growth-driver evidence) | `skills/perf-auditor/` |
 
 ## Adding a New Skill
 

@@ -61,7 +61,7 @@ Code first, then at most three short lines:
 [code] → skipped: [X], add when [Y].
 ```
 
-Review and whole-repo audit findings are tagged one-liners (`delete:` / `stdlib:` / `native:` / `yagni:` / `shrink:`), ranked biggest cut first; a repo audit ends with `net: -<N> lines, -<M> deps possible.` and applies nothing. Scope is over-engineering only — correctness, security, and performance route to their own skills.
+Review and whole-repo audit findings are tagged one-liners (`delete:` / `stdlib:` / `native:` / `yagni:` / `shrink:`), ranked biggest cut first; a repo audit ends with `net: -<N> lines, -<M> deps possible.` and applies nothing. Scope is over-engineering only — correctness routes to [adversarial-reviewer], security to [security-auditor], and performance to [perf-auditor].
 
 Non-trivial logic (any branch, loop, parser, or money/security path) ships with one runnable check — an assert-based self-check or one small test file in the project's existing convention. Never simplified away: input validation at trust boundaries, error handling that prevents data loss, security measures, accessibility basics, anything the user explicitly requested.
 
@@ -80,3 +80,5 @@ Adapted from [ponytail](https://github.com/DietrichGebert/ponytail) by Dietrich 
 [adversarial-reviewer]: ../adversarial-reviewer/README.md
 [nitpicker]: ../nitpicker/README.md
 [pr-reviewer]: ../pr-reviewer/README.md
+[security-auditor]: ../security-auditor/README.md
+[perf-auditor]: ../perf-auditor/README.md

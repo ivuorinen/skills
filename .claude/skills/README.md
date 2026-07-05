@@ -34,6 +34,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`loophole-hunter`][loophole-hunter] | Leaf — audits the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable constraints; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/loophole-hunter-findings.md` |
 | [`hooks-enforcer`][hooks-enforcer] | Leaf — audits hook *coverage* against the project's evidence base (findings history, git, memory) for recurring failures no hook guards and context-discipline gaps; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/hooks-enforcer-findings.md` |
 | [`complexity-hunter`][complexity-hunter] | Leaf — persistent anti-over-engineering mode; forces the laziest working solution via a reuse-first ladder on every coding task; also audits a diff or whole repo for over-engineering (tagged, ranked findings, applies nothing); invokes nothing and reads no audit artifacts | stdout |
+| [`perf-auditor`][perf-auditor] | Leaf — hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots, sync-in-async, unbounded growth, missing pagination, loop-invariant work, and chatty I/O with growth-driver evidence per finding; receives performance findings routed (by prose, not invocation) from complexity-hunter | `docs/audit/perf-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -66,6 +67,7 @@ graph TD
         LH[loophole-hunter]
         HE[hooks-enforcer]
         CH[complexity-hunter]
+        PA[perf-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -77,6 +79,7 @@ graph TD
         CRF[claude-rules-auditor-findings.md]
         LHF[loophole-hunter-findings.md]
         HEF[hooks-enforcer-findings.md]
+        PAF[perf-auditor-findings.md]
     end
 
     %% arch chain
@@ -103,6 +106,9 @@ graph TD
 
     %% hooks-enforcer writes its own findings
     HE -->|writes| HEF
+
+    %% perf-auditor writes its own findings; complexity-hunter routes perf findings to it (prose, not invocation)
+    PA -->|writes| PAF
 
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
@@ -142,6 +148,7 @@ graph TD
     SK -.->|routes to| LH
     SK -.->|routes to| HE
     SK -.->|routes to| CH
+    SK -.->|routes to| PA
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -274,6 +281,7 @@ flowchart TD
     R -->|"close loopholes / harden the Claude Code setup"| LH[loophole-hunter]
     R -->|"enforce hooks / harden hook coverage / use context-mode"| HE[hooks-enforcer]
     R -->|"be lazy / YAGNI / do less / stop over-engineering / find bloat"| CH[complexity-hunter]
+    R -->|"perf audit / find performance issues / will this scale"| PA[perf-auditor]
 ```
 
 ---
@@ -303,6 +311,7 @@ graph LR
         LH[loophole-hunter]
         HE[hooks-enforcer]
         CH[complexity-hunter]
+        PA[perf-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -400,6 +409,7 @@ When adding a new skill, verify:
 | [`loophole-hunter`][loophole-hunter] | `.claude/rules/**`, hook scripts, `.claude/settings.json` + `.claude/settings.local.json` (hooks, permissions, excludes), all `SKILL.md` files | `docs/audit/loophole-hunter-findings.md` |
 | [`hooks-enforcer`][hooks-enforcer] | `.claude/settings.json` + `.claude/settings.local.json` hooks, hook scripts, `docs/audit/*-findings.md` history, git history, project memory, available context-saving tools, harness markers | `docs/audit/hooks-enforcer-findings.md` |
 | [`complexity-hunter`][complexity-hunter] | the task, files the change touches, project manifest, existing codebase helpers and patterns; whole repo in audit mode | stdout only |
+| [`perf-auditor`][perf-auditor] | every entry point and the code paths it reaches, ORM calls, cache constructors, queries, project manifest, installed measurement tools (profilers, benchmark runners, `EXPLAIN`, stdlib timing) | `docs/audit/perf-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -418,3 +428,4 @@ When adding a new skill, verify:
 [loophole-hunter]: ../../skills/loophole-hunter/README.md
 [hooks-enforcer]: ../../skills/hooks-enforcer/README.md
 [complexity-hunter]: ../../skills/complexity-hunter/README.md
+[perf-auditor]: ../../skills/perf-auditor/README.md
