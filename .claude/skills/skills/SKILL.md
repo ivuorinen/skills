@@ -38,6 +38,7 @@ Lists and invokes the public skills in this repository.
 | `migration-auditor` | `/migration-auditor` | Audit database schema and data migrations: destructive ops, irreversible downs, long-lock operations (engine-specific safe forms), missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited |
 | `observability-auditor` | `/observability-auditor` | Audit the signal surface a codebase emits — dark paths with no emissions, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic |
 | `api-contract-auditor` | `/api-contract-auditor` | Audit the declared public contract surface (OpenAPI/Swagger and GraphQL specs, package exports, published types, CLI flags) against the implementation, and every surface change since the last release tag against the semver bump the commits declare; spec vs code fixes are separate per-finding approvals |
+| `a11y-auditor` | `/a11y-auditor` | Audit the UI layer for accessibility against WCAG 2.2 AA — missing alternatives, unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, computed contrast violations, structure breaks, motion hazards; explicit "no auditable UI surface" verdict when there is no UI |
 
 ## Routing Guide
 
@@ -64,6 +65,7 @@ If the user says… → invoke this skill:
 - "audit the migrations / is this migration safe / review the schema changes / will this migration lock the table" → `/migration-auditor`
 - "audit observability / check our logging / can we debug this at 3am / are our alerts real" → `/observability-auditor`
 - "audit the api contract / does the spec match the code / is this change breaking / check exports vs semver" → `/api-contract-auditor`
+- "a11y audit / accessibility audit / check WCAG / is this keyboard accessible" → `/a11y-auditor`
 
 ## Rules
 
