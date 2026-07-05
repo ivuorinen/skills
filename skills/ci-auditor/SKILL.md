@@ -29,7 +29,8 @@ Hostile audit of a project's CI/CD pipeline definitions. It assumes every workfl
 1. Enumerate pipeline files
    .github/workflows/*.yml|*.yaml, .github/actions/**/action.yml|action.yaml (composite
    actions), .gitlab-ci.yml plus every `include:` target, azure-pipelines.yml,
-   .circleci/config.yml, bitbucket-pipelines.yml, .drone.yml, .woodpecker/*. When unsure
+   .circleci/config.yml, bitbucket-pipelines.yml, .drone.yml, .woodpecker.yml,
+   .woodpecker/*.yml, .woodpecker/*.yaml. When unsure
    whether a YAML file defines a pipeline, examine it — "unrecognized" is not "absent".
    Record the count. Every enumerated file is examined against every defect class —
    never sample. A run with unexamined files has verdict INCOMPLETE.
