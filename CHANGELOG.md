@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.7.1](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.0...ivuorinen-skills-v1.7.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* wire specialist auditors into nitpicker modes and release-prep gates ([#43](https://github.com/ivuorinen/skills/issues/43)) ([02b159b](https://github.com/ivuorinen/skills/commit/02b159bc24dc71e1c9b51007913acac90f4da3ed))
+
 ## [1.7.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.6.0...ivuorinen-skills-v1.7.0) (2026-07-05)
 
 
