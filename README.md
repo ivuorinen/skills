@@ -26,6 +26,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`test-auditor`][test-auditor] | Hostile audit of the test suite itself; assumes the tests are weaker than they look and proves it — assertion-free and tautological tests, mocks of the unit under test, over-mocking that severs the code path, flaky patterns, untracked skips, coverage holes on money/security/data-loss paths, and mutation-blind spots; fixes add or strengthen tests only, never production source |
 | [`dep-auditor`][dep-auditor] | Audits dependency health beyond CVEs — unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything |
 | [`silent-failure-hunter`][silent-failure-hunter] | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path |
+| [`migration-auditor`][migration-auditor] | Hostile audit of database schema and data migrations; assumes every migration eats production until proven safe — destructive ops, irreversible downs, long-lock operations, missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis only, never runs a migration; never edits an applied migration — its fix is a new migration |
 
 ## Installation
 
@@ -63,6 +64,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/test-auditor` — audit the test suite itself for tests that cannot fail, severed code paths, flaky patterns, and critical-path coverage holes
 - `/dep-auditor` — audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies
 - `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
+- `/migration-auditor` — audit database schema and data migrations for destructive, irreversible, locking, and deploy-order defects
 
 ## Examples
 
@@ -185,5 +187,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [perf-auditor]: skills/perf-auditor/README.md
 [dep-auditor]: skills/dep-auditor/README.md
 [silent-failure-hunter]: skills/silent-failure-hunter/README.md
+[migration-auditor]: skills/migration-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
