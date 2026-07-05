@@ -27,7 +27,7 @@ Hostile single-shot audit of a project's CI/CD pipeline definitions — GitHub A
 
 | | |
 |---|---|
-| **Reads** | `.github/workflows/*.yml`, `.github/actions/**/action.yml`, `.gitlab-ci.yml` + includes, other pipeline YAML (azure-pipelines, CircleCI, Bitbucket, Drone, Woodpecker); actionlint/zizmor output when installed; branch protection and rulesets via `gh api` when authenticated |
+| **Reads** | `.github/workflows/*.{yml,yaml}`, `.github/actions/**/action.{yml,yaml}`, `.gitlab-ci.yml` + includes, other pipeline YAML (azure-pipelines, CircleCI, Bitbucket, Drone, Woodpecker); actionlint/zizmor output when installed; branch protection and rulesets via `gh api` when authenticated |
 | **Writes** | `docs/audit/ci-auditor-findings.md` |
 
 ## How to Invoke
@@ -75,7 +75,8 @@ Last validated: YYYY-MM-DD
 Status: Open
 Class: <unpinned-action|excess-permissions|untrusted-interpolation|privileged-trigger-misuse|secrets-leakage|non-gating-check|masked-failure|missing-concurrency|cache-poisoning|runner-exposure>
 Area: <.github/workflows/file.yml:line>
-Tool: <actionlint|zizmor|manual>
+Tool: <comma-separated sources — actionlint, zizmor, manual>
+Verification: <Verified|Unverifiable — run: gh api ...>   (non-gating-check findings only)
 Problem: <what is wrong>
 Evidence: <file:line and the concrete attack or failure scenario>
 Impact: <what an attacker gains or what failure ships>

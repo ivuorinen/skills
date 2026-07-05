@@ -27,7 +27,7 @@ Hostile audit of a project's CI/CD pipeline definitions. It assumes every workfl
    - Finding was wrong, or the user marks it false positive → move to Invalid (record reason)
    - Still present → leave Open (Unverifiable findings stay Open until verified)
 1. Enumerate pipeline files
-   .github/workflows/*.yml|*.yaml, .github/actions/**/action.yml|action.yaml (composite
+   .github/workflows/*.{yml,yaml}, .github/actions/**/action.{yml,yaml} (composite
    actions), .gitlab-ci.yml plus every `include:` target, azure-pipelines.yml,
    .circleci/config.yml, bitbucket-pipelines.yml, .drone.yml, .woodpecker.yml,
    .woodpecker/*.yml, .woodpecker/*.yaml. When unsure
@@ -118,7 +118,7 @@ Last validated: YYYY-MM-DD
 Status: Open
 Class: <unpinned-action|excess-permissions|untrusted-interpolation|privileged-trigger-misuse|secrets-leakage|non-gating-check|masked-failure|missing-concurrency|cache-poisoning|runner-exposure>
 Area: <.github/workflows/file.yml:line>
-Tool: <actionlint|zizmor|manual>
+Tool: <comma-separated sources — actionlint, zizmor, manual>
 Verification: <Verified|Unverifiable — run: gh api ...>   (non-gating-check findings only)
 Problem: <what is wrong>
 Evidence: <file:line and the concrete attack or failure scenario>
