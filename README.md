@@ -27,6 +27,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`dep-auditor`][dep-auditor] | Audits dependency health beyond CVEs — unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything |
 | [`silent-failure-hunter`][silent-failure-hunter] | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path |
 | [`migration-auditor`][migration-auditor] | Hostile audit of database schema and data migrations; assumes every migration eats production until proven safe — destructive ops, irreversible downs, long-lock operations, missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis only, never runs a migration; never edits an applied migration — its fix is a new migration |
+| [`observability-auditor`][observability-auditor] | Hostile single-shot audit of the signal surface a codebase emits; assumes production failures are invisible until logs, metrics, traces, and alerts prove otherwise — dark paths, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic |
 
 ## Installation
 
@@ -65,6 +66,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/dep-auditor` — audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies
 - `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
 - `/migration-auditor` — audit database schema and data migrations for destructive, irreversible, locking, and deploy-order defects
+- `/observability-auditor` — audit the emitted signal surface: logging, metrics, tracing, and alert coverage on critical paths
 
 ## Examples
 
@@ -188,5 +190,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [dep-auditor]: skills/dep-auditor/README.md
 [silent-failure-hunter]: skills/silent-failure-hunter/README.md
 [migration-auditor]: skills/migration-auditor/README.md
+[observability-auditor]: skills/observability-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
