@@ -37,6 +37,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`perf-auditor`][perf-auditor] | Leaf — hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots, sync-in-async, unbounded growth, missing pagination, loop-invariant work, and chatty I/O with growth-driver evidence per finding; receives performance findings routed (by prose, not invocation) from complexity-hunter | `docs/audit/perf-auditor-findings.md` |
 | [`test-auditor`][test-auditor] | Leaf — hostile audit of the test suite itself; finds tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, and mutation-blind spots; fixes touch tests only, never production source | `docs/audit/test-auditor-findings.md` |
 | [`dep-auditor`][dep-auditor] | Leaf — audits dependency health beyond CVEs (unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, misclassified) by cross-referencing manifest, lockfile, and a full import/usage scan; never installs anything; CVEs route to security-auditor | `docs/audit/dep-auditor-findings.md` |
+| [`silent-failure-hunter`][silent-failure-hunter] | Leaf — hostile audit of application error handling; enumerates every handler, ignored error signal, async site, retry, and fallback, proves which failures pass silently, and on approval fixes the error path only | `docs/audit/silent-failure-hunter-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -72,6 +73,7 @@ graph TD
         PA[perf-auditor]
         TA[test-auditor]
         DEP[dep-auditor]
+        SFH[silent-failure-hunter]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -86,6 +88,7 @@ graph TD
         PAF[perf-auditor-findings.md]
         TAF[test-auditor-findings.md]
         DEPF[dep-auditor-findings.md]
+        SFF[silent-failure-hunter-findings.md]
     end
 
     %% arch chain
@@ -121,6 +124,9 @@ graph TD
 
     %% dep-auditor writes its own findings
     DEP -->|writes| DEPF
+
+    %% silent-failure-hunter writes its own findings
+    SFH -->|writes| SFF
 
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
@@ -297,6 +303,7 @@ flowchart TD
     R -->|"perf audit / find performance issues / will this scale"| PA[perf-auditor]
     R -->|"audit the tests / find weak tests / do the tests test anything"| TA[test-auditor]
     R -->|"audit dependencies / unused deps / prune deps / dependency health"| DEP[dep-auditor]
+    R -->|"find silent failures / audit error handling / what errors are we swallowing"| SFH[silent-failure-hunter]
 ```
 
 ---
@@ -329,6 +336,7 @@ graph LR
         PA[perf-auditor]
         TA[test-auditor]
         DEP[dep-auditor]
+        SFH[silent-failure-hunter]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -429,6 +437,7 @@ When adding a new skill, verify:
 | [`perf-auditor`][perf-auditor] | every entry point and the code paths it reaches, ORM calls, cache constructors, queries, project manifest, installed measurement tools (profilers, benchmark runners, `EXPLAIN`, stdlib timing) | `docs/audit/perf-auditor-findings.md` |
 | [`test-auditor`][test-auditor] | every test file, test runner config, suite run output, production source on critical paths (read-only) | `docs/audit/test-auditor-findings.md` |
 | [`dep-auditor`][dep-auditor] | every manifest + lockfile pair, full source tree (all import forms), config plugin references, scripts/Makefiles/CI files, read-only registry metadata | `docs/audit/dep-auditor-findings.md` |
+| [`silent-failure-hunter`][silent-failure-hunter] | every project-maintained source file: error handlers, error callbacks, async call sites, discarded error returns, retry loops, fallback branches | `docs/audit/silent-failure-hunter-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -450,3 +459,4 @@ When adding a new skill, verify:
 [perf-auditor]: ../../skills/perf-auditor/README.md
 [test-auditor]: ../../skills/test-auditor/README.md
 [dep-auditor]: ../../skills/dep-auditor/README.md
+[silent-failure-hunter]: ../../skills/silent-failure-hunter/README.md

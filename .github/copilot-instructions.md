@@ -82,6 +82,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Performance audit (growth-driver evidence) | `skills/perf-auditor/` |
 | Test-suite weakness auditor (tests only, never production source) | `skills/test-auditor/` |
 | Dependency health auditor (beyond CVEs) | `skills/dep-auditor/` |
+| Silent-failure and error-handling auditor | `skills/silent-failure-hunter/` |
 
 ## Adding a New Skill
 
