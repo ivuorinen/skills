@@ -33,6 +33,7 @@ Lists and invokes the public skills in this repository.
 | `test-auditor` | `/test-auditor` | Audit the test suite itself: tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, mutation-blind spots; fixes touch tests only, never production source |
 | `dep-auditor` | `/dep-auditor` | Audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything |
 | `silent-failure-hunter` | `/silent-failure-hunter` | Audit application error handling for silent failures — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only |
+| `ci-auditor` | `/ci-auditor` | Audit CI/CD pipeline definitions (GitHub Actions first-class; GitLab CI and other pipeline YAML) for unpinned actions, over-broad permissions, script injection, privileged-trigger misuse, secrets leakage, non-gating checks, masked failures, missing concurrency, cache poisoning, and self-hosted runner exposure |
 
 ## Routing Guide
 
@@ -54,6 +55,7 @@ If the user says… → invoke this skill:
 - "audit the tests / find weak tests / do the tests actually test anything" → `/test-auditor`
 - "audit dependencies / unused dependencies / prune deps / dependency health" → `/dep-auditor`
 - "find silent failures / audit error handling / what errors are we swallowing / why did this fail without a trace" → `/silent-failure-hunter`
+- "audit the CI / audit workflows / check GitHub Actions security / harden the pipelines" → `/ci-auditor`
 
 ## Rules
 

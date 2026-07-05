@@ -83,6 +83,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Test-suite weakness auditor (tests only, never production source) | `skills/test-auditor/` |
 | Dependency health auditor (beyond CVEs) | `skills/dep-auditor/` |
 | Silent-failure and error-handling auditor | `skills/silent-failure-hunter/` |
+| CI/CD pipeline-definition auditor (GitHub Actions first-class) | `skills/ci-auditor/` |
 
 ## Adding a New Skill
 
