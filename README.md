@@ -28,6 +28,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`silent-failure-hunter`][silent-failure-hunter] | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path |
 | [`migration-auditor`][migration-auditor] | Hostile audit of database schema and data migrations; assumes every migration eats production until proven safe — destructive ops, irreversible downs, long-lock operations, missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis only, never runs a migration; never edits an applied migration — its fix is a new migration |
 | [`observability-auditor`][observability-auditor] | Hostile single-shot audit of the signal surface a codebase emits; assumes production failures are invisible until logs, metrics, traces, and alerts prove otherwise — dark paths, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic |
+| [`api-contract-auditor`][api-contract-auditor] | Hostile single-shot audit of the declared public contract surface (OpenAPI/Swagger and GraphQL specs, package exports, published types, documented CLI flags) against the implementation, and of every surface change since the last release tag against the semver bump the commits declare; spec edits and code edits are separate per-finding approvals — which side is right is the user's call |
 
 ## Installation
 
@@ -67,6 +68,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
 - `/migration-auditor` — audit database schema and data migrations for destructive, irreversible, locking, and deploy-order defects
 - `/observability-auditor` — audit the emitted signal surface: logging, metrics, tracing, and alert coverage on critical paths
+- `/api-contract-auditor` — audit the declared contract surface against the implementation and every surface change since the last release against its semver bump
 
 ## Examples
 
@@ -191,5 +193,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [silent-failure-hunter]: skills/silent-failure-hunter/README.md
 [migration-auditor]: skills/migration-auditor/README.md
 [observability-auditor]: skills/observability-auditor/README.md
+[api-contract-auditor]: skills/api-contract-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
