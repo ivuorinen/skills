@@ -54,11 +54,11 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
 - `/loophole-hunter` — audit the Claude Code enforcement surface and close loopholes
 - `/hooks-enforcer` — audit hook coverage against the project's evidence base and wire the missing hooks
-- `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
 - `/complexity-hunter` — force the laziest working solution on every coding task (sticky mode); also audits a diff or repo for over-engineering
 - `/perf-auditor` — performance audit with growth-driver evidence; writes findings to `docs/audit/perf-auditor-findings.md`
 - `/test-auditor` — audit the test suite itself for tests that cannot fail, severed code paths, flaky patterns, and critical-path coverage holes
 - `/dep-auditor` — audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies
+- `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
 
 ## Examples
 
