@@ -31,6 +31,7 @@ Lists and invokes the public skills in this repository.
 | `complexity-hunter` | `/complexity-hunter` | Force the laziest solution that actually works on every coding task; reuse-first ladder before new code; sticky for the session; also audits a diff or whole repo for over-engineering (tagged, ranked findings, applies nothing) |
 | `perf-auditor` | `/perf-auditor` | Hostile single-shot performance audit; hunt N+1 queries, O(n²)+ hotspots, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, loop-invariant work, and chatty per-item I/O — every finding names the code path, growth driver, and concrete fix |
 | `test-auditor` | `/test-auditor` | Audit the test suite itself: tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, mutation-blind spots; fixes touch tests only, never production source |
+| `dep-auditor` | `/dep-auditor` | Audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything |
 
 ## Routing Guide
 
@@ -50,6 +51,7 @@ If the user says… → invoke this skill:
 - "be lazy / simplest solution / YAGNI / do less / stop over-engineering this / find bloat / what can I delete" → `/complexity-hunter`
 - "perf audit / find performance issues / why is this slow / will this scale" → `/perf-auditor`
 - "audit the tests / find weak tests / do the tests actually test anything" → `/test-auditor`
+- "audit dependencies / unused dependencies / prune deps / dependency health" → `/dep-auditor`
 
 ## Rules
 
