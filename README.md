@@ -23,6 +23,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`perf-auditor`][perf-auditor] | Hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, loop-invariant work redone per iteration, and chatty per-item I/O; every finding names the code path, the growth driver, and a concrete fix; uses installed measurement tools, never adds a dependency |
 | [`test-auditor`][test-auditor] | Hostile audit of the test suite itself; assumes the tests are weaker than they look and proves it — assertion-free and tautological tests, mocks of the unit under test, over-mocking that severs the code path, flaky patterns, untracked skips, coverage holes on money/security/data-loss paths, and mutation-blind spots; fixes add or strengthen tests only, never production source |
 | [`dep-auditor`][dep-auditor] | Audits dependency health beyond CVEs — unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything |
+| [`silent-failure-hunter`][silent-failure-hunter] | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path |
 
 ## Installation
 
@@ -53,6 +54,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
 - `/loophole-hunter` — audit the Claude Code enforcement surface and close loopholes
 - `/hooks-enforcer` — audit hook coverage against the project's evidence base and wire the missing hooks
+- `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
 - `/complexity-hunter` — force the laziest working solution on every coding task (sticky mode); also audits a diff or repo for over-engineering
 - `/perf-auditor` — performance audit with growth-driver evidence; writes findings to `docs/audit/perf-auditor-findings.md`
 - `/test-auditor` — audit the test suite itself for tests that cannot fail, severed code paths, flaky patterns, and critical-path coverage holes
@@ -176,5 +178,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [complexity-hunter]: skills/complexity-hunter/README.md
 [perf-auditor]: skills/perf-auditor/README.md
 [dep-auditor]: skills/dep-auditor/README.md
+[silent-failure-hunter]: skills/silent-failure-hunter/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
