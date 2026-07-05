@@ -36,7 +36,7 @@ Hostile audit of every commit message in a range against the diff it labels. It 
    never a sample. A run with unexamined commits has verdict INCOMPLETE.
 2. Load the convention
    The project's own convention table is the standard: CLAUDE.md, CONTRIBUTING, or
-   the release-please config (release-please-config.json changelog-sections).
+   the release-please config (.release-please-config.json changelog-sections).
    Absent all of those, Conventional Commits. Record the source in the Summary.
 3. Verify every commit: message vs diff
    For each commit read the full message (subject, body, footers) AND the full diff
