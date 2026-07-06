@@ -156,7 +156,11 @@ Run `/i18n-auditor`. This audits the localization surface for hardcoded user-fac
 
 Run `/resource-leak-auditor`. This hunts acquire-without-guaranteed-release on failure paths — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks, and temp-artifact leaks. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
 
-## Step 21 — Verify Conventional Commits
+## Step 21 — Configuration
+
+Run `/config-auditor`. This audits application/runtime configuration for undocumented vars, missing startup validation, unsafe production defaults, config drift, committed secrets, and string coercion traps. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 22 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -186,7 +190,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 22 — Confirm CI Is Green
+## Step 23 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -219,6 +223,7 @@ Steps completed:
   [✓] concurrency-auditor — no Critical/High findings
   [✓] i18n-auditor — no Critical/High findings
   [✓] resource-leak-auditor — no Critical/High findings
+  [✓] config-auditor — no Critical/High findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

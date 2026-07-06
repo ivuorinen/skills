@@ -47,6 +47,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`concurrency-auditor`][concurrency-auditor] | Leaf — audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to perf-auditor; invoked by nitpicker in `concurrency` mode and by release-prep as a gate | `docs/audit/concurrency-auditor-findings.md` |
 | [`i18n-auditor`][i18n-auditor] | Leaf — audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by nitpicker in `i18n` mode and by release-prep as a gate | `docs/audit/i18n-auditor-findings.md` |
 | [`resource-leak-auditor`][resource-leak-auditor] | Leaf — audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to perf-auditor; invoked by nitpicker in `leaks` mode and by release-prep as a gate | `docs/audit/resource-leak-auditor-findings.md` |
+| [`config-auditor`][config-auditor] | Leaf — audit application/runtime configuration — undocumented env vars, missing startup validation, unsafe prod defaults, config drift, committed secrets, string coercion traps, hardcoded environment values; cross-references code against `.env.example`/schema/docs; exploitability routes to security-auditor; invoked by nitpicker in `config` mode and by release-prep as a gate | `docs/audit/config-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -92,6 +93,7 @@ graph TD
         CC[concurrency-auditor]
         I18[i18n-auditor]
         RLK[resource-leak-auditor]
+        CFG[config-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -116,6 +118,7 @@ graph TD
         CCF[concurrency-auditor-findings.md]
         I18F[i18n-auditor-findings.md]
         RLKF[resource-leak-auditor-findings.md]
+        CFGF[config-auditor-findings.md]
     end
 
     %% arch chain
@@ -182,6 +185,9 @@ graph TD
     %% resource-leak-auditor writes its own findings
     RLK -->|writes| RLKF
 
+    %% config-auditor writes its own findings
+    CFG -->|writes| CFGF
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -203,6 +209,7 @@ graph TD
     NP -->|concurrency mode: invokes| CC
     NP -->|i18n mode: invokes| I18
     NP -->|leaks mode: invokes| RLK
+    NP -->|config mode: invokes| CFG
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -232,6 +239,7 @@ graph TD
     RP -->|invokes| CC
     RP -->|invokes| I18
     RP -->|invokes| RLK
+    RP -->|invokes| CFG
 
     %% router
     SK -.->|routes to| AR
@@ -259,6 +267,7 @@ graph TD
     SK -.->|routes to| CC
     SK -.->|routes to| I18
     SK -.->|routes to| RLK
+    SK -.->|routes to| CFG
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -434,6 +443,7 @@ flowchart TD
     R -->|"audit concurrency / find race conditions / check for deadlocks / is this thread-safe"| CC[concurrency-auditor]
     R -->|"i18n audit / internationalization / localization audit / find hardcoded strings / check locale handling"| I18[i18n-auditor]
     R -->|"resource leak audit / find leaks / unclosed connections / file descriptor leak / listener leak"| RLK[resource-leak-auditor]
+    R -->|"config audit / audit configuration / check env vars / find undocumented config / config drift"| CFG[config-auditor]
 ```
 
 ---
@@ -476,6 +486,7 @@ graph LR
         CC[concurrency-auditor]
         I18[i18n-auditor]
         RLK[resource-leak-auditor]
+        CFG[config-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -611,6 +622,7 @@ When adding a new skill, verify:
 | [`concurrency-auditor`][concurrency-auditor] | shared mutable state reachable from two or more concurrent contexts, thread/async task spawn sites, lock/atomic/synchronization primitives, `await` points, compound operations on thread-safe containers | `docs/audit/concurrency-auditor-findings.md` |
 | [`i18n-auditor`][i18n-auditor] | user-facing strings, number/currency/date formatting calls, datetime handling, string concatenation, plural/gender handling, the project's declared locale scope and existing i18n mechanism | `docs/audit/i18n-auditor-findings.md` |
 | [`resource-leak-auditor`][resource-leak-auditor] | resource acquisition sites (file/socket/stream/DB handles, pool connections, listeners/subscriptions, tasks/threads/timers, contexts, temp artifacts, native/Disposable handles) and the failure paths that skip release | `docs/audit/resource-leak-auditor-findings.md` |
+| [`config-auditor`][config-auditor] | every config read in code, `.env.example`, config schema, docs, in-code defaults, tracked config files across sources | `docs/audit/config-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -642,3 +654,4 @@ When adding a new skill, verify:
 [concurrency-auditor]: ../../skills/concurrency-auditor/README.md
 [i18n-auditor]: ../../skills/i18n-auditor/README.md
 [resource-leak-auditor]: ../../skills/resource-leak-auditor/README.md
+[config-auditor]: ../../skills/config-auditor/README.md
