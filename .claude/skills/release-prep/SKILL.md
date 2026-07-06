@@ -152,7 +152,11 @@ Run `/concurrency-auditor`. This hunts data races, non-atomic check-then-act, de
 
 Run `/i18n-auditor`. This audits the localization surface for hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, mistranslating concatenation, and missing plural rules; a repo with no localization surface returns the explicit no-surface verdict. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
 
-## Step 20 — Verify Conventional Commits
+## Step 20 — Resource Lifecycle
+
+Run `/resource-leak-auditor`. This hunts acquire-without-guaranteed-release on failure paths — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks, and temp-artifact leaks. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 21 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -182,7 +186,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 21 — Confirm CI Is Green
+## Step 22 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -214,6 +218,7 @@ Steps completed:
   [✓] commit-auditor — no Critical/High findings
   [✓] concurrency-auditor — no Critical/High findings
   [✓] i18n-auditor — no Critical/High findings
+  [✓] resource-leak-auditor — no Critical/High findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

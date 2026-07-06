@@ -91,6 +91,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Accessibility auditor (WCAG 2.2 AA, UI layer) | `skills/a11y-auditor/` |
 | Concurrency safety auditor (races, deadlocks, atomicity) | `skills/concurrency-auditor/` |
 | Internationalization / localization auditor | `skills/i18n-auditor/` |
+| Resource-leak / lifecycle auditor | `skills/resource-leak-auditor/` |
 
 ## Adding a New Skill
 
