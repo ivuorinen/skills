@@ -23,9 +23,10 @@ def main() -> None:
 
     file_path = data.get("file_path") or data.get("path") or ""
     raw = Path(file_path)
-    path = raw if raw.is_absolute() else REPO_ROOT / raw
+    path = (raw if raw.is_absolute() else REPO_ROOT / raw).resolve()
 
-    if path.suffix != ".py" or not path.exists():
+    # Only act on files inside the project; ignore anything resolving outside it.
+    if path.suffix != ".py" or not path.is_relative_to(REPO_ROOT.resolve()) or not path.exists():
         return
 
     # auto-fix what ruff can, then format
