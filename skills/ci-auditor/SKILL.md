@@ -35,8 +35,8 @@ Hostile audit of a project's CI/CD pipeline definitions. It assumes every workfl
    Record the count. Every enumerated file is examined against every defect class —
    never sample. A run with unexamined files has verdict INCOMPLETE.
 2. Run installed analyzers
-   Probe with `which actionlint` and `which zizmor`. Run each tool found
-   (`actionlint -format '{{json .}}'`; `zizmor --format json .`); record a missing tool
+   Probe with `command -v actionlint` and `command -v zizmor`. Run each tool found
+   (`actionlint -format '{{json .}}'`; `zizmor --pedantic --format json .github/workflows`); record a missing tool
    as "Not available" and a crashed tool as "Errored: <message>" in the Summary — a
    tool failure never aborts the run. Never install a tool. Parse tool output into
    findings, deduplicating on file + line + class; list every source under Tool:.

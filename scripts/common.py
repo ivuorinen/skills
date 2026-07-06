@@ -8,6 +8,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
     Returns (frontmatter_dict, body_text). Returns ({}, text) if no frontmatter found.
     """
+    text = text.replace("\r\n", "\n")
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
@@ -31,7 +32,7 @@ def collect_skills(base: Path) -> list[tuple[str, str]]:
     results = []
     for skill_md in sorted(base.glob("*/SKILL.md")):
         fm, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
-        name = fm.get("name", skill_md.parent.name)
-        description = fm.get("description", "(no description)")
+        name = fm.get("name", "").strip() or skill_md.parent.name
+        description = fm.get("description", "").strip() or "(no description)"
         results.append((name, description))
     return results

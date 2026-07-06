@@ -6,9 +6,13 @@
 """PostToolUse hook — run ruff check --fix and ruff format on edited Python files."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+_default = Path(__file__).parent.parent.parent
+REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT", _default)))
 
 
 def main() -> None:
@@ -18,7 +22,8 @@ def main() -> None:
         return
 
     file_path = data.get("file_path") or data.get("path") or ""
-    path = Path(file_path)
+    raw = Path(file_path)
+    path = raw if raw.is_absolute() else REPO_ROOT / raw
 
     if path.suffix != ".py" or not path.exists():
         return

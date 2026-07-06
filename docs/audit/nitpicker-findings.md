@@ -1,9 +1,9 @@
 # Nitpicker Findings
 Generated: 2026-04-24
-Last validated: 2026-05-29
+Last validated: 2026-07-06
 
 ## Summary
-- Total: 101 | Open: 1 | Fixed: 99 | Invalid: 1
+- Total: 122 | Open: 2 | Fixed: 119 | Invalid: 1
 
 ## Open Findings
 
@@ -17,7 +17,97 @@ Evidence: Official docs (platform.claude.com/docs/en/agents-and-tools/agent-skil
 Impact: Platform enforcement may reject the skill name in certain deployment contexts. Behavior varies by deployment.
 Fix: Rename to `rules-auditor` in a future major version bump. Renaming is a breaking change for all plugin consumers — defer to next major release.
 
+#### [N-116] Cosmetic backtick inconsistency in the gate-clause wording across catalogues
+Category: conventions
+Area: .claude/skills/README.md (Skill Catalogue) vs CLAUDE.md / README.md skills tables
+Problem: The wiring clause backticks `nitpicker`/`release-prep` in CLAUDE.md and README.md but not in the wiring-guide Skill Catalogue.
+Evidence: Wiring guide reads "invoked by nitpicker in `perf` mode and by release-prep as a gate"; CLAUDE.md/README read "invoked by `nitpicker` in `perf` mode and by `release-prep` as a gate".
+Impact: None functional. Each file is internally consistent (the wiring guide uses the un-backticked form for all 12 rows, including the pre-existing loophole-hunter/hooks-enforcer rows).
+Fix: Accepted as-is — not applied. Harmonizing a cross-file cosmetic difference would churn 12 catalogue rows for zero functional benefit; each file is already internally consistent. Recorded for visibility.
+
 ## Fixed
+
+### Pass 24 — 2026-07-06
+
+#### [N-102] `validate-skills.yml` has no `permissions:` block (least-privilege gap)
+Fixed: 2026-07-06
+Notes: Added top-level `permissions: contents: read` to `.github/workflows/validate-skills.yml`. The job only reads the checkout, so the default read-write `GITHUB_TOKEN` was an unnecessary write capability during execution of branch/PR code.
+
+#### [N-103] `list-skills.py` crashes with `IndexError` on an empty skill description
+Fixed: 2026-07-06
+Notes: Root-caused in `scripts/common.py` `collect_skills`: `fm.get("description", ...)` returned "" when the key exists but is empty, then `textwrap.wrap("")` → `[]` → `lines[0]` `IndexError` in `list-skills.py:30`, aborting `make list` for all skills. Now coerces empty/blank `name` and `description` to their fallbacks at the shared source.
+
+#### [N-104] Dependency Graph router subgraph missing 3 edges (test/silent-failure/observability)
+Fixed: 2026-07-06
+Notes: Added `SK -.->|routes to| TA`, `SFH`, `OBA` to the Dependency Graph mermaid in `.claude/skills/README.md`. The graph now matches the sibling Ad-hoc Audit Routing flowchart and the router skill (all route to 22 skills).
+
+#### [N-105] "Adding a New Skill" checklists omit the launcher surface
+Fixed: 2026-07-06
+Notes: Added `.claude/skills/skills/SKILL.md` (Available Skills table + Routing Guide) to the registration checklists in CLAUDE.md (step 4), `.github/copilot-instructions.md` (step 2), and the wiring-guide New Skill Registration Checklist (item 5). Following the written checklist would otherwise leave the launcher stale.
+
+#### [N-106] `release-please.yml` grants unused `issues: write`
+Fixed: 2026-07-06
+Notes: Removed `issues: write`; the release-please action needs only `contents: write` + `pull-requests: write`.
+
+#### [N-107] `copilot-instructions.md` `make check` description omits `format-check`
+Fixed: 2026-07-06
+Notes: Added `format-check` to the make-check description (line 106) to match the actual `check:` target and CLAUDE.md.
+
+#### [N-108] `push` trigger has no branch filter → CI double-runs on feature branches
+Fixed: 2026-07-06
+Notes: Added `branches: [main]` under `on.push` in `validate-skills.yml`; feature-branch pushes are now covered by the `pull_request` trigger only, eliminating duplicate runs.
+
+#### [N-109] Workflow path filters exclude the workflow file and Makefile
+Fixed: 2026-07-06
+Notes: Added `.github/workflows/**` and `Makefile` to both the `push` and `pull_request` `paths` lists in `validate-skills.yml`, so edits to the workflow (or Makefile) trigger validation.
+
+#### [N-110] `validate-json-hook` and `ruff-hook` fail open on a relative `file_path`
+Fixed: 2026-07-06
+Notes: Both hooks now resolve a relative `file_path` against `REPO_ROOT` (`CLAUDE_PROJECT_DIR`/`REPO_ROOT` env, else repo root) before `path.exists()`, matching the sibling hooks; a relative path no longer silently skips validation.
+
+#### [N-111] `check-version-sync-hook` only surfaces `MISMATCH`, misses the ERROR class
+Fixed: 2026-07-06
+Notes: The hook now reports on `ERROR` lines and any non-zero return code from `check-version-sync.py` (e.g. a missing/renamed/unreadable version field), not only `MISMATCH`.
+
+#### [N-112] `validate-audit-findings-hook` prints "added missing Summary line" when it adds none
+Fixed: 2026-07-06
+Notes: Guarded the message with `not summary_extra` so it fires only when the summary line is actually appended (the custom-summary case appends nothing).
+
+#### [N-113] `check-audit-consistency` and the findings hook disagree on what a finding line is
+Fixed: 2026-07-06
+Notes: The checker now recognizes any `^#### [` h4 as a finding line (matching the hook) and reports a clear "malformed finding ID" error for a non-conforming ID, instead of surfacing it as a confusing summary-count mismatch.
+
+#### [N-114] `check-audit-consistency` Summary search does not skip fenced code blocks
+Fixed: 2026-07-06
+Notes: Added `in_fence` tracking to the Summary-line search loop (consistent with the section and header-jump scans), so a `Total:`-shaped line inside a fenced example no longer gets picked as the authoritative summary.
+
+#### [N-115] Master Invocation Map has 4 edgeless mermaid nodes with no explanation
+Fixed: 2026-07-06
+Notes: Added a note under the diagram stating the router and standalone skills (cr-implementer, claude-rules-auditor, complexity-hunter) appear without invocation edges by design.
+
+#### [N-117] `common.parse_frontmatter` rejects CRLF frontmatter
+Fixed: 2026-07-06
+Notes: Normalize `\r\n` → `\n` at the top of `parse_frontmatter` so a CRLF-saved SKILL.md is parsed rather than reported "missing frontmatter". (`.gitattributes` enforces LF for committed md, so this hardens the pre-commit/local case.)
+
+#### [N-118] `bump-version.bump_version` crashes on a non-`MAJOR.MINOR.PATCH` version
+Fixed: 2026-07-06
+Notes: Validates the version against `\d+\.\d+\.\d+` and exits with a clear message instead of an unpack/`ValueError` traceback on pre-release or malformed versions.
+
+#### [N-119] SKILL.md validator did not guard against duplicate section headers
+Fixed: 2026-07-06
+Notes: Added a duplicate-header check to `scripts/validate-skill.py` — the same `(level, title)` heading appearing twice in a SKILL.md body (fenced code blocks excluded) is now an error, alongside the existing header-level-jump check. Added 3 tests. Ran across all 22 public + 5 internal skills: none had duplicate headers. `make check` green at 242 tests. The check also runs in CI and in the `validate-skill-hook` on every SKILL.md edit.
+
+#### [N-120] Findings-file validator had no duplicate-header check and was not enforced
+Fixed: 2026-07-06
+Notes: `check-audit-consistency.py` reported `nitpicker-findings.md` "consistent" despite a duplicated `### Pass 23` header, and it was not run by `make check` or CI. Added section-scoped duplicate-`###`-header detection (a duplicate within one `## ` section is an error; the same pass header across `## Fixed` and `## Invalid` stays allowed), plus 2 tests. Wired the checker into the `make check` `audit-consistency` target and a CI step, and added `docs/audit/**` to the CI trigger paths. Updated the make-check descriptions in Makefile/CLAUDE.md/copilot-instructions.
+
+#### [N-121] Stray empty duplicate `### Pass 23` header in this findings file
+Fixed: 2026-07-06
+Notes: An empty `### Pass 23 — 2026-05-29` header preceded the real Pass 23 block under `## Fixed` (a pre-existing defect). Caught by the new N-120 check; removed the empty duplicate.
+
+#### [N-122] `claude-rules-auditor-findings.md` lacked the standard Total summary line
+Fixed: 2026-07-06
+Notes: The file used only domain-specific summary bullets, so `check-audit-consistency` could not verify its counts (and warned once the checker was wired into make check). Added `- Total: 7 | Open: 0 | Fixed: 5 | Invalid: 2` as the first Summary bullet, keeping the domain bullets after it; the validate-audit-findings hook maintains the count line.
 
 ### Pass 23 — 2026-05-29
 

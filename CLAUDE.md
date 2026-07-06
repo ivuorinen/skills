@@ -9,7 +9,7 @@ A Claude Code plugin containing hostile audit and enforcement skills. Each skill
 ## Development Commands
 
 ```bash
-make check        # validate all skills + validate-rules + version sync + ruff lint + ruff format check + pytest (run before every commit)
+make check        # validate all skills + validate-rules + version sync + audit-consistency + ruff lint + ruff format check + pytest (run before every commit)
 make validate     # SKILL.md structure only (public + internal)
 make test         # run pytest unit tests for scripts/
 make list         # list all skills with descriptions
@@ -66,7 +66,7 @@ The body is a prompt written in imperative Markdown — define mindset, checklis
 1. Create a kebab-case directory under `skills/` (e.g., `skills/my-skill/`)
 2. Add `SKILL.md` with YAML frontmatter (`name` + `description`)
 3. Write the `description` per the format enforced by `.claude/rules/skill-format.md`
-4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`; also update the Skill Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`
+4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`; add it to the Available Skills table and Routing Guide in `.claude/skills/skills/SKILL.md`; also update the Skill Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`
 5. Use `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle.
 6. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
 

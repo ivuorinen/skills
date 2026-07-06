@@ -23,7 +23,10 @@ FILES = [
 
 
 def bump_version(version: str, part: str) -> str:
-    major, minor, patch = (int(x) for x in version.split("."))
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
+    if not m:
+        sys.exit(f"error: version {version!r} is not in MAJOR.MINOR.PATCH form")
+    major, minor, patch = (int(x) for x in m.groups())
     match part:
         case "major":
             return f"{major + 1}.0.0"

@@ -110,6 +110,18 @@ class TestValidate:
         text = VALID + "\n```\n#### Not a real header\n```\n"
         assert not _has(_errors(tmp_path, text), "header level jumps")
 
+    def test_duplicate_header_errors(self, tmp_path):
+        text = VALID + "\n## Overview\n\nA second Overview section.\n"
+        assert _has(_errors(tmp_path, text), "duplicate header")
+
+    def test_duplicate_header_in_fenced_block_ignored(self, tmp_path):
+        text = VALID + "\n```\n## Overview\n```\n"
+        assert not _has(_errors(tmp_path, text), "duplicate header")
+
+    def test_same_title_different_level_not_duplicate(self, tmp_path):
+        text = VALID + "\n### Overview\n\nA subsection, not a duplicate section.\n"
+        assert not _has(_errors(tmp_path, text), "duplicate header")
+
     def test_legacy_path_in_prose_warns(self, tmp_path):
         text = VALID + "\nWrite results to codereview.md.\n"
         assert _has(_warnings(tmp_path, text), "legacy output path")

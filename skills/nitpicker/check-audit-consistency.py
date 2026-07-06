@@ -61,9 +61,16 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
         if required not in h2_sections:
             err(f"missing required section '## {required}'")
 
-    # Parse Summary counts
+    # Parse Summary counts (skip fenced example blocks)
     summary_match = None
+    in_fence = False
     for line in lines:
+        stripped = line.rstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
         m = _SUMMARY_RE.search(line)
         if m:
             summary_match = m
@@ -76,6 +83,8 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
     in_open = in_fixed = in_invalid = False
     under_pass_fixed = under_pass_invalid = False
     in_fence = False
+    current_section = ""
+    seen_h3: dict[str, set[str]] = {}
 
     for lineno, line in enumerate(lines, 1):
         stripped = line.rstrip()
@@ -86,6 +95,7 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
         h2 = re.match(r"^##\s+(.*)", line)
         if h2:
             name = h2.group(1).strip()
+            current_section = name
             in_open = name == "Open Findings"
             in_fixed = name == "Fixed"
             in_invalid = name == "Invalid"
@@ -93,6 +103,11 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
             continue
 
         if re.match(r"^###[^#]", line):
+            h3_title = line.lstrip("#").strip()
+            bucket = seen_h3.setdefault(current_section, set())
+            if h3_title in bucket:
+                err(f"line {lineno}: duplicate '### {h3_title}' within '## {current_section}'")
+            bucket.add(h3_title)
             if in_fixed:
                 under_pass_fixed = bool(_PASS_HEADER_RE.match(line))
             elif in_invalid:
@@ -100,6 +115,9 @@ def check_file(path: Path, errors: list[str], warnings: list[str]) -> None:
             continue
 
         id_match = _FINDING_ID_RE.match(line)
+        if re.match(r"^####\s+\[", line) and not id_match:
+            err(f"line {lineno}: malformed finding ID (expected '[PREFIX-N]'): {stripped!r}")
+            continue
         if not id_match:
             continue
         fid = id_match.group(1)
