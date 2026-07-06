@@ -44,6 +44,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only; invoked by nitpicker in `observability` mode and by release-prep as a gate | `docs/audit/observability-auditor-findings.md` |
 | [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals; invoked by nitpicker in `contract` mode and by release-prep as a gate | `docs/audit/api-contract-auditor-findings.md` |
 | [`a11y-auditor`][a11y-auditor] | Leaf — hostile accessibility audit of the UI layer against WCAG 2.2 AA; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, then the manual sweep tools cannot do (focus order, ARIA semantics, contrast math from design tokens); verifies the accessibility floor complexity-hunter never simplifies away; invoked by nitpicker in `a11y` mode and by release-prep as a gate | `docs/audit/a11y-auditor-findings.md` |
+| [`concurrency-auditor`][concurrency-auditor] | Leaf — audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to perf-auditor; invoked by nitpicker in `concurrency` mode and by release-prep as a gate | `docs/audit/concurrency-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -86,6 +87,7 @@ graph TD
         OBA[observability-auditor]
         ACA[api-contract-auditor]
         AY[a11y-auditor]
+        CC[concurrency-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -107,6 +109,7 @@ graph TD
         OBF[observability-auditor-findings.md]
         ACF[api-contract-auditor-findings.md]
         AYF[a11y-auditor-findings.md]
+        CCF[concurrency-auditor-findings.md]
     end
 
     %% arch chain
@@ -164,6 +167,9 @@ graph TD
     %% a11y-auditor writes its own findings
     AY -->|writes| AYF
 
+    %% concurrency-auditor writes its own findings
+    CC -->|writes| CCF
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -182,6 +188,7 @@ graph TD
     NP -->|observability mode: invokes| OBA
     NP -->|contract mode: invokes| ACA
     NP -->|a11y mode: invokes| AY
+    NP -->|concurrency mode: invokes| CC
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -208,6 +215,7 @@ graph TD
     RP -->|invokes| AY
     RP -->|invokes| CIA
     RP -->|invokes| CMA
+    RP -->|invokes| CC
 
     %% router
     SK -.->|routes to| AR
@@ -232,6 +240,7 @@ graph TD
     SK -.->|routes to| OBA
     SK -.->|routes to| ACA
     SK -.->|routes to| AY
+    SK -.->|routes to| CC
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -404,6 +413,7 @@ flowchart TD
     R -->|"audit observability / check our logging / can we debug this at 3am"| OBA[observability-auditor]
     R -->|"audit the api contract / does the spec match the code / is this change breaking"| ACA[api-contract-auditor]
     R -->|"a11y audit / accessibility audit / check WCAG / is this keyboard accessible"| AY[a11y-auditor]
+    R -->|"audit concurrency / find race conditions / check for deadlocks / is this thread-safe"| CC[concurrency-auditor]
 ```
 
 ---
@@ -443,6 +453,7 @@ graph LR
         OBA[observability-auditor]
         ACA[api-contract-auditor]
         AY[a11y-auditor]
+        CC[concurrency-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -575,6 +586,7 @@ When adding a new skill, verify:
 | [`observability-auditor`][observability-auditor] | project-maintained source (critical paths, jobs, boundary crossings, log statements, metric labels), logging/metrics/tracing config, in-repo alert/monitor/recording-rule configs | `docs/audit/observability-auditor-findings.md` |
 | [`api-contract-auditor`][api-contract-auditor] | OpenAPI/Swagger/AsyncAPI files, GraphQL schema, `package.json` exports + published `.d.ts`, `__all__`, public headers, CLI parser + `--help` text, route tables, git tags + diff since the release baseline, commit messages | `docs/audit/api-contract-auditor-findings.md` |
 | [`a11y-auditor`][a11y-auditor] | every component file (`.jsx`/`.tsx`/`.vue`/`.svelte`), server template, `.html` file, CSS/SCSS/design-token file, Tailwind config; installed a11y tool output (axe-core, eslint-plugin-jsx-a11y, pa11y) | `docs/audit/a11y-auditor-findings.md` |
+| [`concurrency-auditor`][concurrency-auditor] | shared mutable state reachable from two or more concurrent contexts, thread/async task spawn sites, lock/atomic/synchronization primitives, `await` points, compound operations on thread-safe containers | `docs/audit/concurrency-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -603,3 +615,4 @@ When adding a new skill, verify:
 [observability-auditor]: ../../skills/observability-auditor/README.md
 [api-contract-auditor]: ../../skills/api-contract-auditor/README.md
 [a11y-auditor]: ../../skills/a11y-auditor/README.md
+[concurrency-auditor]: ../../skills/concurrency-auditor/README.md

@@ -30,6 +30,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`observability-auditor`][observability-auditor] | Hostile single-shot audit of the signal surface a codebase emits; assumes production failures are invisible until logs, metrics, traces, and alerts prove otherwise — dark paths, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic; invoked by `nitpicker` in `observability` mode and by `release-prep` as a gate |
 | [`api-contract-auditor`][api-contract-auditor] | Hostile single-shot audit of the declared public contract surface (OpenAPI/Swagger and GraphQL specs, package exports, published types, documented CLI flags) against the implementation, and of every surface change since the last release tag against the semver bump the commits declare; spec edits and code edits are separate per-finding approvals — which side is right is the user's call; invoked by `nitpicker` in `contract` mode and by `release-prep` as a gate |
 | [`a11y-auditor`][a11y-auditor] | Hostile single-shot accessibility audit of the UI layer against WCAG 2.2 AA; assumes the interface is unusable without a mouse and screen until the code proves otherwise — missing alternatives, unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, computed contrast violations, structure breaks, and motion hazards; runs installed a11y tools first, never installs anything; a repo with no UI surface gets the explicit verdict "no auditable UI surface"; invoked by `nitpicker` in `a11y` mode and by `release-prep` as a gate |
+| [`concurrency-auditor`][concurrency-auditor] | Audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to `perf-auditor`; invoked by `nitpicker` in `concurrency` mode and by `release-prep` as a gate |
 
 ## Installation
 
@@ -71,6 +72,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/observability-auditor` — audit the emitted signal surface: logging, metrics, tracing, and alert coverage on critical paths
 - `/api-contract-auditor` — audit the declared contract surface against the implementation and every surface change since the last release against its semver bump
 - `/a11y-auditor` — accessibility audit of the UI layer against WCAG 2.2 AA; findings in `docs/audit/a11y-auditor-findings.md`
+- `/concurrency-auditor` — concurrency-safety audit for data races, non-atomic check-then-act, deadlock ordering, lost updates, unsafe publication, and shared-state-across-await; findings in `docs/audit/concurrency-auditor-findings.md`
 
 ## Examples
 
@@ -208,5 +210,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [observability-auditor]: skills/observability-auditor/README.md
 [api-contract-auditor]: skills/api-contract-auditor/README.md
 [a11y-auditor]: skills/a11y-auditor/README.md
+[concurrency-auditor]: skills/concurrency-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode

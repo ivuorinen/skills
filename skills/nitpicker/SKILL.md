@@ -62,13 +62,14 @@ Nitpicker must analyze:
 | observability | Invoke `/observability-auditor`; incorporate its findings; focus remaining review on the log and metric call sites in code |
 | contract | Invoke `/api-contract-auditor`; incorporate its findings; focus remaining review on the implementation behind the declared surface |
 | a11y | Invoke `/a11y-auditor`; incorporate its findings; focus remaining review on the UI logic behind the WCAG conformance defects |
+| concurrency | Invoke `/concurrency-auditor`; incorporate its findings; focus remaining review on shared-state access and synchronization boundaries |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
 
 ### Mode delegation detail
 
 The specialist-invoking modes — `security`, `tests`, `docs`, `architecture`, `loophole`,
-`perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`, and
-`a11y` — are incompatible with `inline` mode. If `inline` is combined with any of these,
+`perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`,
+`a11y`, and `concurrency` — are incompatible with `inline` mode. If `inline` is combined with any of these,
 treat the combined mode as `inline` only: run the full internal review without invoking
 specialist skills, and return findings in the response. Never write
 `docs/audit/nitpicker-findings.md` when `inline` is active, regardless of which other mode
@@ -151,6 +152,10 @@ In `a11y` mode (without `inline`), run `/a11y-auditor` first. Read
 `docs/audit/a11y-auditor-findings.md` after it completes. Incorporate all open Critical/High
 findings. Extend with review of the UI logic behind the WCAG conformance defects.
 
+In `concurrency` mode (without `inline`), run `/concurrency-auditor` first. Read
+`docs/audit/concurrency-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of the shared-state access and synchronization boundaries behind the concurrency defects.
+
 ## Single-Shot Behavior
 
 ```
@@ -160,7 +165,7 @@ findings. Extend with review of the UI logic behind the WCAG conformance defects
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in any specialist-invoking mode (security/tests/docs/architecture/loophole/perf/deps/errors/ci/commits/migrations/observability/contract/a11y) AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
+3. If in any specialist-invoking mode (security/tests/docs/architecture/loophole/perf/deps/errors/ci/commits/migrations/observability/contract/a11y/concurrency) AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"
