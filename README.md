@@ -34,6 +34,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`i18n-auditor`][i18n-auditor] | Audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by `nitpicker` in `i18n` mode and by `release-prep` as a gate |
 | [`resource-leak-auditor`][resource-leak-auditor] | Audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to `perf-auditor`; invoked by `nitpicker` in `leaks` mode and by `release-prep` as a gate |
 | [`config-auditor`][config-auditor] | Audit application/runtime configuration — undocumented env vars, missing startup validation, unsafe prod defaults, config drift, committed secrets, string coercion traps, hardcoded environment values; cross-references code against `.env.example`/schema/docs; exploitability routes to `security-auditor`; invoked by `nitpicker` in `config` mode and by `release-prep` as a gate |
+| [`data-privacy-auditor`][data-privacy-auditor] | Audit the personal-data surface — PII/credentials unprotected at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, weak anonymization; elements must be identifiably personal, never guessed; explicit "no personal-data surface" verdict; PII-in-logs routes to `observability-auditor`; invoked by `nitpicker` in `privacy` mode and by `release-prep` as a gate |
 
 ## Installation
 
@@ -79,6 +80,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/i18n-auditor` — internationalization/localization audit for hardcoded strings, locale-unsafe formatting, timezone-naive datetimes, and missing plural rules; findings in `docs/audit/i18n-auditor-findings.md`
 - `/resource-leak-auditor` — resource-lifecycle audit for unclosed handles, pool connections not returned on error, listener/subscription leaks, and orphaned tasks/timers; findings in `docs/audit/resource-leak-auditor-findings.md`
 - `/config-auditor` — application/runtime configuration audit for undocumented env vars, missing startup validation, unsafe prod defaults, config drift, and committed secrets; findings in `docs/audit/config-auditor-findings.md`
+- `/data-privacy-auditor` — personal-data audit for unprotected PII at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, and weak anonymization; findings in `docs/audit/data-privacy-auditor-findings.md`
 
 ## Examples
 
@@ -220,5 +222,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [i18n-auditor]: skills/i18n-auditor/README.md
 [resource-leak-auditor]: skills/resource-leak-auditor/README.md
 [config-auditor]: skills/config-auditor/README.md
+[data-privacy-auditor]: skills/data-privacy-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
