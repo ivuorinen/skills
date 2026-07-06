@@ -160,7 +160,7 @@ def parse_and_fix(text: str) -> tuple[str, list[str]]:
     invalid_count = sum(1 for ln in invalid_lines if H4_FINDING.match(ln))
     total = open_count + fixed_count + invalid_count
 
-    if not summary_found:
+    if not summary_found and not summary_extra:
         messages.append("  added missing Summary line")
 
     # Reconstruct file

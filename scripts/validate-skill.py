@@ -74,6 +74,14 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
             err(f"header level jumps from h{prev_level} to h{level}: '{'#' * level} {title}'")
         prev_level = level
 
+    # Duplicate headers — the same heading must not appear twice (ignores fenced code blocks)
+    seen_headers: set[tuple[int, str]] = set()
+    for level, title in headers:
+        key = (level, title.strip())
+        if key in seen_headers:
+            err(f"duplicate header: '{'#' * level} {title.strip()}'")
+        seen_headers.add(key)
+
     # Body length — official best-practices recommend ≤500 lines for optimal performance
     body_lines = len(body.splitlines())
     if body_lines > 500:

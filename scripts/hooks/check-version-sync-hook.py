@@ -48,10 +48,14 @@ def main() -> None:
         capture_output=True,
         text=True,
     )
-    mismatches = [line for line in result.stdout.splitlines() if "MISMATCH" in line]
-    if mismatches:
-        for line in mismatches:
+    problems = [
+        line for line in result.stdout.splitlines() if "MISMATCH" in line or "ERROR" in line
+    ]
+    if problems or result.returncode != 0:
+        for line in problems:
             print(line, flush=True)
+        if result.returncode != 0 and not problems:
+            print((result.stdout.strip() or result.stderr.strip()), flush=True)
         print("Run ./scripts/bump-version.py to resync all version files.", flush=True)
 
 

@@ -95,15 +95,16 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
 2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in
    `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
-   Also update `README.md` (it always contains a mirrored skills table) and update the Skill
-   Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`.
+   Also update `README.md` (it always contains a mirrored skills table), the Available Skills
+   table + Routing Guide in `.claude/skills/skills/SKILL.md`, and the Skill Catalogue, Mermaid
+   graphs, and Quick Reference in `.claude/skills/README.md`.
 3. Run `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip this; it enforces the TDD baseline and rationalization protection.
 4. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
 
 ## Validation — Run Before Every Commit
 
 ```bash
-make check          # validate + validate-rules + version-sync + lint + pytest (all must pass)
+make check          # validate + validate-rules + version-sync + audit-consistency + lint + format-check + pytest (all must pass)
 make validate       # SKILL.md frontmatter + structure only
 make validate-rules # validate .claude/rules/ files (structure + path freshness)
 make test           # run pytest unit tests for scripts/

@@ -77,6 +77,34 @@ Last validated: 2026-01-01
 
 """
 
+DUP_PASS_IN_FIXED = """\
+# Nitpicker Findings
+Generated: 2026-01-01
+Last validated: 2026-01-01
+
+## Summary
+- Total: 2 | Open: 0 | Fixed: 2 | Invalid: 0
+
+## Open Findings
+
+## Fixed
+
+### Pass 1 — 2026-01-01
+
+#### [N-001] First fixed
+Fixed: 2026-01-01
+Notes: x.
+
+### Pass 1 — 2026-01-01
+
+#### [N-002] Second block reusing the same pass header
+Fixed: 2026-01-01
+Notes: y.
+
+## Invalid
+
+"""
+
 
 # ── check_file: valid inputs ───────────────────────────────────────────────────
 
@@ -99,6 +127,21 @@ class TestCheckFileValid:
         f.write_text(VALID_FINDINGS, encoding="utf-8")
         _, warnings = _run(f)
         assert warnings == []
+
+
+class TestDuplicateHeaders:
+    def test_duplicate_pass_within_fixed_errors(self, tmp_path):
+        f = tmp_path / "nitpicker-findings.md"
+        f.write_text(DUP_PASS_IN_FIXED, encoding="utf-8")
+        errors, _ = _run(f)
+        assert _has(errors, "duplicate '### Pass 1 — 2026-01-01' within '## Fixed'")
+
+    def test_same_pass_across_fixed_and_invalid_ok(self, tmp_path):
+        # VALID_FINDINGS legitimately has Pass 1 under both Fixed and Invalid.
+        f = tmp_path / "nitpicker-findings.md"
+        f.write_text(VALID_FINDINGS, encoding="utf-8")
+        errors, _ = _run(f)
+        assert not _has(errors, "duplicate")
 
 
 # ── check_file: unreadable ─────────────────────────────────────────────────────

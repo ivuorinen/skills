@@ -223,10 +223,13 @@ graph TD
     SK -.->|routes to| HE
     SK -.->|routes to| CH
     SK -.->|routes to| PA
+    SK -.->|routes to| TA
     SK -.->|routes to| DEP
+    SK -.->|routes to| SFH
     SK -.->|routes to| CIA
     SK -.->|routes to| CMA
     SK -.->|routes to| MA
+    SK -.->|routes to| OBA
     SK -.->|routes to| ACA
     SK -.->|routes to| AY
 ```
@@ -491,6 +494,10 @@ extending the review with additional analysis that the specialist does not cover
 In default mode, [nitpicker] covers all areas internally and does not invoke the
 specialist skills.
 
+The router (`skills`) and the standalone skills [cr-implementer], [claude-rules-auditor],
+and [complexity-hunter] appear in the Leaves subgraph without invocation edges by design —
+no orchestrator invokes them; they are entered directly by the user.
+
 ---
 
 ## Acyclicity and Termination Rules
@@ -536,8 +543,9 @@ When adding a new skill, verify:
    prerequisite in this file and in the new skill's `## When to Use` section.
 4. Add it to the Skill Catalogue table and all relevant Mermaid diagrams in this file
    (`.claude/skills/README.md`). Update the Quick Reference Input/Output table too.
-5. Add it to the "Existing Public Skills" table in `.github/copilot-instructions.md`
-   and the skills table in `CLAUDE.md` and `README.md`.
+5. Add it to the "Existing Public Skills" table in `.github/copilot-instructions.md`,
+   the skills table in `CLAUDE.md` and `README.md`, and the Available Skills table +
+   Routing Guide in `.claude/skills/skills/SKILL.md`.
 
 ---
 

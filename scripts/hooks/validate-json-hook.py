@@ -5,8 +5,12 @@
 """PostToolUse hook — validate JSON syntax after Write or Edit."""
 
 import json
+import os
 import sys
 from pathlib import Path
+
+_default = Path(__file__).parent.parent.parent
+REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT", _default)))
 
 
 def main() -> None:
@@ -16,9 +20,14 @@ def main() -> None:
         return
 
     file_path = data.get("file_path") or data.get("path") or ""
-    path = Path(file_path)
+    raw = Path(file_path)
+    path = (raw if raw.is_absolute() else REPO_ROOT / raw).resolve()
 
     if path.suffix != ".json":
+        return
+
+    # Only validate files inside the project; ignore anything resolving outside it.
+    if not path.is_relative_to(REPO_ROOT.resolve()):
         return
 
     if not path.exists():

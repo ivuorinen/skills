@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync lint format format-check list test help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync audit-consistency lint format format-check list test help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,10 +6,11 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + lint + format-check + test (default)"
+	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + lint + format-check + test (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
+	@echo "  audit-consistency — check docs/audit/*-findings.md structure (dup headers, counts, IDs)"
 	@echo "  lint         — ruff check on scripts/, tests/, skills/"
 	@echo "  format       — ruff format on scripts/, tests/, skills/"
 	@echo "  format-check — ruff format --check (CI-safe, no writes)"
@@ -19,7 +20,7 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync lint format-check test
+check: validate validate-rules version-sync audit-consistency lint format-check test
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -30,6 +31,9 @@ validate-rules:
 
 version-sync:
 	$(UV) scripts/check-version-sync.py
+
+audit-consistency:
+	$(UV) skills/nitpicker/check-audit-consistency.py
 
 list:
 	$(UV) scripts/list-skills.py

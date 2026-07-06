@@ -3,6 +3,7 @@ Generated: 2026-05-01
 Last validated: 2026-05-02
 
 ## Summary
+- Total: 7 | Open: 0 | Fixed: 5 | Invalid: 2
 - Rules files audited: 4
 - CLAUDE.md files audited: 1
 - Validation errors: 0 | Misplaced rules: 0 | Redundant rules: 0 | Suggestions: 0 | Invalid: 2
