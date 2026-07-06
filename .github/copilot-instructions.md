@@ -93,6 +93,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Internationalization / localization auditor | `skills/i18n-auditor/` |
 | Resource-leak / lifecycle auditor | `skills/resource-leak-auditor/` |
 | Application/runtime config auditor | `skills/config-auditor/` |
+| Data-privacy / PII auditor | `skills/data-privacy-auditor/` |
 
 ## Adding a New Skill
 

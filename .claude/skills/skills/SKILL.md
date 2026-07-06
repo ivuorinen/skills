@@ -43,6 +43,7 @@ Lists and invokes the public skills in this repository.
 | `i18n-auditor` | `/i18n-auditor` | Audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects |
 | `resource-leak-auditor` | `/resource-leak-auditor` | Audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to `perf-auditor` |
 | `config-auditor` | `/config-auditor` | Audit application/runtime configuration — undocumented env vars, missing startup validation, unsafe prod defaults, config drift, committed secrets, string coercion traps, hardcoded environment values; cross-references code against `.env.example`/schema/docs; exploitability routes to `security-auditor` |
+| `data-privacy-auditor` | `/data-privacy-auditor` | Audit the personal-data surface — PII/credentials unprotected at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, weak anonymization; elements must be identifiably personal, never guessed; explicit "no personal-data surface" verdict; PII-in-logs routes to `observability-auditor` |
 
 ## Routing Guide
 
@@ -74,6 +75,7 @@ If the user says… → invoke this skill:
 - "i18n audit / internationalization / localization audit / find hardcoded strings / check locale handling" → `/i18n-auditor`
 - "resource leak audit / find leaks / unclosed connections / file descriptor leak / listener leak" → `/resource-leak-auditor`
 - "config audit / audit configuration / check env vars / find undocumented config / config drift" → `/config-auditor`
+- "privacy audit / PII audit / data protection audit / GDPR check / find unprotected personal data" → `/data-privacy-auditor`
 
 ## Rules
 

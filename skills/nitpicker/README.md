@@ -52,13 +52,14 @@ Adversarial, exhaustive whole-repository code review with integrated fixing. Ass
 | `observability` | Invoke [observability-auditor]; incorporate findings; extend with the log and metric call sites in code |
 | `contract` | Invoke [api-contract-auditor]; incorporate findings; extend with the implementation behind the declared surface |
 | `a11y` | Invoke [a11y-auditor]; incorporate findings; extend with the UI logic behind the WCAG conformance defects |
+| `privacy` | Invoke [data-privacy-auditor]; incorporate findings; extend with the data-handling paths behind the privacy defects |
 | `config` | Invoke [config-auditor]; incorporate findings; extend with the code paths that consume the flagged config values |
 | `leaks` | Invoke [resource-leak-auditor]; incorporate findings; extend with acquisition/release pairing on error paths |
 | `i18n` | Invoke [i18n-auditor]; incorporate findings; extend with the presentation layer behind the localization defects |
 | `concurrency` | Invoke [concurrency-auditor]; incorporate findings; extend with shared-state access and synchronization boundaries |
 | `release-gate` | Fail if any findings at or above the threshold exist (default threshold: High) |
 
-`inline` is incompatible with every specialist-invoking mode — `security`, `tests`, `docs`, `architecture`, `loophole`, `perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`, `a11y`, `concurrency`, `i18n`, `leaks`, and `config`. When combined, only the inline behavior applies (no specialist skills invoked, no file written).
+`inline` is incompatible with every specialist-invoking mode — `security`, `tests`, `docs`, `architecture`, `loophole`, `perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`, `a11y`, `concurrency`, `i18n`, `leaks`, `config`, and `privacy`. When combined, only the inline behavior applies (no specialist skills invoked, no file written).
 
 ## Review Scope
 
@@ -175,6 +176,7 @@ Finding ID format: `N-NNN` (zero-padded to 3 digits, e.g. `N-001`). IDs are assi
 [observability-auditor]: ../observability-auditor/README.md
 [api-contract-auditor]: ../api-contract-auditor/README.md
 [a11y-auditor]: ../a11y-auditor/README.md
+[data-privacy-auditor]: ../data-privacy-auditor/README.md
 [config-auditor]: ../config-auditor/README.md
 [resource-leak-auditor]: ../resource-leak-auditor/README.md
 [i18n-auditor]: ../i18n-auditor/README.md
