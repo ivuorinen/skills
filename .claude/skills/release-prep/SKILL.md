@@ -144,7 +144,11 @@ type-understatement, type-overstatement, unmarked and spurious breaking changes,
 scope-lies, and malformed convention that mis-version a release-please release. If any Critical or
 High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
 
-## Step 18 — Verify Conventional Commits
+## Step 18 — Concurrency Safety
+
+Run `/concurrency-auditor`. This hunts data races, non-atomic check-then-act, deadlock-ordering, lost updates, unsafe publication, and shared-state-across-await. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 19 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -174,7 +178,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 19 — Confirm CI Is Green
+## Step 20 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -204,6 +208,7 @@ Steps completed:
   [✓] a11y-auditor — no Critical/High findings
   [✓] ci-auditor — no Critical/High findings
   [✓] commit-auditor — no Critical/High findings
+  [✓] concurrency-auditor — no Critical/High findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

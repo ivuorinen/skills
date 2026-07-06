@@ -89,6 +89,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Observability / signal-surface auditor (logs, metrics, traces, alerts) | `skills/observability-auditor/` |
 | Public contract-surface auditor (spec vs implementation, surface vs semver) | `skills/api-contract-auditor/` |
 | Accessibility auditor (WCAG 2.2 AA, UI layer) | `skills/a11y-auditor/` |
+| Concurrency safety auditor (races, deadlocks, atomicity) | `skills/concurrency-auditor/` |
 
 ## Adding a New Skill
 
