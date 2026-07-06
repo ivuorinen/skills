@@ -92,6 +92,7 @@ Body-only (no frontmatter) is a **legacy pattern** — never create new skills w
 | Concurrency safety auditor (races, deadlocks, atomicity) | `skills/concurrency-auditor/` |
 | Internationalization / localization auditor | `skills/i18n-auditor/` |
 | Resource-leak / lifecycle auditor | `skills/resource-leak-auditor/` |
+| Application/runtime config auditor | `skills/config-auditor/` |
 
 ## Adding a New Skill
 
