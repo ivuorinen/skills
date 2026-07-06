@@ -32,6 +32,7 @@ Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the 
 | [`a11y-auditor`][a11y-auditor] | Hostile single-shot accessibility audit of the UI layer against WCAG 2.2 AA; assumes the interface is unusable without a mouse and screen until the code proves otherwise — missing alternatives, unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, computed contrast violations, structure breaks, and motion hazards; runs installed a11y tools first, never installs anything; a repo with no UI surface gets the explicit verdict "no auditable UI surface"; invoked by `nitpicker` in `a11y` mode and by `release-prep` as a gate |
 | [`concurrency-auditor`][concurrency-auditor] | Audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to `perf-auditor`; invoked by `nitpicker` in `concurrency` mode and by `release-prep` as a gate |
 | [`i18n-auditor`][i18n-auditor] | Audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by `nitpicker` in `i18n` mode and by `release-prep` as a gate |
+| [`resource-leak-auditor`][resource-leak-auditor] | Audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to `perf-auditor`; invoked by `nitpicker` in `leaks` mode and by `release-prep` as a gate |
 
 ## Installation
 
@@ -75,6 +76,7 @@ Invoke any skill by name in Claude Code (listed in execution order):
 - `/a11y-auditor` — accessibility audit of the UI layer against WCAG 2.2 AA; findings in `docs/audit/a11y-auditor-findings.md`
 - `/concurrency-auditor` — concurrency-safety audit for data races, non-atomic check-then-act, deadlock ordering, lost updates, unsafe publication, and shared-state-across-await; findings in `docs/audit/concurrency-auditor-findings.md`
 - `/i18n-auditor` — internationalization/localization audit for hardcoded strings, locale-unsafe formatting, timezone-naive datetimes, and missing plural rules; findings in `docs/audit/i18n-auditor-findings.md`
+- `/resource-leak-auditor` — resource-lifecycle audit for unclosed handles, pool connections not returned on error, listener/subscription leaks, and orphaned tasks/timers; findings in `docs/audit/resource-leak-auditor-findings.md`
 
 ## Examples
 
@@ -214,5 +216,6 @@ This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ism
 [a11y-auditor]: skills/a11y-auditor/README.md
 [concurrency-auditor]: skills/concurrency-auditor/README.md
 [i18n-auditor]: skills/i18n-auditor/README.md
+[resource-leak-auditor]: skills/resource-leak-auditor/README.md
 [goal-doc]: https://code.claude.com/docs/en/goal
 [auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode

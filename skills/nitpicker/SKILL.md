@@ -62,6 +62,7 @@ Nitpicker must analyze:
 | observability | Invoke `/observability-auditor`; incorporate its findings; focus remaining review on the log and metric call sites in code |
 | contract | Invoke `/api-contract-auditor`; incorporate its findings; focus remaining review on the implementation behind the declared surface |
 | a11y | Invoke `/a11y-auditor`; incorporate its findings; focus remaining review on the UI logic behind the WCAG conformance defects |
+| leaks | Invoke `/resource-leak-auditor`; incorporate its findings; focus remaining review on acquisition/release pairing on error paths |
 | i18n | Invoke `/i18n-auditor`; incorporate its findings; focus remaining review on the presentation layer behind the localization defects |
 | concurrency | Invoke `/concurrency-auditor`; incorporate its findings; focus remaining review on shared-state access and synchronization boundaries |
 | release-gate | Fail if any findings at or above the threshold exist (default threshold: High) |
@@ -70,7 +71,7 @@ Nitpicker must analyze:
 
 The specialist-invoking modes — `security`, `tests`, `docs`, `architecture`, `loophole`,
 `perf`, `deps`, `errors`, `ci`, `commits`, `migrations`, `observability`, `contract`,
-`a11y`, `concurrency`, and `i18n` — are incompatible with `inline` mode. If `inline` is combined with any of these,
+`a11y`, `concurrency`, `i18n`, and `leaks` — are incompatible with `inline` mode. If `inline` is combined with any of these,
 treat the combined mode as `inline` only: run the full internal review without invoking
 specialist skills, and return findings in the response. Never write
 `docs/audit/nitpicker-findings.md` when `inline` is active, regardless of which other mode
@@ -153,6 +154,10 @@ In `a11y` mode (without `inline`), run `/a11y-auditor` first. Read
 `docs/audit/a11y-auditor-findings.md` after it completes. Incorporate all open Critical/High
 findings. Extend with review of the UI logic behind the WCAG conformance defects.
 
+In `leaks` mode (without `inline`), run `/resource-leak-auditor` first. Read
+`docs/audit/resource-leak-auditor-findings.md` after it completes. Incorporate all open Critical/High
+findings. Extend with review of acquisition/release pairing on error paths.
+
 In `i18n` mode (without `inline`), run `/i18n-auditor` first. Read
 `docs/audit/i18n-auditor-findings.md` after it completes. Incorporate all open Critical/High
 findings. Extend with review of the presentation layer behind the localization defects.
@@ -170,7 +175,7 @@ findings. Extend with review of the shared-state access and synchronization boun
      - Issue resolved → move to Fixed (record date)
      - Finding was wrong → move to Invalid (record reason)
      - Still present → leave as Open
-3. If in any specialist-invoking mode (security/tests/docs/architecture/loophole/perf/deps/errors/ci/commits/migrations/observability/contract/a11y/concurrency/i18n) AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
+3. If in any specialist-invoking mode (security/tests/docs/architecture/loophole/perf/deps/errors/ci/commits/migrations/observability/contract/a11y/concurrency/i18n/leaks) AND NOT inline mode: invoke the specialist skill(s) and read their output file(s) per Mode delegation detail. Then review remaining scope per mode.
 4. Add new findings (assign next available ID — never reuse IDs)
 5. Present findings summary
 6. Ask: "Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o"
