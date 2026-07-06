@@ -148,7 +148,11 @@ High finding remains open after fixes are applied: stop. Report the findings. Do
 
 Run `/concurrency-auditor`. This hunts data races, non-atomic check-then-act, deadlock-ordering, lost updates, unsafe publication, and shared-state-across-await. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
 
-## Step 19 — Verify Conventional Commits
+## Step 19 — Internationalization
+
+Run `/i18n-auditor`. This audits the localization surface for hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, mistranslating concatenation, and missing plural rules; a repo with no localization surface returns the explicit no-surface verdict. If any Critical or High finding remains open after fixes are applied: stop. Report the findings. Do not proceed.
+
+## Step 20 — Verify Conventional Commits
 
 Confirm every commit on this branch follows the conventional commits format that
 release-please uses to determine the version bump and generate release notes:
@@ -178,7 +182,7 @@ merges to `main`.
 Do **not** require or check for a manually-written `CHANGELOG.md` entry; release-please
 manages the changelog.
 
-## Step 20 — Confirm CI Is Green
+## Step 21 — Confirm CI Is Green
 
 Check `.github/workflows/validate-skills.yml` passed on the current commit. If CI is
 failing: stop. Report which checks failed. Do not proceed.
@@ -209,6 +213,7 @@ Steps completed:
   [✓] ci-auditor — no Critical/High findings
   [✓] commit-auditor — no Critical/High findings
   [✓] concurrency-auditor — no Critical/High findings
+  [✓] i18n-auditor — no Critical/High findings
   [✓] conventional commits — all commits on branch use valid format
   [✓] CI — validate-skills.yml passing
 

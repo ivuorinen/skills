@@ -45,6 +45,7 @@ chain, and the rules that keep the graph acyclic and terminating.
 | [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals; invoked by nitpicker in `contract` mode and by release-prep as a gate | `docs/audit/api-contract-auditor-findings.md` |
 | [`a11y-auditor`][a11y-auditor] | Leaf — hostile accessibility audit of the UI layer against WCAG 2.2 AA; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, then the manual sweep tools cannot do (focus order, ARIA semantics, contrast math from design tokens); verifies the accessibility floor complexity-hunter never simplifies away; invoked by nitpicker in `a11y` mode and by release-prep as a gate | `docs/audit/a11y-auditor-findings.md` |
 | [`concurrency-auditor`][concurrency-auditor] | Leaf — audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to perf-auditor; invoked by nitpicker in `concurrency` mode and by release-prep as a gate | `docs/audit/concurrency-auditor-findings.md` |
+| [`i18n-auditor`][i18n-auditor] | Leaf — audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by nitpicker in `i18n` mode and by release-prep as a gate | `docs/audit/i18n-auditor-findings.md` |
 
 **Leaf skills** produce output but do not invoke other skills.
 **Orchestrator skills** sequence other skills to accomplish a compound goal.
@@ -88,6 +89,7 @@ graph TD
         ACA[api-contract-auditor]
         AY[a11y-auditor]
         CC[concurrency-auditor]
+        I18[i18n-auditor]
     end
 
     subgraph artifacts["docs/audit/ — Shared Artifacts"]
@@ -110,6 +112,7 @@ graph TD
         ACF[api-contract-auditor-findings.md]
         AYF[a11y-auditor-findings.md]
         CCF[concurrency-auditor-findings.md]
+        I18F[i18n-auditor-findings.md]
     end
 
     %% arch chain
@@ -170,6 +173,9 @@ graph TD
     %% concurrency-auditor writes its own findings
     CC -->|writes| CCF
 
+    %% i18n-auditor writes its own findings
+    I18 -->|writes| I18F
+
     %% nitpicker writes its own findings; in focused modes it also invokes specialists
     NP -->|writes| NF
     NP -->|security mode: invokes| SA
@@ -189,6 +195,7 @@ graph TD
     NP -->|contract mode: invokes| ACA
     NP -->|a11y mode: invokes| AY
     NP -->|concurrency mode: invokes| CC
+    NP -->|i18n mode: invokes| I18
 
     %% new-skill lifecycle
     NS -->|invokes| ST
@@ -216,6 +223,7 @@ graph TD
     RP -->|invokes| CIA
     RP -->|invokes| CMA
     RP -->|invokes| CC
+    RP -->|invokes| I18
 
     %% router
     SK -.->|routes to| AR
@@ -241,6 +249,7 @@ graph TD
     SK -.->|routes to| ACA
     SK -.->|routes to| AY
     SK -.->|routes to| CC
+    SK -.->|routes to| I18
 ```
 
 Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
@@ -414,6 +423,7 @@ flowchart TD
     R -->|"audit the api contract / does the spec match the code / is this change breaking"| ACA[api-contract-auditor]
     R -->|"a11y audit / accessibility audit / check WCAG / is this keyboard accessible"| AY[a11y-auditor]
     R -->|"audit concurrency / find race conditions / check for deadlocks / is this thread-safe"| CC[concurrency-auditor]
+    R -->|"i18n audit / internationalization / localization audit / find hardcoded strings / check locale handling"| I18[i18n-auditor]
 ```
 
 ---
@@ -454,6 +464,7 @@ graph LR
         ACA[api-contract-auditor]
         AY[a11y-auditor]
         CC[concurrency-auditor]
+        I18[i18n-auditor]
         ST[skill-tester]
         SK[skills / router]
     end
@@ -587,6 +598,7 @@ When adding a new skill, verify:
 | [`api-contract-auditor`][api-contract-auditor] | OpenAPI/Swagger/AsyncAPI files, GraphQL schema, `package.json` exports + published `.d.ts`, `__all__`, public headers, CLI parser + `--help` text, route tables, git tags + diff since the release baseline, commit messages | `docs/audit/api-contract-auditor-findings.md` |
 | [`a11y-auditor`][a11y-auditor] | every component file (`.jsx`/`.tsx`/`.vue`/`.svelte`), server template, `.html` file, CSS/SCSS/design-token file, Tailwind config; installed a11y tool output (axe-core, eslint-plugin-jsx-a11y, pa11y) | `docs/audit/a11y-auditor-findings.md` |
 | [`concurrency-auditor`][concurrency-auditor] | shared mutable state reachable from two or more concurrent contexts, thread/async task spawn sites, lock/atomic/synchronization primitives, `await` points, compound operations on thread-safe containers | `docs/audit/concurrency-auditor-findings.md` |
+| [`i18n-auditor`][i18n-auditor] | user-facing strings, number/currency/date formatting calls, datetime handling, string concatenation, plural/gender handling, the project's declared locale scope and existing i18n mechanism | `docs/audit/i18n-auditor-findings.md` |
 | `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
 | `skill-tester` | scenario description, skill under test | subagent output (stdout) |
 | `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
@@ -616,3 +628,4 @@ When adding a new skill, verify:
 [api-contract-auditor]: ../../skills/api-contract-auditor/README.md
 [a11y-auditor]: ../../skills/a11y-auditor/README.md
 [concurrency-auditor]: ../../skills/concurrency-auditor/README.md
+[i18n-auditor]: ../../skills/i18n-auditor/README.md
