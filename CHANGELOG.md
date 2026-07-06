@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.7.2](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.1...ivuorinen-skills-v1.7.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* repo audit fixes, workflow hardening, and findings-consistency enforcement ([#45](https://github.com/ivuorinen/skills/issues/45)) ([979ef8c](https://github.com/ivuorinen/skills/commit/979ef8ca3feaffa25b3dcb3ad354492be3b5ef6b))
+
 ## [1.7.1](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.0...ivuorinen-skills-v1.7.1) (2026-07-05)
 
 
