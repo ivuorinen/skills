@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [1.8.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.2...ivuorinen-skills-v1.8.0) (2026-07-06)
+
+
+### Features
+
+* add concurrency-auditor skill ([#47](https://github.com/ivuorinen/skills/issues/47)) ([45833f8](https://github.com/ivuorinen/skills/commit/45833f8d227832e7afc4b8c12e784a31954bd5f7))
+* add config-auditor skill ([#50](https://github.com/ivuorinen/skills/issues/50)) ([0ac2ba0](https://github.com/ivuorinen/skills/commit/0ac2ba09d124885c0ebd4da7b4503ada4b52c255))
+* add data-privacy-auditor skill ([#51](https://github.com/ivuorinen/skills/issues/51)) ([679e74c](https://github.com/ivuorinen/skills/commit/679e74c92f3fff8576863def8d442516033bc432))
+* add i18n-auditor skill ([#48](https://github.com/ivuorinen/skills/issues/48)) ([ba681ef](https://github.com/ivuorinen/skills/commit/ba681efe5cfaa7b0729c61990aa5a0a7a8a56ed3))
+* add resource-leak-auditor skill ([#49](https://github.com/ivuorinen/skills/issues/49)) ([9c54f45](https://github.com/ivuorinen/skills/commit/9c54f45319320e91527c7602e49a7baa29f01329))
+
 ## [1.7.2](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.1...ivuorinen-skills-v1.7.2) (2026-07-06)
 
 
