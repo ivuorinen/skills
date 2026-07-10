@@ -94,6 +94,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | Command         | Purpose                                                                                                  |
 | --------------- | -------------------------------------------------------------------------------------------------------- |
 | `tests`         | Audit the test suite itself: tautological tests, over-mocking, coverage holes (alias: `test-auditor`)    |
+| `types`         | Static-typing soundness: suppressed errors, any-escapes, unsound casts, lax strictness                   |
 | `docs`          | Verify documentation accuracy against the codebase (alias: `doc-auditor`)                                |
 | `ci`            | Audit CI/CD pipeline definitions: unpinned actions, injection, token scope (alias: `ci-auditor`)         |
 | `commits`       | Audit commit-message discipline against the actual diffs (alias: `commit-auditor`)                       |

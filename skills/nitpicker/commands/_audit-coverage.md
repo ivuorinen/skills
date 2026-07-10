@@ -78,6 +78,10 @@ review surface the skill offers.
   patterns, untracked skips, coverage holes on critical paths, and tests
   coupled to an external binary or environment the CI test step does not
   provision.
+- **Types** (`types`) — static-typing soundness: blanket suppressions,
+  `any`-escapes, unsound casts, non-null assertions, untyped public
+  boundaries, lax strictness flags. N/A when the repo has no static type
+  system (untyped, by declared scope).
 - **Docs** (`docs`) — documentation accuracy against the code: stale,
   missing, or wrong behavior descriptions.
 - **CI/CD** (`ci`) — unpinned actions, over-broad token scope, script

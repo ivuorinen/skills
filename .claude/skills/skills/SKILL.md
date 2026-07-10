@@ -20,6 +20,7 @@ If the user says… → run:
 - "implement cr comments / address pr feedback" → `/nitpicker cr`
 - "security audit / find vulnerabilities / check for secrets" → `/nitpicker security`
 - "audit the tests / do the tests actually test anything" → `/nitpicker tests`
+- "audit the types / check type safety / find the anys / are the type ignores real" → `/nitpicker types`
 - "check the docs / find stale documentation" → `/nitpicker docs`
 - "what architecture is this / detect patterns" → `/nitpicker arch-profile`
 - "audit the architecture / find violations" → `/nitpicker arch`

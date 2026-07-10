@@ -93,6 +93,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | Command         | What it hunts                                                            |
 | --------------- | ------------------------------------------------------------------------ |
 | `tests`         | Tests that cannot fail: tautologies, mocked-out subjects, coverage holes |
+| `types`         | Suppressed type errors, any-escapes, unsound casts, untyped boundaries   |
 | `docs`          | Documentation that lies: stale, incorrect, missing                       |
 | `ci`            | Pipeline defects: unpinned actions, script injection, over-broad tokens  |
 | `commits`       | Commit messages that mis-version the release vs their actual diffs       |
