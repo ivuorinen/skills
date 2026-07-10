@@ -43,6 +43,14 @@ class TestValidate:
         # uses tmp_path as repo_root; glob won't match but no ERROR for non-empty valid glob
         assert _errors(tmp_path, VALID_SCOPED) == []
 
+    def test_flow_style_paths_list_accepted(self, tmp_path):
+        # A YAML flow-style list must parse as a list, not a scalar — kept in sync
+        # with check-rules-anatomy.py. Regression for the two-validator divergence.
+        content = (
+            '---\npaths: ["src/**/*.ts", "lib/**"]\n---\n\nAlways add explicit return types.\n'
+        )
+        assert not _has(_errors(tmp_path, content), "must be a list")
+
     def test_non_kebab_filename_errors(self, tmp_path):
         assert _has(_errors(tmp_path, VALID_PLAIN, "SEARCH_TOOLS.md"), "kebab-case")
 
@@ -121,3 +129,33 @@ class TestValidate:
         errors, warnings = _run(tmp_path, content)
         assert errors == []
         assert not _has(warnings, "stale")
+
+
+# --- Regression test for audit fix (2026-07-09) ---
+
+
+def test_paths_list_parsed_at_four_space_indent():
+    text = '---\ndescription: d\npaths:\n    - "src/**"\n    - "lib/**"\n---\nbody\n'
+    fm, _ = _mod.parse_rules_frontmatter(text)
+    assert fm is not None and fm.get("paths") == ["src/**", "lib/**"]
+
+
+def test_paths_list_parsed_at_column_zero():
+    # A block sequence at column 0 is valid YAML and must still be recognized,
+    # so its globs are validated rather than silently skipped.
+    text = '---\npaths:\n- "src/**"\n- "lib/**"\n---\nbody\n'
+    fm, _ = _mod.parse_rules_frontmatter(text)
+    assert fm is not None and fm.get("paths") == ["src/**", "lib/**"]
+
+
+def test_column_zero_absolute_glob_is_rejected(tmp_path):
+    # The bug let a column-0 list bypass the absolute-path check entirely.
+    text = '---\npaths:\n- "/etc/passwd"\n---\nbody\n'
+    errors = _errors(tmp_path, text)
+    assert _has(errors, "must be relative, not absolute")
+
+
+def test_blank_line_inside_paths_list_keeps_all_items():
+    text = '---\npaths:\n  - "stale/removed/*"\n\n  - "src/*"\n---\nbody\n'
+    fm, _ = _mod.parse_rules_frontmatter(text)
+    assert fm is not None and fm.get("paths") == ["stale/removed/*", "src/*"]

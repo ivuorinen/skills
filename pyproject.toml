@@ -8,10 +8,12 @@ dev = ["pytest", "pytest-cov"]
 
 [tool.coverage.run]
 include = [
-    "skills/cr-implementer/fetch-pr-comments.py",
-    "skills/nitpicker/check-audit-consistency.py",
-    "skills/claude-rules-auditor/check-rules-anatomy.py",
-    "skills/security-auditor/process-sarif.py",
+  "skills/nitpicker/scripts/findings.py",
+  "skills/nitpicker/scripts/fetch-pr-comments.py",
+  "skills/nitpicker/scripts/check-rules-anatomy.py",
+  "skills/nitpicker/scripts/process-sarif.py",
+  "scripts/*.py",
+  "scripts/hooks/*.py",
 ]
 
 [tool.pytest.ini_options]

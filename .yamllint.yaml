@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://json.schemastore.org/yamllint.json
+---
+extends: default
+
+rules:
+  # pre-commit runs yamllint --strict, so warnings fail like errors; keep these
+  # at their default (error) level rather than a misleading `level: warning`.
+  line-length:
+    max: 200
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1

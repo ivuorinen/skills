@@ -1,129 +1,99 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Shared cross-agent rules live in `AGENTS.md`; this file adds the Claude Code specifics.
 
 ## What This Repo Is
 
-A Claude Code plugin containing hostile audit and enforcement skills. Each skill lives under `skills/<name>/SKILL.md`. The repo is installable via `/plugins` and versioned with semantic versioning + release-please automation. Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are used during development only — not shipped to plugin consumers.
+A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as `/nitpicker <command> [extra instructions]`. The router is `skills/nitpicker/SKILL.md`; each command's instructions live in `skills/nitpicker/commands/<command>.md`, with shared conventions in `commands/_conventions.md`. The repo is installable as a Claude Code plugin via `/plugins`, and into Copilot/pi/other agents via `npx skills add ivuorinen/skills` (open Agent Skills format). Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are not shipped to consumers.
 
 ## Development Commands
 
 ```bash
-make check        # validate all skills + validate-rules + version sync + audit-consistency + ruff lint + ruff format check + pytest (run before every commit)
-make validate     # SKILL.md structure only (public + internal)
-make test         # run pytest unit tests for scripts/
-make list         # list all skills with descriptions
+make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + pytest + pre-commit suite (run before every commit)
+make validate     # SKILL.md + command-file structure (public + internal)
+make test         # run pytest unit tests
+make list         # list the skill and its commands
 make lint         # ruff check on scripts/, tests/, skills/
 make format       # ruff format on scripts/, tests/, skills/
 ```
 
-## Existing Skills
+## Commands
 
-Skills live in `skills/` — each subdirectory is one skill.
+The authoritative command listing (categorized, with aliases) is `## Commands` in `skills/nitpicker/SKILL.md`; `/nitpicker help` prints it. The 1.x standalone skill names (`security-auditor`, `test-auditor`, …) are aliases of the new short names (`security`, `tests`, …).
 
-| Skill | Trigger description |
-|-------|---------------------|
-| `adversarial-reviewer` | Hostile code review; assumes bugs exist and hunts for them |
-| `nitpicker` | Exhaustive repository audit; finds defects across code, tests, docs, and config; optionally applies fixes in a single run |
-| `arch-detector` | Detects which architectural patterns a codebase uses; produces `docs/audit/arch-profile.md` |
-| `arch-auditor` | Audits codebase for architectural violations against detected or declared patterns |
-| `doc-auditor` | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
-| `pr-reviewer` | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
-| `security-auditor` | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
-| `cr-implementer` | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, scans for similar issues, and asks user whether to leave/commit/push |
-| `claude-rules-auditor` | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
-| `loophole-hunter` | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
-| `hooks-enforcer` | Audits an agent project's hook *coverage* against its evidence base (current hooks, audit-findings history, git history, project memory); finds recurring failures no hook guards and context-discipline gaps where large-output work bypasses a context-saving tool; specifies and wires the missing hooks in the host harness's correct shape; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
-| `complexity-hunter` | Forces the laziest solution that actually works on every coding task — reuse-first ladder (YAGNI, codebase, stdlib, platform, installed dependency, one line) before new code; sticky on every coding response once invoked; also audits a diff or whole repo for over-engineering with tagged, ranked findings; never simplifies away trust-boundary validation, data-loss error handling, security, or accessibility |
-| `perf-auditor` | Hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, loop-invariant work redone per iteration, and chatty per-item I/O; every finding names the code path, the growth driver, and a concrete fix — no speculation; uses installed measurement tools, never adds a dependency; receives performance findings routed from `complexity-hunter`; invoked by `nitpicker` in `perf` mode and by `release-prep` as a gate |
-| `test-auditor` | Hostile audit of the test suite itself; assumes the tests are weaker than they look and proves it — assertion-free and tautological tests, mocks of the unit under test, over-mocking that severs the code path, flaky patterns, untracked skips, coverage holes on money/security/data-loss paths, and mutation-blind spots; fixes add or strengthen tests only, never production source; invoked by `nitpicker` in `tests` mode and by `release-prep` as a gate |
-| `dep-auditor` | Hostile audit of dependency health beyond CVEs — unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; uses installed tools only (depcheck, deptry, npm ls, pip list, cargo tree), never installs anything; CVEs route to `security-auditor`, new-dependency decisions to `complexity-hunter`; invoked by `nitpicker` in `deps` mode and by `release-prep` as a gate |
-| `silent-failure-hunter` | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path; invoked by `nitpicker` in `errors` mode and by `release-prep` as a gate |
-| `ci-auditor` | Hostile single-shot audit of CI/CD pipeline definitions (GitHub Actions first-class; GitLab CI and other YAML pipelines by the same principles); finds unpinned actions, over-broad token permissions, script injection via untrusted interpolation, privileged-trigger misuse, secrets leakage, non-gating checks, masked failures, missing concurrency, cache poisoning, and self-hosted runner exposure; uses actionlint/zizmor when installed and verifies gating via `gh api` when authenticated; invoked by `nitpicker` in `ci` mode and by `release-prep` as a gate |
-| `commit-auditor` | Hostile single-shot audit of commit-message discipline against the actual diffs; finds type-understatement (a `chore:`/`docs:` diff that ships behavior unreleased), type-overstatement (a `feat:` on a pure fix), unmarked and spurious breaking changes, squash-title scope-lies, and malformed convention; every finding cites the SHA, quoted message, contradicting hunks, and the version consequence release-please takes vs the bump the diff earns; amends unpushed messages on approval, never rewrites pushed history — proposes `Release-As`/corrected-footer correction commits instead; invoked by `nitpicker` in `commits` mode and by `release-prep` as a gate |
-| `migration-auditor` | Hostile single-shot audit of database schema and data migrations; assumes every migration eats production until proven safe — destructive ops with no rollout story, irreversible downs, long-lock operations (engine-specific safe forms named), missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks under rolling deploys, and duplicate migration versions; static analysis only, never runs a migration; never edits an applied migration — its fix is a new migration; SQL injection routes to `security-auditor`, query performance to `perf-auditor`; invoked by `nitpicker` in `migrations` mode and by `release-prep` as a gate |
-| `observability-auditor` | Hostile single-shot audit of the signal surface a codebase emits; assumes production failures are invisible until logs, metrics, traces, and alerts prove otherwise — dark paths, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; cross-checks in-repo alert configs against emitted metrics; on approval fixes add or correct emissions only, never business logic; invoked by `nitpicker` in `observability` mode and by `release-prep` as a gate |
-| `api-contract-auditor` | Hostile single-shot audit of the declared public contract surface (OpenAPI/Swagger and GraphQL specs, package exports, published types, documented CLI flags) against the implementation, and of every surface change since the last release tag against the semver bump the commits declare; every finding names the declared element, the implementation, the mismatch, and the consumer-visible consequence; spec edits and code edits are separate per-finding approvals — which side is right is the user's call; pairs with `commit-auditor` (label vs diff) by checking the surface against the label; invoked by `nitpicker` in `contract` mode and by `release-prep` as a gate |
-| `a11y-auditor` | Hostile single-shot accessibility audit of the codebase's UI layer against WCAG 2.2 AA; assumes the interface is unusable without a mouse and screen until the code proves otherwise — missing alternatives, unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, contrast violations computed from design tokens with the math shown, structure breaks, and motion hazards; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, never installs anything; a repo with no UI surface gets the explicit verdict "no auditable UI surface"; verifies the accessibility floor `complexity-hunter` never simplifies away; invoked by `nitpicker` in `a11y` mode and by `release-prep` as a gate |
-| `concurrency-auditor` | Hostile single-shot concurrency-safety audit; assumes every piece of state reachable from two or more concurrent execution contexts is corrupted until a happens-before edge proves otherwise — data races, non-atomic check-then-act (TOCTOU), deadlock-ordering, lost updates, unsafe publication, mutable state shared across `await` points, and non-atomic compound operations on thread-safe containers; every finding names the shared state, the concurrent contexts that reach it, the corrupting interleaving, and the synchronization fix; static analysis only, never adds a dependency; lock contention as throughput and sync-blocking-in-async route to `perf-auditor`, single-threaded logic bugs to `adversarial-reviewer`; invoked by `nitpicker` in `concurrency` mode and by `release-prep` as a gate |
-| `i18n-auditor` | Hostile single-shot internationalization/localization audit against the project's declared locale scope; assumes every user-facing string, number, date, and sort is hardcoded to one locale until the code proves it routes through a localization mechanism — hardcoded strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural/gender rules, RTL/bidi gaps, and charset/collation bugs; uses the project's existing i18n mechanism, never adds an i18n dependency (adoption decisions route to `complexity-hunter`); a repo with no localization surface gets the explicit verdict "no localization surface — single-locale by declared scope"; invoked by `nitpicker` in `i18n` mode and by `release-prep` as a gate |
-| `resource-leak-auditor` | Hostile single-shot resource-lifecycle audit; assumes every acquired resource leaks on the failure path until a guaranteed-release construct proves otherwise — unclosed file/socket/stream/DB handles, pool connections not returned on error, event-listener/subscription leaks, orphaned tasks/threads/timers, uncancelled contexts, temp-artifact leaks, and native/Disposable handles released only by GC; every finding names the acquisition site, the path that skips release, the accumulation driver, and the guaranteed-release fix; unbounded-growth-by-design (a cache with no eviction) routes to `perf-auditor`, the swallowed error itself to `silent-failure-hunter`; invoked by `nitpicker` in `leaks` mode and by `release-prep` as a gate |
-| `config-auditor` | Hostile single-shot application/runtime configuration audit; assumes every config value is undocumented, unvalidated, and defaulted to a dev-safe-but-prod-dangerous value until code and its declared config sources prove otherwise — undocumented env vars, missing startup validation, unsafe prod defaults (debug on, CORS `*`, auth off), config drift across sources, secrets committed in tracked config, string-to-bool/int coercion traps, and hardcoded environment-specific values; cross-references code reads against `.env.example`, config schema, docs, and in-code defaults; exploitability of a secret or permissive default routes to `security-auditor`, CI/pipeline env to `ci-auditor`; never writes a real secret into a sample; invoked by `nitpicker` in `config` mode and by `release-prep` as a gate |
-| `data-privacy-auditor` | Hostile single-shot data-privacy audit; assumes every element of personal data is stored and transmitted without the control its data class requires until the code proves the control exists — PII/PHI/PCI/credentials unprotected at rest, personal data flowing to uncontrolled sinks (analytics, third parties, client responses), over-collection, missing retention/deletion, missing consent gates, weak anonymization (hashed identifiers as pseudo-IDs), and cross-border/third-party leaks; the bar is high and false-positive-prone, so an element must be identifiably personal from the code, never guessed; a repo handling no identifiable personal data gets the explicit verdict "no personal-data surface"; exploitability routes to `security-auditor`, PII-in-logs to `observability-auditor`, encryption-at-rest migrations to `migration-auditor`; invoked by `nitpicker` in `privacy` mode and by `release-prep` as a gate |
+## Command File Format
 
-## Skill File Format
+- Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ").
+- Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
+- Every file in `commands/` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
+- Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
+- No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
-Each skill directory contains one `SKILL.md` with YAML frontmatter — all current skills use it and new skills must too.
+## Findings Store
 
-```yaml
----
-name: skill-name
-description: Use when [triggering conditions and symptoms].
----
+One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed exclusively through the shipped, stdlib-only CLI:
+
+```bash
+python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|migrate|migrate-resolved ...
 ```
 
-The body is a prompt written in imperative Markdown — define mindset, checklist, output format, and any constraints.
+IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
 
-**Body-only (no frontmatter)** is a legacy pattern. Skills without frontmatter cannot be auto-discovered by Claude Code from user intent. Frontmatter requirements are enforced by `.claude/rules/skill-format.md`.
+## Script Execution
 
-## Adding a New Skill
+Two classes (see `.claude/rules/use-uv-runner.md`):
 
-1. Create a kebab-case directory under `skills/` (e.g., `skills/my-skill/`)
-2. Add `SKILL.md` with YAML frontmatter (`name` + `description`)
-3. Write the `description` per the format enforced by `.claude/rules/skill-format.md`
-4. Add a row to the Existing Skills table in this file, in `README.md`, and in the "Existing Public Skills" table in `.github/copilot-instructions.md`; add it to the Available Skills table and Routing Guide in `.claude/skills/skills/SKILL.md`; also update the Skill Catalogue, Mermaid graphs, and Quick Reference in `.claude/skills/README.md`
-5. Use `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle.
-6. Commit with `feat: add my-skill skill` (triggers a minor version bump via release-please)
+- **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`, `#!/usr/bin/env python3`. The stdlib-only rule is enforced by `scripts/check-stdlib-only.py` (pre-commit + CI) — a third-party import fails the gate.
+- **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`): `uv run --quiet`, `#!/usr/bin/env -S uv run --quiet` + `# /// script` block.
 
-## Conventions Observed in This Repo
+## Adding a New Command
 
-Skill writing style, output format, and lifecycle rules are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, and `use-uv-runner.md`.
+1. Use `/new-command` — it orchestrates the RED → GREEN → REFACTOR → adversarial-review → validate → pr-review cycle for a command file.
+2. Create `skills/nitpicker/commands/<name>.md` (short kebab-case name, 2.0 vocabulary — no `-auditor` suffixes).
+3. Add its row to the `## Commands` table in `skills/nitpicker/SKILL.md`, the Routing Guide in `.claude/skills/skills/SKILL.md`, and the command table in `README.md`. Update `.github/copilot-instructions.md` only if the new command changes its rules (it deliberately carries no command table).
+4. `make check` must pass (the validator enforces table ↔ file sync).
+5. Commit with `feat: add /nitpicker <name> command` (minor bump via release-please).
+
+## Conventions
+
+Skill/command writing style and lifecycle are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, `use-uv-runner.md`, `github-actions-security.md` (SHA-pinned actions + least-privilege, gated by the `zizmor` pre-commit hook), `use-context-mode.md` (route inspection commands through context-mode; `# ctx-ok` only for real mutations), and `commit-gate-integrity.md` (CI `Validate` is the authoritative gate; no `--no-verify` on governed files).
 
 ## Plugin Metadata
 
-Plugin identity lives in `.claude-plugin/`:
-
-| File | Purpose |
-|------|---------|
-| `.claude-plugin/plugin.json` | Plugin name, version, author, keywords |
+| File                              | Purpose                                  |
+| --------------------------------- | ---------------------------------------- |
+| `.claude-plugin/plugin.json`      | Plugin name, version, author, keywords   |
 | `.claude-plugin/marketplace.json` | Marketplace listing (used by `/plugins`) |
 
-Version must be kept in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it automatically on CI.
+Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
 
 ## Versioning
 
-This repo uses [Semantic Versioning](https://semver.org/) with [release-please](https://github.com/googleapis/release-please) for automated releases.
+[Semantic Versioning](https://semver.org/) with [release-please](https://github.com/googleapis/release-please):
 
-**Commit message convention** (required for release-please to determine bump type):
+| Prefix                               | Effect                                      |
+| ------------------------------------ | ------------------------------------------- |
+| `feat:`                              | Minor bump (new command or feature)         |
+| `fix:`                               | Patch bump (command improvement or bug fix) |
+| `feat!:` / `BREAKING CHANGE:` footer | Major bump                                  |
+| `chore:`, `docs:`, `refactor:`       | No bump                                     |
 
-| Prefix | Effect |
-|--------|--------|
-| `feat:` | Minor bump (new skill) |
-| `fix:` | Patch bump (skill improvement or bug fix) |
-| `feat!:` / `BREAKING CHANGE:` footer | Major bump |
-| `chore:`, `docs:`, `refactor:` | No bump |
-
-**Automated release flow** (CI):
-1. Merge a `feat:` or `fix:` commit to `main`
-2. release-please opens a Release PR with updated CHANGELOG and version
-3. Merge the Release PR → GitHub Release + git tag created automatically
-
-**Manual release flow** (local):
-```bash
-./scripts/bump-version.py [major|minor|patch]
-# Edit CHANGELOG.md to add release notes
-git add -A && git commit -m "chore: release vX.Y.Z"
-git tag vX.Y.Z
-git push && git push --tags
-```
+Merge to `main` → release-please opens a Release PR → merging it creates the GitHub Release and tag.
 
 ## Configuration
 
-`.claude/settings.local.json` — Claude Code local settings (tool permissions, etc.). Not shared; gitignored.
+`.claude/settings.local.json` — local settings; gitignored.
 
-`.claude/settings.json` — Shared PostToolUse hooks that run automatically after every Write or Edit:
-- `validate-skill-hook.py` — validates SKILL.md structure on any edited SKILL.md
+`.claude/settings.json` — shared PostToolUse hooks on every Write/Edit:
+
+- `validate-skill-hook.py` — validates SKILL.md structure on any edited SKILL.md or `commands/*.md` file
 - `validate-json-hook.py` — validates JSON syntax on any edited `.json` file
-- `check-version-sync-hook.py` — warns if editing a version file causes a mismatch across the five manifests
+- `check-version-sync-hook.py` — warns when a version file edit desyncs the five manifests
 - `ruff-hook.py` — auto-fixes and lints any edited `.py` file
-- `validate-audit-findings-hook.py` — validates and autofixes `docs/audit/*-findings.md` structure (single Fixed/Invalid h2, `### Pass N — YYYY-MM-DD` h3 sub-sections) and summary counts
+- `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
+
+Plus a Stop hook, `stop-reminder.py`, which reminds about **staged** skill files (`git diff --cached`) before Claude hands back control — so it fires at commit time, not on every turn a working-tree edit exists.
+
+Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
+
+`.claude/skills/nitpicker` is a symlink to `../../skills/nitpicker` so Claude Code discovers the shipped public skill alongside the internal dev skills.

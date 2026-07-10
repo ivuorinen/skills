@@ -9,17 +9,20 @@ disable-model-invocation: true
 ## Steps
 
 1. Run the validator across all skills — public and internal:
+
    ```bash
    uv run scripts/validate-skill.py
    uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
    ```
 
    To validate only public skills:
+
    ```bash
    uv run scripts/validate-skill.py
    ```
 
    To validate only internal skills:
+
    ```bash
    uv run scripts/validate-skill.py .claude/skills/*/SKILL.md
    ```
@@ -29,6 +32,7 @@ disable-model-invocation: true
 3. **Warnings** should be reviewed; fix if the skill is being released.
 
 4. Run the version sync check:
+
    ```bash
    uv run scripts/check-version-sync.py
    ```
@@ -37,15 +41,20 @@ disable-model-invocation: true
 
 ## What is checked
 
-| Check | Level |
-|-------|-------|
-| Frontmatter present | Error |
-| `name` field present | Error |
-| `description` field present | Error |
-| Description contains "Use when" trigger clause | Error |
-| Description ≤ 1024 chars | Error |
-| Skill name matches directory name | Error |
-| Header level progression (no skipping levels) | Error |
-| Description with `': '` must be single-quoted | Error |
-| Legacy output paths (`./codereview.md` etc.) | Warning |
-| Body exceeds 500 lines | Warning |
+| Check                                                                                                              | Level   |
+| ------------------------------------------------------------------------------------------------------------------ | ------- |
+| Frontmatter present                                                                                                | Error   |
+| `name` field present                                                                                               | Error   |
+| `description` field present                                                                                        | Error   |
+| Description contains "Use when" trigger clause                                                                     | Error   |
+| Description ≤ 1024 chars                                                                                           | Error   |
+| Skill name matches directory name                                                                                  | Error   |
+| Header level progression (no skipping levels)                                                                      | Error   |
+| Description with `': '` must be single-quoted                                                                      | Error   |
+| Command tables (`## Commands`, `## Internal commands`) ↔ `commands/*.md` files 1:1 (skills with a `commands/` dir) | Error   |
+| Duplicate headers within a SKILL.md body                                                                           | Error   |
+| Command file h1 is `# /<skill> <command> — …`                                                                      | Error   |
+| Command file has `## When to use`                                                                                  | Error   |
+| Command file header level progression                                                                              | Error   |
+| Legacy output paths (`./codereview.md` etc.)                                                                       | Warning |
+| Body exceeds 500 lines                                                                                             | Warning |

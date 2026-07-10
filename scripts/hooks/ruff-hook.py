@@ -6,13 +6,14 @@
 """PostToolUse hook — run ruff check --fix and ruff format on edited Python files."""
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-_default = Path(__file__).parent.parent.parent
-REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT", _default)))
+sys.path.insert(0, str(Path(__file__).parent))
+from _hooklib import edited_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
+
+REPO_ROOT = repo_root()
 
 
 def main() -> None:
@@ -20,10 +21,12 @@ def main() -> None:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
         return
+    if not isinstance(data, dict):
+        return
 
-    file_path = data.get("file_path") or data.get("path") or ""
-    raw = Path(file_path)
-    path = (raw if raw.is_absolute() else REPO_ROOT / raw).resolve()
+    path = edited_path(data)
+    if path is None:
+        return
 
     # Only act on files inside the project; ignore anything resolving outside it.
     if path.suffix != ".py" or not path.is_relative_to(REPO_ROOT.resolve()) or not path.exists():
@@ -40,8 +43,9 @@ def main() -> None:
         text=True,
     )
     if result.returncode != 0:
-        print(result.stdout, end="", flush=True)
-        sys.exit(result.returncode)
+        # PostToolUse surfaces only exit 2 + stderr back to the agent.
+        print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

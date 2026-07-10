@@ -1,4 +1,4 @@
-"""Tests for skills/claude-rules-auditor/check-rules-anatomy.py."""
+"""Tests for skills/nitpicker/scripts/check-rules-anatomy.py."""
 
 import importlib.util
 import sys
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-_TOOL = Path(__file__).parent.parent / "skills" / "claude-rules-auditor" / "check-rules-anatomy.py"
+_TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
 _spec = importlib.util.spec_from_file_location("check_rules_anatomy", _TOOL)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
@@ -58,6 +58,18 @@ class TestParseFrontmatter:
         text = '---\npaths:\n  - "src/**/*.ts"\n  - "src/**/*.tsx"\n---\n\nBody.\n'
         fm, _ = _parse_frontmatter(text)
         assert fm["paths"] == ["src/**/*.ts", "src/**/*.tsx"]
+
+    def test_flow_style_paths_list(self):
+        """paths: ["src/**"] must parse as a list, not a scalar (else false paths_not_list)."""
+        text = "---\npaths: [\"src/**\", 'lib/**']\n---\n\nBody.\n"
+        fm, _ = _parse_frontmatter(text)
+        assert fm["paths"] == ["src/**", "lib/**"]
+
+    def test_crlf_frontmatter_is_parsed(self):
+        """CRLF line endings must not defeat frontmatter detection."""
+        text = '---\r\npaths:\r\n  - "src/**"\r\n---\r\n\r\nBody.\r\n'
+        fm, _ = _parse_frontmatter(text)
+        assert fm is not None and fm["paths"] == ["src/**"]
 
     def test_scalar_value_in_frontmatter(self):
         text = "---\nname: my-rule\ndescription: test\n---\n\nBody.\n"
@@ -369,6 +381,10 @@ class TestAdditionalCoverage:
         assert "name" in fm
         assert "Never use grep" in body
 
+    @pytest.mark.skipif(
+        hasattr(__import__("os"), "geteuid") and __import__("os").geteuid() == 0,
+        reason="root ignores file permission bits, so chmod 0o000 stays readable",
+    )
     def test_check_file_oserror_on_read(self, tmp_path):
         """OSError reading the file (lines 98-100)."""
         f = tmp_path / "unreadable.md"
@@ -406,3 +422,27 @@ class TestAdditionalCoverage:
         # Pass seen set already containing this directory
         result = _iter_rules(rules_dir, seen={real})
         assert result == []
+
+
+# --- Regression test for audit fix (2026-07-09) ---
+
+
+def test_paths_list_parsed_at_non_two_space_indent():
+    text = '---\ndescription: d\npaths:\n    - "src/**"\n    - "lib/**"\n---\nbody\n'
+    fm, _ = _parse_frontmatter(text)
+    assert fm.get("paths") == ["src/**", "lib/**"]
+
+
+def test_unindented_block_sequence_matches_indented():
+    unindented = '---\npaths:\n- "src/**"\n- "lib/**"\n---\nbody\n'
+    indented = '---\npaths:\n  - "src/**"\n  - "lib/**"\n---\nbody\n'
+    assert _parse_frontmatter(unindented)[0]["paths"] == ["src/**", "lib/**"]
+    assert _parse_frontmatter(unindented)[0] == _parse_frontmatter(indented)[0]
+
+
+def test_unindented_block_sequence_runs_path_glob_checks(tmp_path):
+    """paths from an unindented block sequence must not be dropped (else all glob checks skip)."""
+    f = tmp_path / "abs-rule.md"
+    f.write_text("---\npaths:\n- /absolute/*.ts\n---\n\nAlways add types.\n", encoding="utf-8")
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "absolute_glob")

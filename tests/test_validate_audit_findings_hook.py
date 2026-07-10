@@ -1,268 +1,175 @@
-"""Tests for scripts/hooks/validate-audit-findings-hook.py."""
+"""Tests for scripts/hooks/validate-audit-findings-hook.py (thin store-validation hook)."""
 
 import importlib.util
-import re
+import io
+import json
+import sys
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location(
-    "validate_audit_findings_hook",
-    Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit-findings-hook.py",
-)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
-parse_and_fix = _mod.parse_and_fix
-ensure_pass_header = _mod._ensure_pass_header
-
-
-# ── _ensure_pass_header ─────────────────────────────────────────────────────
-
-
-class TestEnsurePassHeader:
-    def test_empty_returns_unchanged(self):
-        msgs: list[str] = []
-        assert ensure_pass_header([], msgs, "Fixed") == []
-        assert msgs == []
-
-    def test_h3_before_h4_unchanged(self):
-        lines = ["### Pass 1 — 2026-01-01", "", "#### [X-001] Finding", "Notes: ok"]
-        msgs: list[str] = []
-        result = ensure_pass_header(lines, msgs, "Fixed")
-        assert result == lines
-        assert msgs == []
-
-    def test_orphaned_h4_no_existing_passes_wraps_in_pass_1(self):
-        lines = ["#### [X-001] Finding", "Fixed: 2026-01-15", "Notes: ok"]
-        msgs: list[str] = []
-        result = ensure_pass_header(lines, msgs, "Fixed", "2026-01-15")
-        assert result[0] == "### Pass 1 — 2026-01-15"
-        assert any("Pass 1" in m for m in msgs)
-
-    def test_orphaned_h4_before_pass_2_wraps_in_pass_1(self):
-        lines = [
-            "#### [X-001] Orphaned",
-            "Fixed: 2026-01-10",
-            "Notes: old",
-            "",
-            "### Pass 2 — 2026-01-20",
-            "",
-            "#### [X-002] Existing",
-        ]
-        msgs: list[str] = []
-        result = ensure_pass_header(lines, msgs, "Fixed", "2026-01-10")
-        pass_headers = [ln for ln in result if ln.startswith("### Pass ")]
-        assert "### Pass 1 — 2026-01-10" in pass_headers
-        assert "### Pass 2 — 2026-01-20" in pass_headers
-
-    def test_n046_orphaned_h4_before_pass_1_no_duplicate(self):
-        """N-046: orphaned h4 before existing Pass 1 must not produce two Pass 1 headers."""
-        lines = [
-            "#### [X-001] Orphaned",
-            "Fixed: 2026-01-05",
-            "Notes: orphaned",
-            "",
-            "### Pass 1 — 2026-01-10",
-            "",
-            "#### [X-002] Existing",
-            "Fixed: 2026-01-10",
-            "Notes: existing",
-        ]
-        msgs: list[str] = []
-        result = ensure_pass_header(lines, msgs, "Fixed", "2026-01-05")
-        pass_1 = [ln for ln in result if re.match(r"^### Pass 1 ", ln)]
-        assert len(pass_1) == 1, f"Expected 1 Pass 1 header, got {len(pass_1)}: {pass_1}"
-
-    def test_n046_orphaned_before_pass_1_and_2_uses_pass_3(self):
-        """N-046: orphaned h4 before passes 1 and 2 must use Pass 3 (max+1)."""
-        lines = [
-            "#### [X-001] Orphaned",
-            "",
-            "### Pass 1 — 2026-01-10",
-            "",
-            "#### [X-002] Finding",
-            "",
-            "### Pass 2 — 2026-01-20",
-            "",
-            "#### [X-003] Finding",
-        ]
-        msgs: list[str] = []
-        result = ensure_pass_header(lines, msgs, "Fixed", "2026-01-05")
-        pass_nums = [int(m.group(1)) for ln in result if (m := re.match(r"^### Pass (\d+)", ln))]
-        assert len(pass_nums) == len(set(pass_nums)), f"Duplicate pass numbers: {pass_nums}"
-
-
-# ── parse_and_fix ────────────────────────────────────────────────────────────
-
-
-def _text_to_fixed(text: str) -> tuple[str, list[str]]:
-    return parse_and_fix(text)
-
-
-CLEAN = """\
-# Findings
-Generated: 2026-04-01
-Last validated: 2026-04-30
-
-## Summary
-- Total: 1 | Open: 0 | Fixed: 1 | Invalid: 0
-
-## Open Findings
-
-(none)
-
-## Fixed
-
-### Pass 1 — 2026-04-30
-
-#### [X-001] Fixed finding
-Fixed: 2026-04-30
-Notes: done
-
-## Invalid
-
-(none)
-"""
-
-
-class TestParseAndFix:
-    def test_clean_file_unchanged(self):
-        fixed, msgs = _text_to_fixed(CLEAN)
-        assert fixed == CLEAN
-        assert msgs == []
-
-    def test_duplicate_fixed_sections_merged(self):
-        text = """\
-# Findings
-Generated: 2026-04-01
-
-## Summary
-- Total: 2 | Open: 0 | Fixed: 2 | Invalid: 0
-
-## Open Findings
-
-(none)
-
-## Fixed
-
-### Pass 1 — 2026-04-01
-
-#### [X-001] First
-
-## Fixed
-
-### Pass 2 — 2026-04-02
-
-#### [X-002] Second
-
-## Invalid
-
-(none)
-"""
-        fixed, msgs = _text_to_fixed(text)
-        assert fixed.count("## Fixed") == 1
-        assert any("merged" in m for m in msgs)
-
-    def test_summary_counts_corrected(self):
-        text = """\
-# Findings
-Generated: 2026-04-01
-
-## Summary
-- Total: 99 | Open: 99 | Fixed: 0 | Invalid: 0
-
-## Open Findings
-
-#### [X-001] Open finding
-
-## Fixed
-
-(none)
-
-## Invalid
-
-(none)
-"""
-        fixed, _ = _text_to_fixed(text)
-        assert "Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0" in fixed
-
-    def test_nonconforming_h3_renamed(self):
-        text = """\
-# Findings
-Generated: 2026-04-01
-
-## Summary
-- Total: 1 | Open: 0 | Fixed: 1 | Invalid: 0
-
-## Open Findings
-
-(none)
-
-## Fixed
-
-### 2026-04-01, first pass
-
-#### [X-001] Finding
-Fixed: 2026-04-01
-Notes: done
-
-## Invalid
-
-(none)
-"""
-        fixed, msgs = _text_to_fixed(text)
-        assert "### Pass 1 — 2026-04-01" in fixed
-        assert any("renamed" in m for m in msgs)
-
-    def test_orphaned_h4_wrapped_in_pass(self):
-        text = """\
-# Findings
-Generated: 2026-04-01
-Last validated: 2026-04-30
-
-## Summary
-- Total: 1 | Open: 0 | Fixed: 1 | Invalid: 0
-
-## Open Findings
-
-(none)
-
-## Fixed
-
-#### [X-001] Orphaned finding
-Fixed: 2026-04-30
-Notes: done
-
-## Invalid
-
-(none)
-"""
-        fixed, msgs = _text_to_fixed(text)
-        assert "### Pass" in fixed
-        assert any("added missing pass header" in m for m in msgs)
-
-    def test_custom_summary_not_overwritten(self):
-        text = (
-            "# Custom Findings\nGenerated: 2026-01-01\n\n"
-            "## Summary\n- Rules audited: 3\n- Errors: 0\n\n"
-            "## Open Findings\n\n(none)\n\n"
-            "## Fixed\n\n(none)\n\n"
-            "## Invalid\n\n(none)\n"
-        )
-        fixed, _ = _text_to_fixed(text)
-        assert "Total:" not in fixed
-        assert "Rules audited: 3" in fixed
-
-    def test_missing_blank_lines_before_sections_corrected(self):
-        """Bug 1: structural h2 headers not preceded by blank line must still be recognised."""
-        text = (
-            "# Findings\nGenerated: 2026-01-01\n"
-            "## Summary\n- Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0\n"
-            "## Open Findings\n#### [X-001] Finding\n"
-            "## Fixed\n(none)\n"
-            "## Invalid\n(none)\n"
-        )
-        fixed, _ = _text_to_fixed(text)
-        assert "## Open Findings" in fixed
-        assert "## Fixed" in fixed
-        assert "## Invalid" in fixed
-        assert "Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0" in fixed
-        assert "[X-001] Finding" in fixed
+import pytest
+
+HOOK_PATH = Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit-findings-hook.py"
+FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
+
+spec = importlib.util.spec_from_file_location("audit_hook", HOOK_PATH)
+hook = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+spec.loader.exec_module(hook)  # type: ignore[union-attr]
+
+
+def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_should_check_accepts_finding_file(tmp_path):
+    path = _store_file(tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md")
+    assert hook.should_check(path, tmp_path)
+
+
+def test_should_check_rejects_index_and_outsiders(tmp_path):
+    index = _store_file(tmp_path, "docs/audit/findings/INDEX.md")
+    outside = _store_file(tmp_path, "docs/audit/arch-profile.md")
+    non_md = _store_file(tmp_path, "docs/audit/findings/security/open/tool.py")
+    assert not hook.should_check(index, tmp_path)
+    assert not hook.should_check(outside, tmp_path)
+    assert not hook.should_check(non_md, tmp_path)
+
+
+def test_should_check_rejects_missing_file(tmp_path):
+    missing = tmp_path / "docs/audit/findings/security/open/gone.md"
+    assert not hook.should_check(missing, tmp_path)
+
+
+def test_should_check_matches_under_symlinked_repo_root(tmp_path):
+    # Regression (audit fix 2026-07-09): a symlinked checkout must not disable
+    # the hook. The caller resolves the edited path, so the root must resolve too.
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    path = _store_file(real, "docs/audit/findings/security/open/security-1a2b3c4d.md").resolve()
+    assert hook.should_check(path, link)
+
+
+def test_main_ignores_invalid_json(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
+    hook.main()
+    assert capsys.readouterr().out == ""
+
+
+def test_main_reports_invalid_finding_from_real_payload(monkeypatch, tmp_path, capsys):
+    """PostToolUse delivers the path nested under tool_input; failure must be exit 2 + stderr."""
+    path = _store_file(
+        tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md", "no frontmatter"
+    )
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(hook, "FINDINGS", FINDINGS_PATH)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 2
+    assert "not a valid finding file" in capsys.readouterr().err
+
+
+def test_main_accepts_legacy_toplevel_payload(monkeypatch, tmp_path, capsys):
+    path = _store_file(
+        tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md", "no frontmatter"
+    )
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(hook, "FINDINGS", FINDINGS_PATH)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"file_path": str(path)})))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 2
+    assert "not a valid finding file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload", [{}, {"file_path": ""}])
+def test_main_noop_without_path(monkeypatch, payload, capsys):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    hook.main()
+    assert capsys.readouterr().out == ""
+
+
+def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys):
+    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
+    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
+    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+
+    root = tmp_path / "docs" / "audit" / "findings"
+    path = findings.new_finding(
+        root,
+        auditor="security",
+        severity="high",
+        category="security",
+        area="src/auth.py",
+        title="Token compared with ==",
+        body="## Problem\np\n\n## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n",
+    )
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(hook, "FINDINGS", FINDINGS_PATH)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    hook.main()
+    assert capsys.readouterr().out == ""
+    assert (root / "INDEX.md").exists()
+
+
+def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
+    # Regression (audit-307527a8): the hook must regenerate INDEX with the same
+    # repo-relative paths as canonical `findings.py index` — never absolute paths,
+    # which leak the checkout directory and fail make check / CI index-check.
+    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
+    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
+    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+
+    root = tmp_path / "docs" / "audit" / "findings"
+    path = findings.new_finding(
+        root,
+        auditor="security",
+        severity="high",
+        category="security",
+        area="src/auth.py",
+        title="Token compared with ==",
+        body="## Problem\np\n\n## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n",
+    )
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(hook, "FINDINGS", FINDINGS_PATH)
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    hook.main()
+
+    index_text = (root / "INDEX.md").read_text(encoding="utf-8")
+    assert str(tmp_path) not in index_text  # no absolute paths leaked
+    assert "docs/audit/findings/security/open/" in index_text  # canonical relative form
+
+
+def test_main_handles_resolved_ledger_edit(monkeypatch, tmp_path, capsys):
+    # A resolved.jsonl edit is store-validated and regenerates INDEX (the ledger
+    # has no per-line file, so there is nothing to per-file validate).
+    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
+    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
+    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+
+    root = tmp_path / "docs" / "audit" / "findings"
+    path = findings.new_finding(
+        root,
+        auditor="security",
+        severity="high",
+        category="security",
+        area="src/auth.py",
+        title="Token compared with ==",
+        body="## Problem\np\n\n## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n",
+    )
+    findings.resolve_finding(root, path.stem, "fixed", "done")
+    ledger = root / "resolved.jsonl"
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(hook, "FINDINGS", FINDINGS_PATH)
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(ledger)}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    hook.main()  # no SystemExit — the ledger is valid
+    assert capsys.readouterr().err == ""
+    assert (root / "INDEX.md").exists()

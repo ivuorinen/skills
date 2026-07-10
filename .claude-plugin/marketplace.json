@@ -1,6 +1,7 @@
 {
+  "$schema": "../schemas/marketplace.schema.json",
   "name": "ivuorinen-skills",
-  "description": "Hostile audit skills for Claude Code",
+  "description": "Hostile audit toolkit for Claude Code",
   "owner": {
     "name": "Ismo Vuorinen",
     "email": "ismo@ivuorinen.net"
@@ -8,7 +9,7 @@
   "plugins": [
     {
       "name": "ivuorinen-skills",
-      "description": "Hostile audit skills for Claude Code: adversarial code review, architecture detection and auditing, and documentation verification.",
+      "description": "Nitpicker \u2014 hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, architecture, perf, deps, CI, migrations, a11y, privacy, concurrency, and more).",
       "version": "1.8.0",
       "source": "./",
       "author": {

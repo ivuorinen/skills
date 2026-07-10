@@ -1,6 +1,5 @@
 {
   "name": "ivuorinen-skills",
   "version": "1.8.0",
-  "type": "module",
   "description": "Hostile audit skills for Claude Code"
 }

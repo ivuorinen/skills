@@ -1,4 +1,4 @@
-"""Tests for skills/cr-implementer/fetch-pr-comments.py."""
+"""Tests for skills/nitpicker/scripts/fetch-pr-comments.py."""
 
 import importlib.util
 import json
@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_TOOL = Path(__file__).parent.parent / "skills" / "cr-implementer" / "fetch-pr-comments.py"
+_TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "fetch-pr-comments.py"
 _spec = importlib.util.spec_from_file_location("fetch_pr_comments", _TOOL)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
@@ -151,6 +151,16 @@ class TestTokenRestPaginate:
         with patch("urllib.request.urlopen", return_value=_http_resp(data, "")):
             result = _token_rest_paginate(_COMMENTS_URL, "token")
         assert len(result) == 1
+
+    def test_offhost_next_url_not_followed(self):
+        # A malicious Link header pointing off-host must not receive the token.
+        evil_link = '<https://evil.example.com/page2>; rel="next"'
+        page1 = [{"id": 1}]
+        resp = _http_resp(page1, evil_link)
+        with patch("urllib.request.urlopen", return_value=resp) as mock_open:
+            result = _token_rest_paginate(_COMMENTS_URL, "token")
+        assert result == page1
+        assert mock_open.call_count == 1
 
 
 # ── _build_thread / _build_comment ────────────────────────────────────────────
@@ -345,6 +355,24 @@ class TestFetchGraphql:
         assert threads[0]["path"] == "src/foo.py"
         assert threads[0]["comments"][0]["author"] == "reviewer"
 
+    def test_inner_comment_page_truncation_warns(self, capsys):
+        node = self._thread_node()
+        node["comments"]["pageInfo"] = {"hasNextPage": True}
+        resp = self._graphql_response([node])
+        with patch.object(_mod, "_gh_graphql", return_value=resp):
+            threads = fetch_graphql("owner", "repo", 1)
+        assert len(threads) == 1
+        err = capsys.readouterr().err
+        assert "[warn] thread T_1 comments truncated at 100" in err
+
+    def test_null_pull_request_raises_not_found(self):
+        resp = {"data": {"repository": {"pullRequest": None}}}
+        with (
+            patch.object(_mod, "_gh_graphql", return_value=resp),
+            pytest.raises(RuntimeError, match="PR #1 not found in owner/repo"),
+        ):
+            fetch_graphql("owner", "repo", 1)
+
     def test_null_author_handled(self):
         node = {
             "id": "T_1",
@@ -455,6 +483,33 @@ class TestMain:
         with pytest.raises(SystemExit) as exc:
             _mod.main()
         assert exc.value.code == 2
+
+    @pytest.mark.parametrize(
+        "owner, repo",
+        [
+            ("ow/ner", "repo"),
+            ("owner", "re/po"),
+            ("../etc", "repo"),
+            ("owner", "../etc"),
+            ("owner?x", "repo"),
+            ("owner", "repo?x"),
+            ("own er", "repo"),
+        ],
+    )
+    def test_malicious_owner_repo_exits_2(self, owner, repo, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["prog", owner, repo, "1"])
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 2
+
+    def test_valid_owner_repo_passes_validation(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["prog", "valid.owner-1", "valid_repo.2", "42"])
+        with (
+            patch.object(_mod, "_gh_available", return_value=True),
+            patch.object(_mod, "fetch_graphql", return_value=self._THREADS),
+        ):
+            _mod.main()
+        assert json.loads(capsys.readouterr().out)
 
     def test_gh_graphql_fails_falls_back_to_rest(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])

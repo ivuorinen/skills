@@ -40,8 +40,11 @@ def parse_rules_frontmatter(text: str) -> tuple[dict | None, str]:
     current_list: list[str] | None = None
 
     for line in fm_text.splitlines():
-        if line.startswith("  - ") and current_key is not None:
-            item = line[4:].strip().strip("\"'")
+        content = line.lstrip()
+        # A block-sequence item is valid YAML at any indent (including column 0),
+        # so recognize it by "- " while a key is pending, not by indentation.
+        if content.startswith("- ") and current_key is not None:
+            item = content[2:].strip().strip("\"'")
             if current_list is None:
                 current_list = []
                 fm[current_key] = current_list
@@ -50,11 +53,18 @@ def parse_rules_frontmatter(text: str) -> tuple[dict | None, str]:
             current_list = None
             key, _, val = line.partition(":")
             current_key = key.strip()
-            val = val.strip().strip("\"'")
-            if val:
-                fm[current_key] = val
-        else:
-            current_list = None
+            val = val.strip()
+            if val.startswith("[") and val.endswith("]"):
+                # YAML flow-style list, e.g. paths: ["src/**", "lib/**"] — kept in
+                # sync with check-rules-anatomy.py so the two validators agree.
+                items = [x.strip().strip("\"'") for x in val[1:-1].split(",")]
+                fm[current_key] = [x for x in items if x]
+            elif val:
+                fm[current_key] = val.strip("\"'")
+        elif not content:
+            # A blank line inside a list is not a terminator — keep collecting,
+            # so a gap between items doesn't drop everything before it.
+            continue
 
     return fm, body
 
