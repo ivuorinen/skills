@@ -437,6 +437,49 @@ def test_resolve_rejects_malformed_date(tmp_path):
     assert findings.read_ledger(tmp_path) == []
 
 
+def test_baseline_write_read_roundtrip_and_clear(tmp_path):
+    p1 = _new(tmp_path)
+    findings.write_baseline(tmp_path, [p1.stem], "2026-07-10")
+    assert findings.read_baseline(tmp_path) == {p1.stem}
+    assert findings.baseline_path(tmp_path).exists()
+    assert findings.clear_baseline(tmp_path) is True
+    assert findings.read_baseline(tmp_path) == set()
+    assert findings.clear_baseline(tmp_path) is False
+
+
+def test_cli_baseline_then_list_excludes_baselined_but_shows_new(tmp_path, capsys):
+    """release-gate ratchet: a pre-existing finding is baselined away, a NEW one is not."""
+    old = _new(tmp_path)
+    assert findings.main(["baseline", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    # a genuinely new finding filed after the baseline gets a new content-hash id
+    new = _new(tmp_path, auditor="docs", title="Stale README", area="README.md", category="docs")
+    assert (
+        findings.main(["list", "--root", str(tmp_path), "--status", "open", "--exclude-baseline"])
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert new.stem in out  # new finding blocks the gate
+    assert old.stem not in out  # baselined finding is waived
+
+
+def test_read_baseline_survives_malformed_file(tmp_path):
+    _new(tmp_path)
+    findings.baseline_path(tmp_path).write_text("{not json", encoding="utf-8")
+    assert findings.read_baseline(tmp_path) == set()
+
+
+def test_cli_baseline_refuses_overwrite_without_force(tmp_path, capsys):
+    """The ratchet only tightens: re-baselining must be deliberate, not silent."""
+    _new(tmp_path)
+    assert findings.main(["baseline", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    _new(tmp_path, auditor="docs", title="New", area="n.md", category="docs")
+    assert findings.main(["baseline", "--root", str(tmp_path)]) == 1  # refused
+    assert "already exists" in capsys.readouterr().err
+    assert findings.main(["baseline", "--root", str(tmp_path), "--force"]) == 0  # explicit
+
+
 def test_pattern_covers_ignores_descendant_of_store():
     """A gitignore pattern naming a file inside the store must NOT be read as the
     whole store being ignored (else review-hygiene marking silently switches off)."""

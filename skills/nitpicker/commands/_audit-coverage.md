@@ -108,5 +108,5 @@ review surface the skill offers.
 ## Not coverage lenses
 
 `review` (the diff-scoped form of this same read), `pr`, `cr`, `plan`,
-`release-gate`, `help`, and `x-findings-migrator` are workflow or meta
-commands, not quality lenses — they are not tasks in this checklist.
+`baseline`, `release-gate`, `help`, and `x-findings-migrator` are workflow or
+meta commands, not quality lenses — they are not tasks in this checklist.

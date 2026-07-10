@@ -112,6 +112,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 
 | Command        | Purpose                                                             |
 | -------------- | ------------------------------------------------------------------- |
+| `baseline`     | Snapshot open findings as accepted; gate fails only on new ones     |
 | `release-gate` | Fail if open findings at or above a threshold exist (default: High) |
 | `help`         | Print this command listing (alias: `list`)                          |
 
@@ -138,10 +139,18 @@ Naming a focus area deepens that lens but never narrows the checklist.
 
 ## release-gate
 
-Read the open findings (`findings.py list --status open`). If any finding at
-or above the threshold exists (default High; the extra instructions may name
-another), report them and fail the gate. Otherwise report pass. Writes
-nothing.
+Read the open findings (`findings.py list --status open`; add
+`--exclude-baseline` when a baseline exists). If any finding at or above the
+threshold exists (default High; the extra instructions may name another),
+report them and fail the gate. Otherwise report pass. Writes nothing.
+
+## baseline
+
+Snapshot the open findings as an accepted baseline (`findings.py baseline`) so
+`release-gate` fails only on findings filed afterward — adopting the toolkit on
+a repo with pre-existing debt without deleting or falsifying a finding. The
+baseline records ids only; a baselined finding stays open and visible.
+`commands/baseline.md` holds the full protocol.
 
 ## Bundled tools
 

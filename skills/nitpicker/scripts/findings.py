@@ -40,6 +40,7 @@ from pathlib import Path
 
 DEFAULT_ROOT = Path("docs/audit/findings")
 LEDGER_NAME = "resolved.jsonl"
+BASELINE_NAME = "baseline.json"
 SEVERITIES = ("critical", "high", "medium", "low", "advisory")
 CATEGORIES = (
     "correctness",
@@ -377,6 +378,52 @@ def _note(errors: list[str] | None, msg: str) -> None:
         print(f"  WARNING  {msg}", file=sys.stderr)
     else:
         errors.append(msg)
+
+
+# ── release-gate baseline (docs/audit/findings/baseline.json) ─────────────────
+#
+# A baseline is the set of finding IDs accepted at adoption time. `release-gate`
+# fails only on open findings whose id is NOT in the baseline, so pre-existing
+# debt is waived (but stays a real open finding) while any NEW finding blocks.
+# IDs are content-hashed, so a genuinely new finding gets a new id and is caught.
+
+
+def baseline_path(root: Path) -> Path:
+    return root / BASELINE_NAME
+
+
+def read_baseline(root: Path) -> set[str]:
+    """The set of accepted finding IDs (empty if there is no baseline)."""
+    p = baseline_path(root)
+    if not p.exists():
+        return set()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    ids = data.get("ids") if isinstance(data, dict) else None
+    return {str(i) for i in ids} if isinstance(ids, list) else set()
+
+
+def write_baseline(root: Path, ids: list[str], created: str) -> Path:
+    p = baseline_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"created": created, "ids": sorted(set(ids))}
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(p)
+    return p
+
+
+def clear_baseline(root: Path) -> bool:
+    p = baseline_path(root)
+    if p.exists():
+        p.unlink()
+        return True
+    return False
 
 
 # ── review-hygiene: keep the store out of PR review noise ─────────────────────
@@ -1064,6 +1111,11 @@ def main(argv: list[str] | None = None) -> int:
     add_root(p_list)
     p_list.add_argument("--auditor", default=None)
     p_list.add_argument("--status", default=None, choices=STATUSES)
+    p_list.add_argument(
+        "--exclude-baseline",
+        action="store_true",
+        help="omit findings whose id is in the release-gate baseline",
+    )
 
     p_show = sub.add_parser("show", help="print one finding (open file or resolved ledger)")
     add_root(p_show)
@@ -1075,6 +1127,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p_idx = sub.add_parser("index", help="regenerate INDEX.md")
     add_root(p_idx)
+
+    p_base = sub.add_parser(
+        "baseline", help="snapshot open findings as an accepted release-gate baseline"
+    )
+    add_root(p_base)
+    p_base.add_argument("--clear", action="store_true", help="remove the baseline")
+    p_base.add_argument(
+        "--force", action="store_true", help="overwrite an existing baseline (review the diff)"
+    )
 
     p_mig = sub.add_parser("migrate", help="convert v1 *-findings.md files")
     add_root(p_mig)
@@ -1139,10 +1200,13 @@ def main(argv: list[str] | None = None) -> int:
                     rec.get("auditor", "?"),
                 )
             )
+        baselined = read_baseline(args.root) if args.exclude_baseline else set()
         for fid, status, severity, title, auditor in entries:
             if args.auditor and auditor != args.auditor:
                 continue
             if args.status and status != args.status:
+                continue
+            if fid in baselined:
                 continue
             print(f"{fid:24} {status:8} {severity:9} {title}")
         return 0
@@ -1177,6 +1241,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "index":
         print(write_index(args.root))
+        return 0
+
+    if args.cmd == "baseline":
+        if args.clear:
+            print("baseline cleared" if clear_baseline(args.root) else "no baseline to clear")
+            return 0
+        if baseline_path(args.root).exists() and not args.force:
+            print(
+                f"ERROR  {baseline_path(args.root)} already exists; re-baselining can absorb "
+                "findings filed since. Use --clear first, or --force after reviewing the diff.",
+                file=sys.stderr,
+            )
+            return 1
+        open_ids = sorted(fm.get("id", path.stem) for path, fm, _ in iter_open(args.root))
+        out = write_baseline(args.root, open_ids, _today())
+        print(f"{out}: baselined {len(open_ids)} open finding(s)")
         return 0
 
     if args.cmd == "migrate":

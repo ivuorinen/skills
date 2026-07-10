@@ -44,6 +44,7 @@ If the user says… → run:
 - "find unwired code / is everything hooked up / incomplete implementations" → `/nitpicker unwired`
 - "plan this / how should we build X / design the implementation" → `/nitpicker plan`
 - "can we ship / release gate" → `/nitpicker release-gate`
+- "baseline the findings / accept existing debt / only fail on new findings" → `/nitpicker baseline`
 - "what audit commands are there / list the commands" → `/nitpicker help`
 
 ## Rules
