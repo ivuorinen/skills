@@ -240,9 +240,12 @@ def main() -> None:
         sys.exit(2)
 
     # owner/repo are interpolated into REST URLs and the `gh api` path; reject
-    # anything outside GitHub's allowed name charset (blocks /, .., ?, @, ...).
+    # anything outside GitHub's allowed name charset (blocks /, ?, @, spaces).
+    # The charset alone permits '.'/'..' (dots are legal in repo names), so the
+    # bare traversal tokens are rejected explicitly — otherwise the comment above
+    # would promise a guard the regex does not actually provide.
     for label, value in (("owner", owner), ("repo", repo)):
-        if not _OWNER_REPO_RE.fullmatch(value):
+        if not _OWNER_REPO_RE.fullmatch(value) or value in (".", ".."):
             print(f"[error] invalid {label}: {value!r}", file=sys.stderr)
             sys.exit(2)
 

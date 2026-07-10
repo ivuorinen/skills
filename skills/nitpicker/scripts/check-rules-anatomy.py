@@ -74,6 +74,11 @@ def _parse_frontmatter(text: str) -> tuple[dict | None, str]:
                 fm[current_key] = [x for x in items if x]
             elif v:
                 fm[current_key] = v.strip("\"'")
+        elif not content:
+            # A blank line inside a list is not a terminator — keep collecting,
+            # so a gap between items doesn't drop everything before it. (YAML-
+            # correct; single source of truth also imported by validate-rules.py.)
+            continue
         else:
             current_list = None
 

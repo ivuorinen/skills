@@ -4,69 +4,25 @@
 # ///
 """Validate .claude/rules/ files for structural correctness and glob freshness."""
 
-import os
+import importlib.util
 import re
 import sys
 from pathlib import Path
 
+# Single source of truth for the frontmatter parser and the symlink-safe rules
+# walker: the shipped, stdlib-only check-rules-anatomy.py. Internal tooling
+# depending on the shipped tool points the dependency the safe direction (the
+# shipped tool can never import back into scripts/). Loaded by path because the
+# module name contains hyphens and cannot be `import`ed by name.
+_ANATOMY_PATH = (
+    Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
+)
+_spec = importlib.util.spec_from_file_location("check_rules_anatomy", _ANATOMY_PATH)
+_anatomy = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_anatomy)  # type: ignore[union-attr]
 
-def parse_rules_frontmatter(text: str) -> tuple[dict | None, str]:
-    """Parse optional YAML frontmatter from a rules file.
-
-    Returns (frontmatter_dict, body_str). Returns ({}, text) if no frontmatter.
-    Returns (None, text) if frontmatter is opened but never closed.
-    """
-    if not text.startswith("---\n"):
-        return {}, text
-
-    lines = text.splitlines(keepends=True)
-    fm_lines: list[str] = []
-    body_start: int | None = None
-
-    for i, line in enumerate(lines[1:], start=1):
-        if line in {"---\n", "---"}:
-            body_start = i + 1
-            break
-        fm_lines.append(line)
-
-    if body_start is None:
-        return None, text  # signals parse failure
-
-    fm_text = "".join(fm_lines)
-    body = "".join(lines[body_start:])
-
-    fm: dict = {}
-    current_key: str | None = None
-    current_list: list[str] | None = None
-
-    for line in fm_text.splitlines():
-        content = line.lstrip()
-        # A block-sequence item is valid YAML at any indent (including column 0),
-        # so recognize it by "- " while a key is pending, not by indentation.
-        if content.startswith("- ") and current_key is not None:
-            item = content[2:].strip().strip("\"'")
-            if current_list is None:
-                current_list = []
-                fm[current_key] = current_list
-            current_list.append(item)
-        elif ":" in line and not line.startswith(" "):
-            current_list = None
-            key, _, val = line.partition(":")
-            current_key = key.strip()
-            val = val.strip()
-            if val.startswith("[") and val.endswith("]"):
-                # YAML flow-style list, e.g. paths: ["src/**", "lib/**"] — kept in
-                # sync with check-rules-anatomy.py so the two validators agree.
-                items = [x.strip().strip("\"'") for x in val[1:-1].split(",")]
-                fm[current_key] = [x for x in items if x]
-            elif val:
-                fm[current_key] = val.strip("\"'")
-        elif not content:
-            # A blank line inside a list is not a terminator — keep collecting,
-            # so a gap between items doesn't drop everything before it.
-            continue
-
-    return fm, body
+# Re-exported so callers (and tests) keep importing it from this module.
+parse_rules_frontmatter = _anatomy._parse_frontmatter
 
 
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -140,36 +96,14 @@ def validate(path: Path, errors: list[str], warnings: list[str], repo_root: Path
         warn("body is empty after frontmatter")
 
 
-def _iter_rules_dir(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
-    """Collect .md files and dangling symlinks from rules_dir recursively.
-
-    Uses os.scandir instead of rglob so dangling symlinks are not silently skipped.
-    Tracks resolved real paths to prevent symlink loop hangs.
-    """
-    if seen is None:
-        seen = set()
-    real_dir = rules_dir.resolve()
-    if real_dir in seen:
-        return []
-    seen.add(real_dir)
-
-    results: list[Path] = []
-    with os.scandir(rules_dir) as it:
-        for entry in it:
-            p = Path(entry.path)
-            if entry.is_symlink() and not p.exists():
-                results.append(p)
-            elif entry.is_dir(follow_symlinks=True):
-                results.extend(_iter_rules_dir(p, seen))
-            elif entry.name.endswith(".md"):
-                results.append(p)
-    return results
-
-
 def _discover_targets(repo_root: Path) -> list[Path]:
-    """Return sorted rule files (and dangling symlinks) under .claude/rules/."""
+    """Return sorted rule files (and dangling symlinks) under .claude/rules/.
+
+    Uses the shipped tool's symlink-safe walker (returns sorted) as the single
+    source of truth, so the two validators can never disagree on discovery.
+    """
     rules_dir = repo_root / ".claude" / "rules"
-    return sorted(_iter_rules_dir(rules_dir))
+    return _anatomy._iter_rules(rules_dir)
 
 
 def main() -> None:

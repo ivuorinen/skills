@@ -65,6 +65,13 @@ class TestParseFrontmatter:
         fm, _ = _parse_frontmatter(text)
         assert fm["paths"] == ["src/**", "lib/**"]
 
+    def test_blank_line_inside_paths_list_keeps_all_items(self):
+        # A blank line between block-sequence items must not drop earlier items.
+        # Single source of truth: validate-rules.py imports this parser.
+        text = '---\npaths:\n  - "stale/removed/*"\n\n  - "src/*"\n---\nbody\n'
+        fm, _ = _parse_frontmatter(text)
+        assert fm is not None and fm["paths"] == ["stale/removed/*", "src/*"]
+
     def test_crlf_frontmatter_is_parsed(self):
         """CRLF line endings must not defeat frontmatter detection."""
         text = '---\r\npaths:\r\n  - "src/**"\r\n---\r\n\r\nBody.\r\n'
