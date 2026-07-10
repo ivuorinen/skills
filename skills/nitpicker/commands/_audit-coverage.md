@@ -68,6 +68,10 @@ review surface the skill offers.
 - **API contract** (`contract`) — declared public surface (specs, exports,
   published types, CLI flags) vs implementation vs the declared semver bump.
   N/A when no public contract surface exists.
+- **License** (`license`) — the project's own license, dependency-license
+  compatibility, copyleft/source-available contamination, unlicensed
+  dependencies, missing attribution/NOTICE, bundled-asset licenses. Rarely
+  fully N/A — the project itself always needs a declared license.
 - **Dependencies** (`deps`) — unused, phantom, duplicate, heavyweight,
   unmaintained, license-conflicting, drifted, misclassified dependencies.
 - **Migrations** (`migrations`) — destructive ops, irreversible downs,

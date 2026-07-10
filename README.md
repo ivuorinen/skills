@@ -80,13 +80,14 @@ that run. The modifiers `inline` (nothing written to disk) and
 
 ### Structure and contracts
 
-| Command        | What it hunts                                                              |
-| -------------- | -------------------------------------------------------------------------- |
-| `arch`         | Architectural violations against detected or declared patterns             |
-| `arch-profile` | Detects the architecture; writes `docs/audit/arch-profile.md`              |
-| `contract`     | Spec-vs-code drift and surface changes vs the declared semver bump         |
-| `deps`         | Unused, phantom, duplicate, unmaintained, license-conflicting dependencies |
-| `migrations`   | Migrations that eat production: destructive ops, long locks, drift         |
+| Command        | What it hunts                                                                  |
+| -------------- | ------------------------------------------------------------------------------ |
+| `arch`         | Architectural violations against detected or declared patterns                 |
+| `arch-profile` | Detects the architecture; writes `docs/audit/arch-profile.md`                  |
+| `contract`     | Spec-vs-code drift and surface changes vs the declared semver bump             |
+| `deps`         | Unused, phantom, duplicate, unmaintained, license-conflicting dependencies     |
+| `license`      | Project license, dependency compatibility, copyleft contamination, attribution |
+| `migrations`   | Migrations that eat production: destructive ops, long locks, drift             |
 
 ### Quality surfaces
 

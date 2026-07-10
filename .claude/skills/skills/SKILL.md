@@ -26,6 +26,7 @@ If the user says… → run:
 - "audit the architecture / find violations" → `/nitpicker arch`
 - "perf audit / why is this slow / will this scale" → `/nitpicker perf`
 - "audit dependencies / prune deps" → `/nitpicker deps`
+- "audit the licenses / license compatibility / are we GPL-contaminated / check attribution" → `/nitpicker license`
 - "find silent failures / what errors are we swallowing" → `/nitpicker errors`
 - "audit the CI / GitHub Actions security" → `/nitpicker ci`
 - "audit the commits / verify conventional commits" → `/nitpicker commits`
