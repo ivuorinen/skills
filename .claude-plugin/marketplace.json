@@ -9,8 +9,8 @@
   "plugins": [
     {
       "name": "ivuorinen-skills",
-      "description": "Nitpicker \u2014 hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, architecture, perf, deps, CI, migrations, a11y, privacy, concurrency, and more).",
-      "version": "1.8.0",
+      "description": "Nitpicker — hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, architecture, perf, deps, CI, migrations, a11y, privacy, concurrency, and more).",
+      "version": "2.0.0",
       "source": "./",
       "author": {
         "name": "Ismo Vuorinen",

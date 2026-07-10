@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [2.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.8.0...ivuorinen-skills-v2.0.0) (2026-07-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* the standalone `*-auditor` skills are replaced by a single `nitpicker` skill invoked as `/nitpicker <command>`; consumers must update their invocations (the old names still resolve as aliases).
+
+### Features
+
+* reorganize standalone audit skills into one nitpicker skill with commands ([#54](https://github.com/ivuorinen/skills/issues/54)) ([dc3c074](https://github.com/ivuorinen/skills/commit/dc3c07437d8d5c1aac0fae6d7285f5c9d1c9d3fc))
+
 ## [1.8.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.7.2...ivuorinen-skills-v1.8.0) (2026-07-06)
 
 ### Features
