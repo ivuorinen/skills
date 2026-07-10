@@ -21,15 +21,15 @@ Speculation is banned: "it's probably closed somewhere" is not a finding; every 
 
 File a finding only when the class, the acquisition site, the specific path where release is skipped, and the accumulation driver are all named. A driver is a repetition the deployment does not bound: per-request, per-loop-iteration, per-mount, per-event. A one-shot acquire on a process that exits immediately is at most Low — process exit reclaims it; say so. No acquisition site, no skipped path, no driver → no finding.
 
-| Class                          | What to hunt                                                                                                                                                         | Evidence to construct                                                                                                                                         |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **unclosed-handle**            | A file/socket/stream/DB-connection/cursor acquired with no guaranteed close on **all** paths — no `with`/`try-finally`/`defer`/`using`/RAII wrapping the acquisition | The acquire site, the path (usually error/early-return) where close is skipped, the driver, and the guaranteed-release construct that closes it on every path |
-| **pool-exhaustion**            | A connection/thread/handle borrowed from a pool and not returned on the error path, accumulating until the pool empties                                              | The borrow site, the path where the handle is not returned, the driver, and the `finally`-return that releases it back                                        |
-| **listener-subscription-leak** | An event listener/observer/signal-handler/subscription added with no matching removal on teardown, growing per mount/request/iteration                               | The add site, the missing removal, the per-X driver, and the teardown-hook removal that pairs it                                                              |
-| **orphaned-task**              | A goroutine/thread/async-task/timer/interval started with no cancellation or join path — fire-and-forget outliving its context                                       | The start site, the absent cancellation, the driver, and the cancellation/join that bounds its lifetime                                                       |
-| **context-leak**               | A cancellation token / context / scope not propagated or cancelled, keeping downstream work and its resources alive                                                  | The un-cancelled context, what it keeps alive downstream, the driver, and the propagation/cancel that releases it                                             |
-| **temp-artifact-leak**         | A temp file/dir/lock-file created without cleanup on the error path                                                                                                  | The create site, the path where cleanup is skipped, the driver, and the cleanup (unlink/remove/release) that runs on every path                               |
-| **native-resource-leak**       | A native/FFI handle or a `Disposable`/`Closeable`/`AutoCloseable` released non-deterministically — relying on GC/finalizer for a scarce resource                     | The acquire site, the non-deterministic release path, the driver, and the deterministic-dispose (`using`/`try-with-resources`/explicit `dispose`) fix         |
+| Class | What to hunt | Evidence to construct |
+| --- | --- | --- |
+| **unclosed-handle** | A file/socket/stream/DB-connection/cursor acquired with no guaranteed close on **all** paths — no `with`/`try-finally`/`defer`/`using`/RAII wrapping the acquisition | The acquire site, the path (usually error/early-return) where close is skipped, the driver, and the guaranteed-release construct that closes it on every path |
+| **pool-exhaustion** | A connection/thread/handle borrowed from a pool and not returned on the error path, accumulating until the pool empties | The borrow site, the path where the handle is not returned, the driver, and the `finally`-return that releases it back |
+| **listener-subscription-leak** | An event listener/observer/signal-handler/subscription added with no matching removal on teardown, growing per mount/request/iteration | The add site, the missing removal, the per-X driver, and the teardown-hook removal that pairs it |
+| **orphaned-task** | A goroutine/thread/async-task/timer/interval started with no cancellation or join path — fire-and-forget outliving its context | The start site, the absent cancellation, the driver, and the cancellation/join that bounds its lifetime |
+| **context-leak** | A cancellation token / context / scope not propagated or cancelled, keeping downstream work and its resources alive | The un-cancelled context, what it keeps alive downstream, the driver, and the propagation/cancel that releases it |
+| **temp-artifact-leak** | A temp file/dir/lock-file created without cleanup on the error path | The create site, the path where cleanup is skipped, the driver, and the cleanup (unlink/remove/release) that runs on every path |
+| **native-resource-leak** | A native/FFI handle or a `Disposable`/`Closeable`/`AutoCloseable` released non-deterministically — relying on GC/finalizer for a scarce resource | The acquire site, the non-deterministic release path, the driver, and the deterministic-dispose (`using`/`try-with-resources`/explicit `dispose`) fix |
 
 ## Process
 
@@ -44,13 +44,13 @@ File a finding only when the class, the acquisition site, the specific path wher
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                           |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | A leak on a per-request or per-event path that exhausts a finite resource (file-descriptor limit, connection pool) and downs the service under normal traffic       |
-| High     | A leak on a repeated path with a real driver that degrades the process over time — unbounded listener/subscription growth, orphaned goroutines/threads accumulating |
-| Medium   | A leak only on the error path of a frequently-failing operation; temp-artifact accumulation with a real driver                                                      |
-| Low      | A leak on a bounded or one-shot path (startup, a CLI that acquires once and exits) where process exit reclaims it — named as such                                   |
-| Advisory | Non-deterministic release (GC/finalizer) of a scarce resource with no measured accumulation yet, on a path with a named, realistic route to repetition              |
+| Severity | Condition |
+| --- | --- |
+| Critical | A leak on a per-request or per-event path that exhausts a finite resource (file-descriptor limit, connection pool) and downs the service under normal traffic |
+| High | A leak on a repeated path with a real driver that degrades the process over time — unbounded listener/subscription growth, orphaned goroutines/threads accumulating |
+| Medium | A leak only on the error path of a frequently-failing operation; temp-artifact accumulation with a real driver |
+| Low | A leak on a bounded or one-shot path (startup, a CLI that acquires once and exits) where process exit reclaims it — named as such |
+| Advisory | Non-deterministic release (GC/finalizer) of a scarce resource with no measured accumulation yet, on a path with a named, realistic route to repetition |
 
 ## Fix strategy
 

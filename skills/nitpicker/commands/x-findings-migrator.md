@@ -63,16 +63,16 @@ agent — that decision rule holds even when the working tree is clean.
 
 Everything the v1 format recorded, mapped losslessly:
 
-| v1                                | v2                                                          |
-| --------------------------------- | ----------------------------------------------------------- |
-| `[ID]` (e.g. `N-042`)             | Same ID, kept as filename and `id:` (legacy IDs stay valid) |
-| Severity h3 (open findings)       | `severity:` frontmatter                                     |
-| `Category:` / `Area:`             | `category:` / `area:` frontmatter                           |
-| `Problem/Evidence/Impact/Fix`     | The same `##` sections in the body                          |
-| `Fixed:` date / pass date         | `resolved:` frontmatter                                     |
-| `Notes:`                          | `## Resolution` body                                        |
-| `### Pass N — date` + source file | Provenance line: `Migrated from v1 <file> (Pass N, date).`  |
-| `Generated:` date                 | `found:` frontmatter                                        |
+| v1 | v2 |
+| --- | --- |
+| `[ID]` (e.g. `N-042`) | Same ID, kept as filename and `id:` (legacy IDs stay valid) |
+| Severity h3 (open findings) | `severity:` frontmatter |
+| `Category:` / `Area:` | `category:` / `area:` frontmatter |
+| `Problem/Evidence/Impact/Fix` | The same `##` sections in the body |
+| `Fixed:` date / pass date | `resolved:` frontmatter |
+| `Notes:` | `## Resolution` body |
+| `### Pass N — date` + source file | Provenance line: `Migrated from v1 <file> (Pass N, date).` |
+| `Generated:` date | `found:` frontmatter |
 
 File-level `Last validated:` has no per-finding equivalent and is the only
 v1 datum not carried into individual findings — state this in the summary.

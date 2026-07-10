@@ -15,17 +15,17 @@ Not for: general code quality (`/nitpicker audit`), architecture boundary violat
 
 Before running any scan, probe for each tool with `which <tool>`. Only run tools that are found. Skip missing tools without attempting to execute them, and list them in the run summary under Tool Coverage as "Not available".
 
-| Tool              | What it finds                                            |
-| ----------------- | -------------------------------------------------------- |
-| semgrep           | SAST: code-level security bugs                           |
-| opengrep          | SAST: code-level security bugs (semgrep fork)            |
-| grype             | Dependency vulnerabilities (CVEs)                        |
-| trivy             | Dependencies, misconfigurations, secrets                 |
-| gitleaks          | Secrets committed to git history or working tree         |
-| checkov           | IaC misconfigurations (Terraform, Dockerfile, k8s, etc.) |
-| gosec             | Go-specific security issues                              |
-| snyk              | Dependency vulnerabilities (SCA)                         |
-| npm / yarn / pnpm | Node.js dependency vulnerabilities via `audit`           |
+| Tool | What it finds |
+| --- | --- |
+| semgrep | SAST: code-level security bugs |
+| opengrep | SAST: code-level security bugs (semgrep fork) |
+| grype | Dependency vulnerabilities (CVEs) |
+| trivy | Dependencies, misconfigurations, secrets |
+| gitleaks | Secrets committed to git history or working tree |
+| checkov | IaC misconfigurations (Terraform, Dockerfile, k8s, etc.) |
+| gosec | Go-specific security issues |
+| snyk | Dependency vulnerabilities (SCA) |
+| npm / yarn / pnpm | Node.js dependency vulnerabilities via `audit` |
 
 If a tool is found but fails to run (e.g., broken Python environment), record it under "Errored" in Tool Coverage with the error message. Always capture stderr separately — never redirect to `/dev/null`.
 
@@ -178,13 +178,13 @@ Non-Claude agents resolve the path relative to this skill's directory. Outputs J
 
 Normalize tool-specific severities to the standard five levels:
 
-| Tool severity                    | Normalized |
-| -------------------------------- | ---------- |
-| critical / CRITICAL              | Critical   |
-| high / HIGH / error              | High       |
-| medium / MEDIUM / warning / WARN | Medium     |
-| low / LOW / note / INFO          | Low        |
-| informational / advisory / hint  | Advisory   |
+| Tool severity | Normalized |
+| --- | --- |
+| critical / CRITICAL | Critical |
+| high / HIGH / error | High |
+| medium / MEDIUM / warning / WARN | Medium |
+| low / LOW / note / INFO | Low |
+| informational / advisory / hint | Advisory |
 
 - gitleaks: all secrets are **Critical** unless the matched rule is tagged `allowlist`.
 - semgrep/opengrep: use `.extra.severity`; `ERROR` → High, `WARNING` → Medium, `INFO` → Low.
@@ -196,13 +196,13 @@ Never print an actual secret value. Record file, line, rule, and a redacted exce
 
 ## Fix strategy
 
-| Finding type                                    | Auto-fixable                           | Action                                                                          |
-| ----------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
-| Dependency vulnerability with known fix version | Yes, after asking                      | Run package manager upgrade command                                             |
-| Secret in working tree (not committed)          | Yes, after asking                      | Remove from file, add to `.gitignore`                                           |
-| Secret in git history                           | No — requires `git filter-repo` or BFG | Document the exact command; warn that it is destructive and requires force-push |
-| IaC misconfiguration                            | Sometimes — checkov `--fix` flag       | Ask before applying                                                             |
-| SAST / gosec finding                            | No — requires code change              | Provide the exact fix in the finding                                            |
+| Finding type | Auto-fixable | Action |
+| --- | --- | --- |
+| Dependency vulnerability with known fix version | Yes, after asking | Run package manager upgrade command |
+| Secret in working tree (not committed) | Yes, after asking | Remove from file, add to `.gitignore` |
+| Secret in git history | No — requires `git filter-repo` or BFG | Document the exact command; warn that it is destructive and requires force-push |
+| IaC misconfiguration | Sometimes — checkov `--fix` flag | Ask before applying |
+| SAST / gosec finding | No — requires code change | Provide the exact fix in the finding |
 
 ## Common mistakes
 

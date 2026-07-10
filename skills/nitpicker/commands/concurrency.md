@@ -21,15 +21,15 @@ Speculation is banned: "this looks racy" is not a finding; every finding names t
 
 File a finding only when the class, the shared state, ≥2 concrete concurrent contexts that reach it, and the corrupting interleaving are all named. A concurrent context is a thread, goroutine, async task, signal handler, or a request handler sharing a global/singleton. Single-threaded code, request-local state, and immutable state are NOT findings.
 
-| Class                      | What to hunt                                                                                                                                                                               | Evidence to construct                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| **race-condition**         | Unsynchronized access to shared mutable state from ≥2 concurrent contexts (threads, goroutines, async tasks, signal handlers, request handlers sharing a global/singleton)                 | The shared state, the ≥2 contexts that reach it, the corrupting interleaving, and the synchronization fix |
-| **check-then-act**         | Non-atomic TOCTOU: a condition checked then acted on without holding a lock across both (get-or-create, exists-then-write, balance-check-then-debit)                                       | The check site, the act site, the window between them, and the atomic replacement                         |
-| **deadlock-risk**          | Locks acquired in inconsistent order across call sites; nested/re-entrant acquisition; a lock held across a blocking call or callback that can re-enter                                    | The two acquisition orders (or the held-across-blocking site) and the ordering/scoping fix                |
-| **lost-update**            | Read-modify-write on shared state without atomicity (`counter++`, non-atomic accumulation, non-transactional DB read-modify-write)                                                         | The RMW site, the concurrent writers, and the atomic/transactional fix                                    |
-| **unsafe-publication**     | An object shared across threads with no happens-before edge — missing volatile/memory-barrier/final, or a partially-constructed object escaping                                            | The publish site, the reader, and the memory-visibility fix                                               |
-| **async-shared-state**     | Mutable state shared across `await` points or concurrent tasks where an interleaving corrupts it (a field mutated across an await in a shared service; two asyncio tasks racing on a dict) | The state, the await/task boundary, the interleaving, and the fix                                         |
-| **non-atomic-compound-op** | A compound operation on a "thread-safe" container that is atomic per-call but not across calls (ConcurrentDictionary two-step; atomic-map get-then-put)                                    | The two calls, the gap between them, and the single-atomic-operation replacement                          |
+| Class | What to hunt | Evidence to construct |
+| --- | --- | --- |
+| **race-condition** | Unsynchronized access to shared mutable state from ≥2 concurrent contexts (threads, goroutines, async tasks, signal handlers, request handlers sharing a global/singleton) | The shared state, the ≥2 contexts that reach it, the corrupting interleaving, and the synchronization fix |
+| **check-then-act** | Non-atomic TOCTOU: a condition checked then acted on without holding a lock across both (get-or-create, exists-then-write, balance-check-then-debit) | The check site, the act site, the window between them, and the atomic replacement |
+| **deadlock-risk** | Locks acquired in inconsistent order across call sites; nested/re-entrant acquisition; a lock held across a blocking call or callback that can re-enter | The two acquisition orders (or the held-across-blocking site) and the ordering/scoping fix |
+| **lost-update** | Read-modify-write on shared state without atomicity (`counter++`, non-atomic accumulation, non-transactional DB read-modify-write) | The RMW site, the concurrent writers, and the atomic/transactional fix |
+| **unsafe-publication** | An object shared across threads with no happens-before edge — missing volatile/memory-barrier/final, or a partially-constructed object escaping | The publish site, the reader, and the memory-visibility fix |
+| **async-shared-state** | Mutable state shared across `await` points or concurrent tasks where an interleaving corrupts it (a field mutated across an await in a shared service; two asyncio tasks racing on a dict) | The state, the await/task boundary, the interleaving, and the fix |
+| **non-atomic-compound-op** | A compound operation on a "thread-safe" container that is atomic per-call but not across calls (ConcurrentDictionary two-step; atomic-map get-then-put) | The two calls, the gap between them, and the single-atomic-operation replacement |
 
 ## Process
 
@@ -44,13 +44,13 @@ File a finding only when the class, the shared state, ≥2 concrete concurrent c
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                     |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Condition |
+| --- | --- |
 | Critical | Data-corrupting or money-path race reachable on the normal concurrent path (request handlers sharing mutable state, a balance debit under concurrent requests); a deadlock reachable under normal load that hangs the service |
-| High     | Lost update on persisted state under concurrent writers; check-then-act with a realistic window on a correctness-critical path that is not money or data-corrupting (those are Critical)                                      |
-| Medium   | Race on non-persisted state that degrades correctness; unsafe publication with a plausible reader                                                                                                                             |
-| Low      | Race only under a contrived interleaving on a bounded or admin-only path                                                                                                                                                      |
-| Advisory | Theoretical publication/visibility issue on a path that is single-threaded today, with a named realistic path to concurrency                                                                                                  |
+| High | Lost update on persisted state under concurrent writers; check-then-act with a realistic window on a correctness-critical path that is not money or data-corrupting (those are Critical) |
+| Medium | Race on non-persisted state that degrades correctness; unsafe publication with a plausible reader |
+| Low | Race only under a contrived interleaving on a bounded or admin-only path |
+| Advisory | Theoretical publication/visibility issue on a path that is single-threaded today, with a named realistic path to concurrency |
 
 ## Fix strategy
 

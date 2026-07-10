@@ -25,24 +25,24 @@ Out of scope: code defects inside the diffs route to `/nitpicker review`; CI/CD 
 
 ### Defect classes
 
-| Class                    | What to flag                                                                                                                                                         | Fix shape                                                                                                   |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **type-understatement**  | A no-bump type (`chore:`, `docs:`, `refactor:`, `test:`, `ci:`) whose diff adds or changes user-facing behavior — a new feature, a bug fix, a shipped-surface change | Relabel `feat:`/`fix:`; pushed → empty correction commit restating the change under its earned type         |
-| **type-overstatement**   | A `feat:` whose diff is a pure fix, refactor, or internal change; a `fix:` on a diff with no behavior change                                                         | Relabel to the type the diff earns                                                                          |
-| **unmarked-breaking**    | The diff removes or renames public surface, or changes behavior incompatibly, with no `!` and no `BREAKING CHANGE:` footer                                           | Add the `!`/footer; pushed → correction commit carrying the `BREAKING CHANGE:` footer                       |
-| **spurious-breaking**    | A `!` or `BREAKING CHANGE:` footer on a diff with no consumer-visible break (e.g. a bot's `chore(deps)!:` on an internal CI action bump)                             | Drop the marker; pushed → `Release-As: X.Y.Z` correction commit pinning the correct next version            |
-| **scope-lie**            | A squash-merge title describing only part of the diff — the title says docs, the hunks also change code                                                              | Retitle to cover the whole diff; pushed → correction commit naming the omitted change under its earned type |
-| **malformed-convention** | A type not in the project's convention table, a missing `: ` separator, or a footer not in the `BREAKING CHANGE: <desc>` form release-please parses                  | Rewrite the message into the convention shape                                                               |
+| Class | What to flag | Fix shape |
+| --- | --- | --- |
+| **type-understatement** | A no-bump type (`chore:`, `docs:`, `refactor:`, `test:`, `ci:`) whose diff adds or changes user-facing behavior — a new feature, a bug fix, a shipped-surface change | Relabel `feat:`/`fix:`; pushed → empty correction commit restating the change under its earned type |
+| **type-overstatement** | A `feat:` whose diff is a pure fix, refactor, or internal change; a `fix:` on a diff with no behavior change | Relabel to the type the diff earns |
+| **unmarked-breaking** | The diff removes or renames public surface, or changes behavior incompatibly, with no `!` and no `BREAKING CHANGE:` footer | Add the `!`/footer; pushed → correction commit carrying the `BREAKING CHANGE:` footer |
+| **spurious-breaking** | A `!` or `BREAKING CHANGE:` footer on a diff with no consumer-visible break (e.g. a bot's `chore(deps)!:` on an internal CI action bump) | Drop the marker; pushed → `Release-As: X.Y.Z` correction commit pinning the correct next version |
+| **scope-lie** | A squash-merge title describing only part of the diff — the title says docs, the hunks also change code | Retitle to cover the whole diff; pushed → correction commit naming the omitted change under its earned type |
+| **malformed-convention** | A type not in the project's convention table, a missing `: ` separator, or a footer not in the `BREAKING CHANGE: <desc>` form release-please parses | Rewrite the message into the convention shape |
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Severity | Condition |
+| --- | --- |
 | Critical | A wrong major or minor release would ship, or a breaking change would ship unmarked: spurious-breaking forcing a bogus major; unmarked-breaking riding out as minor or patch; the net as-labeled bump diverging from the corrected bump at major level |
-| High     | The net bump diverges at minor or patch level: type-understatement suppressing a due release (the feature or fix ships unreleased); type-overstatement forcing an undue release                                                                        |
-| Medium   | The label is wrong but the net bump is unchanged (another commit in range already earns it) — the changelog misfiles the entry; malformed-convention hiding a commit from release-please without changing the bump                                     |
-| Low      | A scope-lie or format defect whose only consequence is changelog wording; malformed scope syntax on a no-bump commit                                                                                                                                   |
-| Advisory | Message hygiene (tense, casing, body detail) with no version or changelog consequence                                                                                                                                                                  |
+| High | The net bump diverges at minor or patch level: type-understatement suppressing a due release (the feature or fix ships unreleased); type-overstatement forcing an undue release |
+| Medium | The label is wrong but the net bump is unchanged (another commit in range already earns it) — the changelog misfiles the entry; malformed-convention hiding a commit from release-please without changing the bump |
+| Low | A scope-lie or format defect whose only consequence is changelog wording; malformed scope syntax on a no-bump commit |
+| Advisory | Message hygiene (tense, casing, body detail) with no version or changelog consequence |
 
 ## Fix strategy
 

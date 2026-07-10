@@ -26,24 +26,24 @@ For architecture-specific documentation drift, run `/nitpicker arch` instead —
 
 ## Finding types
 
-| Type                  | Description                                                                                                                   |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Stale                 | References a function, class, module, file, or parameter that no longer exists or has been renamed                            |
-| Incorrect             | Documented behavior contradicts implementation — wrong parameters, wrong return type, wrong description of what the code does |
-| Missing               | Public API, exported function, architectural boundary, or module with no documentation                                        |
-| Outdated architecture | Describes a structural pattern, layer, or component that has changed or been removed                                          |
-| Contradiction         | Two documentation sources make conflicting claims about the same thing                                                        |
-| Broken link           | Internal link to a file, heading, or section that does not resolve                                                            |
+| Type | Description |
+| --- | --- |
+| Stale | References a function, class, module, file, or parameter that no longer exists or has been renamed |
+| Incorrect | Documented behavior contradicts implementation — wrong parameters, wrong return type, wrong description of what the code does |
+| Missing | Public API, exported function, architectural boundary, or module with no documentation |
+| Outdated architecture | Describes a structural pattern, layer, or component that has changed or been removed |
+| Contradiction | Two documentation sources make conflicting claims about the same thing |
+| Broken link | Internal link to a file, heading, or section that does not resolve |
 
 ## Severity guide
 
-| Severity | Meaning                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------- |
+| Severity | Meaning |
+| --- | --- |
 | Critical | Actively misleads — incorrect behavior description that would cause wrong usage of the code |
-| High     | Missing documentation for a public API or architectural boundary                            |
-| Medium   | Stale reference, outdated architecture description, contradiction                           |
-| Low      | Broken internal link, minor inaccuracy, test name that misrepresents behavior               |
-| Advisory | Informational note about the docs; no action required                                       |
+| High | Missing documentation for a public API or architectural boundary |
+| Medium | Stale reference, outdated architecture description, contradiction |
+| Low | Broken internal link, minor inaccuracy, test name that misrepresents behavior |
+| Advisory | Informational note about the docs; no action required |
 
 ## Process
 
@@ -57,15 +57,15 @@ For architecture-specific documentation drift, run `/nitpicker arch` instead —
 
 All are applied only after the `_conventions.md` apply-fixes prompt:
 
-| Fix                                    | How                                                        |
-| -------------------------------------- | ---------------------------------------------------------- |
-| Remove stale references                | Delete the dead reference                                  |
-| Update renamed identifiers             | Rename to the current identifier                           |
-| Fix broken internal links              | Repoint to the resolving target                            |
-| Generate missing docs from code        | Inferred from signatures, types, and context               |
-| Update incorrect behavior descriptions | Rewritten from the actual implementation                   |
-| Update architecture descriptions       | Rewritten from `docs/audit/arch-profile.md` if present     |
-| Resolve contradictions                 | Pick the version consistent with code; note the resolution |
+| Fix | How |
+| --- | --- |
+| Remove stale references | Delete the dead reference |
+| Update renamed identifiers | Rename to the current identifier |
+| Fix broken internal links | Repoint to the resolving target |
+| Generate missing docs from code | Inferred from signatures, types, and context |
+| Update incorrect behavior descriptions | Rewritten from the actual implementation |
+| Update architecture descriptions | Rewritten from `docs/audit/arch-profile.md` if present |
+| Resolve contradictions | Pick the version consistent with code; note the resolution |
 
 ## Rules
 

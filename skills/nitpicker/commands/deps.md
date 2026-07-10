@@ -14,16 +14,16 @@ Out of scope: CVEs, vulnerable versions, and supply-chain advisories route to `/
 
 ## Defect classes
 
-| Class                    | Definition                                                                                                                                         |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| unused-dependency        | Declared in a manifest, referenced by no import form, config plugin reference, script, or binary invocation                                        |
-| phantom-dependency       | Imported by source or config but declared in no manifest — resolves only through a transitive                                                      |
-| duplicate-dependency     | Two or more declared packages covering the same capability (two HTTP clients, two date libraries, lodash + underscore)                             |
-| heavyweight-dependency   | A declared package whose only usage is one function replaceable by ten or fewer lines of stdlib/local code                                         |
-| unmaintained-upstream    | Upstream archived or formally deprecated, proven by fetched metadata (registry deprecation field, archived flag) — never inferred from release age |
-| license-conflict         | Dependency license incompatible with the project's declared license                                                                                |
-| manifest-lockfile-drift  | Lockfile missing, stale, or disagreeing with the manifest (entry or version-range mismatch)                                                        |
-| misclassified-dependency | Runtime dependency declared dev-only, or dev/build tool declared as production                                                                     |
+| Class | Definition |
+| --- | --- |
+| unused-dependency | Declared in a manifest, referenced by no import form, config plugin reference, script, or binary invocation |
+| phantom-dependency | Imported by source or config but declared in no manifest — resolves only through a transitive |
+| duplicate-dependency | Two or more declared packages covering the same capability (two HTTP clients, two date libraries, lodash + underscore) |
+| heavyweight-dependency | A declared package whose only usage is one function replaceable by ten or fewer lines of stdlib/local code |
+| unmaintained-upstream | Upstream archived or formally deprecated, proven by fetched metadata (registry deprecation field, archived flag) — never inferred from release age |
+| license-conflict | Dependency license incompatible with the project's declared license |
+| manifest-lockfile-drift | Lockfile missing, stale, or disagreeing with the manifest (entry or version-range mismatch) |
+| misclassified-dependency | Runtime dependency declared dev-only, or dev/build tool declared as production |
 
 **Evidence rule:** every finding cites all three sources — the manifest line, the lockfile entry, and the usage-scan result. Any leg is satisfiable by an exhaustive negative ("declared in no manifest" for a phantom, "no reference after the full scan" for unused, "lockfile missing" for drift) — but only after the exhaustive check actually ran. A finding missing any leg is not filed; a leg is never skipped on the grounds that its class "obviously" lacks it.
 
@@ -31,11 +31,11 @@ Out of scope: CVEs, vulnerable versions, and supply-chain advisories route to `/
 
 A dependency is "unused" only after every reference form its ecosystem supports comes back empty:
 
-| Ecosystem                        | Reference forms to scan                                                                                                                                                                                                                                        |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JS/TS                            | `require()`, static `import`/`export from`, dynamic `import()`, type-only imports and `@types/*` pairing, `package.json` scripts binaries, config plugin/preset/extends strings (eslint, prettier, babel, jest, postcss, tailwind, vite/webpack plugin arrays) |
-| Python                           | `import` / `from ... import`, `importlib`, `__import__`, entry points, plugins auto-loaded from config (pytest, flake8), tool sections in `pyproject.toml`/`setup.cfg`, Makefile/CI script invocations                                                         |
-| Other (Rust, Go, PHP, Ruby, ...) | That ecosystem's full import/use/require forms plus build-config and task-runner references                                                                                                                                                                    |
+| Ecosystem | Reference forms to scan |
+| --- | --- |
+| JS/TS | `require()`, static `import`/`export from`, dynamic `import()`, type-only imports and `@types/*` pairing, `package.json` scripts binaries, config plugin/preset/extends strings (eslint, prettier, babel, jest, postcss, tailwind, vite/webpack plugin arrays) |
+| Python | `import` / `from ... import`, `importlib`, `__import__`, entry points, plugins auto-loaded from config (pytest, flake8), tool sections in `pyproject.toml`/`setup.cfg`, Makefile/CI script invocations |
+| Other (Rust, Go, PHP, Ruby, ...) | That ecosystem's full import/use/require forms plus build-config and task-runner references |
 
 Map package names to import names before scanning (`beautifulsoup4` → `bs4`, `Pillow` → `PIL`, `@scope/pkg` subpaths) — a grep for the package name alone proves nothing in either direction.
 
@@ -43,12 +43,12 @@ Map package names to import names before scanning (`beautifulsoup4` → `bs4`, `
 
 Probe every tool with `which` before use; run only what is installed; never install anything, not even a scanner.
 
-| Tool                                                                                         | Use                                                                    |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| depcheck                                                                                     | JS unused/phantom candidates                                           |
-| deptry                                                                                       | Python unused/phantom/misclassified candidates                         |
+| Tool | Use |
+| --- | --- |
+| depcheck | JS unused/phantom candidates |
+| deptry | Python unused/phantom/misclassified candidates |
 | npm/pnpm/yarn ls, pip list / uv pip list, cargo tree, go mod why, composer show, bundle list | Installed-vs-locked comparison; parse the full output, never sample it |
-| npm view / pip index / registry metadata (read-only)                                         | Deprecation/archived status and license fields                         |
+| npm view / pip index / registry metadata (read-only) | Deprecation/archived status and license fields |
 
 A tool's candidate list is input, not a finding — verify every candidate against the import-form coverage table before filing; the tools miss config-plugin references and name mappings. Where maintenance or license metadata is unreachable (tool absent, no network), record the dependency as unexamined in the run summary — never guess either way.
 
@@ -63,13 +63,13 @@ A tool's candidate list is input, not a finding — verify every candidate again
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                             |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | license-conflict with the project's declared license; phantom-dependency on a production code path — one transitive-graph change breaks the build                                                     |
-| High     | manifest-lockfile-drift (manifest/lockfile disagreement, or missing lockfile in an application); runtime dependency declared dev-only (absent from production installs); unused production dependency |
-| Medium   | duplicate-dependency; unmaintained-upstream proven by metadata; dev/build tool declared as production; phantom-dependency on a dev/test-only path                                                     |
-| Low      | unused dev dependency; heavyweight-dependency                                                                                                                                                         |
-| Advisory | Deprecated upstream whose own metadata names a drop-in replacement; capability overlap that exists only in transitive graphs; missing lockfile in a published library that ships version ranges       |
+| Severity | Condition |
+| --- | --- |
+| Critical | license-conflict with the project's declared license; phantom-dependency on a production code path — one transitive-graph change breaks the build |
+| High | manifest-lockfile-drift (manifest/lockfile disagreement, or missing lockfile in an application); runtime dependency declared dev-only (absent from production installs); unused production dependency |
+| Medium | duplicate-dependency; unmaintained-upstream proven by metadata; dev/build tool declared as production; phantom-dependency on a dev/test-only path |
+| Low | unused dev dependency; heavyweight-dependency |
+| Advisory | Deprecated upstream whose own metadata names a drop-in replacement; capability overlap that exists only in transitive graphs; missing lockfile in a published library that ships version ranges |
 
 ## Fix strategy
 

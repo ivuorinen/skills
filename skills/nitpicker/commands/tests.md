@@ -13,16 +13,16 @@ Not for: bugs in application code (`/nitpicker review` — this command audits t
 
 ## Defect classes
 
-| Class           | Definition                                                                                                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| assertion-free  | The test asserts nothing (or only that no exception was raised)                                                                                                                      |
-| tautological    | The test cannot fail — asserts a constant, asserts the value it just configured, or reimplements the production logic and compares it to itself                                      |
-| mock-of-subject | The test mocks or stubs the unit under test, then asserts on the mock                                                                                                                |
-| over-mocking    | Mocks sever the code path so no production code executes between arrange and assert                                                                                                  |
-| flaky-pattern   | Sleep-based synchronization, wall-clock/timezone dependence, test-order dependence, live network calls, shared mutable state across tests                                            |
-| coverage-hole   | A money/security/data-loss path with no failing-capable test                                                                                                                         |
-| untracked-skip  | A disabled/skipped/commented-out test with no tracked reason — a tracked reason names an issue ID or a concrete re-enable condition; prose alone ("flaky", "fix later") is untracked |
-| mutation-blind  | A critical function survives a mutation spot-check — no test fails when a branch is inverted or a guard dropped                                                                      |
+| Class | Definition |
+| --- | --- |
+| assertion-free | The test asserts nothing (or only that no exception was raised) |
+| tautological | The test cannot fail — asserts a constant, asserts the value it just configured, or reimplements the production logic and compares it to itself |
+| mock-of-subject | The test mocks or stubs the unit under test, then asserts on the mock |
+| over-mocking | Mocks sever the code path so no production code executes between arrange and assert |
+| flaky-pattern | Sleep-based synchronization, wall-clock/timezone dependence, test-order dependence, live network calls, shared mutable state across tests |
+| coverage-hole | A money/security/data-loss path with no failing-capable test |
+| untracked-skip | A disabled/skipped/commented-out test with no tracked reason — a tracked reason names an issue ID or a concrete re-enable condition; prose alone ("flaky", "fix later") is untracked |
+| mutation-blind | A critical function survives a mutation spot-check — no test fails when a branch is inverted or a guard dropped |
 
 ## Process
 
@@ -37,13 +37,13 @@ Not for: bugs in application code (`/nitpicker review` — this command audits t
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                 |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Condition |
+| --- | --- |
 | Critical | A money, security/auth, or data-loss path has no failing-capable test (coverage-hole), or survives a mutation spot-check (mutation-blind) — a defect there ships silently |
-| High     | An assertion-free, tautological, mock-of-subject, or over-mocking test guarding a critical-path behavior that no other failing-capable test covers                        |
-| Medium   | A flaky-pattern test whose intermittent failure trains the team to ignore red; any untracked-skip                                                                         |
-| Low      | A weak test whose behavior is on a non-critical path or is covered by another failing-capable test                                                                        |
-| Advisory | A weak assertion where a stronger one is checkable (asserts non-null where the exact value is known); a positive-case test with no negative-case sibling                  |
+| High | An assertion-free, tautological, mock-of-subject, or over-mocking test guarding a critical-path behavior that no other failing-capable test covers |
+| Medium | A flaky-pattern test whose intermittent failure trains the team to ignore red; any untracked-skip |
+| Low | A weak test whose behavior is on a non-critical path or is covered by another failing-capable test |
+| Advisory | A weak assertion where a stronger one is checkable (asserts non-null where the exact value is known); a positive-case test with no negative-case sibling |
 
 ## Fix strategy
 

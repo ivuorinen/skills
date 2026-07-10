@@ -5,13 +5,13 @@ every command unless the command file explicitly overrides it.
 
 ## Severity levels
 
-| Level    | Meaning                                        |
-| -------- | ---------------------------------------------- |
+| Level | Meaning |
+| --- | --- |
 | Critical | Correctness or security failure; must be fixed |
-| High     | Significant risk or defect                     |
-| Medium   | Quality or reliability concern                 |
-| Low      | Minor issue or smell                           |
-| Advisory | Informational, no action required              |
+| High | Significant risk or defect |
+| Medium | Quality or reliability concern |
+| Low | Minor issue or smell |
+| Advisory | Informational, no action required |
 
 Severity reflects actual risk, never preference.
 

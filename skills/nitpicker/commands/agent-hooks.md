@@ -18,11 +18,11 @@ Not for checking whether an _existing_ hook, rule, or permission can be evaded �
 
 Detect the host agent harness first; it dictates the enforcement mechanism and the best-practice ruleset. A hook written for the wrong harness enforces nothing.
 
-| Signal present                                                                                       | Harness        | Mechanism + best-practice source                                                                                             |
-| ---------------------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/settings.json` or `.claude/settings.local.json` with a `hooks` key, or `.claude/` directory | Claude Code    | `hooks` in `.claude/settings.json`; follow https://code.claude.com/docs/en/hooks-guide                                       |
-| `.github/copilot-instructions.md` and no `.claude/` hooks                                            | GitHub Copilot | Copilot's own configuration/instruction mechanism and its documented best practices — never write Claude Code hook JSON here |
-| `AGENTS.md` / `GEMINI.md` / other harness marker                                                     | That harness   | That harness's documented hook/automation mechanism and best practices                                                       |
+| Signal present | Harness | Mechanism + best-practice source |
+| --- | --- | --- |
+| `.claude/settings.json` or `.claude/settings.local.json` with a `hooks` key, or `.claude/` directory | Claude Code | `hooks` in `.claude/settings.json`; follow https://code.claude.com/docs/en/hooks-guide |
+| `.github/copilot-instructions.md` and no `.claude/` hooks | GitHub Copilot | Copilot's own configuration/instruction mechanism and its documented best practices — never write Claude Code hook JSON here |
+| `AGENTS.md` / `GEMINI.md` / other harness marker | That harness | That harness's documented hook/automation mechanism and best practices |
 
 A project may run more than one harness. Audit each detected harness against its own mechanism and record the detected harness(es) in the summary. For a non-Claude-Code harness, fetch and follow its published guidance and state which document you used.
 
@@ -38,14 +38,14 @@ A project may run more than one harness. Audit each detected harness against its
 
 Mine all of these every run. Never sample, and never substitute "the current hooks look fine" for mining the evidence.
 
-| Source                         | What to extract                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Current hooks                  | Every hook entry in `.claude/settings.json` and `.claude/settings.local.json` — event, matcher, command — and every hook script under any hooks directory (`scripts/hooks/`, `.claude/hooks/`) whether wired or not                                                                                                                                                                                        |
+| Source | What to extract |
+| --- | --- |
+| Current hooks | Every hook entry in `.claude/settings.json` and `.claude/settings.local.json` — event, matcher, command — and every hook script under any hooks directory (`scripts/hooks/`, `.claude/hooks/`) whether wired or not |
 | Available context-saving tools | Every installed plugin/MCP/CLI that executes a shell command or fetch and returns only a derived result rather than raw bytes to the conversation (context-mode `ctx_execute`/`ctx_execute_file`/`ctx_batch_execute`/`ctx_fetch_and_index` is the reference implementation). Record every candidate considered, including rejects and why; the routing findings below require at least one qualifying tool |
-| Findings history               | Every finding in the store (`findings.py list`, all auditors and statuses) plus any legacy `docs/audit/*-findings.md` files. A defect class that recurs — or that a fixed entry shows was hand-fixed — is a recurring, hook-preventable candidate                                                                                                                                                          |
-| Git history                    | Repeated fix/revert commits touching the same concern (`git log` for `fix:`/`revert` clusters on one file or rule). A recurring manual fix is a missing automated guard                                                                                                                                                                                                                                    |
-| Project memory                 | Every `feedback`/`project` memory entry under the project memory directory that implies an automated guard the user expects. Absent memory is one empty source, recorded as empty — not a reason to skip the run                                                                                                                                                                                           |
-| Project mandates               | Every `.claude/rules/` mandate and CLAUDE.md convention. Flag only those with no hook AND an automatable shape — the violation is detectable by inspecting a file path, a file's text, or a tool name on stdin without running the project; do not re-file the loopholes unenforced-rule evasion analysis                                                                                                  |
+| Findings history | Every finding in the store (`findings.py list`, all auditors and statuses) plus any legacy `docs/audit/*-findings.md` files. A defect class that recurs — or that a fixed entry shows was hand-fixed — is a recurring, hook-preventable candidate |
+| Git history | Repeated fix/revert commits touching the same concern (`git log` for `fix:`/`revert` clusters on one file or rule). A recurring manual fix is a missing automated guard |
+| Project memory | Every `feedback`/`project` memory entry under the project memory directory that implies an automated guard the user expects. Absent memory is one empty source, recorded as empty — not a reason to skip the run |
+| Project mandates | Every `.claude/rules/` mandate and CLAUDE.md convention. Flag only those with no hook AND an automatable shape — the violation is detectable by inspecting a file path, a file's text, or a tool name on stdin without running the project; do not re-file the loopholes unenforced-rule evasion analysis |
 
 Discover hook script paths from the settings wiring and the hooks directories, not from a hardcoded list.
 
@@ -66,14 +66,14 @@ Not exempt (route through the context tool): reading/summarizing/parsing files, 
 
 File a finding only with concrete evidence drawn from the evidence base. Each class names what _should_ be a hook and is not.
 
-| Class                      | Definition                                                                                                                                                                                                                                                                                                    | Evidence to construct                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **coverage-gap**           | A defect class recurring across two or more findings-history entries or git fix-commits, with no hook that would catch it on the path it recurs                                                                                                                                                               | The two-or-more occurrences and the hook (event + matcher + check) that would have blocked each |
-| **context-discipline-gap** | A read/gather/process command that appears as a **mandated step in a project skill or workflow file**, routed through raw `Bash`/`Read` where a context-saving tool exists, with no hook redirecting it                                                                                                       | The exact step and file, the available `ctx_*` equivalent, and the absence of a routing hook    |
-| **over-permissioned-bash** | A `Bash` pattern **permitted by a `permissions.allow` entry** (not a mandated workflow step), not on the must-run-direct allowlist, that could route through the context tool and is left unconstrained. If a command is both a mandated step and permission-allowed, file context-discipline-gap, never both | The allow entry, why it is not allowlist-exempt, and the narrowing hook/permission              |
-| **wrong-event**            | An existing or proposed hook whose event cannot achieve its stated intent (e.g. a `PostToolUse` hook meant to _block_)                                                                                                                                                                                        | The intent, the chosen event's incapacity, and the blocking-capable event it must use           |
-| **harness-mismatch**       | A hook shaped for the wrong harness, or a mandate expressed as prose where the detected harness supports an actual hook                                                                                                                                                                                       | The harness signal vs. the hook shape, and the correct mechanism                                |
-| **unguarded-mandate**      | A project mandate with an automatable shape and no hook, that recurs in the evidence base                                                                                                                                                                                                                     | The mandate, the recurrence, and the exact hook that would enforce it                           |
+| Class | Definition | Evidence to construct |
+| --- | --- | --- |
+| **coverage-gap** | A defect class recurring across two or more findings-history entries or git fix-commits, with no hook that would catch it on the path it recurs | The two-or-more occurrences and the hook (event + matcher + check) that would have blocked each |
+| **context-discipline-gap** | A read/gather/process command that appears as a **mandated step in a project skill or workflow file**, routed through raw `Bash`/`Read` where a context-saving tool exists, with no hook redirecting it | The exact step and file, the available `ctx_*` equivalent, and the absence of a routing hook |
+| **over-permissioned-bash** | A `Bash` pattern **permitted by a `permissions.allow` entry** (not a mandated workflow step), not on the must-run-direct allowlist, that could route through the context tool and is left unconstrained. If a command is both a mandated step and permission-allowed, file context-discipline-gap, never both | The allow entry, why it is not allowlist-exempt, and the narrowing hook/permission |
+| **wrong-event** | An existing or proposed hook whose event cannot achieve its stated intent (e.g. a `PostToolUse` hook meant to _block_) | The intent, the chosen event's incapacity, and the blocking-capable event it must use |
+| **harness-mismatch** | A hook shaped for the wrong harness, or a mandate expressed as prose where the detected harness supports an actual hook | The harness signal vs. the hook shape, and the correct mechanism |
+| **unguarded-mandate** | A project mandate with an automatable shape and no hook, that recurs in the evidence base | The mandate, the recurrence, and the exact hook that would enforce it |
 
 ## Process
 
@@ -115,13 +115,13 @@ A proposed hook is "enforced" only after it is wired and fired on the evidence i
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                    |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | A safety/release-gate failure class recurs and is wholly unguarded — every release can reintroduce it; or a block-intent hook uses a non-blocking event so the guard never binds                                             |
-| High     | A defect class recurs across the evidence base with no hook; a context-discipline-gap (a mandated should-route step) with a context tool available and no routing hook; a hook shaped for the wrong harness so it never runs |
-| Medium   | A single-occurrence automatable mandate with no hook; an over-permissioned-bash pattern that could route through the context tool                                                                                            |
-| Low      | Redundant or near-duplicate proposed coverage; a routing gap on a command whose result is trivially small (a single value or one line)                                                                                       |
-| Advisory | Defense-in-depth hook opportunity where no failure has yet recurred                                                                                                                                                          |
+| Severity | Condition |
+| --- | --- |
+| Critical | A safety/release-gate failure class recurs and is wholly unguarded — every release can reintroduce it; or a block-intent hook uses a non-blocking event so the guard never binds |
+| High | A defect class recurs across the evidence base with no hook; a context-discipline-gap (a mandated should-route step) with a context tool available and no routing hook; a hook shaped for the wrong harness so it never runs |
+| Medium | A single-occurrence automatable mandate with no hook; an over-permissioned-bash pattern that could route through the context tool |
+| Low | Redundant or near-duplicate proposed coverage; a routing gap on a command whose result is trivially small (a single value or one line) |
+| Advisory | Defense-in-depth hook opportunity where no failure has yet recurred |
 
 ## Fix strategy
 

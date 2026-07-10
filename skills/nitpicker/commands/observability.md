@@ -17,16 +17,16 @@ This is not `/nitpicker errors`. That command finds errors being swallowed on th
 
 Check every enumerated element against every applicable class. A finding is filed only with the file:line of the path, what it emits versus what diagnosing it requires, and the concrete 3am scenario that stays invisible.
 
-| Class                  | Definition                                                                                                              | Evidence to construct                                                                          |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **dark-path**          | A money, auth, or data-loss path that emits no log, metric, or span on success or failure                               | The path's entry-to-exit trace with zero emission sites, and a failure on it no signal reports |
-| **no-correlation**     | Requests crossing a service, queue, or process boundary with no propagated correlation/request ID — each hop unlinkable | The boundary crossing and the emissions on each side that share no identifier                  |
-| **level-misuse**       | A real error logged at debug/info below the deployed threshold, or routine noise at error/warn drowning the pager       | The statement, its level, and the threshold or pager rule it defeats                           |
-| **unfireable-alert**   | An in-repo alert/monitor referencing a metric name or label the code never emits                                        | The alert expression and the absent emission in the codebase                                   |
-| **cardinality-bomb**   | A metric label fed an unbounded value — user ID, raw URL, free-form string — exploding the time-series backend          | The label, the unbounded source feeding it, and the growth driver                              |
-| **pii-in-logs**        | Personal data or credentials written to logs — the emission, not mere presence in source                                | The log statement and the field carrying the personal data or credential                       |
-| **silent-job**         | A cron, background, or queue worker with no success signal and no failure signal — indistinguishable from never running | The job entry point and its zero emissions on both outcomes                                    |
-| **context-free-error** | An error logged without the identifiers needed to act — no entity ID, no operation, message only                        | The log statement and the identifier the diagnosis requires that it omits                      |
+| Class | Definition | Evidence to construct |
+| --- | --- | --- |
+| **dark-path** | A money, auth, or data-loss path that emits no log, metric, or span on success or failure | The path's entry-to-exit trace with zero emission sites, and a failure on it no signal reports |
+| **no-correlation** | Requests crossing a service, queue, or process boundary with no propagated correlation/request ID — each hop unlinkable | The boundary crossing and the emissions on each side that share no identifier |
+| **level-misuse** | A real error logged at debug/info below the deployed threshold, or routine noise at error/warn drowning the pager | The statement, its level, and the threshold or pager rule it defeats |
+| **unfireable-alert** | An in-repo alert/monitor referencing a metric name or label the code never emits | The alert expression and the absent emission in the codebase |
+| **cardinality-bomb** | A metric label fed an unbounded value — user ID, raw URL, free-form string — exploding the time-series backend | The label, the unbounded source feeding it, and the growth driver |
+| **pii-in-logs** | Personal data or credentials written to logs — the emission, not mere presence in source | The log statement and the field carrying the personal data or credential |
+| **silent-job** | A cron, background, or queue worker with no success signal and no failure signal — indistinguishable from never running | The job entry point and its zero emissions on both outcomes |
+| **context-free-error** | An error logged without the identifiers needed to act — no entity ID, no operation, message only | The log statement and the identifier the diagnosis requires that it omits |
 
 **Evidence rule.** Every finding names the file:line of the path, states what the path emits today versus what diagnosing it requires, and constructs the concrete 3am scenario — the production failure an on-call engineer never sees or cannot act on. Signal is usable only end-to-end: emitted on both outcomes, at a deployed level, carrying the identifiers to act, free of PII and unbounded labels. The presence of a logger call proves none of that; a path whose emissions provably meet that standard is not a finding.
 
@@ -41,13 +41,13 @@ Check every enumerated element against every applicable class. A finding is file
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                                                                           |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Condition |
+| --- | --- |
 | Critical | A data-loss or security event would be invisible in production: dark-path or silent-job on a money, auth, or data-persistence path with no failure signal; unfireable-alert guarding such a path; credentials or auth tokens written to logs (the log itself is the security event) |
-| High     | An outage is diagnosable only by guesswork: no-correlation across a boundary on a critical path; real errors below the deployed threshold; cardinality-bomb whose growth takes down the metrics backend; personal data (non-credential) written to logs                             |
-| Medium   | context-free-error on a critical path; routine noise at error/warn drowning the pager; dark-path or unfireable-alert on a non-critical path; silent-job whose only liveness check lives outside the repo                                                                            |
-| Low      | level-misuse with no threshold or pager consequence; context-free-error on a non-critical path; a critical path signalling one outcome where the other is inferable from adjacent signals                                                                                           |
-| Advisory | Hardening where every scenario already surfaces: span attributes, structured-field consistency, SLO wiring for an already-signalled path                                                                                                                                            |
+| High | An outage is diagnosable only by guesswork: no-correlation across a boundary on a critical path; real errors below the deployed threshold; cardinality-bomb whose growth takes down the metrics backend; personal data (non-credential) written to logs |
+| Medium | context-free-error on a critical path; routine noise at error/warn drowning the pager; dark-path or unfireable-alert on a non-critical path; silent-job whose only liveness check lives outside the repo |
+| Low | level-misuse with no threshold or pager consequence; context-free-error on a non-critical path; a critical path signalling one outcome where the other is inferable from adjacent signals |
+| Advisory | Hardening where every scenario already surfaces: span attributes, structured-field consistency, SLO wiring for an already-signalled path |
 
 ## Fix strategy
 

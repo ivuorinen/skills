@@ -17,12 +17,12 @@ Not for enforcement bypasses — whether rules and hooks actually bind is `/nitp
 
 These enrich rule suggestions. Run the corresponding command before this one to maximize findings. If absent, proceed without them and record the gap as Advisory.
 
-| Artifact                             | Prerequisite command      | Purpose                                        |
-| ------------------------------------ | ------------------------- | ---------------------------------------------- |
-| `docs/audit/arch-profile.md`         | `/nitpicker arch-profile` | Architectural boundary rules                   |
-| Findings store, `--auditor arch`     | `/nitpicker arch`         | Violated conventions worth enforcing           |
-| Findings store, `--auditor security` | `/nitpicker security`     | Security mandates from high-severity findings  |
-| Findings store, `--auditor audit`    | `/nitpicker audit`        | Code convention rules from repeated violations |
+| Artifact | Prerequisite command | Purpose |
+| --- | --- | --- |
+| `docs/audit/arch-profile.md` | `/nitpicker arch-profile` | Architectural boundary rules |
+| Findings store, `--auditor arch` | `/nitpicker arch` | Violated conventions worth enforcing |
+| Findings store, `--auditor security` | `/nitpicker security` | Security mandates from high-severity findings |
+| Findings store, `--auditor audit` | `/nitpicker audit` | Code convention rules from repeated violations |
 
 If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the highest-yield single source for new rule suggestions.
 
@@ -160,13 +160,13 @@ Each rule must be **specific** ("Use `rg` not `grep`", not "prefer better search
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                            |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Critical | `.claude/rules/` absent and CLAUDE.md contains 5+ atomic behavioral rules; rule file with broken/unparseable content                                                                                                                 |
-| High     | `.claude/rules/` absent and CLAUDE.md contains 1–4 atomic rules; 3+ misplaced rules; contradictory duplicate rules across files; cross-file CLAUDE.md conflict; rule inside HTML comment; CLAUDE.md over 400 lines; dangling symlink |
-| Medium   | 1–2 misplaced rules; grab-bag rule file; CLAUDE.md 200–400 lines; missing @-import target; invalid `paths:` glob                                                                                                                     |
-| Low      | Hedged rule language; non-kebab-case filename; rule that could be more specific; rules-to-rules duplicate without contradiction; unconditional rule that would be better path-scoped                                                 |
-| Advisory | Suggested new rule from a detected convention; `.claude/rules/` absent with zero atomic rules; `.claude/rules/` exists but empty; rule file excluded by `claudeMdExcludes`; project rule better as a user-level rule                 |
+| Severity | Condition |
+| --- | --- |
+| Critical | `.claude/rules/` absent and CLAUDE.md contains 5+ atomic behavioral rules; rule file with broken/unparseable content |
+| High | `.claude/rules/` absent and CLAUDE.md contains 1–4 atomic rules; 3+ misplaced rules; contradictory duplicate rules across files; cross-file CLAUDE.md conflict; rule inside HTML comment; CLAUDE.md over 400 lines; dangling symlink |
+| Medium | 1–2 misplaced rules; grab-bag rule file; CLAUDE.md 200–400 lines; missing @-import target; invalid `paths:` glob |
+| Low | Hedged rule language; non-kebab-case filename; rule that could be more specific; rules-to-rules duplicate without contradiction; unconditional rule that would be better path-scoped |
+| Advisory | Suggested new rule from a detected convention; `.claude/rules/` absent with zero atomic rules; `.claude/rules/` exists but empty; rule file excluded by `claudeMdExcludes`; project rule better as a user-level rule |
 
 Do not invent intermediate thresholds — use this table exactly.
 

@@ -16,14 +16,14 @@ Not for rule _quality and placement_ (kebab-case, grab-bags, misplaced CLAUDE.md
 
 Enumerate all of these every run. Never sample.
 
-| Surface      | What to read                                                                                                                                                         |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rules        | Every file in `.claude/rules/` (and `~/.claude/rules/` if present)                                                                                                   |
+| Surface | What to read |
+| --- | --- |
+| Rules | Every file in `.claude/rules/` (and `~/.claude/rules/` if present) |
 | Hook scripts | Every script referenced by a hook entry in settings, plus every script under any hooks directory (e.g. `scripts/hooks/`, `.claude/hooks/`) whether referenced or not |
-| Hook wiring  | Every `hooks` entry in `.claude/settings.json` and `.claude/settings.local.json` — event, matcher, command                                                           |
-| Permissions  | `permissions.allow` / `permissions.deny` / `permissions.ask` in both settings files                                                                                  |
-| Skills       | Every `SKILL.md` under `skills/` and `.claude/skills/`                                                                                                               |
-| Exclusions   | `claudeMdExcludes` and any disable flags in settings                                                                                                                 |
+| Hook wiring | Every `hooks` entry in `.claude/settings.json` and `.claude/settings.local.json` — event, matcher, command |
+| Permissions | `permissions.allow` / `permissions.deny` / `permissions.ask` in both settings files |
+| Skills | Every `SKILL.md` under `skills/` and `.claude/skills/` |
+| Exclusions | `claudeMdExcludes` and any disable flags in settings |
 
 Discover hook script paths from the settings wiring, not from a hardcoded directory — the wiring is the source of truth for what actually runs.
 
@@ -31,19 +31,19 @@ Discover hook script paths from the settings wiring, not from a hardcoded direct
 
 Check every element against every applicable class. A loophole is filed only with a concrete bypass scenario as evidence.
 
-| Class                        | Definition                                                                                                                                                                                       | Bypass evidence to construct                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| **Unenforced rule**          | A `.claude/rules/` mandate with no hook, validator, or CI step that blocks its violation                                                                                                         | Run the action the rule forbids and show no mechanism blocks it                       |
-| **Fail-open hook**           | A hook that exits 0 (allow) when its own logic errors, throws, or hits an unexpected input                                                                                                       | The malformed/edge input that makes the hook pass instead of block                    |
-| **Matcher gap**              | A settings hook matcher whose pattern misses inputs the paired rule/validator claims to govern                                                                                                   | The file path, extension variant, rename, or new-file case the matcher does not match |
-| **Permission contradiction** | A `permissions.allow` entry permits what a rule forbids, or `deny`/`ask` fails to cover a forbidden action                                                                                       | The exact command allowed by settings but forbidden by a rule                         |
-| **Unwired hook**             | A hook script no settings entry references (dead enforcement), or a settings entry pointing to a missing/renamed script (broken enforcement)                                                     | The script that never runs, or the command path that does not resolve                 |
-| **Excluded/disabled rule**   | A rule file matched by `claudeMdExcludes`, or enforcement disabled by a flag                                                                                                                     | The exclusion glob or flag that silences it                                           |
-| **Rationalizable step**      | A skill body step that is hedged or optional ("optionally", "should", "prefer", "consider") where the intent is mandatory; or an unhandled mode/flag combination that skips a safety step        | The sentence an agent quotes to skip the step, or the mode combo that bypasses it     |
-| **Warn-only enforcement**    | A hook that only prints a warning and exits 0 where the rule implies a hard block                                                                                                                | Show the violating input passes despite the warning                                   |
-| **Bypassable mechanism**     | A constraint enforced only by a skippable path (e.g. a pre-commit hook defeated by `--no-verify`, or a check in `make check` but not on the path actually used) with no rule forbidding the skip | The command that reaches the protected state without triggering enforcement           |
-| **Self-exempting carve-out** | A rule or hook with an exception broad enough to swallow the rule                                                                                                                                | The common case that falls entirely inside the exception                              |
-| **Semantic validator gap**   | A validator that checks structure but not the property the rule actually requires                                                                                                                | The structurally-valid input that violates the rule yet passes                        |
+| Class | Definition | Bypass evidence to construct |
+| --- | --- | --- |
+| **Unenforced rule** | A `.claude/rules/` mandate with no hook, validator, or CI step that blocks its violation | Run the action the rule forbids and show no mechanism blocks it |
+| **Fail-open hook** | A hook that exits 0 (allow) when its own logic errors, throws, or hits an unexpected input | The malformed/edge input that makes the hook pass instead of block |
+| **Matcher gap** | A settings hook matcher whose pattern misses inputs the paired rule/validator claims to govern | The file path, extension variant, rename, or new-file case the matcher does not match |
+| **Permission contradiction** | A `permissions.allow` entry permits what a rule forbids, or `deny`/`ask` fails to cover a forbidden action | The exact command allowed by settings but forbidden by a rule |
+| **Unwired hook** | A hook script no settings entry references (dead enforcement), or a settings entry pointing to a missing/renamed script (broken enforcement) | The script that never runs, or the command path that does not resolve |
+| **Excluded/disabled rule** | A rule file matched by `claudeMdExcludes`, or enforcement disabled by a flag | The exclusion glob or flag that silences it |
+| **Rationalizable step** | A skill body step that is hedged or optional ("optionally", "should", "prefer", "consider") where the intent is mandatory; or an unhandled mode/flag combination that skips a safety step | The sentence an agent quotes to skip the step, or the mode combo that bypasses it |
+| **Warn-only enforcement** | A hook that only prints a warning and exits 0 where the rule implies a hard block | Show the violating input passes despite the warning |
+| **Bypassable mechanism** | A constraint enforced only by a skippable path (e.g. a pre-commit hook defeated by `--no-verify`, or a check in `make check` but not on the path actually used) with no rule forbidding the skip | The command that reaches the protected state without triggering enforcement |
+| **Self-exempting carve-out** | A rule or hook with an exception broad enough to swallow the rule | The common case that falls entirely inside the exception |
+| **Semantic validator gap** | A validator that checks structure but not the property the rule actually requires | The structurally-valid input that violates the rule yet passes |
 
 ## Process
 
@@ -100,13 +100,13 @@ Non-Claude agents resolve the path relative to the nitpicker skill directory. It
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | A security, safety, or release-gate constraint can be silently bypassed: fail-open hook on a gating validator; permission allowing a forbidden destructive action; rule forbidding a dangerous action that settings permit                        |
-| High     | An enforcement constraint does not bind at all: unenforced rule with real consequence; unwired hook meant to enforce; matcher gap admitting a whole input class; warn-only where a block is intended; settings entry pointing to a missing script |
-| Medium   | Rationalizable mandatory step in a skill; bypassable-via-skip mechanism with no rule forbidding the skip; semantic validator gap; unhandled mode/flag combination skipping a safety step                                                          |
-| Low      | Redundant or overlapping enforcement; matcher narrower than ideal with low blast radius; unwired but provably obsolete hook script                                                                                                                |
-| Advisory | Hardening suggestion where no current bypass exists; defense-in-depth opportunity                                                                                                                                                                 |
+| Severity | Condition |
+| --- | --- |
+| Critical | A security, safety, or release-gate constraint can be silently bypassed: fail-open hook on a gating validator; permission allowing a forbidden destructive action; rule forbidding a dangerous action that settings permit |
+| High | An enforcement constraint does not bind at all: unenforced rule with real consequence; unwired hook meant to enforce; matcher gap admitting a whole input class; warn-only where a block is intended; settings entry pointing to a missing script |
+| Medium | Rationalizable mandatory step in a skill; bypassable-via-skip mechanism with no rule forbidding the skip; semantic validator gap; unhandled mode/flag combination skipping a safety step |
+| Low | Redundant or overlapping enforcement; matcher narrower than ideal with low blast radius; unwired but provably obsolete hook script |
+| Advisory | Hardening suggestion where no current bypass exists; defense-in-depth opportunity |
 
 ## Fix strategy
 

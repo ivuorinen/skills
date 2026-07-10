@@ -20,17 +20,17 @@ its absence — never to guess from a single grep.
 
 ## Detection classes
 
-| Class                    | Signature                                                                                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Never-registered handler | Route/command/listener/job/middleware defined but absent from every router, parser, dispatcher, schedule, or registration call                             |
-| Never-mounted component  | UI component/view/template defined but never rendered, imported, or referenced by any reachable component                                                  |
-| Never-bound service      | Class/factory/provider defined but never instantiated, injected, or configured in any container/wiring module                                              |
-| Never-imported module    | File with executable definitions that no reachable module imports (respect framework auto-discovery first)                                                 |
-| Parsed-but-unread input  | CLI flag, env var, or config key parsed/declared but its value never read on any path                                                                      |
-| Flag-gated orphan        | Branch behind a feature flag that no environment defines and no flag system registers                                                                      |
-| Stub shipped as done     | `NotImplementedError`/`todo!()`/empty body/`TODO: wire` on a path callers can reach                                                                        |
-| Dropped result           | Function returns a value every caller ignores, where at least one caller's correctness depends on it (error status, computed data it then fakes elsewhere) |
-| Half-wired chain         | Registration exists but the registering code is itself unreachable                                                                                         |
+| Class | Signature |
+| --- | --- |
+| Never-registered handler | Route/command/listener/job/middleware defined but absent from every router, parser, dispatcher, schedule, or registration call |
+| Never-mounted component | UI component/view/template defined but never rendered, imported, or referenced by any reachable component |
+| Never-bound service | Class/factory/provider defined but never instantiated, injected, or configured in any container/wiring module |
+| Never-imported module | File with executable definitions that no reachable module imports (respect framework auto-discovery first) |
+| Parsed-but-unread input | CLI flag, env var, or config key parsed/declared but its value never read on any path |
+| Flag-gated orphan | Branch behind a feature flag that no environment defines and no flag system registers |
+| Stub shipped as done | `NotImplementedError`/`todo!()`/empty body/`TODO: wire` on a path callers can reach |
+| Dropped result | Function returns a value every caller ignores, where at least one caller's correctness depends on it (error status, computed data it then fakes elsewhere) |
+| Half-wired chain | Registration exists but the registering code is itself unreachable |
 
 ## The wiring evidence bar
 

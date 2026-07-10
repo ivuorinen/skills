@@ -50,19 +50,19 @@ Decompose into an ordered list of **bite-sized tasks**, each a few minutes of wo
 
 Run the draft through the lenses in the table below. This is the core of the command: a plan that skipped its relevant lenses is not hardened. Every lens is either run and recorded, or explicitly recorded as not-applicable **with the reason it does not apply** — a lens with no entry at all means the hardening is incomplete and the plan stays in draft. When a lens runs, record the concrete thing it examined (the specific file, boundary, task, or path) and what it changed; a bare "examined, no change" naming no subject does not count as having run the lens.
 
-| Lens                                                     | Question it forces on the plan                                                                                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `complexity`                                             | Does any task need to exist? Is anything over-built, speculative, or reinventing what the codebase already has? Cut it. |
-| `review`                                                 | What edge cases, boundary values, and error paths must each task handle?                                                |
-| `security`                                               | What trust boundary does the change introduce or move? What input reaches a sink?                                       |
-| `errors` / `leaks`                                       | What is the failure path of each new operation, and what releases the resources it acquires?                            |
-| `migrations`                                             | For schema or data changes: reversible, non-locking, safely ordered against deploy? What is the rollback?               |
-| `concurrency`                                            | Does the change add shared state or an ordering assumption?                                                             |
-| `contract`                                               | Does it change a public surface? Is that change compatible, and does the intended version bump match?                   |
-| `arch`                                                   | Does any task violate the codebase's boundaries or patterns?                                                            |
-| `perf`                                                   | Does any task introduce N+1, unbounded growth, or per-item I/O at scale?                                                |
-| `tests`                                                  | Is every task's verification a real check, not a tautology? Are the critical paths covered?                             |
-| `config` / `privacy` / `a11y` / `i18n` / `observability` | Apply when the change touches configuration, personal data, UI, locale, or the signals the system emits.                |
+| Lens | Question it forces on the plan |
+| --- | --- |
+| `complexity` | Does any task need to exist? Is anything over-built, speculative, or reinventing what the codebase already has? Cut it. |
+| `review` | What edge cases, boundary values, and error paths must each task handle? |
+| `security` | What trust boundary does the change introduce or move? What input reaches a sink? |
+| `errors` / `leaks` | What is the failure path of each new operation, and what releases the resources it acquires? |
+| `migrations` | For schema or data changes: reversible, non-locking, safely ordered against deploy? What is the rollback? |
+| `concurrency` | Does the change add shared state or an ordering assumption? |
+| `contract` | Does it change a public surface? Is that change compatible, and does the intended version bump match? |
+| `arch` | Does any task violate the codebase's boundaries or patterns? |
+| `perf` | Does any task introduce N+1, unbounded growth, or per-item I/O at scale? |
+| `tests` | Is every task's verification a real check, not a tautology? Are the critical paths covered? |
+| `config` / `privacy` / `a11y` / `i18n` / `observability` | Apply when the change touches configuration, personal data, UI, locale, or the signals the system emits. |
 
 Every gap a lens surfaces is resolved **in the plan** — a revised task, an added task, or an explicitly accepted risk — never deferred to "we will handle it during implementation".
 

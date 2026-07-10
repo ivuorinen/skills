@@ -19,24 +19,24 @@ Out of scope: prose documentation accuracy routes to `/nitpicker docs`; whether 
 
 The definition of "public" comes from the project's own declarations, never from guesswork. Inventory every declaration source present and record the element count per source. An element in any of these is public, whatever a comment or a teammate calls it.
 
-| Source                             | Declared elements                                                                                                          |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| OpenAPI / Swagger / AsyncAPI files | Paths, methods, parameters, request/response schemas, status codes, security requirements                                  |
-| GraphQL SDL or code-first schema   | Types, fields, arguments, nullability, and the resolvers bound to them                                                     |
-| Package manifest + type surface    | `package.json` `exports`/`main`/`types`/`bin`, published `.d.ts`, `__all__`, public headers, re-export barrels             |
-| CLI                                | Flags and subcommands in `--help` text and man pages vs the argument parser definition                                     |
-| Route tables                       | Framework route registrations — inventoried with or without a spec; a spec-less route surface is the Advisory contract-gap |
+| Source | Declared elements |
+| --- | --- |
+| OpenAPI / Swagger / AsyncAPI files | Paths, methods, parameters, request/response schemas, status codes, security requirements |
+| GraphQL SDL or code-first schema | Types, fields, arguments, nullability, and the resolvers bound to them |
+| Package manifest + type surface | `package.json` `exports`/`main`/`types`/`bin`, published `.d.ts`, `__all__`, public headers, re-export barrels |
+| CLI | Flags and subcommands in `--help` text and man pages vs the argument parser definition |
+| Route tables | Framework route registrations — inventoried with or without a spec; a spec-less route surface is the Advisory contract-gap |
 
 ## Change classes (axis 2)
 
-| Change since the baseline                                                                  | Compatibility |
-| ------------------------------------------------------------------------------------------ | ------------- |
-| Removed or renamed exported symbol, function, endpoint, method, or flag                    | Breaking      |
-| Narrowed parameter/input type; new required parameter or field                             | Breaking      |
-| Widened return/output type; response field removed or retyped                              | Breaking      |
-| Changed default value on an existing input                                                 | Breaking      |
-| Stricter validation on an existing input                                                   | Breaking      |
-| Additive: new optional parameter, new endpoint, new export, widened input, narrowed output | Non-breaking  |
+| Change since the baseline | Compatibility |
+| --- | --- |
+| Removed or renamed exported symbol, function, endpoint, method, or flag | Breaking |
+| Narrowed parameter/input type; new required parameter or field | Breaking |
+| Widened return/output type; response field removed or retyped | Breaking |
+| Changed default value on an existing input | Breaking |
+| Stricter validation on an existing input | Breaking |
+| Additive: new optional parameter, new endpoint, new export, widened input, narrowed output | Non-breaking |
 
 ## Process
 
@@ -50,13 +50,13 @@ The definition of "public" comes from the project's own declarations, never from
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                                                      |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | A shipped release already broke consumers without a major bump — a breaking surface change sits between the previous tag and a published minor or patch tag                                                                                    |
-| High     | A pending breaking change is unlabeled — breaking surface change since the baseline with a declared bump below major — or the spec promises an endpoint, field, type, status code, or auth requirement the implementation does not honor       |
-| Medium   | Implemented-but-undeclared surface (live route, export, or flag absent from the declaration); a non-breaking change declared as breaking (over-labeled bump); implementation more permissive than the declaration (accepts more than promised) |
-| Low      | Drift on an element the declaration itself marks deprecated; naming/metadata mismatch (operationId, tag names) with no consumer-visible behavior change                                                                                        |
-| Advisory | A surface class with no declaration at all (routes with no spec, a CLI with no documented flags) — a contract gap, not drift; contract-test opportunity                                                                                        |
+| Severity | Condition |
+| --- | --- |
+| Critical | A shipped release already broke consumers without a major bump — a breaking surface change sits between the previous tag and a published minor or patch tag |
+| High | A pending breaking change is unlabeled — breaking surface change since the baseline with a declared bump below major — or the spec promises an endpoint, field, type, status code, or auth requirement the implementation does not honor |
+| Medium | Implemented-but-undeclared surface (live route, export, or flag absent from the declaration); a non-breaking change declared as breaking (over-labeled bump); implementation more permissive than the declaration (accepts more than promised) |
+| Low | Drift on an element the declaration itself marks deprecated; naming/metadata mismatch (operationId, tag names) with no consumer-visible behavior change |
+| Advisory | A surface class with no declaration at all (routes with no spec, a CLI with no documented flags) — a contract gap, not drift; contract-test opportunity |
 
 ## Fix strategy
 

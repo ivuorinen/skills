@@ -21,15 +21,15 @@ This audit is domain-heavy and false-positive-prone, so the bar is high: an elem
 
 File a finding only when the element is identifiably personal from concrete code evidence AND the specific absent control is named. No identified element, no finding.
 
-| Class                             | What to hunt                                                                                                                                                                                                        | Evidence to construct                                                                                                         |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **pii-at-rest-unprotected**       | PII/PHI/PCI/credentials persisted (DB column, file, cache) with no encryption/hashing/tokenization where the data class requires it — passwords not hashed, card PAN in plaintext, SSN/health data unencrypted      | The identified element and its data class, the store site (file:line), the absent control, and the concrete protection to add |
-| **pii-to-uncontrolled-sink**      | Personal data flowing to a sink that should not receive it: analytics, a third-party API, an error tracker, a URL query string, a client-visible response field (a _log line_ routes to `/nitpicker observability`) | The element, the flow site + the sink, the control that is absent, and the redact/drop/gate fix                               |
-| **excessive-collection**          | Personal data collected and persisted with no code that consumes it for a legitimate use — a field captured and stored but never read (data minimization)                                                           | The collection/store site, the demonstrated absence of a consuming read, and the drop-or-justify fix                          |
-| **missing-retention-deletion**    | Personal data with no deletion/expiry path — no TTL, no user-delete, no anonymization job — growing forever                                                                                                         | The stored element, the absent deletion path, and the retention/TTL/delete mechanism to add                                   |
-| **missing-consent-gate**          | Processing/tracking/sharing personal data on a path with no consent check where the data class or jurisdiction requires one — analytics before consent, marketing without opt-in                                    | The processing site, the absent gate, and the consent-check to add before the processing                                      |
-| **weak-anonymization**            | "Anonymized" data that remains re-identifiable — an email hashed as a pseudo-ID, quasi-identifiers left joinable, reversible tokenization presented as anonymization                                                | The anonymization site, the re-identification vector, and the stronger control that actually de-identifies                    |
-| **cross-border-third-party-leak** | Personal data sent to a processor or region without the safeguard the code should carry — a region-pinning flag ignored, a processor called with no data-handling gate                                              | The send site, the missing safeguard, and the region-pin/gate/agreement-flag fix                                              |
+| Class | What to hunt | Evidence to construct |
+| --- | --- | --- |
+| **pii-at-rest-unprotected** | PII/PHI/PCI/credentials persisted (DB column, file, cache) with no encryption/hashing/tokenization where the data class requires it — passwords not hashed, card PAN in plaintext, SSN/health data unencrypted | The identified element and its data class, the store site (file:line), the absent control, and the concrete protection to add |
+| **pii-to-uncontrolled-sink** | Personal data flowing to a sink that should not receive it: analytics, a third-party API, an error tracker, a URL query string, a client-visible response field (a _log line_ routes to `/nitpicker observability`) | The element, the flow site + the sink, the control that is absent, and the redact/drop/gate fix |
+| **excessive-collection** | Personal data collected and persisted with no code that consumes it for a legitimate use — a field captured and stored but never read (data minimization) | The collection/store site, the demonstrated absence of a consuming read, and the drop-or-justify fix |
+| **missing-retention-deletion** | Personal data with no deletion/expiry path — no TTL, no user-delete, no anonymization job — growing forever | The stored element, the absent deletion path, and the retention/TTL/delete mechanism to add |
+| **missing-consent-gate** | Processing/tracking/sharing personal data on a path with no consent check where the data class or jurisdiction requires one — analytics before consent, marketing without opt-in | The processing site, the absent gate, and the consent-check to add before the processing |
+| **weak-anonymization** | "Anonymized" data that remains re-identifiable — an email hashed as a pseudo-ID, quasi-identifiers left joinable, reversible tokenization presented as anonymization | The anonymization site, the re-identification vector, and the stronger control that actually de-identifies |
+| **cross-border-third-party-leak** | Personal data sent to a processor or region without the safeguard the code should carry — a region-pinning flag ignored, a processor called with no data-handling gate | The send site, the missing safeguard, and the region-pin/gate/agreement-flag fix |
 
 ## Process
 
@@ -41,13 +41,13 @@ File a finding only when the element is identifiably personal from concrete code
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                         |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Condition |
+| --- | --- |
 | Critical | Credentials stored recoverably (plaintext or reversible); regulated data (health, financial, government-id) persisted or sent to a third party with no protection |
-| High     | PII to an uncontrolled sink (analytics, error tracker, client response); no deletion path for regulated personal data                                             |
-| Medium   | Excessive collection of identifiers; weak anonymization presented as anonymized; a consent gate missing on a tracking path                                        |
-| Low      | Minor over-collection of low-sensitivity data with a plausible near-term purpose named                                                                            |
-| Advisory | A retention or consent gap on a path handling only pseudonymous low-risk data, with the compliance obligation named as jurisdiction-dependent                     |
+| High | PII to an uncontrolled sink (analytics, error tracker, client response); no deletion path for regulated personal data |
+| Medium | Excessive collection of identifiers; weak anonymization presented as anonymized; a consent gate missing on a tracking path |
+| Low | Minor over-collection of low-sensitivity data with a plausible near-term purpose named |
+| Advisory | A retention or consent gap on a path handling only pseudonymous low-risk data, with the compliance obligation named as jurisdiction-dependent |
 
 ## Fix strategy
 

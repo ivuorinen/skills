@@ -21,15 +21,15 @@ Assume every config value read by code is undocumented, unvalidated, and default
 
 File a finding only when the config value is actually read by code AND the specific source-of-truth gap or wrong input is named. No read site, no gap named — no finding.
 
-| Class                           | What to hunt                                                                                                                                                                             | Evidence to construct                                                                                                |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **undocumented-config**         | An env var or config key read by code but absent from the documented config surface (`.env.example`, config schema, README/docs) so an operator cannot know to set it                    | The read site, the source(s) of truth it is missing from, and the fix — add it with a safe placeholder               |
-| **missing-validation**          | Config consumed with no startup validation, so the app boots and fails later on first use (required var read as empty, an int left unparsed, a URL unchecked)                            | The read site, the absent fail-fast check, the deferred failure it causes, and the startup-validation fix            |
-| **unsafe-default**              | A default convenient in dev but dangerous in prod applied when the var is unset — `debug=true`, permissive CORS `*`, insecure cookie, `0.0.0.0` bind, verbose error pages, auth disabled | The default site, the prod posture it ships when unset, and the safe-default fix                                     |
-| **config-drift**                | Divergence between sources for the same setting — `.env.example` vs in-code default vs docs vs schema disagree on name, default, or type                                                 | The two+ disagreeing sources quoted, which is authoritative, and the reconciliation fix                              |
-| **secret-in-config**            | A real (live-looking) secret committed in a tracked config file, default value, or sample                                                                                                | The file+key, why it is a real secret not a placeholder, and the fix — remove from tracking / move to a secret store |
-| **type-coercion-trap**          | An env var (always a string) used as bool/int/list without correct coercion — `if os.getenv("FLAG")` truthy on the string `"false"`, the string `"0"` truthy                             | The read+use site, the input that coerces wrong, and the correct-coercion fix                                        |
-| **hardcoded-environment-value** | An environment-specific value (URL, hostname, path, bucket, region, port) hardcoded in source instead of config, breaking portability across environments                                | The hardcoded value, the environment it breaks in, and the move-to-config fix                                        |
+| Class | What to hunt | Evidence to construct |
+| --- | --- | --- |
+| **undocumented-config** | An env var or config key read by code but absent from the documented config surface (`.env.example`, config schema, README/docs) so an operator cannot know to set it | The read site, the source(s) of truth it is missing from, and the fix — add it with a safe placeholder |
+| **missing-validation** | Config consumed with no startup validation, so the app boots and fails later on first use (required var read as empty, an int left unparsed, a URL unchecked) | The read site, the absent fail-fast check, the deferred failure it causes, and the startup-validation fix |
+| **unsafe-default** | A default convenient in dev but dangerous in prod applied when the var is unset — `debug=true`, permissive CORS `*`, insecure cookie, `0.0.0.0` bind, verbose error pages, auth disabled | The default site, the prod posture it ships when unset, and the safe-default fix |
+| **config-drift** | Divergence between sources for the same setting — `.env.example` vs in-code default vs docs vs schema disagree on name, default, or type | The two+ disagreeing sources quoted, which is authoritative, and the reconciliation fix |
+| **secret-in-config** | A real (live-looking) secret committed in a tracked config file, default value, or sample | The file+key, why it is a real secret not a placeholder, and the fix — remove from tracking / move to a secret store |
+| **type-coercion-trap** | An env var (always a string) used as bool/int/list without correct coercion — `if os.getenv("FLAG")` truthy on the string `"false"`, the string `"0"` truthy | The read+use site, the input that coerces wrong, and the correct-coercion fix |
+| **hardcoded-environment-value** | An environment-specific value (URL, hostname, path, bucket, region, port) hardcoded in source instead of config, breaking portability across environments | The hardcoded value, the environment it breaks in, and the move-to-config fix |
 
 ## Process
 
@@ -49,13 +49,13 @@ File a finding only when the config value is actually read by code AND the speci
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                                                        |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity | Condition |
+| --- | --- |
 | Critical | An unsafe default that ships an insecure production posture when a var is unset (auth disabled, `debug=true`, CORS `*`, bind `0.0.0.0` on a sensitive service); a live secret committed in a tracked config file |
-| High     | Required config with no startup validation that fails in production on first request; a type-coercion trap on a security or money flag (a `"false"` that reads truthy)                                           |
-| Medium   | An undocumented config var an operator must set; config drift on a default or type between two sources of truth                                                                                                  |
-| Low      | A hardcoded environment value on a service with a single deployment target today; an undocumented optional var with a genuinely safe default                                                                     |
-| Advisory | Cosmetic naming drift between doc and code with identical semantics; dead config declared but never read                                                                                                         |
+| High | Required config with no startup validation that fails in production on first request; a type-coercion trap on a security or money flag (a `"false"` that reads truthy) |
+| Medium | An undocumented config var an operator must set; config drift on a default or type between two sources of truth |
+| Low | A hardcoded environment value on a service with a single deployment target today; an undocumented optional var with a genuinely safe default |
+| Advisory | Cosmetic naming drift between doc and code with identical semantics; dead config declared but never read |
 
 ## Fix strategy
 

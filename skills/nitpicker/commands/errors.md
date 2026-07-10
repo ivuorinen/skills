@@ -14,15 +14,15 @@ Out of scope: fail-open hooks and unenforced rules on the agent enforcement surf
 
 ## Defect classes
 
-| Class                    | Definition                                                                                                                                               | Evidence to construct                                                        |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **swallowed-exception**  | Empty catch, or catch-log-continue where the swallowed failure loses or corrupts data                                                                    | The upstream failure and the data the caller believes was written or handled |
-| **fail-open-default**    | Error path returns a success value or default indistinguishable from a real result                                                                       | The default value and the decision a caller makes on it as if it were real   |
-| **overbroad-catch**      | `catch Exception` / bare `catch (e)` around logic that raises programming errors (TypeError, NameError, KeyError), converting bugs into handled failures | The programming error the guarded logic raises and the block masks           |
-| **ignored-error-signal** | A return code, error result, or errback discarded; an unawaited call or promise chain with no rejection path                                             | The call site and the failure the discarded signal carried                   |
-| **masking-fallback**     | Fallback (cache-on-error, default config, secondary source) serving degraded data with no signal that the primary failed                                 | The primary outage and the absence of any operator-reaching signal           |
-| **silent-retry**         | Retry loop with no bound or no exhaustion signal, converting persistent failure into indefinite silence                                                  | The persistent failure and the nowhere its exhaustion is reported            |
-| **cause-destroyed**      | Rethrow or error message that drops the original exception — no chaining, no context, catch-and-throw-new losing the stack                               | The original cause and the stripped message the operator gets instead        |
+| Class | Definition | Evidence to construct |
+| --- | --- | --- |
+| **swallowed-exception** | Empty catch, or catch-log-continue where the swallowed failure loses or corrupts data | The upstream failure and the data the caller believes was written or handled |
+| **fail-open-default** | Error path returns a success value or default indistinguishable from a real result | The default value and the decision a caller makes on it as if it were real |
+| **overbroad-catch** | `catch Exception` / bare `catch (e)` around logic that raises programming errors (TypeError, NameError, KeyError), converting bugs into handled failures | The programming error the guarded logic raises and the block masks |
+| **ignored-error-signal** | A return code, error result, or errback discarded; an unawaited call or promise chain with no rejection path | The call site and the failure the discarded signal carried |
+| **masking-fallback** | Fallback (cache-on-error, default config, secondary source) serving degraded data with no signal that the primary failed | The primary outage and the absence of any operator-reaching signal |
+| **silent-retry** | Retry loop with no bound or no exhaustion signal, converting persistent failure into indefinite silence | The persistent failure and the nowhere its exhaustion is reported |
+| **cause-destroyed** | Rethrow or error message that drops the original exception — no chaining, no context, catch-and-throw-new losing the stack | The original cause and the stripped message the operator gets instead |
 
 **Evidence rule.** Every finding quotes the handler code, names the concrete upstream failure (what throws, times out, or returns the error), and states the observable consequence — what the caller, user, or on-call engineer never finds out about. A handler is a finding only when the scenario shows real harm; style is not harm. Logging alone is a finding only when the log provably reaches no one: level below the deployed threshold, destination nobody monitors, or a message that omits the data needed to act — but a log never converts data loss into handled: catch-log-continue on a path that loses or corrupts data is swallowed-exception no matter where the log goes. Deliberate degradation — documented, signalled (metric, alert, error field, or operator-reaching log), and bounded — is not a finding.
 
@@ -35,13 +35,13 @@ Out of scope: fail-open hooks and unenforced rules on the agent enforcement surf
 
 ## Severity guide
 
-| Severity | Condition                                                                                                                                                                 |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Critical | Data loss or corruption passes silently: swallowed exception on a write/persistence path; fail-open default that stores or returns fabricated data as real                |
-| High     | An outage or failure is invisible to operators: masking fallback with no signal; unbounded signal-free retry on a dependency; error path no log, metric, or alert reaches |
-| Medium   | Overbroad catch masking programming errors; cause-destroying rethrow that blinds production debugging; ignored error signal with user-visible effect but no data loss     |
-| Low      | Under-signalled failure — wrong log level, missing context, or delayed exhaustion signal — on a path with no data consequence                                             |
-| Advisory | Deliberate degradation that is signalled and bounded but undocumented; hardening where no concrete harm scenario exists yet                                               |
+| Severity | Condition |
+| --- | --- |
+| Critical | Data loss or corruption passes silently: swallowed exception on a write/persistence path; fail-open default that stores or returns fabricated data as real |
+| High | An outage or failure is invisible to operators: masking fallback with no signal; unbounded signal-free retry on a dependency; error path no log, metric, or alert reaches |
+| Medium | Overbroad catch masking programming errors; cause-destroying rethrow that blinds production debugging; ignored error signal with user-visible effect but no data loss |
+| Low | Under-signalled failure — wrong log level, missing context, or delayed exhaustion signal — on a path with no data consequence |
+| Advisory | Deliberate degradation that is signalled and bounded but undocumented; hardening where no concrete harm scenario exists yet |
 
 ## Fix strategy
 

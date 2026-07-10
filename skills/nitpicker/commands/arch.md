@@ -16,30 +16,30 @@ Load `docs/audit/arch-profile.md` if present — use its **Inferred Structural R
 
 ## Violation catalogue
 
-| Concern               | Violations hunted                                                                                                                                                                                                                                                                                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dependency direction  | Inner layer importing outer layer; domain importing infrastructure; application importing infrastructure directly instead of through ports                                                                                                                                                                                                                     |
-| DDD                   | Anemic domain model (entities with no behavior, only getters/setters); domain objects with infrastructure imports; application services containing domain logic; value objects with mutable state; aggregates with public setters that bypass invariants; domain services depending on infrastructure; repositories called directly from UI or API controllers |
-| Hexagonal             | Business logic inside adapters; adapters calling each other directly (bypassing ports); ports defined in infrastructure instead of application layer; port interfaces that mimic tool API instead of fitting domain needs                                                                                                                                      |
-| Clean Architecture    | Use case importing a concrete infrastructure class; entity depending on a use case                                                                                                                                                                                                                                                                             |
-| CQRS                  | Commands returning domain data; queries with side effects; command and query handlers mixed in the same class; read model routed through domain instead of direct projection                                                                                                                                                                                   |
-| Event Sourcing        | Direct state mutation instead of event emission; event handlers containing business logic; missing projections for read models; projection mutating the event store                                                                                                                                                                                            |
-| Explicit Architecture | Components importing directly from other components (bypassing Shared Kernel or events); Shared Kernel containing domain-specific logic (must stay minimal); Application Events not used for cross-component integration                                                                                                                                       |
-| Microservices         | Direct database coupling across service boundaries; synchronous calls where events are required                                                                                                                                                                                                                                                                |
-| Vertical Slice        | Cross-slice import (feature A importing feature B internals)                                                                                                                                                                                                                                                                                                   |
-| Layered               | Skipped layer (UI calling data access directly); circular layer dependency                                                                                                                                                                                                                                                                                     |
-| Cross-cutting         | Logging, metrics, or auth logic duplicated across layers instead of handled by middleware or decorators                                                                                                                                                                                                                                                        |
-| General               | Circular dependencies between layers or components; concrete classes used where interfaces are required by the architecture; missing abstraction at a documented boundary; names that contradict the detected pattern (e.g., `*Service` in a DDD domain layer without a domain-service role)                                                                   |
+| Concern | Violations hunted |
+| --- | --- |
+| Dependency direction | Inner layer importing outer layer; domain importing infrastructure; application importing infrastructure directly instead of through ports |
+| DDD | Anemic domain model (entities with no behavior, only getters/setters); domain objects with infrastructure imports; application services containing domain logic; value objects with mutable state; aggregates with public setters that bypass invariants; domain services depending on infrastructure; repositories called directly from UI or API controllers |
+| Hexagonal | Business logic inside adapters; adapters calling each other directly (bypassing ports); ports defined in infrastructure instead of application layer; port interfaces that mimic tool API instead of fitting domain needs |
+| Clean Architecture | Use case importing a concrete infrastructure class; entity depending on a use case |
+| CQRS | Commands returning domain data; queries with side effects; command and query handlers mixed in the same class; read model routed through domain instead of direct projection |
+| Event Sourcing | Direct state mutation instead of event emission; event handlers containing business logic; missing projections for read models; projection mutating the event store |
+| Explicit Architecture | Components importing directly from other components (bypassing Shared Kernel or events); Shared Kernel containing domain-specific logic (must stay minimal); Application Events not used for cross-component integration |
+| Microservices | Direct database coupling across service boundaries; synchronous calls where events are required |
+| Vertical Slice | Cross-slice import (feature A importing feature B internals) |
+| Layered | Skipped layer (UI calling data access directly); circular layer dependency |
+| Cross-cutting | Logging, metrics, or auth logic duplicated across layers instead of handled by middleware or decorators |
+| General | Circular dependencies between layers or components; concrete classes used where interfaces are required by the architecture; missing abstraction at a documented boundary; names that contradict the detected pattern (e.g., `*Service` in a DDD domain layer without a domain-service role) |
 
 ## Severity guide
 
-| Severity | Meaning                                                                          |
-| -------- | -------------------------------------------------------------------------------- |
-| Critical | Direct dependency rule violation — inner layer imports outer layer               |
-| High     | Business logic in wrong layer; missing required abstraction                      |
-| Medium   | Pattern inconsistency; weak boundary enforcement                                 |
-| Low      | Naming inconsistency with detected patterns; missing domain event where expected |
-| Advisory | Informational structural observation; no action required                         |
+| Severity | Meaning |
+| --- | --- |
+| Critical | Direct dependency rule violation — inner layer imports outer layer |
+| High | Business logic in wrong layer; missing required abstraction |
+| Medium | Pattern inconsistency; weak boundary enforcement |
+| Low | Naming inconsistency with detected patterns; missing domain event where expected |
+| Advisory | Informational structural observation; no action required |
 
 ## Process
 
