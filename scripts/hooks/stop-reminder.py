@@ -11,13 +11,12 @@ would block the stop once per turn forever; the index scope fires only at the
 moment it matters — right before a commit.
 """
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import repo_root  # noqa: E402  # type: ignore[import-not-found]
+from _hooklib import load_event, repo_root  # noqa: E402  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 
@@ -27,11 +26,7 @@ def main() -> None:
     # this guard the reminder fires again on the forced continuation's own stop,
     # looping forever. `stop_hook_active` is true on that second pass — surface
     # the reminder once, then let Claude stop.
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
-        data = {}
-    if isinstance(data, dict) and data.get("stop_hook_active"):
+    if (load_event() or {}).get("stop_hook_active"):
         return
 
     # `git diff --cached --name-only -z` lists staged paths only, NUL-separated

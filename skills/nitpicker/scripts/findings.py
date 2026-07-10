@@ -254,12 +254,11 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def render_finding(fm: dict[str, str], title: str, body: str) -> str:
-    known = ("id", "auditor", "severity", "category", "area", "status", "found", "resolved")
     if "\n" in title:
         raise FindingError("title must be single-line")
     lines = ["---"]
     # Known keys in canonical order, then any extra keys (e.g. cve:) preserved.
-    for key in (*known, *(k for k in fm if k not in known)):
+    for key in (*_KNOWN_FM, *(k for k in fm if k not in _KNOWN_FM)):
         value = fm.get(key, "")
         if "\n" in value:
             # A newline would inject extra frontmatter lines (last-write-wins on parse).

@@ -5,26 +5,18 @@
 # ///
 """PostToolUse hook — run ruff check --fix and ruff format on edited Python files."""
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import edited_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
+from _hooklib import event_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
-        return
-    if not isinstance(data, dict):
-        return
-
-    path = edited_path(data)
+    path = event_path()
     if path is None:
         return
 
