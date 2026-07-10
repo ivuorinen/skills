@@ -1,4 +1,4 @@
-"""Tests for skills/security-auditor/process-sarif.py."""
+"""Tests for skills/nitpicker/scripts/process-sarif.py."""
 
 import importlib.util
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_TOOL = Path(__file__).parent.parent / "skills" / "security-auditor" / "process-sarif.py"
+_TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "process-sarif.py"
 _spec = importlib.util.spec_from_file_location("process_sarif", _TOOL)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
@@ -274,6 +274,39 @@ class TestExtractFindings:
         findings = _extract_findings(run, "x.sarif")
         assert findings == []
 
+    def test_null_taxa_and_locations_no_crash(self):
+        result = {
+            "ruleId": "r1",
+            "level": "error",
+            "message": {"text": "x"},
+            "locations": None,
+            "taxa": None,
+        }
+        run = _run("t", results=[result])
+        findings = _extract_findings(run, "x.sarif")
+        assert findings[0]["cve_or_rule"] == "r1"
+        assert findings[0]["start_line"] == 0
+
+    def test_string_start_line_coerced_to_int(self):
+        r = _result()
+        r["locations"][0]["physicalLocation"]["region"]["startLine"] = "12"
+        r["locations"][0]["physicalLocation"]["region"]["startColumn"] = "junk"
+        run = _run("t", results=[r])
+        findings = _extract_findings(run, "x.sarif")
+        assert findings[0]["start_line"] == 12
+        assert findings[0]["start_column"] == 0
+
+    def test_string_and_int_start_lines_sort_together(self, tmp_path, capsys, monkeypatch):
+        r1 = _result("r1", "warning", "a", "f.py", 5)
+        r2 = _result("r2", "warning", "b", "f.py", 3)
+        r2["locations"][0]["physicalLocation"]["region"]["startLine"] = "3"
+        f = tmp_path / "mixed.sarif"
+        f.write_text(json.dumps(_sarif([_run("t", results=[r1, r2])])), encoding="utf-8")
+        monkeypatch.setattr(sys, "argv", ["prog", str(f)])
+        _mod.main()
+        data = json.loads(capsys.readouterr().out)
+        assert [x["start_line"] for x in data["findings"]] == [3, 5]
+
 
 # ── _parse_sarif ───────────────────────────────────────────────────────────────
 
@@ -293,11 +326,25 @@ class TestParseSarif:
             _parse_sarif(f)
         assert exc.value.code == 1
 
-    def test_wrong_version_warns(self, tmp_path):
+    def test_wrong_version_warns(self, tmp_path, capsys):
         data = {"version": "1.0.0", "runs": []}
         f = tmp_path / "old.sarif"
         f.write_text(json.dumps(data), encoding="utf-8")
         _parse_sarif(f)
+        assert "not fully supported" in capsys.readouterr().err
+
+    def test_top_level_array_exits_1(self, tmp_path, capsys):
+        f = tmp_path / "arr.sarif"
+        f.write_text("[]", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            _parse_sarif(f)
+        assert exc.value.code == 1
+        assert "[error]" in capsys.readouterr().err
+
+    def test_null_runs_returns_empty(self, tmp_path):
+        f = tmp_path / "null-runs.sarif"
+        f.write_text(json.dumps({"version": "2.1.0", "runs": None}), encoding="utf-8")
+        assert _parse_sarif(f) == []
 
     def test_multiple_runs(self, tmp_path):
         data = _sarif(
@@ -466,3 +513,157 @@ class TestMain:
         with pytest.raises(SystemExit) as exc:
             _mod.main()
         assert exc.value.code == 1
+
+
+# --- Regression tests for audit fixes (2026-07-09) ---
+
+
+def test_null_physical_location_does_not_crash():
+    """physicalLocation:null (or a non-dict location) must not abort the run."""
+    run = _run(
+        results=[
+            {"ruleId": "r", "message": {"text": "m"}, "locations": [{"physicalLocation": None}]}
+        ]
+    )
+    got = _extract_findings(run, "x.sarif")
+    assert len(got) == 1 and got[0]["uri"] == ""
+    run2 = _run(results=[{"ruleId": "r", "message": {"text": "m"}, "locations": [None]}])
+    assert len(_extract_findings(run2, "x.sarif")) == 1
+
+
+def test_cvss_score_not_buried_by_coarse_tool_severity():
+    # A WARNING tool string must not downgrade an explicit CVSS 9.8.
+    assert _normalize_severity("warning", "9.8", "WARNING") == "Critical"
+    # ...and an explicit tool Critical must not be dragged down by a low CVSS.
+    assert _normalize_severity("note", "2.0", "CRITICAL") == "Critical"
+
+
+def test_location_less_findings_with_distinct_cves_not_deduped():
+    results = [
+        {"ruleId": "vuln", "message": {"text": ""}, "taxa": [{"id": "CVE-2021-1111"}]},
+        {"ruleId": "vuln", "message": {"text": ""}, "taxa": [{"id": "CVE-2022-2222"}]},
+    ]
+    got = _extract_findings(_run(results=results), "grype.sarif")
+    unique, removed = _deduplicate(got)
+    assert removed == 0 and len(unique) == 2
+
+
+# --- Regression tests for audit fix (2026-07-09): malformed SARIF must not
+#     crash the batch; a bad node is skipped, not fatal. ---
+
+
+@pytest.mark.parametrize(
+    "sev",
+    [5, [9.0], {"x": 1}, None, "CRITICAL"],
+)
+def test_normalize_severity_tolerates_nonstring_signals(sev):
+    # Free-form SARIF properties may carry non-string severity / non-numeric
+    # security-severity; neither may raise.
+    assert _normalize_severity("warning", sev, sev) in _mod._SEVERITY_ORDER
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        {"tool": None, "results": []},
+        "notadict",
+        {"tool": {"driver": {"rules": ["notadict"]}}, "results": []},
+        {"tool": {"driver": {"name": "t"}}, "results": ["notadict"]},
+        {"tool": {"driver": {"name": "t"}}, "results": [{"ruleId": "x", "taxa": ["notadict"]}]},
+    ],
+)
+def test_extract_findings_skips_malformed_nodes(run):
+    # Must return a list without raising, whatever the node types are.
+    assert isinstance(_extract_findings(run, "bad.sarif"), list)
+
+
+def test_parse_sarif_survives_nonconforming_result(tmp_path):
+    # A single bad result must not abort the whole file.
+    sarif = _sarif(
+        [
+            {
+                "tool": {"driver": {"name": "t", "rules": []}},
+                "results": [
+                    {"ruleId": "x", "level": "warning", "properties": {"severity": 5}},
+                    {"ruleId": "y", "level": "error", "message": {"text": "ok"}},
+                ],
+            }
+        ]
+    )
+    p = tmp_path / "in.sarif"
+    p.write_text(json.dumps(sarif), encoding="utf-8")
+    findings = _parse_sarif(p)
+    assert len(findings) == 2  # both survive; neither crashes the batch
+
+
+# --- Regression tests for audit fixes (2026-07-09, batch 2) ---
+
+
+def test_rule_index_resolves_rule_metadata():
+    # A result referencing its rule via ruleIndex (no ruleId) must recover the
+    # rule id, name, and CVSS severity from driver.rules[ruleIndex].
+    run = _run(
+        "semgrep",
+        rules=[{"id": "r1", "name": "Rule1", "properties": {"security-severity": "9.5"}}],
+        results=[{"ruleIndex": 0, "level": "note", "message": {"text": "m"}, "locations": []}],
+    )
+    got = _extract_findings(run, "x.sarif")
+    assert got[0]["rule_id"] == "r1"
+    assert got[0]["rule_name"] == "Rule1"
+    assert got[0]["severity"] == "Critical"
+
+
+def test_out_of_bounds_rule_index_ignored():
+    run = _run(
+        "t",
+        rules=[{"id": "r1"}],
+        results=[{"ruleIndex": 9, "level": "note", "message": {"text": "m"}, "locations": []}],
+    )
+    got = _extract_findings(run, "x.sarif")
+    assert got[0]["rule_id"] == ""  # bad index leaves rule_id empty, no crash
+
+
+def test_null_uri_sorts_without_crash(tmp_path, capsys, monkeypatch):
+    # artifactLocation.uri present but null must coerce to "" so the final sort
+    # (which compares uri strings) does not raise TypeError.
+    r_null = {
+        "ruleId": "r1",
+        "level": "warning",
+        "message": {"text": "m"},
+        "locations": [
+            {"physicalLocation": {"artifactLocation": {"uri": None}, "region": {"startLine": 1}}}
+        ],
+    }
+    r_ok = _result("r2", "warning", "n", "a.py", 2)
+    f = tmp_path / "n.sarif"
+    f.write_text(json.dumps(_sarif([_run("t", results=[r_null, r_ok])])), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["prog", str(f)])
+    _mod.main()
+    data = json.loads(capsys.readouterr().out)
+    assert any(x["uri"] == "" for x in data["findings"])
+
+
+def test_nonstring_taxon_id_does_not_crash():
+    result = {
+        "ruleId": "r1",
+        "level": "warning",
+        "message": {"text": "m"},
+        "locations": [],
+        "taxa": [{"id": 12345}],
+    }
+    got = _extract_findings(_run("t", results=[result]), "x.sarif")
+    assert got[0]["cve_or_rule"] == "r1"
+
+
+def test_bad_file_skipped_good_findings_emitted(tmp_path, capsys, monkeypatch):
+    good = tmp_path / "good.sarif"
+    good.write_text(json.dumps(_sarif([_run("t", results=[_result()])])), encoding="utf-8")
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["prog", str(good), str(broken)])
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 1  # at least one file failed → non-zero exit
+    data = json.loads(capsys.readouterr().out)
+    assert data["meta"]["total_raw"] == 1  # good findings still emitted
+    assert len(data["findings"]) == 1

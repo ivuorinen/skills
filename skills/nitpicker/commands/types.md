@@ -1,0 +1,90 @@
+# /nitpicker types — Static-Typing Soundness Audit
+
+Hostile audit of the static type layer: assume every `any`, every suppression, and every unchecked cast is hiding a real type error until proven otherwise. The type checker is only as strong as the escape hatches punched through it — this command finds every hole.
+
+## When to use
+
+- Auditing a typed codebase (TypeScript, Python with annotations + mypy/pyright, Go, Rust, C#, Java, Kotlin, or any statically-checked language) for suppressed and evaded type errors
+- The type checker reports zero errors and you need to know whether that is soundness or suppression
+- Before trusting a refactor, a public API, or a "fully typed" claim
+- When asked to "audit the types", "check type safety", "find the `any`s", "are the type ignores real", or "is this actually typed"
+- Run standalone or by the `/nitpicker` default audit flow
+
+Out of scope: runtime input validation at trust boundaries routes to `/nitpicker security`; test-suite quality to `/nitpicker tests`; public API surface vs semver to `/nitpicker contract`; general correctness to `/nitpicker audit`. A repo with no static type system anywhere — no `.ts`, no annotations, no `py.typed`, no checker config, and no typed source in any language — gets the explicit verdict "no static-typing surface — untyped by declared scope". A single typed file puts the repo in scope.
+
+## Process
+
+1. **Establish the declared strictness.** Read the type config: `tsconfig.json` (`strict`, `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`, `strictPropertyInitialization`, `useUnknownInCatchVariables`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `skipLibCheck`), `pyproject.toml`/`mypy.ini` (`[tool.mypy] strict`, `disallow_untyped_defs`, `warn_return_any`, `check_untyped_defs`), `pyrightconfig.json`/`[tool.pyright]` (`typeCheckingMode`); for other languages the equivalent (`<Nullable>enable</Nullable>` in C#, `-Xlint:unchecked` on the JVM, `#![deny(warnings)]` in Rust). A checker run under lax settings that reports zero errors is not evidence of soundness — record every strictness flag that is off or absent; each is a class of error the checker never looked for.
+2. **Run the installed checker.** Probe with `command -v` for `tsc`, `mypy`, `pyright`, `ty`, `flow`; for other typed languages probe the project's checker — `go vet` and the Go compiler, `cargo check` + `cargo clippy`, `dotnet build` under nullable-enabled, the JVM compiler with `-Xlint:unchecked` or `detekt`. Run the one the project configures (`tsc --noEmit`; `mypy .`; `pyright --outputjson`); record a missing checker as "not available" and a crashed one as "errored: <message>" — a failure never aborts the run. Never install a tool. A green checker under lax config is expected — the defects live in what the config excused and what the suppressions hid, not in the checker's error list.
+3. **Enumerate every suppression and escape hatch.** Grep is the start, not the sweep: `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, `: any`, `as any`, `as unknown as`, `Record<string, any>`, `!` non-null assertions, `catch (e)` (untyped `e`), `Function`/`Object`/`{}` typed params, `# type: ignore`, `cast(`, `Any`, `except ... as e`, `# mypy: ignore-errors`, `typing.no_type_check`, bare `list`/`dict`/`tuple` without parameters; in other languages `interface{}`/`any` and `x.(T)` and `//nolint` (Go), `unsafe`/`.unwrap()`/`transmute`/`#[allow(...)]` (Rust), `dynamic`/null-forgiving `!`/`#nullable disable`/`#pragma warning disable` (C#), raw types and `@SuppressWarnings("unchecked")` (Java), `!!` and `@Suppress` (Kotlin). Read each in context — a suppression is a defect unless its comment names the exact upstream cause and it is narrowed to that one error code (`# type: ignore[arg-type]`); `@ts-expect-error` carries no error code and suppresses every error on its line, so it is acceptable only with a reason on a single-error line.
+4. **Judge each escape hatch against the defect classes.** For every hatch found, decide: does it mask a real, fixable type error (a defect), narrow a genuine checker/stub limitation with a code + reason (acceptable), or is it dead (`@ts-expect-error` on a line that no longer errors — itself a finding)? Untyped public boundaries are checked whether or not a suppression exists.
+5. **File findings** via the store protocol in `_conventions.md`, using `--auditor types`. Each finding records the class, Evidence (file:line, the suppressed/evaded type and the concrete unsound value that flows through it, e.g. "`user` is `any`, so `user.emial` typos through and is `undefined` at runtime"), Impact (the runtime failure the type system was supposed to prevent), and Fix (the exact annotation, generic, or narrowing to apply). "Add types" is not a fix — name the type.
+6. **Summarize and fix.** The summary states the run verdict (COMPLETE only if every enumerated suppression was judged and every public boundary checked), the declared-strictness gaps, and counts by class. Fix application and the commit gate follow `_conventions.md`, with this override: after each fix, re-run the checker on the changed file and confirm the error count did not rise — a fix that trades one suppression for another is not a fix.
+
+### Defect classes
+
+| Class | What to flag | Fix shape |
+| --- | --- | --- |
+| **blanket-suppression** | `@ts-ignore`, `@ts-nocheck`, `# type: ignore` (no code), `# mypy: ignore-errors`, or `eslint-disable` on a type rule — suppresses every error on the line; a bare `# type: ignore`/`@ts-nocheck` as the file's first line ignores the whole module (flag at whole-file reach) | Replace with a narrowed suppression carrying the error code and a reason, or fix the underlying error; delete `@ts-nocheck` outright |
+| **any-escape** | Explicit `: any`, `as any`, `as unknown as T`, `Record<string, any>`/`{ [k: string]: any }` index signatures, an unchecked `catch`/`except` variable used as `any` (`e.message`), implicit-any under `noImplicitAny: false`, or Python `Any`/untyped def at a boundary carrying real data | Give the value its real type or a precise generic; for genuinely dynamic data use `unknown`/`object` and narrow before use |
+| **unsound-cast** | A cast asserting a type the value is not proven to have (`x as Foo`, `cast(Foo, x)`, `<Foo>x`) with no runtime check behind it; a numeric enum accepting an arbitrary number; a literal widened by a missing `as const`; two structurally-identical but semantically-distinct types conflated where a branded/nominal type is required | Replace with a validated narrowing (type guard, `isinstance`, schema parse) that proves the type at runtime; add a branded type where identity matters |
+| **unchecked-declaration** | A hand-written `.d.ts`, ambient `declare`/`declare module`/`declare global`, or `.pyi` stub asserting a shape with no runtime backing — a module-scope cast the checker trusts blindly; `skipLibCheck: true` suppressing errors inside declaration files | Regenerate the declaration from its source of truth, or add a runtime schema-parse at the boundary that produces the declared type; remove `skipLibCheck` and fix the errors it hid |
+| **non-null-assertion** | `x!` / `x!.y` asserting non-null where the value can be null/undefined; Python `assert x is not None` used only to silence the checker on a legitimately optional value | Handle the null branch, or narrow with a real check; reserve `!` for values provably non-null by construction |
+| **stale-expect-error** | `@ts-expect-error` on a line that no longer produces an error (the checker flags it as unused) — a dead suppression that will silently swallow a future real error; also `@ts-expect-error` on a multi-error line, which swallows the siblings | Delete the dead one; split a multi-error line so the suppression covers exactly one error |
+| **untyped-public-boundary** | An exported function/method/class with unannotated params or return, an untyped module export, or a public API returning `any`/`Any` — callers get no checking | Annotate every public param and return; a public surface is fully typed even if internals are inferred |
+| **lax-strictness** | `strict: false` or a specific strict flag off (`strictNullChecks`, `noImplicitAny`, `strictFunctionTypes`, `noUncheckedIndexedAccess`); mypy without `disallow_untyped_defs`/`warn_return_any`; C# without nullable enabled | Enable strict (or the specific flag); when enabling all at once surfaces more than a handful of errors, ratchet per-file via override config |
+| **untyped-dependency-leak** | A third-party import with no stubs typed as `any`/`Any` whose values flow untyped into your code, with no `types-*` stub installed and no local declaration | Install the `@types`/`types-*` stub, or write a minimal local declaration for the surface you use; do not let `any` leak inward |
+| **unparameterized-generic** | Bare `list`/`dict`/`set`/`tuple`/`Array`/`Promise`/`Map` without type arguments, or `object`/`{}` where a shape is known — the element type is unchecked | Parameterize (`list[User]`, `Map<string, Foo>`, `Promise<Result>`); replace `{}`/`object` with the actual interface |
+
+## Severity guide
+
+| Severity | Condition |
+| --- | --- |
+| Critical | A suppression or `any` on a security- or money-critical path where the evaded type would have caught a wrong-type value reaching auth, a query, or a financial calculation |
+| High | `any`-escape or unsound-cast on data crossing a public API or persistence boundary; a blanket suppression hiding a real error on a hot/shared path; an unchecked declaration/stub on a boundary; `strictNullChecks` off in a codebase with unguarded member access on nullable values (`x.y` where `x` can be null) |
+| Medium | Non-null assertion on a genuinely optional value; untyped public boundary on an internal-but-shared module; unparameterized generic carrying real data; a `# type: ignore` with no code on a non-critical line |
+| Low | Unparameterized generic in a local scope; a narrowed suppression whose reason is stale; `any` in test or script code |
+| Advisory | A strictness flag off with no current unsound value flowing through it; a suppression correctly narrowed with code + reason (reported for visibility, not action) |
+
+## Fix strategy
+
+**Auto-applicable (via the batch prompt, apply only on approval):**
+
+- Narrow a blanket `@ts-ignore`/`# type: ignore` to `@ts-expect-error <reason>` / `# type: ignore[code]` once the code is known
+- Delete a stale `@ts-expect-error`
+- Parameterize a bare generic where the element type is unambiguous
+- Annotate a public boundary whose types are already inferable
+
+**Requires explicit approval per change:**
+
+- Replacing an `any` or unsound cast with a real type (may surface a cascade of downstream errors)
+- Enabling a strict flag or removing `skipLibCheck` (surfaces every latent error at once)
+- Adding a runtime narrowing/guard in place of a cast (changes control flow)
+
+**Never auto-apply:**
+
+- Adding a new suppression to silence an error a fix surfaced — that is trading one hole for another
+- Weakening a strict flag to make the checker pass
+- Casting to satisfy the checker without a runtime check behind it
+
+## Common mistakes
+
+These are the rationalizations this command exists to defeat. Each one is forbidden.
+
+**"The type checker passes with zero errors, so the types are sound."** Zero errors under lax config, or under a hundred suppressions, means the checker was told not to look — not that there is nothing to find. Soundness is the strictness flags that are on plus the suppressions that are narrowed and justified, never the error count. Read the config and every hatch.
+
+**"This language has no static types here, so it's N/A."** The N/A verdict requires the whole repo to have no type system — no `.ts`, no annotations, no `py.typed`, no checker config, and no typed source in any language. A single typed file, a partially annotated module, or a mixed JS/TS repo puts the repo in scope: audit the typed surface and file the untyped remainder as untyped-public-boundary. Declaring N/A over any typed surface is a defect.
+
+**"It's just one `any` — TypeScript/mypy handles the rest."** `any` is contagious: every value derived from an `any` is `any`, so one `any` at a boundary silently unchecks an entire downstream call graph. Trace what flows from it; file it at the severity of the furthest unchecked use.
+
+**"The `@ts-ignore` was needed to ship, the error is a false positive."** A real false positive is narrowed to its error code with a reason (`# type: ignore[code]`, or `@ts-expect-error` with a reason on a single-error line) so a _different_ future error is not also swallowed. A blanket suppression with no code, or an `@ts-expect-error` on a multi-error line, is a defect regardless of why it was added.
+
+**"`as SomeType` is fine, I know the value is that type."** You knowing it is not the checker or the runtime knowing it. An unsound cast asserts a type nothing proves; when the value is not that type, the cast turns a caught type error into an uncaught runtime one. Replace it with a narrowing that proves the type, or file it. The same applies to a hand-written declaration or stub — it is a cast the checker never rechecks.
+
+**"`strictNullChecks`/`strict` is off because the codebase is old."** The flag being off is exactly why null-dereference bugs ship — every `x.y` on a possibly-null `x` is unchecked. Legacy is a reason to ratchet the flag on incrementally, not a reason to call the gap acceptable. File the missing flag with the unsound dereferences it hides.
+
+**"Grepping `: any` covers it."** Implicit `any` from `noImplicitAny: false`, `any` leaking from an untyped dependency, an unchecked `catch` variable, `Function`/`Object`/`{}`/`Record<string, any>` types, and bare generics are all `any` in effect without the literal word. The sweep reads the config and the boundaries, not just the string.
+
+**"Internal code doesn't need full types."** The untyped internal function is where the wrong-shape object propagates until it surfaces three modules away with no stack pointing home. Public boundaries are non-negotiable; shared internals are checked at the severity their reach earns.
+
+**"I added the annotation, so the finding is handled."** A described or added annotation is an open finding until the checker is re-run on the changed file and confirms the error count did not rise. A fix that adds a new suppression to absorb the errors it surfaced is not a fix.

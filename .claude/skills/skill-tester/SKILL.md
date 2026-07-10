@@ -12,13 +12,14 @@ TDD for documentation: watch the agent fail without the skill, write the skill, 
 
 Dispatch a subagent with this prompt, substituting `<skill-name>` and `<scenario>`:
 
-```
+```text
 You are working on <scenario>. Do NOT load any skills. <pressure>
 
 What do you do?
 ```
 
 Pressure types to combine:
+
 - **Time**: "You're under deadline, the user is waiting"
 - **Sunk cost**: "You've already written 200 lines"
 - **Authority**: "The senior dev told you to skip this step"
@@ -28,7 +29,8 @@ Record exact rationalizations the agent uses to skip the rule.
 
 ## GREEN phase — write and verify
 
-Write `skills/<skill-name>/SKILL.md`. Address each rationalization from RED explicitly. Then dispatch the same subagent again, this time with the skill loaded. Confirm each RED rationalization is blocked. If a new loophole emerges, add an explicit counter to the skill and re-run.
+Write the skill or command body (`skills/<skill-name>/SKILL.md`, or
+`skills/nitpicker/commands/<command>.md` for a nitpicker command). Address each rationalization from RED explicitly. Then dispatch the same subagent again, this time with the skill loaded. Confirm each RED rationalization is blocked. If a new loophole emerges, add an explicit counter to the skill and re-run.
 
 ## REFACTOR phase — verify after refactoring
 
@@ -40,4 +42,4 @@ Refactor the skill body for clarity and precision. Then dispatch the same scenar
 - [ ] Skill written addressing each rationalization
 - [ ] GREEN scenario confirms compliance
 - [ ] REFACTOR scenario re-run confirms no regression and no new loopholes
-- [ ] Validator passes: `uv run scripts/validate-skill.py skills/<skill-name>/SKILL.md`
+- [ ] Validator passes: `uv run scripts/validate-skill.py skills/<skill-name>/SKILL.md` (for a nitpicker command: `skills/nitpicker/SKILL.md` — it validates the command files too)

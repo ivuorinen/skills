@@ -12,6 +12,27 @@ sys.path.insert(0, str(Path(__file__).parent))
 from common import parse_frontmatter  # noqa: E402  # type: ignore[import-not-found]
 
 
+def strip_fences(lines: list[str]) -> list[str]:
+    """Return lines outside fenced code blocks.
+
+    Handles indented fences and distinct markers: a block opened with ```
+    is only closed by ```, and one opened with ~~~ only by ~~~.
+    """
+    result: list[str] = []
+    fence = ""
+    for line in lines:
+        stripped = line.lstrip()
+        if fence:
+            if stripped.startswith(fence):
+                fence = ""
+            continue
+        if stripped.startswith(("```", "~~~")):
+            fence = stripped[:3]
+            continue
+        result.append(line)
+    return result
+
+
 def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
@@ -24,6 +45,8 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     except OSError as e:
         err(f"cannot read file: {e}")
         return
+
+    text = text.replace("\r\n", "\n")  # normalize CRLF so frontmatter checks and slicing work
 
     if not text.startswith("---\n"):
         err("missing YAML frontmatter (file must start with ---)")
@@ -38,12 +61,11 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
         err("frontmatter missing 'name' field")
     if not description:
         err("frontmatter missing 'description' field")
-        return
-
-    if "Use when" not in description:
-        err("description must contain 'Use when' trigger clause")
-    if len(description) > 1024:
-        err(f"description is {len(description)} chars; must be ≤1024")
+    else:
+        if "Use when" not in description:
+            err("description must contain 'Use when' trigger clause")
+        if len(description) > 1024:
+            err(f"description is {len(description)} chars; must be ≤1024")
 
     end_fm = text.find("\n---\n", 4)
     for line in text[4:end_fm].splitlines():
@@ -60,11 +82,8 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
 
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
-    in_fence = False
-    for line in body.splitlines():
-        if line.startswith("```") or line.startswith("~~~"):
-            in_fence = not in_fence
-        if not in_fence and line.startswith("#"):
+    for line in strip_fences(body.splitlines()):
+        if line.startswith("#"):
             level = len(line) - len(line.lstrip("#"))
             headers.append((level, line.lstrip("# ")))
 
@@ -98,6 +117,82 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
         if legacy in body_no_doc:
             warn(f"references legacy output path '{legacy}' — use docs/audit/ instead")
 
+    commands_dir = path.parent / "commands"
+    if commands_dir.is_dir():
+        validate_commands(commands_dir, name or expected_name, body, errors)
+    else:
+        table_cmds = table_commands(body)
+        if table_cmds:
+            err(f"Commands table lists {len(table_cmds)} commands but commands/ does not exist")
+
+
+_CMD_ROW = re.compile(r"^\|\s*`([a-z0-9][a-z0-9-]*)`\s*\|")
+
+
+def table_commands(skill_body: str) -> set[str]:
+    """Return command names listed in the SKILL.md Commands table."""
+    cmds: set[str] = set()
+    for line in strip_fences(skill_body.splitlines()):
+        m = _CMD_ROW.match(line.strip())
+        if m and m.group(1) != "command":
+            cmds.add(m.group(1))
+    return cmds
+
+
+def validate_commands(
+    commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
+) -> None:
+    """Cross-check the SKILL.md Commands table against commands/*.md files."""
+
+    table_cmds = table_commands(skill_body)
+
+    file_cmds = {p.stem: p for p in sorted(commands_dir.glob("*.md")) if not p.name.startswith("_")}
+
+    for cmd in sorted(table_cmds - set(file_cmds)):
+        errors.append(
+            f"  ERROR  {commands_dir.parent / 'SKILL.md'}: Commands table lists `{cmd}` "
+            f"but no commands/{cmd}.md exists"
+        )
+    for cmd in sorted(set(file_cmds) - table_cmds):
+        errors.append(f"  ERROR  {file_cmds[cmd]}: not in the Commands table of SKILL.md")
+
+    for cmd, cpath in file_cmds.items():
+
+        def cerr(msg: str, cpath: Path = cpath) -> None:
+            errors.append(f"  ERROR  {cpath}: {msg}")
+
+        try:
+            text = cpath.read_text(encoding="utf-8")
+        except OSError as e:
+            cerr(f"cannot read file: {e}")
+            continue
+
+        if text.startswith("---\n"):
+            cerr("command files must not have YAML frontmatter (only the router SKILL.md does)")
+
+        # All structural checks ignore fenced code blocks.
+        content_lines = strip_fences(text.splitlines())
+
+        first_header = next((ln for ln in content_lines if ln.startswith("#")), "")
+        expected_h1 = f"# /{skill_name} {cmd} — "
+        if not (first_header.startswith(expected_h1) and first_header[len(expected_h1) :].strip()):
+            cerr(f"h1 must be '# /{skill_name} {cmd} — <Title>' (found {first_header!r})")
+
+        h1_count = sum(1 for ln in content_lines if ln.startswith("#") and not ln.startswith("##"))
+        if h1_count > 1:
+            cerr(f"command file has {h1_count} h1 headers; exactly one allowed")
+
+        if not any(ln.rstrip() == "## When to use" for ln in content_lines):
+            cerr("missing '## When to use' section")
+
+        prev_level = 0
+        for line in content_lines:
+            if line.startswith("#"):
+                level = len(line) - len(line.lstrip("#"))
+                if prev_level and level > prev_level + 1:
+                    cerr(f"header level jumps from h{prev_level} to h{level}: {line!r}")
+                prev_level = level
+
 
 def main() -> None:
     errors: list[str] = []
@@ -107,7 +202,9 @@ def main() -> None:
 
     if not targets:
         repo_root = Path(__file__).parent.parent
-        targets = sorted(repo_root.glob("skills/*/SKILL.md"))
+        targets = sorted(
+            [*repo_root.glob("skills/*/SKILL.md"), *repo_root.glob(".claude/skills/*/SKILL.md")]
+        )
 
     if not targets:
         print("No SKILL.md files found.")

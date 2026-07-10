@@ -1,40 +1,20 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+---
 name: Validate Skills
 
 on:
   push:
     branches:
       - main
-    paths:
-      - 'skills/**/SKILL.md'
-      - 'skills/**/*.py'
-      - '.claude/skills/**/SKILL.md'
-      - 'scripts/**'
-      - 'tests/**'
-      - '.claude/rules/**'
-      - 'docs/audit/**'
-      - '.github/workflows/**'
-      - 'Makefile'
-      - 'package.json'
-      - 'pyproject.toml'
-      - '.claude-plugin/plugin.json'
-      - '.claude-plugin/marketplace.json'
-      - '.release-please-manifest.json'
   pull_request:
-    paths:
-      - 'skills/**/SKILL.md'
-      - 'skills/**/*.py'
-      - '.claude/skills/**/SKILL.md'
-      - 'scripts/**'
-      - 'tests/**'
-      - '.claude/rules/**'
-      - 'docs/audit/**'
-      - '.github/workflows/**'
-      - 'Makefile'
-      - 'package.json'
-      - 'pyproject.toml'
-      - '.claude-plugin/plugin.json'
-      - '.claude-plugin/marketplace.json'
-      - '.release-please-manifest.json'
+    # `edited` is needed by the pr-title job (title/body lint); `reopened` keeps
+    # the required Validate check from going stale when a PR is reopened with no
+    # new commits. The validate job below is scoped off `edited` so a title tweak
+    # does not rerun the full suite.
+    types: [opened, edited, reopened, synchronize]
+  # Manual trigger so Validate can be run on the release-please branch, which
+  # GITHUB_TOKEN-authored PRs cannot auto-trigger (see release-please.yml).
+  workflow_dispatch:
 
 permissions: {}
 
@@ -43,8 +23,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pr-title:
+    name: Lint PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read # read-only: the action only reads the PR title to lint it
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   validate:
     name: Validate
+    # Skip the full suite on metadata-only PR edits (title/body); `synchronize`
+    # still covers new commits, and push/workflow_dispatch are unaffected.
+    if: github.event_name != 'pull_request' || github.event.action != 'edited'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read-only: only reads the checkout to validate it
@@ -67,14 +61,24 @@ jobs:
       - name: Check version sync
         run: uv run --quiet scripts/check-version-sync.py
 
-      - name: Check audit findings consistency
-        run: uv run --quiet skills/nitpicker/check-audit-consistency.py
+      - name: Validate findings store
+        run: python3 skills/nitpicker/scripts/findings.py validate
+
+      - name: Check findings index is current
+        run: |
+          python3 skills/nitpicker/scripts/findings.py index
+          git diff --exit-code docs/audit/findings/INDEX.md
 
       - name: Run tests
-        run: uv run --with pytest pytest tests/
+        # --with ruff: tests/test_hooks.py exercises ruff-hook.py, which shells out
+        # to the real `ruff` binary; without it the run fails with FileNotFoundError.
+        run: uv run --with pytest --with ruff pytest tests/
 
       - name: Lint scripts
         run: uv run --with ruff ruff check scripts/ tests/ skills/
 
       - name: Check script formatting
         run: uv run --with ruff ruff format --check scripts/ tests/ skills/
+
+      - name: Run pre-commit suite
+        run: uv run --with pre-commit pre-commit run --all-files --show-diff-on-failure

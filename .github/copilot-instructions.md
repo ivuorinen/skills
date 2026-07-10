@@ -2,182 +2,146 @@
 
 ## What This Repository Is
 
-A **Claude Code plugin** (`ivuorinen-skills`) containing hostile audit and enforcement skills. Each skill is a self-contained
-prompt file (`SKILL.md`) that Claude Code loads when a user invokes it. The repo is installable via `/plugins`
-and is versioned with semantic versioning using release-please automation.
+This repo ships **one public skill** — `nitpicker`, a hostile audit toolkit invoked as
+`/nitpicker <command> [extra instructions]` — in the open Agent Skills format. The router is
+`skills/nitpicker/SKILL.md`; each command's instructions live in `skills/nitpicker/commands/<command>.md`.
+It installs into Claude Code (`/plugins` marketplace `ivuorinen/skills`), Copilot, pi, and any
+SKILL.md-reading agent via `npx skills add ivuorinen/skills`. Copilot reads skills from
+`.github/skills/`, `.claude/skills/`, and `.agents/skills/`; pi invokes `/skill:nitpicker`.
+
+Shared cross-agent rules live in `AGENTS.md` — read it first. `CLAUDE.md` holds Claude Code
+specifics. This file adds the Copilot cloud-agent specifics.
 
 ## Repository Layout
 
-```
-skills/                    # Public skills (shipped with the plugin)
-  <skill-name>/
-    SKILL.md               # Skill definition (YAML frontmatter + prompt body)
-    <tool>.py              # (optional) bundled executable script for the skill
+```text
+skills/nitpicker/
+  SKILL.md                 # The router: frontmatter + dispatch + Commands table
+  commands/
+    _conventions.md        # Shared conventions binding every command (severity, findings protocol)
+    <command>.md           # One file per command, no frontmatter
+  scripts/                 # Shipped tools: findings.py, fetch-pr-comments.py,
+                           #   process-sarif.py, check-rules-anatomy.py — stdlib-only, plain python3
 .claude/
-  skills/                  # Internal/dev skills (used during development only)
-    <skill-name>/
-      SKILL.md
-  agents/                  # Claude Code sub-agent definitions — do NOT read or modify
-  settings.json            # Claude Code project settings / shared hooks
-.claude-plugin/
-  plugin.json              # Plugin identity + version
-  marketplace.json         # Marketplace listing
-scripts/
-  validate-skill.py        # Validates public skill `SKILL.md` files by default (run via `make validate`)
-  check-version-sync.py    # Verifies version is in sync across all manifests
-  bump-version.py          # Manual version bump utility
-  list-skills.py           # Lists all skills with their descriptions
-  common.py                # Shared helpers for scripts
-.github/
-  workflows/
-    validate-skills.yml    # CI: validates skills + version sync; triggers on SKILL.md files, version files, and validation scripts
-    release-please.yml     # CI: automated releases from main
-docs/
-  audit/                   # Output directory for skill findings (auto-created by skills)
-CLAUDE.md                  # Primary guidance document — read this first on any task
-README.md                  # Public-facing documentation
-package.json               # npm manifest — holds the canonical version
-pyproject.toml             # Python project config (uv/ruff)
-Makefile                   # Developer workflow commands
+  skills/                  # Internal dev skills (new-command, release-prep, skills, skill-tester,
+                           #   validate-skills) — not shipped to consumers
+  rules/                   # Enforced conventions (skill-format, skill-style, use-uv-runner, …)
+  settings.json            # Shared PostToolUse hooks
+  agents/                  # Sub-agent definitions — do NOT read or modify
+.claude-plugin/            # plugin.json + marketplace.json (plugin identity + version)
+scripts/                   # Internal dev tooling: validate-skill.py, bump-version.py, hooks, …
+docs/audit/findings/       # Per-finding audit store (see below)
+tests/                     # pytest suite for the tooling
 ```
 
-## Skill File Format — Non-Negotiable Rules
+## The Commands
 
-Every `SKILL.md` **must** start with YAML frontmatter:
+The authoritative command listing (categorized; each command keeps its 1.x skill-name alias) is the
+`## Commands` section of `skills/nitpicker/SKILL.md` — do not duplicate it here. Nitpicker in one
+line: adversarial, exhaustive auditing across code, security, tests, docs, architecture,
+performance, dependencies, error handling, CI, commits, migrations, observability, contracts,
+a11y, privacy, config, leaks, i18n, and concurrency, plus PR review and review-comment
+implementation.
 
-```yaml
----
-name: skill-name
-description: '<Capability summary sentence>. Use when <triggering conditions>.'
----
+## File Format — Non-Negotiable Rules
+
+Enforced by `scripts/validate-skill.py` (run via `make validate`, part of `make check` and CI):
+
+**Router (`skills/nitpicker/SKILL.md`)** — the only file with YAML frontmatter:
+
+- `name` must match the directory name exactly (kebab-case)
+- `description` must contain `"Use when"`, be ≤ 1024 characters, and be wrapped in single
+  quotes when the value contains `": "` (colon + space)
+
+**Command files (`commands/*.md`)** — no frontmatter. Required shape:
+
+- h1 `# /nitpicker <command> — <Title>` where `<command>` matches the filename
+- a `## When to use` section
+- no header-level jumps (h2 → h4 is an error)
+- every file in `commands/` must have a row in one of the command tables of SKILL.md
+  (`## Commands` or `## Internal commands`), **1:1**, enforced by `scripts/validate-skill.py` —
+  a table row without a file or a file without a row fails validation
+- never restate `_conventions.md` content (severity table, findings protocol, generic rules)
+- no reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`) in skill bodies:
+  arguments are parsed from the free text after the invocation so the skill works in Copilot and pi
+
+## Findings Store
+
+Audits write one file per open finding — never a monolithic report — and append resolved findings to a ledger:
+
+```text
+docs/audit/findings/
+  INDEX.md                      # generated — never hand-edit
+  resolved.jsonl                # append-only ledger of fixed/invalid findings
+  .gitattributes                # marks the store linguist-generated (self-written)
+  <auditor>/open/<id>.md        # <auditor> is the command name; IDs are content-hashed
 ```
 
-Validation checks and repository guidance from `scripts/validate-skill.py` (and CI):
+Drive the store only through the shipped CLI:
 
-- `name` must match the **directory name exactly** (kebab-case)
-- `description` must contain `"Use when"` (trigger clause); recommended format: `"<capability summary>. Use when <trigger conditions>."`
-- `description` must be ≤ 1024 characters
-- Header levels in the body must not skip (e.g., h2 → h4 is an error)
-- Do not reference legacy output paths (`codereview.md`, `fixreport.md`) — use `docs/audit/`
-  instead; `scripts/validate-skill.py` currently warns on these references
+```bash
+python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|migrate|migrate-resolved ...
+```
 
-Body-only (no frontmatter) is a **legacy pattern** — never create new skills without frontmatter.
+Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migrate` converts
+1.x `docs/audit/*-findings.md` documents.
 
-## Existing Public Skills
+## Two Script Classes
 
-| Skill | Directory |
-|-------|-----------|
-| Adversarial code reviewer | `skills/adversarial-reviewer/` |
-| Exhaustive repository audit + auto-fix | `skills/nitpicker/` |
-| Architecture pattern detection | `skills/arch-detector/` |
-| Architecture violation auditor | `skills/arch-auditor/` |
-| Documentation accuracy auditor | `skills/doc-auditor/` |
-| PR review (stdout only, no findings file) | `skills/pr-reviewer/` |
-| Security audit with available local scanners | `skills/security-auditor/` |
-| GitHub PR review comment implementer | `skills/cr-implementer/` |
-| Claude rules and CLAUDE.md rule-placement auditor | `skills/claude-rules-auditor/` |
-| Claude Code enforcement-surface loophole hunter | `skills/loophole-hunter/` |
-| Agent hook-coverage enforcer (evidence-driven) | `skills/hooks-enforcer/` |
-| Anti-over-engineering enforcement (lazy-senior mode) | `skills/complexity-hunter/` |
-| Performance audit (growth-driver evidence) | `skills/perf-auditor/` |
-| Test-suite weakness auditor (tests only, never production source) | `skills/test-auditor/` |
-| Dependency health auditor (beyond CVEs) | `skills/dep-auditor/` |
-| Silent-failure and error-handling auditor | `skills/silent-failure-hunter/` |
-| CI/CD pipeline-definition auditor (GitHub Actions first-class) | `skills/ci-auditor/` |
-| Commit-message-vs-diff discipline auditor (release-please truth) | `skills/commit-auditor/` |
-| Database schema/data migration auditor (static, never runs migrations) | `skills/migration-auditor/` |
-| Observability / signal-surface auditor (logs, metrics, traces, alerts) | `skills/observability-auditor/` |
-| Public contract-surface auditor (spec vs implementation, surface vs semver) | `skills/api-contract-auditor/` |
-| Accessibility auditor (WCAG 2.2 AA, UI layer) | `skills/a11y-auditor/` |
-| Concurrency safety auditor (races, deadlocks, atomicity) | `skills/concurrency-auditor/` |
-| Internationalization / localization auditor | `skills/i18n-auditor/` |
-| Resource-leak / lifecycle auditor | `skills/resource-leak-auditor/` |
-| Application/runtime config auditor | `skills/config-auditor/` |
-| Data-privacy / PII auditor | `skills/data-privacy-auditor/` |
-
-## Adding a New Skill
-
-1. Create `skills/<kebab-case-name>/SKILL.md` with valid frontmatter
-2. Add a row to the skills table in `CLAUDE.md` and the "Existing Public Skills" table in
-   `.github/copilot-instructions.md` (these are the source of truth for the public skill list).
-   Also update `README.md` (it always contains a mirrored skills table), the Available Skills
-   table + Routing Guide in `.claude/skills/skills/SKILL.md`, and the Skill Catalogue, Mermaid
-   graphs, and Quick Reference in `.claude/skills/README.md`.
-3. Run `/new-skill` — it orchestrates the full RED → GREEN → REFACTOR → adversarial-review → validate → pr-reviewer cycle. Do not skip this; it enforces the TDD baseline and rationalization protection.
-4. Commit with `feat: add <name> skill` — this triggers a **minor** version bump via release-please
+| Class                | Location                               | Runner                                                                                                                   |
+| -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Shipped skill tools  | `skills/*/scripts/*.py`                | plain `python3`, stdlib-only, `#!/usr/bin/env python3` — consumers cannot be assumed to have uv or any installed package |
+| Internal dev tooling | `scripts/`, `scripts/hooks/`, `tests/` | `uv run --quiet <script>`, shebang `#!/usr/bin/env -S uv run --quiet` + `# /// script` block                             |
 
 ## Validation — Run Before Every Commit
 
 ```bash
-make check          # validate + validate-rules + version-sync + audit-consistency + lint + format-check + pytest (all must pass)
-make validate       # SKILL.md frontmatter + structure only
-make validate-rules # validate .claude/rules/ files (structure + path freshness)
-make test           # run pytest unit tests for scripts/
-make version-sync   # version consistency across manifests
-make lint           # ruff check on scripts/, tests/, skills/
-make list           # print all skills with descriptions
+make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + pytest + pre-commit
+make list      # list the skill and its commands
+make test      # pytest suite for the tooling
 ```
 
-CI runs six steps on every push/PR that touches a relevant path: validate-skill (twice — public and internal
-skills), validate-rules, check-version-sync, `pytest tests/`, `ruff check scripts/ tests/ skills/`, and
-`ruff format --check scripts/ tests/ skills/`. Trigger paths include `skills/**/SKILL.md`,
-`skills/**/*.py`, `.claude/skills/**/SKILL.md`, `scripts/**`, `tests/**`, `.claude/rules/**`, and all
-five version manifest files.
+CI runs the same checks on every push/PR touching skills, scripts, tests, rules, or version files.
 
 ## Versioning — Five Files Must Stay in Sync
 
-The canonical version lives in `package.json`. All five must match:
-
-| File | Field |
-|------|-------|
-| `package.json` | `"version"` |
-| `.claude-plugin/plugin.json` | `"version"` |
-| `.claude-plugin/marketplace.json` | `"plugins[0].version"` |
-| `.release-please-manifest.json` | `"."` |
-| `pyproject.toml` | `project.version` |
-
-Use `scripts/bump-version.py [major|minor|patch]` for manual bumps — it updates all files atomically.
-Never update version fields by hand in individual files.
+The canonical version lives in `package.json`. All five must match: `package.json`,
+`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`plugins[0].version`),
+`.release-please-manifest.json`, `pyproject.toml`. Use `scripts/bump-version.py [major|minor|patch]`
+for manual bumps — never edit version fields by hand in individual files.
 
 ## Commit Message Convention (Controls Release Automation)
 
-| Prefix | Effect |
-|--------|--------|
-| `feat:` | Minor version bump (new skill) |
-| `fix:` | Patch version bump (skill improvement, bug fix) |
-| `feat!:` or `BREAKING CHANGE:` footer | Major version bump |
-| `chore:`, `docs:`, `refactor:` | No version bump |
+| Prefix                                | Effect                                    |
+| ------------------------------------- | ----------------------------------------- |
+| `feat:`                               | Minor bump (new command or feature)       |
+| `fix:`                                | Patch bump (command improvement, bug fix) |
+| `feat!:` or `BREAKING CHANGE:` footer | Major bump                                |
+| `chore:`, `docs:`, `refactor:`        | No bump                                   |
 
-Incorrect prefixes will produce wrong version bumps or no release at all.
+release-please derives releases from these prefixes; a wrong prefix mis-versions the release.
 
-## Skill Writing Conventions
+## Adding a New Command
 
-All skills follow these conventions — new skills must too:
-
-- **Hostile, deterministic agents** — no hedging ("might", "could", "potential"), no compliments
-- **Silence = approval** — if a finding is not filed, it is implicitly accepted
-- **Output destinations are explicit**: skills that write files write findings under `docs/audit/`
-  using a skill-specific filename; `pr-reviewer` writes to stdout only and never writes a file
-- **Severity levels are enumerated** (Critical / High / Medium / Low, sometimes Advisory)
-- **Every finding must include evidence** and a concrete fix — no abstract advice
+1. Create `skills/nitpicker/commands/<name>.md` (short kebab-case name, 2.0 vocabulary — no
+   `-auditor` suffixes) with the required h1 and `## When to use`.
+2. Add its row to the `## Commands` table in `skills/nitpicker/SKILL.md`.
+3. Add it to the Routing Guide in `.claude/skills/skills/SKILL.md`.
+4. Add it to the command table in `README.md` and mention it here if it changes the rules above.
+5. `make check` must pass (the validator enforces table ↔ file sync).
+6. Commit with `feat: add /nitpicker <name> command`.
 
 ## Common Mistakes to Avoid
 
-- **Do not** create a skill without YAML frontmatter — it will fail CI
-- **Do not** update version in only one file — all five files must be in sync
-- **Do not** use `feat:` for a bug fix or `fix:` for a new skill — the commit prefix controls the release bump
-- **Do not** reference `codereview.md` or `fixreport.md` as output paths — use `docs/audit/`
-- **Do not** read or modify anything under `.claude/agents/` — those are restricted
-- **Do not** commit findings files (`docs/audit/*.md`) silently — every audit skill must ask "Commit findings to git? (y/n)" before staging them. Findings files **are** tracked in this repo as the canonical audit history; the rule is "always ask first", not "never commit"
-
-## Development Environment
-
-The project uses [uv](https://docs.astral.sh/uv/) for Python dependency management. Scripts are run via `uv run`:
-
-```bash
-uv run scripts/validate-skill.py         # validate public skills
-uv run scripts/validate-skill.py .claude/skills/*/SKILL.md  # validate internal skills
-uv run scripts/check-version-sync.py     # verify version consistency
-```
-
-No `npm install` or Python venv setup is needed — `uv` handles it automatically.
+- **Do not** duplicate `_conventions.md` content into a command file — commands inherit it.
+- **Do not** hand-edit `docs/audit/findings/INDEX.md` — it is generated by `findings.py index`.
+- **Do not** add uv invocations or non-stdlib imports to shipped tools under
+  `skills/nitpicker/scripts/` — they must run with plain `python3` on any consumer machine.
+- **Do not** add a Commands-table row without its command file, or a command file without its
+  row — the 1:1 sync check fails CI.
+- **Do not** use `$ARGUMENTS` or other Claude-only substitution in skill bodies — parse the
+  free text after the invocation instead.
+- **Do not** add frontmatter to command files, or omit it from the router SKILL.md.
+- **Do not** update the version in only one manifest — all five must move together.
+- **Do not** read or modify anything under `.claude/agents/` — those are restricted.
+- **Do not** commit finding files silently — audits ask "Commit findings to git? (y/n)" first.

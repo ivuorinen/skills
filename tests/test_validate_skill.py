@@ -138,3 +138,112 @@ class TestValidate:
             f"{long_body}\n"
         )
         assert _has(_warnings(tmp_path, text), "500")
+
+    def test_crlf_frontmatter_valid(self, tmp_path):
+        assert _errors(tmp_path, VALID.replace("\n", "\r\n")) == []
+
+
+class TestTargetDiscovery:
+    def test_no_args_includes_dot_claude_skills(self, tmp_path, monkeypatch, capsys):
+        for base, skill in (("skills", "pub"), (".claude/skills", "internal")):
+            d = tmp_path / base / skill
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(VALID.replace("my-skill", skill), encoding="utf-8")
+        # main() derives repo_root from the module's __file__ as scripts/validate-skill.py.
+        monkeypatch.setattr(_mod, "__file__", str(tmp_path / "scripts" / "validate-skill.py"))
+        monkeypatch.setattr(_mod.sys, "argv", ["validate-skill.py"])
+        _mod.main()
+        assert "2 skill(s) validated" in capsys.readouterr().out
+
+
+# ── command-file validation (skills with a commands/ directory) ─────────────
+
+COMMANDS_SKILL = (
+    "---\nname: my-skill\n"
+    "description: Dispatches commands. Use when testing command dispatch.\n"
+    "---\n\n## Commands\n\n"
+    "| Command | Aliases | Purpose |\n"
+    "|---------|---------|---------|\n"
+    "| `alpha` | `old-alpha` | First |\n"
+    "| `beta` | — | Second |\n"
+)
+
+GOOD_COMMAND = "# /my-skill {name} — Title\n\nPurpose line.\n\n## When to use\n\nTriggers.\n"
+
+
+def _run_commands(tmp_path: Path, files: dict[str, str]) -> list[str]:
+    skill_dir = tmp_path / "my-skill"
+    cmd_dir = skill_dir / "commands"
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(COMMANDS_SKILL, encoding="utf-8")
+    for fname, content in files.items():
+        (cmd_dir / fname).write_text(content, encoding="utf-8")
+    errors: list[str] = []
+    warnings: list[str] = []
+    validate(skill_dir / "SKILL.md", errors, warnings)
+    return errors
+
+
+def _cmd(name: str) -> str:
+    return GOOD_COMMAND.format(name=name)
+
+
+class TestCommandValidation:
+    def test_happy_path(self, tmp_path):
+        errors = _run_commands(tmp_path, {"alpha.md": _cmd("alpha"), "beta.md": _cmd("beta")})
+        assert errors == []
+
+    def test_underscore_files_ignored(self, tmp_path):
+        errors = _run_commands(
+            tmp_path,
+            {"alpha.md": _cmd("alpha"), "beta.md": _cmd("beta"), "_conventions.md": "# Shared\n"},
+        )
+        assert errors == []
+
+    def test_table_row_without_file(self, tmp_path):
+        errors = _run_commands(tmp_path, {"alpha.md": _cmd("alpha")})
+        assert _has(errors, "beta")
+        assert _has(errors, "no commands/beta.md")
+
+    def test_file_without_table_row(self, tmp_path):
+        errors = _run_commands(
+            tmp_path,
+            {"alpha.md": _cmd("alpha"), "beta.md": _cmd("beta"), "gamma.md": _cmd("gamma")},
+        )
+        assert _has(errors, "gamma")
+        assert _has(errors, "not in the Commands table")
+
+    def test_wrong_h1(self, tmp_path):
+        bad = "# /my-skill wrong — Title\n\nPurpose.\n\n## When to use\n\nT.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "h1 must be '# /my-skill alpha — <Title>'")
+
+    def test_h1_without_title_rejected(self, tmp_path):
+        bad = "# /my-skill alpha\n\nPurpose.\n\n## When to use\n\nT.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "h1 must be '# /my-skill alpha — <Title>'")
+
+    def test_command_frontmatter_rejected(self, tmp_path):
+        bad = "---\ndescription: sneaky\n---\n" + _cmd("alpha")
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "must not have YAML frontmatter")
+
+    def test_when_to_use_inside_fence_rejected(self, tmp_path):
+        bad = "# /my-skill alpha — Title\n\nPurpose.\n\n```\n## When to use\n```\n\nT.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "missing '## When to use'")
+
+    def test_headerless_command_file(self, tmp_path):
+        errors = _run_commands(tmp_path, {"alpha.md": "just prose\n", "beta.md": _cmd("beta")})
+        assert _has(errors, "h1 must be '# /my-skill alpha — <Title>'")
+        assert _has(errors, "missing '## When to use'")
+
+    def test_missing_when_to_use(self, tmp_path):
+        bad = "# /my-skill alpha — Title\n\nPurpose.\n\n## Something else\n\nT.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "missing '## When to use'")
+
+    def test_header_jump_in_command(self, tmp_path):
+        bad = "# /my-skill alpha — Title\n\nPurpose.\n\n## When to use\n\nT.\n\n#### Deep\n\nX.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "header level jumps")

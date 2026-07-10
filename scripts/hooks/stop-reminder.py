@@ -2,43 +2,56 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Stop hook — remind about modified skills before Claude hands back control."""
+"""Stop hook — remind about staged skill changes before Claude hands back control.
 
-import os
+Scoped to the git index (`git diff --cached`): the reminder fires only when
+skill files are staged for commit, not on every turn a working-tree edit exists.
+On a long-lived branch full of uncommitted skill edits, a working-tree scope
+would block the stop once per turn forever; the index scope fires only at the
+moment it matters — right before a commit.
+"""
+
 import subprocess
+import sys
 from pathlib import Path
 
-_default = Path(__file__).parent.parent.parent
-REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT", _default)))
+sys.path.insert(0, str(Path(__file__).parent))
+from _hooklib import load_event, repo_root  # noqa: E402  # type: ignore[import-not-found]
+
+REPO_ROOT = repo_root()
 
 
 def main() -> None:
-    # Use `git status --porcelain -uall` so the hook also sees individual
-    # untracked SKILL.md files — without `-uall`, an untracked directory shows
-    # as just `?? skills/` (trailing slash) and the SKILL.md filter misses it.
+    # A Stop hook that exits 2 blocks the stop and re-invokes Claude. Without
+    # this guard the reminder fires again on the forced continuation's own stop,
+    # looping forever. `stop_hook_active` is true on that second pass — surface
+    # the reminder once, then let Claude stop.
+    if (load_event() or {}).get("stop_hook_active"):
+        return
+
+    # `git diff --cached --name-only -z` lists staged paths only, NUL-separated
+    # and unquoted (safe for spaces). Renames report just the new path.
     result = subprocess.run(
-        ["git", "status", "--porcelain", "-uall"],
+        ["git", "diff", "--cached", "--name-only", "-z"],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         return
-    paths: list[str] = []
-    for line in result.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:]
-        # Renames look like "R  old -> new"; keep only the new path.
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        paths.append(path)
-    changed = [f for f in paths if "skills/" in f and f.endswith("SKILL.md")]
+    paths = [p for p in result.stdout.split("\0") if p]
+    changed = [
+        f
+        for f in paths
+        if "skills/" in f and (f.endswith("SKILL.md") or "/commands/" in f and f.endswith(".md"))
+    ]
     if changed:
-        print("Modified skills detected:", flush=True)
+        # Stop hooks feed back to Claude only via exit 2 + stderr.
+        print("Staged skill changes detected:", file=sys.stderr)
         for f in changed:
-            print(f"  {f}", flush=True)
-        print("Run /validate-skills before releasing.", flush=True)
+            print(f"  {f}", file=sys.stderr)
+        print("Run /validate-skills before releasing.", file=sys.stderr, flush=True)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

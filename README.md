@@ -1,227 +1,191 @@
-# ivuorinen-skills
+# skills
 
-Hostile audit skills for Claude Code.
-
-## Skills
-
-Skills are listed in preferred execution order. [`nitpicker`][nitpicker] is the orchestrator — start there for a full audit.
-
-| Skill | Description |
-|-------|-------------|
-| [`nitpicker`][nitpicker] | Exhaustive repository audit; finds defects across code, tests, docs, and config; optionally applies fixes |
-| [`arch-detector`][arch-detector] | Detects which architectural patterns a codebase uses (19 patterns, 8 canonical combinations) |
-| [`arch-auditor`][arch-auditor] | Audits codebase for architectural violations against detected or declared patterns |
-| [`doc-auditor`][doc-auditor] | Verifies all documentation accuracy against the codebase; finds stale, incorrect, and missing docs |
-| [`security-auditor`][security-auditor] | Audits a codebase with available security scanners, parses results, and writes a consolidated findings report |
-| [`adversarial-reviewer`][adversarial-reviewer] | Hostile code review; assumes bugs exist and hunts for them |
-| [`pr-reviewer`][pr-reviewer] | Hostile but constructive PR review; outputs copy-paste-ready markdown for GitHub PR comments |
-| [`cr-implementer`][cr-implementer] | Fetches GitHub PR review comments (unresolved where available via GraphQL), evaluates and implements valid ones one at a time, verifies with tests and linting, and asks user whether to leave/commit/push |
-| [`claude-rules-auditor`][claude-rules-auditor] | Audits `.claude/rules/` files for quality, checks CLAUDE.md for misplaced rules, and suggests new rules from project conventions and audit artifacts |
-| [`loophole-hunter`][loophole-hunter] | Audits the Claude Code enforcement surface (`.claude/rules/`, hooks, `.claude/settings.json`, permissions, skills) for bypassable or unenforced constraints and closes them; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
-| [`hooks-enforcer`][hooks-enforcer] | Audits an agent project's hook *coverage* against its evidence base (current hooks, audit-findings history, git history, project memory); finds recurring failures no hook guards and context-discipline gaps where large-output work bypasses a context-saving tool; specifies and wires the missing hooks in the host harness's correct shape; invoked by `nitpicker` in `loophole` mode and by `release-prep` as a gate |
-| [`ci-auditor`][ci-auditor] | Hostile single-shot audit of CI/CD pipeline definitions (GitHub Actions first-class; GitLab CI and other YAML pipelines by the same principles); finds unpinned actions, over-broad token permissions, script injection, privileged-trigger misuse, secrets leakage, non-gating checks, masked failures, missing concurrency, cache poisoning, and self-hosted runner exposure; invoked by `nitpicker` in `ci` mode and by `release-prep` as a gate |
-| [`commit-auditor`][commit-auditor] | Hostile single-shot audit of commit-message discipline against the actual diffs; finds type-understatement, type-overstatement, unmarked and spurious breaking changes, squash-title scope-lies, and malformed convention that mis-version a release-please/semver release; every finding cites the SHA, quoted message, contradicting hunks, and the version consequence; amends unpushed messages on approval, never rewrites pushed history; invoked by `nitpicker` in `commits` mode and by `release-prep` as a gate |
-| [`complexity-hunter`][complexity-hunter] | Forces the laziest solution that actually works on every coding task — climbs a reuse-first ladder (YAGNI, codebase, stdlib, platform, installed dependency, one line) before writing new code; stays active on every coding response once invoked; also audits a diff or a whole repo for over-engineering with tagged, ranked findings; never simplifies away trust-boundary validation, data-loss error handling, security, or accessibility |
-| [`perf-auditor`][perf-auditor] | Hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots on real data paths, sync-blocking calls in async contexts, unbounded caches/queues/retries, missing pagination, loop-invariant work redone per iteration, and chatty per-item I/O; every finding names the code path, the growth driver, and a concrete fix; uses installed measurement tools, never adds a dependency; invoked by `nitpicker` in `perf` mode and by `release-prep` as a gate |
-| [`test-auditor`][test-auditor] | Hostile audit of the test suite itself; assumes the tests are weaker than they look and proves it — assertion-free and tautological tests, mocks of the unit under test, over-mocking that severs the code path, flaky patterns, untracked skips, coverage holes on money/security/data-loss paths, and mutation-blind spots; fixes add or strengthen tests only, never production source; invoked by `nitpicker` in `tests` mode and by `release-prep` as a gate |
-| [`dep-auditor`][dep-auditor] | Audits dependency health beyond CVEs — unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies; cross-references manifest, lockfile, and a full import/usage scan; never installs anything; invoked by `nitpicker` in `deps` mode and by `release-prep` as a gate |
-| [`silent-failure-hunter`][silent-failure-hunter] | Hostile audit of application error handling; assumes failures are being swallowed and proves where — swallowed exceptions, fail-open defaults, overbroad catches, ignored error signals, masking fallbacks, silent retries, cause-destroying rethrows; on approval fixes the error path only, never the happy path; invoked by `nitpicker` in `errors` mode and by `release-prep` as a gate |
-| [`migration-auditor`][migration-auditor] | Hostile audit of database schema and data migrations; assumes every migration eats production until proven safe — destructive ops, irreversible downs, long-lock operations, missing FK indexes, schema-model drift, unbatched data migrations, deploy-order breaks, duplicate versions; static analysis only, never runs a migration; never edits an applied migration — its fix is a new migration; invoked by `nitpicker` in `migrations` mode and by `release-prep` as a gate |
-| [`observability-auditor`][observability-auditor] | Hostile single-shot audit of the signal surface a codebase emits; assumes production failures are invisible until logs, metrics, traces, and alerts prove otherwise — dark paths, missing correlation IDs, level misuse, unfireable alerts, cardinality bombs, PII in logs, silent jobs, context-free errors; on approval fixes add or correct emissions only, never business logic; invoked by `nitpicker` in `observability` mode and by `release-prep` as a gate |
-| [`api-contract-auditor`][api-contract-auditor] | Hostile single-shot audit of the declared public contract surface (OpenAPI/Swagger and GraphQL specs, package exports, published types, documented CLI flags) against the implementation, and of every surface change since the last release tag against the semver bump the commits declare; spec edits and code edits are separate per-finding approvals — which side is right is the user's call; invoked by `nitpicker` in `contract` mode and by `release-prep` as a gate |
-| [`a11y-auditor`][a11y-auditor] | Hostile single-shot accessibility audit of the UI layer against WCAG 2.2 AA; assumes the interface is unusable without a mouse and screen until the code proves otherwise — missing alternatives, unlabeled controls, keyboard-unreachable handlers, focus loss, ARIA misuse, computed contrast violations, structure breaks, and motion hazards; runs installed a11y tools first, never installs anything; a repo with no UI surface gets the explicit verdict "no auditable UI surface"; invoked by `nitpicker` in `a11y` mode and by `release-prep` as a gate |
-| [`concurrency-auditor`][concurrency-auditor] | Audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to `perf-auditor`; invoked by `nitpicker` in `concurrency` mode and by `release-prep` as a gate |
-| [`i18n-auditor`][i18n-auditor] | Audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by `nitpicker` in `i18n` mode and by `release-prep` as a gate |
-| [`resource-leak-auditor`][resource-leak-auditor] | Audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to `perf-auditor`; invoked by `nitpicker` in `leaks` mode and by `release-prep` as a gate |
-| [`config-auditor`][config-auditor] | Audit application/runtime configuration — undocumented env vars, missing startup validation, unsafe prod defaults, config drift, committed secrets, string coercion traps, hardcoded environment values; cross-references code against `.env.example`/schema/docs; exploitability routes to `security-auditor`; invoked by `nitpicker` in `config` mode and by `release-prep` as a gate |
-| [`data-privacy-auditor`][data-privacy-auditor] | Audit the personal-data surface — PII/credentials unprotected at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, weak anonymization; elements must be identifiably personal, never guessed; explicit "no personal-data surface" verdict; PII-in-logs routes to `observability-auditor`; invoked by `nitpicker` in `privacy` mode and by `release-prep` as a gate |
-
-## Installation
-
-### Add the marketplace
+**Nitpicker** — a hostile audit toolkit for coding agents. One skill, one
+entry point, a full deck of audit commands:
 
 ```text
-/plugins marketplace add ivuorinen/skills
+/nitpicker <command> [extra instructions]
 ```
 
-### Install the plugin
+Assumes the code is incorrect until proven otherwise. Every command files
+findings with evidence and a concrete fix — no compliments, no hedging.
 
-```text
-/plugins install ivuorinen-skills
-```
+Works in **Claude Code**, **GitHub Copilot**, **pi**, and any agent that
+reads the open [Agent Skills](https://agentskills.io) format.
+
+## Install
+
+| Agent                                             | How                                                                                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code (plugin)                              | `/plugins` → add marketplace `ivuorinen/skills` → install `ivuorinen-skills`                                                                                       |
+| Any agent via [skills.sh](https://www.skills.sh/) | `npx skills add ivuorinen/skills` (installs into the agent you pick)                                                                                               |
+| GitHub Copilot                                    | `npx skills add ivuorinen/skills -a copilot`, or copy `skills/nitpicker/` into `.github/skills/` — Copilot also reads `.claude/skills/` and `.agents/skills/`      |
+| pi                                                | `npx skills add ivuorinen/skills -a pi`, copy into `.agents/skills/`, or add the checkout to the `"skills": [...]` setting; invoke as `/skill:nitpicker <command>` |
+
+The bundled tools (`skills/nitpicker/scripts/*.py`) are stdlib-only and run
+with plain `python3` — no uv, no package installs on the consumer machine.
 
 ## Usage
 
-Invoke any skill by name in Claude Code (listed in execution order):
-
-- `/nitpicker` — exhaustive audit + optional auto-fix
-- `/arch-detector` — detect architecture patterns
-- `/arch-auditor` — audit architecture violations
-- `/doc-auditor` — verify documentation accuracy
-- `/security-auditor` — security audit with available local scanners
-- `/adversarial-reviewer` — hostile code review
-- `/pr-reviewer` — PR review (stdout only)
-- `/cr-implementer` — implement PR review comments
-- `/claude-rules-auditor` — audit `.claude/rules/` and CLAUDE.md rule placement
-- `/loophole-hunter` — audit the Claude Code enforcement surface and close loopholes
-- `/hooks-enforcer` — audit hook coverage against the project's evidence base and wire the missing hooks
-- `/ci-auditor` — audit CI/CD pipeline definitions for security and reliability defects
-- `/commit-auditor` — audit commit messages against their diffs so release automation computes the right version
-- `/complexity-hunter` — force the laziest working solution on every coding task (sticky mode); also audits a diff or repo for over-engineering
-- `/perf-auditor` — performance audit with growth-driver evidence; writes findings to `docs/audit/perf-auditor-findings.md`
-- `/test-auditor` — audit the test suite itself for tests that cannot fail, severed code paths, flaky patterns, and critical-path coverage holes
-- `/dep-auditor` — audit dependency health beyond CVEs: unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, and misclassified dependencies
-- `/silent-failure-hunter` — audit application error handling for swallowed failures and fix the error paths
-- `/migration-auditor` — audit database schema and data migrations for destructive, irreversible, locking, and deploy-order defects
-- `/observability-auditor` — audit the emitted signal surface: logging, metrics, tracing, and alert coverage on critical paths
-- `/api-contract-auditor` — audit the declared contract surface against the implementation and every surface change since the last release against its semver bump
-- `/a11y-auditor` — accessibility audit of the UI layer against WCAG 2.2 AA; findings in `docs/audit/a11y-auditor-findings.md`
-- `/concurrency-auditor` — concurrency-safety audit for data races, non-atomic check-then-act, deadlock ordering, lost updates, unsafe publication, and shared-state-across-await; findings in `docs/audit/concurrency-auditor-findings.md`
-- `/i18n-auditor` — internationalization/localization audit for hardcoded strings, locale-unsafe formatting, timezone-naive datetimes, and missing plural rules; findings in `docs/audit/i18n-auditor-findings.md`
-- `/resource-leak-auditor` — resource-lifecycle audit for unclosed handles, pool connections not returned on error, listener/subscription leaks, and orphaned tasks/timers; findings in `docs/audit/resource-leak-auditor-findings.md`
-- `/config-auditor` — application/runtime configuration audit for undocumented env vars, missing startup validation, unsafe prod defaults, config drift, and committed secrets; findings in `docs/audit/config-auditor-findings.md`
-- `/data-privacy-auditor` — personal-data audit for unprotected PII at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, and weak anonymization; findings in `docs/audit/data-privacy-auditor-findings.md`
-
-## Examples
-
-### Full repository audit (recommended starting point)
-
-```
-/nitpicker
+```text
+/nitpicker                       # exhaustive whole-repo audit (default)
+/nitpicker security              # run the security scanners, consolidate findings
+/nitpicker tests inline          # audit the test suite; findings in the response only
+/nitpicker cr fix only critical  # implement PR review comments, scoped by your words
+/nitpicker release-gate          # fail if any open finding ≥ High
+/nitpicker help                  # print the command table
 ```
 
-Exhaustive audit of code, tests, docs, and config. Findings written to `docs/audit/nitpicker-findings.md`. At the end, nitpicker offers to apply fixes and asks before committing.
+The first word after `/nitpicker` picks the command (old 1.x skill names
+still work as aliases); everything after it is free-text instructions for
+that run. The modifiers `inline` (nothing written to disk) and
+`changed-files` (scope to modified files) work with every command.
 
-### Focused nitpicker modes
+## Commands
 
+### Review and fixing
+
+| Command            | What it hunts                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| _(none)_ / `audit` | Everything: code, tests, docs, config — the exhaustive review                                          |
+| `review`           | Bugs in a diff or file set — logic errors, edge cases, missing tests                                   |
+| `pr`               | PR defects; outputs copy-paste-ready GitHub review markdown                                            |
+| `cr`               | Unresolved PR review comments — evaluates and implements the valid ones                                |
+| `complexity`       | Over-engineering; forces the laziest solution that works                                               |
+| `unwired`          | Implementations never wired in, or left incomplete; wires, merges, or removes with per-finding consent |
+
+### Planning
+
+| Command | What it does                                                                                                                                 |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan`  | Turns a change request into a plan hardened by the audit lenses; writes a plan doc and stops for explicit approval before any implementation |
+
+### Security and data
+
+| Command         | What it hunts                                                                    |
+| --------------- | -------------------------------------------------------------------------------- |
+| `security`      | Vulnerabilities, exposed secrets, insecure dependencies (via installed scanners) |
+| `privacy`       | Personal data without the control its class requires                             |
+| `config`        | Undocumented env vars, unsafe prod defaults, committed secrets                   |
+| `iac`           | Container/IaC misconfig: root, open ingress, public stores, overbroad IAM        |
+| `prompt-safety` | LLM-integration safety: prompt injection, model-output-to-sink, tool agency      |
+
+### Runtime behavior
+
+| Command       | What it hunts                                                          |
+| ------------- | ---------------------------------------------------------------------- |
+| `perf`        | N+1 queries, O(n²)+ hotspots, sync-blocking-in-async, unbounded growth |
+| `concurrency` | Data races, TOCTOU, deadlock ordering, unsafe publication              |
+| `errors`      | Swallowed exceptions, fail-open defaults, masking fallbacks            |
+| `leaks`       | Resources acquired without guaranteed release on failure paths         |
+
+### Structure and contracts
+
+| Command        | What it hunts                                                                  |
+| -------------- | ------------------------------------------------------------------------------ |
+| `arch`         | Architectural violations against detected or declared patterns                 |
+| `arch-profile` | Detects the architecture; writes `docs/audit/arch-profile.md`                  |
+| `contract`     | Spec-vs-code drift and surface changes vs the declared semver bump             |
+| `deps`         | Unused, phantom, duplicate, unmaintained, license-conflicting dependencies     |
+| `license`      | Project license, dependency compatibility, copyleft contamination, attribution |
+| `migrations`   | Migrations that eat production: destructive ops, long locks, drift             |
+
+### Quality surfaces
+
+| Command         | What it hunts                                                            |
+| --------------- | ------------------------------------------------------------------------ |
+| `tests`         | Tests that cannot fail: tautologies, mocked-out subjects, coverage holes |
+| `types`         | Suppressed type errors, any-escapes, unsound casts, untyped boundaries   |
+| `docs`          | Documentation that lies: stale, incorrect, missing                       |
+| `ci`            | Pipeline defects: unpinned actions, script injection, over-broad tokens  |
+| `commits`       | Commit messages that mis-version the release vs their actual diffs       |
+| `observability` | Dark paths, PII in logs, unfireable alerts, cardinality bombs            |
+| `a11y`          | WCAG 2.2 AA violations computed from the actual UI code                  |
+| `i18n`          | Hardcoded locale assumptions against the declared locale scope           |
+
+### Coding-agent enforcement
+
+| Command           | What it hunts                                                     |
+| ----------------- | ----------------------------------------------------------------- |
+| `agent-loopholes` | Bypassable constraints in the agent enforcement surface           |
+| `agent-hooks`     | Recurring failures no hook guards; missing hook coverage          |
+| `agent-rules`     | `.claude/rules/` quality and rules mined from project conventions |
+
+### Meta
+
+| Command        | What it hunts                                               |
+| -------------- | ----------------------------------------------------------- |
+| `baseline`     | Snapshots open findings as accepted; gate fails only on new |
+| `release-gate` | Fails if any open finding at/above threshold (default High) |
+| `help`         | Prints the command listing                                  |
+
+Full command instructions: [`skills/nitpicker/commands/`](skills/nitpicker/commands/),
+shared conventions in [`commands/_conventions.md`](skills/nitpicker/commands/_conventions.md).
+
+## Findings store
+
+Open findings live one file each; resolving one appends to an append-only
+ledger and deletes the file, so audits scale, parallel worktrees never conflict
+on a counter, and PR review is never buried under resolved-finding files:
+
+```text
+docs/audit/findings/
+  INDEX.md                      # generated summary — never hand-edited
+  resolved.jsonl                # append-only ledger of fixed/invalid findings
+  .gitattributes                # marks the store linguist-generated (self-written)
+  <auditor>/open/<id>.md        # one open finding per file
 ```
-/nitpicker security          # invokes security-auditor, then extends with trust-boundary analysis
-/nitpicker tests             # invokes test-auditor, then extends with test structure and coverage
-/nitpicker docs              # invokes doc-auditor, then extends with inline comment accuracy
-/nitpicker architecture      # invokes arch-detector + arch-auditor, then extends with coupling analysis
-/nitpicker loophole          # invokes loophole-hunter + hooks-enforcer, then extends with hook-script analysis
-/nitpicker perf              # invokes perf-auditor, then extends with complexity and resource-lifecycle review
-/nitpicker deps              # invokes dep-auditor, then extends with dependency call-site usage
-/nitpicker errors            # invokes silent-failure-hunter, then extends with error-propagation review
-/nitpicker ci                # invokes ci-auditor, then extends with pipeline build and deploy logic
-/nitpicker commits           # invokes commit-auditor, then extends with commit granularity and history hygiene
-/nitpicker migrations        # invokes migration-auditor, then extends with migration/application-code coupling
-/nitpicker observability     # invokes observability-auditor, then extends with log and metric call sites
-/nitpicker contract          # invokes api-contract-auditor, then extends with the implementation behind the surface
-/nitpicker a11y              # invokes a11y-auditor, then extends with UI logic behind WCAG defects
-/nitpicker changed-files     # limit review to modified files and their dependencies only
-/nitpicker release-gate      # fail if any High or Critical findings exist (CI gate)
-/nitpicker inline            # return findings in the response, no file written
+
+IDs are content-hashed (`security-1a2b3c4d`). The store is managed by the
+bundled CLI:
+
+```bash
+python3 skills/nitpicker/scripts/findings.py list --status open
+python3 skills/nitpicker/scripts/findings.py resolve <id> --status fixed --notes "…"
+python3 skills/nitpicker/scripts/findings.py validate
+python3 skills/nitpicker/scripts/findings.py index
 ```
 
-### Architecture pipeline
+### Migrating from 1.x
 
-```
-/arch-detector    # detect patterns → writes docs/audit/arch-profile.md
-/arch-auditor     # find violations → writes docs/audit/arch-findings.md
-```
+1.x wrote one `docs/audit/<skill>-findings.md` per skill. Run
+`/nitpicker x-findings-migrator` (nitpicker also detects the old files
+itself and asks before migrating — never mid-PR without your consent), or
+convert manually:
 
-Run `arch-detector` first — `arch-auditor` reads the profile and produces stronger, more precise findings.
-
-### Security scan
-
-```
-/security-auditor
+```bash
+python3 skills/nitpicker/scripts/findings.py migrate docs/audit/*-findings.md
+git rm docs/audit/*-findings.md
 ```
 
-Probes for available scanners (`semgrep`, `grype`, `trivy`, `gitleaks`, `checkov`, `gosec`, `snyk`, `npm`/`yarn`/`pnpm` audit) and runs all that are present.
+Legacy IDs (`N-042`) stay valid. All 1.x skill invocations
+(`/security-auditor`, `/test-auditor`, …) map to `/nitpicker <command>`
+aliases — the `## Commands` tables in `skills/nitpicker/SKILL.md` list
+every alias next to its command.
 
-### PR review
+## Development
 
-```
-/pr-reviewer          # review the current branch diff
-/pr-reviewer 42       # review PR #42 on GitHub
-```
-
-Output is copy-paste-ready markdown for GitHub PR comments.
-
-### Implement review comments
-
-```
-/cr-implementer       # detect and implement unresolved comments on the current PR
-/cr-implementer 42    # implement comments on PR #42
+```bash
+make check     # validate skill + commands, rules, version sync, findings store, findings index, lint, format, tests, pre-commit
+make list      # list the skill and its commands
+make test      # pytest suite for the tooling
 ```
 
-Evaluates each comment, implements valid ones one at a time, verifies with tests and linting, and asks before committing or posting replies.
+Repo conventions for agents working on this codebase: [`AGENTS.md`](AGENTS.md)
+(shared), [`CLAUDE.md`](CLAUDE.md) (Claude Code),
+[`.github/copilot-instructions.md`](.github/copilot-instructions.md) (Copilot).
 
-### Running nitpicker autonomously with /goal
-
-[`/goal`][goal-doc] sets a completion condition and keeps Claude working toward it across turns — no re-prompting after each step. After each turn, a separate fast model checks whether the condition holds. If not, Claude starts another turn automatically. The goal clears once the condition is met.
-
-```
-/goal /nitpicker finds no Critical or High findings and docs/audit/nitpicker-findings.md is committed
-```
-
-For fully unattended runs, enable **[auto mode][auto-mode-doc]** before setting the goal. Auto mode uses a background classifier to approve tool calls (file edits, shell commands) without prompting you:
-
-| Layer | What it removes |
-|-------|----------------|
-| `/goal` | Per-turn prompts — Claude re-enters after each turn until the condition holds |
-| Auto mode | Per-tool prompts — file edits and shell commands proceed without confirmation |
-
-Enable auto mode: press `Shift+Tab` in the CLI until `auto` is shown, or use the mode selector in VS Code or Desktop.
-
-```
-# 1. Enable auto mode first (Shift+Tab in the CLI)
-# 2. Then set the goal:
-/goal /nitpicker security applies all Critical and High fixes, docs/audit/nitpicker-findings.md shows 0 open Critical/High
-```
-
-Write effective goal conditions with a verifiable end state — something Claude's own output can demonstrate: a file written, a count reached, a command exit code. Include a turn limit to bound how long the goal can run: `or stop after 15 turns`.
-
-> `/goal` requires Claude Code v2.1.139 or later. See the [`/goal` documentation][goal-doc] and [auto mode reference][auto-mode-doc] for full details.
-
-## Versioning
-
-This plugin follows [Semantic Versioning](https://semver.org/):
-
-- **PATCH** — skill improvements, bug fixes, clarifications
-- **MINOR** — new skills added
-- **MAJOR** — breaking changes to skill behavior or output format
-
-Releases are automated via [release-please](https://github.com/googleapis/release-please). Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/).
-
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+Versioning is [SemVer](https://semver.org/) automated with
+[release-please](https://github.com/googleapis/release-please) from
+Conventional Commits (`feat:` minor, `fix:` patch, `feat!:` major).
 
 ## Credits
 
-[`complexity-hunter`][complexity-hunter] is adapted from [ponytail](https://github.com/DietrichGebert/ponytail) by Dietrich Gebert — the lazy-senior mindset, the ladder, the output pattern, and the audit tags originate there, reshaped to this repo's skill conventions.
+- `/nitpicker plan` adapts the brainstorm → plan → gated-execution model from
+  [obra/superpowers](https://github.com/obra/superpowers) — the separation of
+  planning from implementation, with explicit human sign-off before code is
+  written — and hardens the plan with nitpicker's own adversarial audit lenses.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE). Copyright © 2026 Ismo Vuorinen.
-
-[nitpicker]: skills/nitpicker/README.md
-[arch-detector]: skills/arch-detector/README.md
-[arch-auditor]: skills/arch-auditor/README.md
-[doc-auditor]: skills/doc-auditor/README.md
-[security-auditor]: skills/security-auditor/README.md
-[adversarial-reviewer]: skills/adversarial-reviewer/README.md
-[pr-reviewer]: skills/pr-reviewer/README.md
-[cr-implementer]: skills/cr-implementer/README.md
-[claude-rules-auditor]: skills/claude-rules-auditor/README.md
-[loophole-hunter]: skills/loophole-hunter/README.md
-[hooks-enforcer]: skills/hooks-enforcer/README.md
-[test-auditor]: skills/test-auditor/README.md
-[ci-auditor]: skills/ci-auditor/README.md
-[commit-auditor]: skills/commit-auditor/README.md
-[complexity-hunter]: skills/complexity-hunter/README.md
-[perf-auditor]: skills/perf-auditor/README.md
-[dep-auditor]: skills/dep-auditor/README.md
-[silent-failure-hunter]: skills/silent-failure-hunter/README.md
-[migration-auditor]: skills/migration-auditor/README.md
-[observability-auditor]: skills/observability-auditor/README.md
-[api-contract-auditor]: skills/api-contract-auditor/README.md
-[a11y-auditor]: skills/a11y-auditor/README.md
-[concurrency-auditor]: skills/concurrency-auditor/README.md
-[i18n-auditor]: skills/i18n-auditor/README.md
-[resource-leak-auditor]: skills/resource-leak-auditor/README.md
-[config-auditor]: skills/config-auditor/README.md
-[data-privacy-auditor]: skills/data-privacy-auditor/README.md
-[goal-doc]: https://code.claude.com/docs/en/goal
-[auto-mode-doc]: https://code.claude.com/docs/en/glossary#auto-mode
+[MIT](LICENSE) © Ismo Vuorinen

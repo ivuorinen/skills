@@ -5,23 +5,19 @@
 """PostToolUse hook — validate JSON syntax after Write or Edit."""
 
 import json
-import os
 import sys
 from pathlib import Path
 
-_default = Path(__file__).parent.parent.parent
-REPO_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.environ.get("REPO_ROOT", _default)))
+sys.path.insert(0, str(Path(__file__).parent))
+from _hooklib import event_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
+
+REPO_ROOT = repo_root()
 
 
 def main() -> None:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
+    path = event_path()
+    if path is None:
         return
-
-    file_path = data.get("file_path") or data.get("path") or ""
-    raw = Path(file_path)
-    path = (raw if raw.is_absolute() else REPO_ROOT / raw).resolve()
 
     if path.suffix != ".json":
         return
@@ -37,8 +33,13 @@ def main() -> None:
         text = path.read_text(encoding="utf-8")
         json.loads(text)
     except json.JSONDecodeError as e:
-        print(f"  INVALID JSON  {path}: {e}", flush=True)
-        sys.exit(1)
+        # PostToolUse surfaces only exit 2 + stderr back to the agent.
+        print(f"  INVALID JSON  {path}: {e}", file=sys.stderr, flush=True)
+        sys.exit(2)
+    except OSError:
+        # Unreadable path (dir named *.json, permission denied) — fail open,
+        # matching the other hooks rather than crashing with a traceback.
+        return
 
 
 if __name__ == "__main__":

@@ -3,7 +3,11 @@ node_modules/
 *.local
 .claude/settings.local.json
 .ruff_cache/
+.pytest_cache/
 .venv
 __pycache__
 uv.lock
 .coverage
+
+# Dogfooding symlink: exposes the working-tree skill to Claude Code/Copilot as a project skill
+.claude/skills/nitpicker

@@ -7,7 +7,7 @@ paths:
 # Skill Official Best Practices
 
 Rules derived from the official Anthropic skill authoring best-practices:
-https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices
+<https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices>
 
 ## Name Constraints
 
@@ -24,16 +24,19 @@ description: <Capability summary sentence>. Use when <trigger conditions>.
 ```
 
 Good example:
+
 ```yaml
 description: Generates descriptive commit messages by analyzing git diffs. Use when asked to write commit messages or review staged changes.
 ```
 
 Bad (trigger-only, no capability context):
+
 ```yaml
 description: Use when asked to write commit messages or review staged changes.
 ```
 
 Bad (vague, no trigger):
+
 ```yaml
 description: Helps with git.
 ```

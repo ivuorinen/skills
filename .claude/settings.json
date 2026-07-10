@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/validate-skill-hook.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-skill-hook.py\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/validate-json-hook.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-json-hook.py\""
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/check-version-sync-hook.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/check-version-sync-hook.py\""
           }
         ]
       },
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/ruff-hook.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ruff-hook.py\""
           }
         ]
       },
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/validate-audit-findings-hook.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-audit-findings-hook.py\""
           }
         ]
       }
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "REPO_ROOT=$CLAUDE_PROJECT_DIR uv run --quiet scripts/hooks/stop-reminder.py"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/stop-reminder.py\""
           }
         ]
       }

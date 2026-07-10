@@ -1,0 +1,133 @@
+# yaml-language-server: $schema=https://json.schemastore.org/pre-commit-config.json
+---
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: destroyed-symlinks
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      # JSON syntax for every .json (jsonc is a distinct type, so
+      # .markdownlint.jsonc is excluded — markdownlint-cli2 validates it).
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=auto]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.0
+    hooks:
+      - id: markdownlint-cli2
+        # cli2 has no -c short flag (a bare -c is consumed as a file glob,
+        # which lints the config file itself with no config loaded).
+        args: [--config, .markdownlint.jsonc, --fix]
+        types: [markdown]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: [--strict, -c=.yamllint.yaml]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      # Run the linter with auto-fix
+      - id: ruff-check
+        args: [--fix]
+        types: [python]
+      # Run the formatter
+      - id: ruff-format
+        types: [python]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.4
+    hooks:
+      # Validate the actual JSON/YAML against schemas (fetched from
+      # SchemaStore and cached; CI has network).
+      - id: check-github-workflows
+      - id: check-renovate
+      # Ensure our hand-written schemas are themselves valid JSON Schema.
+      - id: check-metaschema
+        files: ^schemas/.*\.json$
+      - id: check-jsonschema
+        name: validate plugin.json against schemas/plugin.schema.json
+        files: ^\.claude-plugin/plugin\.json$
+        args: [--schemafile, schemas/plugin.schema.json]
+      - id: check-jsonschema
+        name: validate marketplace.json against schemas/marketplace.schema.json
+        files: ^\.claude-plugin/marketplace\.json$
+        args: [--schemafile, schemas/marketplace.schema.json]
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.26.1
+    hooks:
+      # Enforce .claude/rules/github-actions-security.md: SHA-pinned actions,
+      # least-privilege tokens, injection safety. --offline keeps it
+      # deterministic and tokenless; unpinned-uses is still a hard error.
+      - id: zizmor
+        args: [--pedantic, --offline]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      # release-please derives versions from conventional commits; reject anything else.
+      # commit-msg stage — NOT run by CI's `pre-commit run --all-files`. CI validates
+      # commit convention only via the PR title (Lint PR title job), so that gate is
+      # complete only under squash-merge (squash subject = PR title).
+      - id: conventional-commit-msg
+        name: conventional commit message
+        language: pygrep
+        entry: '^((feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\([\w./-]+\))?!?: .+|(Merge|Revert|fixup!) .+)'
+        args: [--negate]
+        stages: [commit-msg]
+      - id: validate-skills
+        name: validate SKILL.md and command files
+        language: system
+        entry: uv run --quiet scripts/validate-skill.py
+        pass_filenames: false
+        files: ^(skills/|\.claude/skills/|scripts/validate-skill\.py)
+      - id: validate-rules
+        name: validate rules files
+        language: system
+        entry: uv run --quiet scripts/validate-rules.py
+        pass_filenames: false
+        files: ^(\.claude/rules/|scripts/validate-rules\.py)
+      - id: version-sync
+        name: check version sync
+        language: system
+        entry: uv run --quiet scripts/check-version-sync.py
+        pass_filenames: false
+        files: '^(package\.json|pyproject\.toml|\.release-please-manifest\.json|\.claude-plugin/(plugin|marketplace)\.json)'
+      - id: findings-store
+        name: validate findings store
+        language: system
+        entry: python3 skills/nitpicker/scripts/findings.py validate
+        pass_filenames: false
+        files: ^docs/audit/findings/
+      - id: stdlib-only-tools
+        name: shipped skill tools are stdlib-only
+        language: system
+        entry: uv run --quiet scripts/check-stdlib-only.py
+        pass_filenames: false
+        files: ^(skills/.*/scripts/.*\.py|scripts/check-stdlib-only\.py)$
+      - id: rules-anatomy
+        # Gates rule *quality* (hedged/vague language, bad frontmatter, dangling
+        # symlinks) — complements validate-rules, which only checks structure.
+        # Exits non-zero on High/Critical anatomy issues; Low/Medium are advisory.
+        name: rule files have sound anatomy
+        language: system
+        entry: python3 skills/nitpicker/scripts/check-rules-anatomy.py .
+        pass_filenames: false
+        files: ^(\.claude/rules/|skills/nitpicker/scripts/check-rules-anatomy\.py)

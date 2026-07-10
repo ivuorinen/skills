@@ -1,670 +1,94 @@
 # Skill Wiring Guide
 
-This document explains how the internal dev skills (`.claude/skills/`) and the public
-audit skills (`skills/`) work together. It covers which skills invoke which, how they
-chain, and the rules that keep the graph acyclic and terminating.
+How the public surface (`skills/`) and the internal dev skills
+(`.claude/skills/`) fit together in 2.0.
 
----
+## Overview
 
-## Skill Catalogue
+**Public surface — one skill.** `nitpicker` is a router
+(`skills/nitpicker/SKILL.md`) dispatching its commands, invoked as
+`/nitpicker <command> [extra instructions]`. Each command's instructions
+live in `skills/nitpicker/commands/<command>.md`; shared conventions
+(severity levels, findings protocol, modifiers, rules) in
+`commands/_conventions.md`. Per-command descriptions live in the
+`## Commands` table of `skills/nitpicker/SKILL.md` — not duplicated here.
 
-### Internal Skills (`.claude/skills/`)
+**Internal dev skills** (`.claude/skills/`, never shipped):
 
-| Skill | Role |
-|-------|------|
-| `new-skill` | Orchestrator — scaffolds + drives the full new-skill lifecycle |
-| `skill-tester` | Validator — TDD pressure-testing for new skill behaviour |
-| `validate-skills` | Leaf — validates SKILL.md frontmatter/format for all skills (public + internal) and checks repository version sync |
-| `release-prep` | Orchestrator — validates release readiness and offers to open a PR; never tags or bumps versions |
-| `skills` | Router — helps users discover and invoke the right public skill |
+| Skill             | Purpose                                                                                              |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `new-command`     | Orchestrates the full new-command lifecycle (RED → GREEN → REFACTOR → review → validate → PR review) |
+| `skill-tester`    | TDD pressure-testing: runs scenarios without/with the skill loaded to prove it changes behaviour     |
+| `validate-skills` | Validates the router + command files + internal skills and checks five-file version sync             |
+| `release-prep`    | Release-readiness gatekeeper; runs the audit gates, offers to open a PR, never tags or bumps         |
+| `skills`          | Launcher — routes a user request to the right `/nitpicker` command (Routing Guide in its SKILL.md)   |
 
-### Public Skills (`skills/`)
-
-| Skill | Role | Output |
-|-------|------|--------|
-| [`nitpicker`][nitpicker] | Orchestrator — exhaustive whole-repo audit; delegates to specialist skills in focused modes | `docs/audit/nitpicker-findings.md` |
-| [`arch-detector`][arch-detector] | Leaf — detects architectural patterns | `docs/audit/arch-profile.md` |
-| [`arch-auditor`][arch-auditor] | Consumer — validates against detected architecture | `docs/audit/arch-findings.md` |
-| [`doc-auditor`][doc-auditor] | Consumer — verifies documentation accuracy against codebase; optionally reads `arch-profile.md` | `docs/audit/doc-findings.md` |
-| [`security-auditor`][security-auditor] | Leaf — tool-driven security scan | `docs/audit/security-findings.md` |
-| [`adversarial-reviewer`][adversarial-reviewer] | Leaf — hostile bug hunt on specific code or content | stdout |
-| [`pr-reviewer`][pr-reviewer] | Leaf — reviews a PR diff; stdout only, never writes a file | stdout |
-| [`cr-implementer`][cr-implementer] | Leaf — fetches and implements GitHub PR review comments (unresolved where available via GraphQL) | stdout + GitHub thread replies |
-| [`claude-rules-auditor`][claude-rules-auditor] | Consumer — validates `.claude/rules/` files, audits CLAUDE.md for misplaced rules, and suggests new rules from audit artifacts | `docs/audit/claude-rules-auditor-findings.md` |
-| [`loophole-hunter`][loophole-hunter] | Leaf — audits the Claude Code enforcement surface (rules, hooks, settings, permissions, skills) for bypassable constraints; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/loophole-hunter-findings.md` |
-| [`hooks-enforcer`][hooks-enforcer] | Leaf — audits hook *coverage* against the project's evidence base (findings history, git, memory) for recurring failures no hook guards and context-discipline gaps; invoked by nitpicker in `loophole` mode and by release-prep as a gate | `docs/audit/hooks-enforcer-findings.md` |
-| [`complexity-hunter`][complexity-hunter] | Leaf — persistent anti-over-engineering mode; forces the laziest working solution via a reuse-first ladder on every coding task; also audits a diff or whole repo for over-engineering (tagged, ranked findings, applies nothing); invokes nothing and reads no audit artifacts | stdout |
-| [`perf-auditor`][perf-auditor] | Leaf — hostile single-shot performance audit; hunts N+1 queries, O(n²)+ hotspots, sync-in-async, unbounded growth, missing pagination, loop-invariant work, and chatty I/O with growth-driver evidence per finding; receives performance findings routed (by prose, not invocation) from complexity-hunter; invoked by nitpicker in `perf` mode and by release-prep as a gate | `docs/audit/perf-auditor-findings.md` |
-| [`test-auditor`][test-auditor] | Leaf — hostile audit of the test suite itself; finds tests that cannot fail, mocks of the unit under test, severed code paths, flaky patterns, untracked skips, critical-path coverage holes, and mutation-blind spots; fixes touch tests only, never production source; invoked by nitpicker in `tests` mode and by release-prep as a gate | `docs/audit/test-auditor-findings.md` |
-| [`dep-auditor`][dep-auditor] | Leaf — audits dependency health beyond CVEs (unused, phantom, duplicate, heavyweight, unmaintained, license-conflicting, drifted, misclassified) by cross-referencing manifest, lockfile, and a full import/usage scan; never installs anything; CVEs route to security-auditor; invoked by nitpicker in `deps` mode and by release-prep as a gate | `docs/audit/dep-auditor-findings.md` |
-| [`silent-failure-hunter`][silent-failure-hunter] | Leaf — hostile audit of application error handling; enumerates every handler, ignored error signal, async site, retry, and fallback, proves which failures pass silently, and on approval fixes the error path only; invoked by nitpicker in `errors` mode and by release-prep as a gate | `docs/audit/silent-failure-hunter-findings.md` |
-| [`ci-auditor`][ci-auditor] | Leaf — hostile audit of CI/CD pipeline definitions (GitHub Actions first-class; other pipeline YAML by the same principles); runs actionlint/zizmor when installed and verifies gating via `gh api` when authenticated; invoked by nitpicker in `ci` mode and by release-prep as a gate | `docs/audit/ci-auditor-findings.md` |
-| [`commit-auditor`][commit-auditor] | Leaf — hostile audit of commit-message discipline against the actual diffs; verifies every commit in the audit range (default: since the last release tag) for type-understatement/overstatement, unmarked/spurious breaking changes, scope-lies, and malformed convention, with the version consequence per finding; amends unpushed messages on approval, never rewrites pushed history; invoked by nitpicker in `commits` mode and by release-prep as a gate | `docs/audit/commit-auditor-findings.md` |
-| [`migration-auditor`][migration-auditor] | Leaf — hostile audit of database schema and data migrations; reads every migration up-and-down, cross-checks ORM models against the sum of migrations and the schema dump; static analysis, never runs a migration; applied migrations are fixed by a new migration, never edited; invoked by nitpicker in `migrations` mode and by release-prep as a gate | `docs/audit/migration-auditor-findings.md` |
-| [`observability-auditor`][observability-auditor] | Leaf — hostile audit of the signal surface a codebase emits; enumerates critical paths, boundaries, jobs, log statements, metric labels, and in-repo alert configs, traces emissions end to end, and on approval fixes add or correct emissions only; invoked by nitpicker in `observability` mode and by release-prep as a gate | `docs/audit/observability-auditor-findings.md` |
-| [`api-contract-auditor`][api-contract-auditor] | Leaf — hostile audit of the declared public contract surface (OpenAPI/GraphQL specs, package exports, published types, CLI flags) against the implementation, and of every surface change since the last release tag against the declared semver bump; spec vs code fixes are separate per-finding user approvals; invoked by nitpicker in `contract` mode and by release-prep as a gate | `docs/audit/api-contract-auditor-findings.md` |
-| [`a11y-auditor`][a11y-auditor] | Leaf — hostile accessibility audit of the UI layer against WCAG 2.2 AA; runs axe-core/eslint-plugin-jsx-a11y/pa11y when installed, then the manual sweep tools cannot do (focus order, ARIA semantics, contrast math from design tokens); verifies the accessibility floor complexity-hunter never simplifies away; invoked by nitpicker in `a11y` mode and by release-prep as a gate | `docs/audit/a11y-auditor-findings.md` |
-| [`concurrency-auditor`][concurrency-auditor] | Leaf — audit concurrency safety — data races, non-atomic check-then-act/TOCTOU, deadlock ordering, lost updates, unsafe publication, mutable state shared across `await`, and non-atomic compound ops on thread-safe containers; every finding names the shared state, the concurrent contexts, the interleaving, and the fix; contention/sync-blocking route to perf-auditor; invoked by nitpicker in `concurrency` mode and by release-prep as a gate | `docs/audit/concurrency-auditor-findings.md` |
-| [`i18n-auditor`][i18n-auditor] | Leaf — audit the localization surface — hardcoded user-facing strings, locale-unsafe number/currency/date formatting, timezone-naive datetimes, concatenation that mistranslates, missing plural rules, RTL/bidi, charset/collation; uses the project's existing i18n mechanism, never adds one; explicit "no localization surface" verdict for single-locale projects; invoked by nitpicker in `i18n` mode and by release-prep as a gate | `docs/audit/i18n-auditor-findings.md` |
-| [`resource-leak-auditor`][resource-leak-auditor] | Leaf — audit resource lifecycle — unclosed handles, pool connections not returned on error, listener/subscription leaks, orphaned tasks/timers, uncancelled contexts, temp-artifact leaks; every finding names the acquisition site, the release-skipping path, and the accumulation driver; unbounded-growth-by-design routes to perf-auditor; invoked by nitpicker in `leaks` mode and by release-prep as a gate | `docs/audit/resource-leak-auditor-findings.md` |
-| [`config-auditor`][config-auditor] | Leaf — audit application/runtime configuration — undocumented env vars, missing startup validation, unsafe prod defaults, config drift, committed secrets, string coercion traps, hardcoded environment values; cross-references code against `.env.example`/schema/docs; exploitability routes to security-auditor; invoked by nitpicker in `config` mode and by release-prep as a gate | `docs/audit/config-auditor-findings.md` |
-| [`data-privacy-auditor`][data-privacy-auditor] | Leaf — audit the personal-data surface — PII/credentials unprotected at rest, flows to uncontrolled sinks, over-collection, missing retention/consent, weak anonymization; elements must be identifiably personal, never guessed; explicit "no personal-data surface" verdict; PII-in-logs routes to observability-auditor; invoked by nitpicker in `privacy` mode and by release-prep as a gate | `docs/audit/data-privacy-auditor-findings.md` |
-
-**Leaf skills** produce output but do not invoke other skills.
-**Orchestrator skills** sequence other skills to accomplish a compound goal.
-**Consumer skills** are a specialised Leaf that optionally reads a specific predecessor's artifact; they call nothing and appear in the Leaves and Consumers subgraph of the Master Invocation Map.
-
----
-
-## Dependency Graph (static — invocations, reads, and writes)
-
-```mermaid
-graph TD
-    subgraph internal[".claude/skills — Internal"]
-        NS[new-skill]
-        ST[skill-tester]
-        VS[validate-skills]
-        RP[release-prep]
-        SK[skills / router]
-    end
-
-    subgraph public["skills/ — Public"]
-        AR[adversarial-reviewer]
-        NP[nitpicker]
-        AD[arch-detector]
-        AA[arch-auditor]
-        DA[doc-auditor]
-        PR[pr-reviewer]
-        SA[security-auditor]
-        CRI[cr-implementer]
-        CRA[claude-rules-auditor]
-        LH[loophole-hunter]
-        HE[hooks-enforcer]
-        CH[complexity-hunter]
-        PA[perf-auditor]
-        TA[test-auditor]
-        DEP[dep-auditor]
-        SFH[silent-failure-hunter]
-        CIA[ci-auditor]
-        CMA[commit-auditor]
-        MA[migration-auditor]
-        OBA[observability-auditor]
-        ACA[api-contract-auditor]
-        AY[a11y-auditor]
-        CC[concurrency-auditor]
-        I18[i18n-auditor]
-        RLK[resource-leak-auditor]
-        CFG[config-auditor]
-        DPV[data-privacy-auditor]
-    end
-
-    subgraph artifacts["docs/audit/ — Shared Artifacts"]
-        APF[arch-profile.md]
-        AFF[arch-findings.md]
-        DF[doc-findings.md]
-        SF[security-findings.md]
-        NF[nitpicker-findings.md]
-        CRF[claude-rules-auditor-findings.md]
-        LHF[loophole-hunter-findings.md]
-        HEF[hooks-enforcer-findings.md]
-        PAF[perf-auditor-findings.md]
-        TAF[test-auditor-findings.md]
-        DEPF[dep-auditor-findings.md]
-        SFF[silent-failure-hunter-findings.md]
-        CIF[ci-auditor-findings.md]
-        CMF[commit-auditor-findings.md]
-        MGF[migration-auditor-findings.md]
-        OBF[observability-auditor-findings.md]
-        ACF[api-contract-auditor-findings.md]
-        AYF[a11y-auditor-findings.md]
-        CCF[concurrency-auditor-findings.md]
-        I18F[i18n-auditor-findings.md]
-        RLKF[resource-leak-auditor-findings.md]
-        CFGF[config-auditor-findings.md]
-        DPVF[data-privacy-auditor-findings.md]
-    end
-
-    %% arch chain
-    AD -->|writes| APF
-    AA -.->|reads if present| APF
-    AA -->|writes| AFF
-
-    %% doc-auditor reads arch profile for architecture descriptions
-    DA -.->|reads if present| APF
-    DA -->|writes| DF
-
-    %% security-auditor
-    SA -->|writes| SF
-
-    %% claude-rules-auditor reads all artifacts
-    CRA -.->|reads if present| APF
-    CRA -.->|reads if present| AFF
-    CRA -.->|reads if present| SF
-    CRA -.->|reads if present| NF
-    CRA -->|writes| CRF
-
-    %% loophole-hunter writes its own findings
-    LH -->|writes| LHF
-
-    %% hooks-enforcer writes its own findings
-    HE -->|writes| HEF
-
-    %% perf-auditor writes its own findings; complexity-hunter routes perf findings to it (prose, not invocation)
-    PA -->|writes| PAF
-
-    %% test-auditor writes its own findings
-    TA -->|writes| TAF
-
-    %% dep-auditor writes its own findings
-    DEP -->|writes| DEPF
-
-    %% silent-failure-hunter writes its own findings
-    SFH -->|writes| SFF
-
-    %% ci-auditor writes its own findings
-    CIA -->|writes| CIF
-
-    %% commit-auditor writes its own findings
-    CMA -->|writes| CMF
-
-    %% migration-auditor writes its own findings
-    MA -->|writes| MGF
-
-    %% observability-auditor writes its own findings
-    OBA -->|writes| OBF
-
-    %% api-contract-auditor writes its own findings
-    ACA -->|writes| ACF
-
-    %% a11y-auditor writes its own findings
-    AY -->|writes| AYF
-
-    %% concurrency-auditor writes its own findings
-    CC -->|writes| CCF
-
-    %% i18n-auditor writes its own findings
-    I18 -->|writes| I18F
-
-    %% resource-leak-auditor writes its own findings
-    RLK -->|writes| RLKF
-
-    %% config-auditor writes its own findings
-    CFG -->|writes| CFGF
-
-    %% data-privacy-auditor writes its own findings
-    DPV -->|writes| DPVF
-
-    %% nitpicker writes its own findings; in focused modes it also invokes specialists
-    NP -->|writes| NF
-    NP -->|security mode: invokes| SA
-    NP -->|tests mode: invokes| TA
-    NP -->|docs mode: invokes| DA
-    NP -->|architecture mode: invokes| AD
-    NP -->|architecture mode: invokes| AA
-    NP -->|loophole mode: invokes| LH
-    NP -->|loophole mode: invokes| HE
-    NP -->|perf mode: invokes| PA
-    NP -->|deps mode: invokes| DEP
-    NP -->|errors mode: invokes| SFH
-    NP -->|ci mode: invokes| CIA
-    NP -->|commits mode: invokes| CMA
-    NP -->|migrations mode: invokes| MA
-    NP -->|observability mode: invokes| OBA
-    NP -->|contract mode: invokes| ACA
-    NP -->|a11y mode: invokes| AY
-    NP -->|concurrency mode: invokes| CC
-    NP -->|i18n mode: invokes| I18
-    NP -->|leaks mode: invokes| RLK
-    NP -->|config mode: invokes| CFG
-    NP -->|privacy mode: invokes| DPV
-
-    %% new-skill lifecycle
-    NS -->|invokes| ST
-    NS -->|invokes| AR
-    NS -->|invokes| VS
-    NS -->|invokes| PR
-
-    %% release-prep gate
-    RP -->|invokes| VS
-    RP -->|invokes| SA
-    RP -->|invokes| DA
-    RP -->|invokes| AD
-    RP -->|invokes| AA
-    RP -->|invokes| NP
-    RP -->|invokes| LH
-    RP -->|invokes| HE
-    RP -->|invokes| PA
-    RP -->|invokes| TA
-    RP -->|invokes| DEP
-    RP -->|invokes| SFH
-    RP -->|invokes| MA
-    RP -->|invokes| OBA
-    RP -->|invokes| ACA
-    RP -->|invokes| AY
-    RP -->|invokes| CIA
-    RP -->|invokes| CMA
-    RP -->|invokes| CC
-    RP -->|invokes| I18
-    RP -->|invokes| RLK
-    RP -->|invokes| CFG
-    RP -->|invokes| DPV
-
-    %% router
-    SK -.->|routes to| AR
-    SK -.->|routes to| NP
-    SK -.->|routes to| AD
-    SK -.->|routes to| AA
-    SK -.->|routes to| DA
-    SK -.->|routes to| PR
-    SK -.->|routes to| SA
-    SK -.->|routes to| CRI
-    SK -.->|routes to| CRA
-    SK -.->|routes to| LH
-    SK -.->|routes to| HE
-    SK -.->|routes to| CH
-    SK -.->|routes to| PA
-    SK -.->|routes to| TA
-    SK -.->|routes to| DEP
-    SK -.->|routes to| SFH
-    SK -.->|routes to| CIA
-    SK -.->|routes to| CMA
-    SK -.->|routes to| MA
-    SK -.->|routes to| OBA
-    SK -.->|routes to| ACA
-    SK -.->|routes to| AY
-    SK -.->|routes to| CC
-    SK -.->|routes to| I18
-    SK -.->|routes to| RLK
-    SK -.->|routes to| CFG
-    SK -.->|routes to| DPV
-```
-
-Solid arrows (`-->`) are hard dependencies — one skill must run before the other can
-operate correctly, or the invoking skill explicitly calls the target. Dashed arrows
-(`-.->`) are soft dependencies — the consuming skill works without the predecessor
-but produces better output with it, or the invocation is conditional on a specific
-mode or the presence of an artifact.
-
----
-
-## Workflow: Creating a New Skill
-
-The `new-skill` orchestrator drives this full cycle. No step may be skipped.
+## Audit Flow
 
 ```mermaid
 flowchart TD
-    A([Start: user wants a new skill]) --> B["/new-skill — scaffold structure"]
-    B --> C[skill-tester RED phase\nsubagent without skill loaded\nrecord rationalizations]
-    C --> D[Write skill body\ncounter every rationalization]
-    D --> E[skill-tester GREEN phase\nsubagent with skill loaded\nconfirm compliance]
-    E --> F{New loophole\nfound?}
-    F -->|Yes| D
-    F -->|No| REFACTOR[Phase 4: Refactor]
-    REFACTOR --> ST2[skill-tester REFACTOR verify\nre-run with skill loaded\nconfirm no regression]
-    ST2 --> ST2Q{Regression\nfound?}
-    ST2Q -->|Yes — fix| D
-    ST2Q -->|No| G[adversarial-reviewer\non skills/name/SKILL.md]
-    G --> H{HIGH or CRITICAL\nfindings?}
-    H -->|Yes — fix| D
-    H -->|No| I[Update CLAUDE.md\n.claude/skills/skills/SKILL.md\ncopilot-instructions.md\nREADME.md\n.claude/skills/README.md]
-    I --> J[validate-skills\nboth public + internal]
-    J --> K{Errors?}
-    K -->|Yes — fix| D
-    K -->|No| L[pr-reviewer on diff]
-    L --> M{HIGH or CRITICAL\nfindings?}
-    M -->|Yes — fix| D
-    M -->|No| N([Done — commit feat: add skill])
+    U([User request]) --> SK["skills launcher\n(Routing Guide)"]
+    SK --> NP["/nitpicker command\n(router SKILL.md dispatch)"]
+    NP --> CF["commands/&lt;command&gt;.md\ncommand instructions"]
+    CF --> CV[commands/_conventions.md\nseverity + findings protocol]
+    CF --> FP[scripts/findings.py\nstdlib-only CLI]
+    CV --> FP
+    FP --> FS[("docs/audit/findings/\n&lt;auditor&gt;/open|resolved/&lt;id&gt;.md\n+ generated INDEX.md")]
 ```
 
-**Termination guarantee:** Each iteration through the fix loop (`D`) directly
-addresses a specific finding. Skills do not loop unless new findings are introduced.
-The loop terminates when [adversarial-reviewer] and [pr-reviewer] each return no HIGH/CRITICAL
-findings, and validate-skills exits clean.
+The launcher selects exactly one command per request and never chains
+commands — the nitpicker router owns any command-to-command hand-off.
+Aliases (the 1.x skill names) resolve to canonical command files.
 
----
-
-## Workflow: Release Preparation
-
-The `release-prep` orchestrator validates readiness and then — **only with explicit
-user approval** — offers to open a PR. It never bumps versions, creates tags, or
-pushes commits; release-please automation handles all of that when the PR merges to
-`main`.
-
-If any gate fails, `release-prep` stops immediately and reports findings. It does not
-continue to the next step.
-
-```mermaid
-flowchart TD
-    A([Start: prepare for release PR]) --> B[validate-skills\nno structural errors\nall 5 version files agree]
-    B --> B2{Errors or\nversion mismatch?}
-    B2 -->|Yes — stop| STOP1([Stop: report errors to user])
-    B2 -->|No| D[security-auditor\nno Critical/High open]
-    D --> D2{Critical/High\nfindings?}
-    D2 -->|Yes — stop| STOP3([Stop: report security findings])
-    D2 -->|No| E[doc-auditor\nno Critical/High open]
-    E --> E2{Critical/High\nfindings?}
-    E2 -->|Yes — stop| STOP4([Stop: report doc findings])
-    E2 -->|No| F{arch-profile.md\nfresh?}
-    F -->|No| G[arch-detector\nwrite arch-profile.md]
-    G --> H[arch-auditor\nno Critical/High open]
-    F -->|Yes| H
-    H --> H2{Critical/High\nfindings?}
-    H2 -->|Yes — stop| STOP5([Stop: report arch findings])
-    H2 -->|No| I[nitpicker release-gate\nthreshold: High]
-    I --> I2{Critical/High\nfindings?}
-    I2 -->|Yes — stop| STOP6([Stop: report code findings])
-    I2 -->|No| LHG[loophole-hunter\nenforcement surface]
-    LHG --> LHG2{Critical/High\nfindings?}
-    LHG2 -->|Yes — stop| STOP6b([Stop: report loophole findings])
-    LHG2 -->|No| HEG[hooks-enforcer\nhook coverage]
-    HEG --> HEG2{Critical/High\nfindings?}
-    HEG2 -->|Yes — stop| STOP6c([Stop: report hook-coverage findings])
-    HEG2 -->|No| PAG[perf-auditor\nperformance]
-    PAG --> PAG2{Critical/High\nfindings?}
-    PAG2 -->|Yes — stop| STOP9([Stop: report perf findings])
-    PAG2 -->|No| TAG[test-auditor\ntest-suite strength]
-    TAG --> TAG2{Critical/High\nfindings?}
-    TAG2 -->|Yes — stop| STOP10([Stop: report test findings])
-    TAG2 -->|No| DEPG[dep-auditor\ndependency health]
-    DEPG --> DEPG2{Critical/High\nfindings?}
-    DEPG2 -->|Yes — stop| STOP11([Stop: report dependency findings])
-    DEPG2 -->|No| SFHG[silent-failure-hunter\nerror handling]
-    SFHG --> SFHG2{Critical/High\nfindings?}
-    SFHG2 -->|Yes — stop| STOP12([Stop: report error-handling findings])
-    SFHG2 -->|No| MAG[migration-auditor\nmigration safety]
-    MAG --> MAG2{Critical/High\nfindings?}
-    MAG2 -->|Yes — stop| STOP13([Stop: report migration findings])
-    MAG2 -->|No| OBAG[observability-auditor\nsignal surface]
-    OBAG --> OBAG2{Critical/High\nfindings?}
-    OBAG2 -->|Yes — stop| STOP14([Stop: report observability findings])
-    OBAG2 -->|No| ACAG[api-contract-auditor\ncontract surface]
-    ACAG --> ACAG2{Critical/High\nfindings?}
-    ACAG2 -->|Yes — stop| STOP15([Stop: report contract findings])
-    ACAG2 -->|No| AYG[a11y-auditor\nWCAG 2.2 AA]
-    AYG --> AYG2{Critical/High\nfindings?}
-    AYG2 -->|Yes — stop| STOP16([Stop: report accessibility findings])
-    AYG2 -->|No| CIAG[ci-auditor\nCI/CD pipeline]
-    CIAG --> CIAG2{Critical/High\nfindings?}
-    CIAG2 -->|Yes — stop| STOP17([Stop: report CI findings])
-    CIAG2 -->|No| CMAG[commit-auditor\ncommit discipline]
-    CMAG --> CMAG2{Critical/High\nfindings?}
-    CMAG2 -->|Yes — stop| STOP18([Stop: report commit findings])
-    CMAG2 -->|No| J[conventional commits\nrelease-please can generate notes]
-    J --> J2{Commits\ninvalid?}
-    J2 -->|Yes — stop| STOP7([Stop: fix commit messages for release-please])
-    J2 -->|No| K[CI green check\nvalidate-skills.yml passes]
-    K --> K2{CI\nfailing?}
-    K2 -->|Yes — stop| STOP8([Stop: report failed checks])
-    K2 -->|No| L[Present gate summary]
-    L --> M{"Create PR?\ndefault: n"}
-    M -->|n / no answer| DONE1([Done: branch ready, no PR created])
-    M -->|y| DONE2([Open PR using branch commit messages])
-```
-
----
-
-## Workflow: Architecture Review
-
-These two skills always run in this order. Running `arch-auditor` before
-`arch-detector` is allowed (it detects inline) but produces weaker output.
+## Dev Lifecycle
 
 ```mermaid
 flowchart LR
-    A([arch-detector]) -->|writes docs/audit/arch-profile.md| B([arch-auditor])
-    B -->|writes docs/audit/arch-findings.md| C([findings reviewed])
+    NS["/new-command"] --> ST["skill-tester\nRED / GREEN"]
+    ST --> RV["/nitpicker review"]
+    RV --> VS[validate-skills]
+    VS --> PR["/nitpicker pr"]
+    PR --> C([commit feat:])
 ```
 
-[doc-auditor] reads `arch-profile.md` when updating architecture descriptions in
-docs. Run [arch-detector] before [doc-auditor] if the architecture docs have changed.
+Any HIGH/CRITICAL finding at a step loops back to editing the command file;
+the loop terminates when review, validation, and PR review are all clean
+(see `.claude/rules/skill-lifecycle.md`).
 
----
+## Release Preparation
 
-## Workflow: Ad-hoc Audit Routing
+`release-prep` runs `validate-skills`, then the **22 audit gates** as
+`/nitpicker` commands (`security`, `docs`, `arch`, `audit`, `agent-loopholes`,
+`agent-hooks`, `perf`, `tests`, `deps`, `errors`, `migrations`, `observability`,
+`contract`, `a11y`, `ci`, `commits`, `concurrency`, `i18n`, `leaks`,
+`config`, `privacy`, `unwired`), then `/nitpicker release-gate` as the backstop — it
+fails if any open finding at or above the threshold (default High) remains
+in the store. Any failed gate stops the run. It never bumps versions or
+tags; release-please handles that from `main`.
 
-The `skills` router maps user intent to the correct public skill. It does not chain
-skills — it selects exactly one based on what the user asked for.
+## Quick Reference: Input/Output
 
-```mermaid
-flowchart TD
-    U([User request]) --> R[skills / router]
-    R -->|"find bugs / tear this apart"| AR[adversarial-reviewer]
-    R -->|"audit everything / pre-release"| NP[nitpicker]
-    R -->|"review this PR / review my diff"| PR[pr-reviewer]
-    R -->|"what architecture is this"| AD[arch-detector]
-    R -->|"audit the architecture / find violations"| AA[arch-auditor]
-    R -->|"check the docs / stale documentation"| DA[doc-auditor]
-    R -->|"security scan / vulnerabilities / secrets"| SA[security-auditor]
-    R -->|"implement cr comments / fix review feedback"| CRI[cr-implementer]
-    R -->|"audit rules / check .claude/rules / CLAUDE.md rules"| CRA[claude-rules-auditor]
-    R -->|"close loopholes / harden the Claude Code setup"| LH[loophole-hunter]
-    R -->|"enforce hooks / harden hook coverage / use context-mode"| HE[hooks-enforcer]
-    R -->|"be lazy / YAGNI / do less / stop over-engineering / find bloat"| CH[complexity-hunter]
-    R -->|"perf audit / find performance issues / will this scale"| PA[perf-auditor]
-    R -->|"audit the tests / find weak tests / do the tests test anything"| TA[test-auditor]
-    R -->|"audit dependencies / unused deps / prune deps / dependency health"| DEP[dep-auditor]
-    R -->|"find silent failures / audit error handling / what errors are we swallowing"| SFH[silent-failure-hunter]
-    R -->|"audit the CI / audit workflows / check GitHub Actions security"| CIA[ci-auditor]
-    R -->|"audit the commits / check commit messages / verify conventional commits"| CMA[commit-auditor]
-    R -->|"audit the migrations / is this migration safe / review the schema changes"| MA[migration-auditor]
-    R -->|"audit observability / check our logging / can we debug this at 3am"| OBA[observability-auditor]
-    R -->|"audit the api contract / does the spec match the code / is this change breaking"| ACA[api-contract-auditor]
-    R -->|"a11y audit / accessibility audit / check WCAG / is this keyboard accessible"| AY[a11y-auditor]
-    R -->|"audit concurrency / find race conditions / check for deadlocks / is this thread-safe"| CC[concurrency-auditor]
-    R -->|"i18n audit / internationalization / localization audit / find hardcoded strings / check locale handling"| I18[i18n-auditor]
-    R -->|"resource leak audit / find leaks / unclosed connections / file descriptor leak / listener leak"| RLK[resource-leak-auditor]
-    R -->|"config audit / audit configuration / check env vars / find undocumented config / config drift"| CFG[config-auditor]
-    R -->|"privacy audit / PII audit / data protection audit / GDPR check / find unprotected personal data"| DPV[data-privacy-auditor]
-```
+| Surface                                       | Reads                                                                                                           | Writes                                                                                                                  |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Router (`skills/nitpicker/SKILL.md`)          | invocation text (command word + extra instructions)                                                             | nothing — dispatches to a command file                                                                                  |
+| Command files (`commands/*.md`)               | `_conventions.md`, the audited repo, installed tools                                                            | findings via `findings.py`; stdout with the `inline` modifier                                                           |
+| Findings store (`docs/audit/findings/`)       | —                                                                                                               | open findings under `<auditor>/open/`; resolved appended to `resolved.jsonl`; `INDEX.md` generated, never hand-edited   |
+| Bundled scripts (`skills/nitpicker/scripts/`) | store files, PR comments (`fetch-pr-comments.py`), SARIF (`process-sarif.py`), rules (`check-rules-anatomy.py`) | store mutations, stdout — plain `python3`, stdlib-only                                                                  |
+| `new-command`                                 | user intent                                                                                                     | `skills/nitpicker/commands/<name>.md` + registration edits                                                              |
+| `skill-tester`                                | scenario, skill under test                                                                                      | subagent output (stdout)                                                                                                |
+| `validate-skills`                             | router + command files, internal SKILL.md files, five version manifests                                         | stdout (errors/warnings)                                                                                                |
+| `release-prep`                                | gate results, findings store, CI status                                                                         | none (optionally opens a PR on explicit approval)                                                                       |
+| `skills` launcher                             | user intent                                                                                                     | routes to one `/nitpicker` command                                                                                      |
 
----
+## New Command Registration Checklist
 
-## Master Invocation Map
+When adding a command, update all five surfaces (the validator enforces 1–2):
 
-Who calls whom. Leaves have no outgoing edges.
+1. `skills/nitpicker/commands/<name>.md` — the command file
+   (h1 `# /nitpicker <name> — …`, `## When to use`).
+2. The `## Commands` table in `skills/nitpicker/SKILL.md` (1:1 with the files).
+3. The Routing Guide in `.claude/skills/skills/SKILL.md`.
+4. The command table in `README.md`.
+5. `.github/copilot-instructions.md` (if it changes any stated rule or count).
 
-```mermaid
-graph LR
-    subgraph orchestrators["Orchestrators"]
-        NS[new-skill]
-        RP[release-prep]
-        NP[nitpicker]
-    end
-
-    subgraph leaves["Leaves and Consumers (called, never call)"]
-        AR[adversarial-reviewer]
-        VS[validate-skills]
-        AD[arch-detector]
-        AA[arch-auditor]
-        DA[doc-auditor]
-        PR[pr-reviewer]
-        SA[security-auditor]
-        CRI[cr-implementer]
-        CRA[claude-rules-auditor]
-        LH[loophole-hunter]
-        HE[hooks-enforcer]
-        CH[complexity-hunter]
-        PA[perf-auditor]
-        TA[test-auditor]
-        DEP[dep-auditor]
-        SFH[silent-failure-hunter]
-        CIA[ci-auditor]
-        CMA[commit-auditor]
-        MA[migration-auditor]
-        OBA[observability-auditor]
-        ACA[api-contract-auditor]
-        AY[a11y-auditor]
-        CC[concurrency-auditor]
-        I18[i18n-auditor]
-        RLK[resource-leak-auditor]
-        CFG[config-auditor]
-        DPV[data-privacy-auditor]
-        ST[skill-tester]
-        SK[skills / router]
-    end
-
-    NS --> ST
-    NS --> AR
-    NS --> VS
-    NS --> PR
-
-    RP --> VS
-    RP --> SA
-    RP --> DA
-    RP --> AD
-    RP --> AA
-    RP --> NP
-    RP --> LH
-    RP --> HE
-    RP --> PA
-    RP --> TA
-    RP --> DEP
-    RP --> SFH
-    RP --> MA
-    RP --> OBA
-    RP --> ACA
-    RP --> AY
-    RP --> CIA
-    RP --> CMA
-
-    NP -->|architecture mode| AA
-    NP -->|architecture mode| AD
-    NP -->|docs mode| DA
-    NP -->|security mode| SA
-    NP -->|tests mode| TA
-    NP -->|loophole mode| LH
-    NP -->|loophole mode| HE
-    NP -->|perf mode| PA
-    NP -->|deps mode| DEP
-    NP -->|errors mode| SFH
-    NP -->|ci mode| CIA
-    NP -->|commits mode| CMA
-    NP -->|migrations mode| MA
-    NP -->|observability mode| OBA
-    NP -->|contract mode| ACA
-    NP -->|a11y mode| AY
-```
-
-[nitpicker] in focused modes delegates to the matching specialist skill before
-extending the review with additional analysis that the specialist does not cover.
-In default mode, [nitpicker] covers all areas internally and does not invoke the
-specialist skills.
-
-The router (`skills`) and the standalone skills [cr-implementer], [claude-rules-auditor],
-and [complexity-hunter] appear in the Leaves subgraph without invocation edges by design —
-no orchestrator invokes them; they are entered directly by the user.
-
----
-
-## Acyclicity and Termination Rules
-
-These rules must be maintained whenever skills are modified or new skills are added.
-
-### No Circular Dependencies
-
-| Rule | Rationale |
-|------|-----------|
-| [`arch-auditor`][arch-auditor] never invokes [`arch-detector`][arch-detector] | arch-detector is a prerequisite, not a dependent |
-| `validate-skills` never invokes any audit skill | It is a pure linter; audit logic lives in the audit skills |
-| [`adversarial-reviewer`][adversarial-reviewer] never invokes any other skill | It is a single-purpose leaf |
-| [`pr-reviewer`][pr-reviewer] never invokes any other skill | It outputs to stdout only; no chaining |
-| `skill-tester` never invokes itself | TDD loops are controlled by the caller (`new-skill`), not the tester |
-| `release-prep` is never invoked by other skills | It is the terminal orchestrator in the release chain |
-
-### Bounded Iteration
-
-Skills that loop must terminate:
-
-- `new-skill` — iterates only while `adversarial-reviewer` returns HIGH/CRITICAL
-  findings, or `skill-tester` finds a compliance loophole. Each iteration must remove
-  at least one finding. If no progress is made in two consecutive iterations, stop
-  and report the stalemate to the user.
-
-- `nitpicker` — single-shot re-validation of existing findings plus one new scan
-  pass. Does not loop indefinitely.
-
-- `release-prep` — each gate either passes (continue) or fails (stop and report). It
-  never retries automatically. User must fix findings and re-invoke the skill. If all
-  gates pass, the user is asked once whether to open a PR; the default answer is **no**.
-
-### New Skill Registration Checklist
-
-When adding a new skill, verify:
-
-1. It is a **leaf** (calls nothing) or an **orchestrator** (calls only leaves or
-   lower-level orchestrators).
-2. If it produces an artifact, the artifact path is `docs/audit/<name>-findings.md`
-   or `docs/audit/arch-profile.md` (arch-detector only).
-3. If it reads another skill's artifact, that predecessor skill is documented as a
-   prerequisite in this file and in the new skill's `## When to Use` section.
-4. Add it to the Skill Catalogue table and all relevant Mermaid diagrams in this file
-   (`.claude/skills/README.md`). Update the Quick Reference Input/Output table too.
-5. Add it to the "Existing Public Skills" table in `.github/copilot-instructions.md`,
-   the skills table in `CLAUDE.md` and `README.md`, and the Available Skills table +
-   Routing Guide in `.claude/skills/skills/SKILL.md`.
-
----
-
-## Quick Reference: Skill Input/Output
-
-| Skill | Reads | Writes |
-|-------|-------|--------|
-| [`nitpicker`][nitpicker] | whole repo | `docs/audit/nitpicker-findings.md` |
-| [`arch-detector`][arch-detector] | repo directory tree + file naming | `docs/audit/arch-profile.md` |
-| [`arch-auditor`][arch-auditor] | `docs/audit/arch-profile.md` (optional), codebase | `docs/audit/arch-findings.md` |
-| [`doc-auditor`][doc-auditor] | all docs, codebase, `docs/audit/arch-profile.md` (optional) | `docs/audit/doc-findings.md` |
-| [`security-auditor`][security-auditor] | codebase, git history, dependency manifests | `docs/audit/security-findings.md` |
-| [`adversarial-reviewer`][adversarial-reviewer] | code / content passed as argument | stdout |
-| [`pr-reviewer`][pr-reviewer] | git diff / staged changes | stdout only |
-| [`cr-implementer`][cr-implementer] | GitHub PR review comments (via `gh` CLI, REST, or GraphQL), codebase files | stdout + GitHub thread replies |
-| [`claude-rules-auditor`][claude-rules-auditor] | `.claude/rules/**`, all `CLAUDE.md` files, audit artifacts (optional) | `docs/audit/claude-rules-auditor-findings.md` |
-| [`loophole-hunter`][loophole-hunter] | `.claude/rules/**`, hook scripts, `.claude/settings.json` + `.claude/settings.local.json` (hooks, permissions, excludes), all `SKILL.md` files | `docs/audit/loophole-hunter-findings.md` |
-| [`hooks-enforcer`][hooks-enforcer] | `.claude/settings.json` + `.claude/settings.local.json` hooks, hook scripts, `docs/audit/*-findings.md` history, git history, project memory, available context-saving tools, harness markers | `docs/audit/hooks-enforcer-findings.md` |
-| [`complexity-hunter`][complexity-hunter] | the task, files the change touches, project manifest, existing codebase helpers and patterns; whole repo in audit mode | stdout only |
-| [`perf-auditor`][perf-auditor] | every entry point and the code paths it reaches, ORM calls, cache constructors, queries, project manifest, installed measurement tools (profilers, benchmark runners, `EXPLAIN`, stdlib timing) | `docs/audit/perf-auditor-findings.md` |
-| [`test-auditor`][test-auditor] | every test file, test runner config, suite run output, production source on critical paths (read-only) | `docs/audit/test-auditor-findings.md` |
-| [`dep-auditor`][dep-auditor] | every manifest + lockfile pair, full source tree (all import forms), config plugin references, scripts/Makefiles/CI files, read-only registry metadata | `docs/audit/dep-auditor-findings.md` |
-| [`silent-failure-hunter`][silent-failure-hunter] | every project-maintained source file: error handlers, error callbacks, async call sites, discarded error returns, retry loops, fallback branches | `docs/audit/silent-failure-hunter-findings.md` |
-| [`ci-auditor`][ci-auditor] | `.github/workflows/**`, `.github/actions/**`, `.gitlab-ci.yml` + includes, other pipeline YAML; actionlint/zizmor output when installed; branch protection/rulesets via `gh api` when authenticated | `docs/audit/ci-auditor-findings.md` |
-| [`commit-auditor`][commit-auditor] | every commit message and diff in the audit range (`git log`, `git show`), the last release tag, the project's convention table (CLAUDE.md, CONTRIBUTING, release-please config), remote refs, PR commits via `gh` when given a PR | `docs/audit/commit-auditor-findings.md` |
-| [`migration-auditor`][migration-auditor] | every migration file per detected system (Django/Alembic/Rails/Flyway/Liquibase/Prisma/knex/raw SQL), ORM models/entities, committed schema dumps, engine config/connection strings, git branch/tag state for applied-status | `docs/audit/migration-auditor-findings.md` |
-| [`observability-auditor`][observability-auditor] | project-maintained source (critical paths, jobs, boundary crossings, log statements, metric labels), logging/metrics/tracing config, in-repo alert/monitor/recording-rule configs | `docs/audit/observability-auditor-findings.md` |
-| [`api-contract-auditor`][api-contract-auditor] | OpenAPI/Swagger/AsyncAPI files, GraphQL schema, `package.json` exports + published `.d.ts`, `__all__`, public headers, CLI parser + `--help` text, route tables, git tags + diff since the release baseline, commit messages | `docs/audit/api-contract-auditor-findings.md` |
-| [`a11y-auditor`][a11y-auditor] | every component file (`.jsx`/`.tsx`/`.vue`/`.svelte`), server template, `.html` file, CSS/SCSS/design-token file, Tailwind config; installed a11y tool output (axe-core, eslint-plugin-jsx-a11y, pa11y) | `docs/audit/a11y-auditor-findings.md` |
-| [`concurrency-auditor`][concurrency-auditor] | shared mutable state reachable from two or more concurrent contexts, thread/async task spawn sites, lock/atomic/synchronization primitives, `await` points, compound operations on thread-safe containers | `docs/audit/concurrency-auditor-findings.md` |
-| [`i18n-auditor`][i18n-auditor] | user-facing strings, number/currency/date formatting calls, datetime handling, string concatenation, plural/gender handling, the project's declared locale scope and existing i18n mechanism | `docs/audit/i18n-auditor-findings.md` |
-| [`resource-leak-auditor`][resource-leak-auditor] | resource acquisition sites (file/socket/stream/DB handles, pool connections, listeners/subscriptions, tasks/threads/timers, contexts, temp artifacts, native/Disposable handles) and the failure paths that skip release | `docs/audit/resource-leak-auditor-findings.md` |
-| [`config-auditor`][config-auditor] | every config read in code, `.env.example`, config schema, docs, in-code defaults, tracked config files across sources | `docs/audit/config-auditor-findings.md` |
-| [`data-privacy-auditor`][data-privacy-auditor] | identifiably personal data elements (PII/PHI/PCI/credentials), their storage-at-rest and transmission sinks (analytics, third parties, client responses), collection/retention/consent points, anonymization | `docs/audit/data-privacy-auditor-findings.md` |
-| `validate-skills` | all `SKILL.md` files: `skills/*/SKILL.md` (public) + `.claude/skills/*/SKILL.md` (internal); version-sync manifests: `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, `pyproject.toml` | stdout (errors/warnings) |
-| `skill-tester` | scenario description, skill under test | subagent output (stdout) |
-| `new-skill` | user-supplied skill name and intent | `skills/<name>/SKILL.md` |
-| `release-prep` | all of the above | none (delegates to each skill; optionally opens a PR on user approval) |
-| `skills` (router) | user intent | routes to one public skill |
-
-[nitpicker]: ../../skills/nitpicker/README.md
-[arch-detector]: ../../skills/arch-detector/README.md
-[arch-auditor]: ../../skills/arch-auditor/README.md
-[doc-auditor]: ../../skills/doc-auditor/README.md
-[security-auditor]: ../../skills/security-auditor/README.md
-[adversarial-reviewer]: ../../skills/adversarial-reviewer/README.md
-[pr-reviewer]: ../../skills/pr-reviewer/README.md
-[cr-implementer]: ../../skills/cr-implementer/README.md
-[claude-rules-auditor]: ../../skills/claude-rules-auditor/README.md
-[loophole-hunter]: ../../skills/loophole-hunter/README.md
-[hooks-enforcer]: ../../skills/hooks-enforcer/README.md
-[complexity-hunter]: ../../skills/complexity-hunter/README.md
-[perf-auditor]: ../../skills/perf-auditor/README.md
-[test-auditor]: ../../skills/test-auditor/README.md
-[dep-auditor]: ../../skills/dep-auditor/README.md
-[silent-failure-hunter]: ../../skills/silent-failure-hunter/README.md
-[ci-auditor]: ../../skills/ci-auditor/README.md
-[commit-auditor]: ../../skills/commit-auditor/README.md
-[migration-auditor]: ../../skills/migration-auditor/README.md
-[observability-auditor]: ../../skills/observability-auditor/README.md
-[api-contract-auditor]: ../../skills/api-contract-auditor/README.md
-[a11y-auditor]: ../../skills/a11y-auditor/README.md
-[concurrency-auditor]: ../../skills/concurrency-auditor/README.md
-[i18n-auditor]: ../../skills/i18n-auditor/README.md
-[resource-leak-auditor]: ../../skills/resource-leak-auditor/README.md
-[config-auditor]: ../../skills/config-auditor/README.md
-[data-privacy-auditor]: ../../skills/data-privacy-auditor/README.md
+Then `make check` must pass; commit with `feat: add /nitpicker <name> command`.
