@@ -67,6 +67,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | `security` | Vulnerabilities, exposed secrets, insecure dependencies (via installed scanners) |
 | `privacy`  | Personal data without the control its class requires                             |
 | `config`   | Undocumented env vars, unsafe prod defaults, committed secrets                   |
+| `iac`      | Container/IaC misconfig: root, open ingress, public stores, overbroad IAM        |
 
 ### Runtime behavior
 

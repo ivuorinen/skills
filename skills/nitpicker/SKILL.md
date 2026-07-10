@@ -68,6 +68,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `security` | Run available security scanners, consolidate results into findings (alias: `security-auditor`)          |
 | `privacy`  | Personal data stored/transmitted without the control its class requires (alias: `data-privacy-auditor`) |
 | `config`   | Undocumented env vars, unsafe prod defaults, config drift, committed secrets (alias: `config-auditor`)  |
+| `iac`      | Infrastructure-as-code misconfig: root containers, open ingress, public stores, overbroad IAM           |
 
 ### Runtime behavior
 

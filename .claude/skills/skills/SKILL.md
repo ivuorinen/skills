@@ -34,6 +34,7 @@ If the user says… → run:
 - "a11y audit / check WCAG / keyboard accessible" → `/nitpicker a11y`
 - "privacy audit / PII audit / GDPR check" → `/nitpicker privacy`
 - "config audit / check env vars / config drift" → `/nitpicker config`
+- "audit the infra / Dockerfile / Terraform / k8s security / IaC misconfig" → `/nitpicker iac`
 - "find leaks / unclosed connections / fd leak" → `/nitpicker leaks`
 - "i18n audit / find hardcoded strings" → `/nitpicker i18n`
 - "find race conditions / is this thread-safe" → `/nitpicker concurrency`

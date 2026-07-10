@@ -48,6 +48,11 @@ review surface the skill offers.
   exists.
 - **Config** (`config`) — undocumented env vars, unsafe prod defaults,
   config drift, committed secrets, type-coercion traps.
+- **Infrastructure-as-code** (`iac`) — container images, orchestration
+  (Kubernetes, Compose, Helm), and cloud provisioning (Terraform,
+  CloudFormation, Pulumi): root/privileged containers, open ingress, public
+  data stores, unencrypted resources, overbroad IAM, unpinned base images,
+  committed state/secrets. N/A when the repo has no IaC files.
 - **Performance** (`perf`) — N+1 queries, O(n²)+ hotspots,
   sync-blocking-in-async, unbounded growth, missing pagination.
 - **Concurrency** (`concurrency`) — races, TOCTOU, deadlock ordering, lost
