@@ -103,6 +103,10 @@ review surface the skill offers.
 - **Localization** (`i18n`) — hardcoded strings, locale-unsafe number, date,
   and sort handling against the declared locale scope. N/A when there is no
   localization surface and single-locale is the declared scope.
+- **Prompt safety** (`prompt-safety`) — LLM-integration safety: direct and
+  indirect prompt injection, model output reaching a privileged sink,
+  excessive tool agency, secrets in the model context, cross-tenant
+  retrieval. N/A when the repo does not call or embed a language model.
 - **Complexity** (`complexity`) — over-engineering: speculative
   abstractions, reinvented standard library, dead flexibility, needless
   dependencies.

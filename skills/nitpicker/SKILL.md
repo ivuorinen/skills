@@ -63,12 +63,13 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 
 ### Security and data
 
-| Command    | Purpose                                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------------------------- |
-| `security` | Run available security scanners, consolidate results into findings (alias: `security-auditor`)          |
-| `privacy`  | Personal data stored/transmitted without the control its class requires (alias: `data-privacy-auditor`) |
-| `config`   | Undocumented env vars, unsafe prod defaults, config drift, committed secrets (alias: `config-auditor`)  |
-| `iac`      | Infrastructure-as-code misconfig: root containers, open ingress, public stores, overbroad IAM           |
+| Command         | Purpose                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| `security`      | Run available security scanners, consolidate results into findings (alias: `security-auditor`)            |
+| `privacy`       | Personal data stored/transmitted without the control its class requires (alias: `data-privacy-auditor`)   |
+| `config`        | Undocumented env vars, unsafe prod defaults, config drift, committed secrets (alias: `config-auditor`)    |
+| `iac`           | Infrastructure-as-code misconfig: root containers, open ingress, public stores, overbroad IAM             |
+| `prompt-safety` | LLM-integration safety: prompt injection, model-output-to-sink, excessive tool agency, secrets in context |
 
 ### Runtime behavior
 
