@@ -1,0 +1,8 @@
+# Managed by findings.py (the nitpicker findings store). Patterns here are
+# relative to this directory, so this marks the whole findings store as a
+# generated artifact: GitHub collapses these files in PR diffs ("load diff" on
+# demand) so audit runs don't flood review. Kept inside the store so the skill
+# never edits the repo-root .gitattributes. Delete this file only if the store
+# is gitignored. `findings.py validate` warns if neither this mark nor a
+# gitignore of the folder is present.
+** linguist-generated=true
