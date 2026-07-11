@@ -22,6 +22,7 @@ If the user says… → run:
 - "audit the tests / do the tests actually test anything" → `/nitpicker tests`
 - "audit the types / check type safety / find the anys / are the type ignores real" → `/nitpicker types`
 - "check the docs / find stale documentation" → `/nitpicker docs`
+- "audit CONTRIBUTING / is our contributor guide accurate / we have no CONTRIBUTING.md" → `/nitpicker contributing`
 - "what architecture is this / detect patterns" → `/nitpicker arch-profile`
 - "audit the architecture / find violations" → `/nitpicker arch`
 - "perf audit / why is this slow / will this scale" → `/nitpicker perf`
