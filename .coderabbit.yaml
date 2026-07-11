@@ -1,12 +1,12 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 ---
 # Scope CodeRabbit reviews to the code that actually needs review. The 2.0
-# reorg deletes the ~28 standalone 1.x skill trees and regenerates the audit
-# findings store; excluding those keeps the reviewed file set under CodeRabbit's
-# per-PR limit and off the generated/deleted noise.
+# reorg already deleted the ~28 standalone 1.x skill trees (only skills/nitpicker
+# remains under skills/), so only the generated/removed doc trees are excluded.
+# A blanket "!skills/**" here would shadow every skill file and, because it pairs
+# with a positive include, turn the whole list into an allowlist that also drops
+# README and .claude — skipping the review entirely.
 reviews:
   path_filters:
-    - "!skills/**" # skip the deleted 1.x skill trees...
-    - "skills/nitpicker/**" # ...but review the new skill
     - "!docs/audit/**" # generated findings store + migrated v1 docs
     - "!docs/superpowers/**" # removed planning docs
