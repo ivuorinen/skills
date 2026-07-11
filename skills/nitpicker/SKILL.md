@@ -98,6 +98,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `tests` | Audit the test suite itself: tautological tests, over-mocking, coverage holes (alias: `test-auditor`) |
 | `types` | Static-typing soundness: suppressed errors, any-escapes, unsound casts, lax strictness |
 | `docs` | Verify documentation accuracy against the codebase (alias: `doc-auditor`) |
+| `contributing` | Audit `CONTRIBUTING.md` against the repo's real tooling; offer to scaffold one from actual conventions when absent |
 | `ci` | Audit CI/CD pipeline definitions: unpinned actions, injection, token scope (alias: `ci-auditor`) |
 | `commits` | Audit commit-message discipline against the actual diffs (alias: `commit-auditor`) |
 | `observability` | Audit logs, metrics, traces, alerts: dark paths, PII, unfireable alerts (alias: `observability-auditor`) |
