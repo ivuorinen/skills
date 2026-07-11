@@ -17,6 +17,7 @@ Every CONTRIBUTING section maps to a source the repo already contains. A claim i
 
 | Section | Source of truth |
 | --- | --- |
+| Intro | the `README` title and description, or the manifest (`package.json`, `pyproject.toml`, `Cargo.toml`) `description` |
 | Development setup | `README`, `Makefile`, `package.json` scripts, language manifests (`pyproject.toml`, `go.mod`, `Cargo.toml`, `package.json`), `.tool-versions`/`.nvmrc`, `devcontainer.json`, `docker-compose.yml` |
 | Build / run | `Makefile` targets, `package.json` scripts, CI build steps |
 | Testing | test-runner config, the `test` target/script, CI test steps |
@@ -30,7 +31,7 @@ Every CONTRIBUTING section maps to a source the repo already contains. A claim i
 ## Process
 
 1. Re-validate open findings per `_conventions.md`.
-2. **Locate the file.** Search `CONTRIBUTING.md`, `.github/CONTRIBUTING.md`, `docs/CONTRIBUTING.md`. Absent → skip claim extraction and go straight to steps 6–7 (file the absence, offer the scaffold), then close at step 8. Present → work steps 3–6, then step 8. Both branches end at step 8, where the summary and the apply-fixes prompt fire.
+2. **Locate the file.** Search in GitHub's precedence order — `.github/CONTRIBUTING.md`, then `CONTRIBUTING.md`, then `docs/CONTRIBUTING.md`. The first one found is the guide GitHub surfaces and the one audited. If more than one exists, audit that highest-precedence copy and file a finding for every additional copy — duplicate guides drift out of sync and mislead contributors. Absent from all three → skip claim extraction and go straight to steps 6–7 (file the absence, offer the scaffold), then close at step 8. Present → work steps 3–6, then step 8. Both branches end at step 8, where the summary and the apply-fixes prompt fire.
 3. **Extract every claim.** Parse the file into discrete claims: each shell command, each named target/script, each stated convention, each required step, each internal link. Every claim is a suspect.
 4. **Verify each claim against its source.** A documented command is verified by locating the target/script/binary it names in its source of truth (a `Makefile` target, a `package.json` script, a config key) — never by trusting the prose. Never execute a documented command to test it; a destructive or long-running instruction is verified by inspection only. A convention claim (commit format, code style) is verified against the config that enforces it. A link is verified against its resolving target. File a finding for every claim whose source contradicts it, is absent, or has drifted.
 5. **Detect missing sections.** For each row in Sources of truth whose source exists in the repo, the file must carry the matching section. A repo with a `test` target and no Testing section, or with release-please and no commit-convention section, is a gap — file it.

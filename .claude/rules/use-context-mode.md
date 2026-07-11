@@ -12,9 +12,12 @@ rule: never reach for `WebFetch` or a raw `curl`/`wget` in Bash to pull remote
 content you will read. Route it through context-mode —
 `ctx_fetch_and_index` for docs/API references, or `ctx_execute` running `curl`
 in the sandbox for anything else — so the fetched body stays in the sandbox and
-only the extract you print enters context. The single exception is a URL
-context-mode cannot reach: an authenticated or private resource (`gh` for
-private GitHub, `WebFetch` for a `claude.ai` artifact URL). When the
+only the extract you print enters context. The exceptions are authenticated or
+private resources: `gh` for private GitHub, `WebFetch` for a `claude.ai`
+artifact URL, or a token-authenticated API call such as `/nitpicker cr`'s GitHub
+access (`gh`, or `curl`/`fetch` with `$GITHUB_TOKEN` when `gh` is absent) — the
+`curl` fallback there is deliberate, not a violation. Route even these through
+`ctx_execute` when you can, so the response body stays in the sandbox. When the
 context-mode plugin is absent (a fresh clone, CI, a different agent), fall back
 to `WebFetch` by discipline, exactly as the enforcement note below describes.
 
