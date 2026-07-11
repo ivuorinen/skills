@@ -1,7 +1,6 @@
 ---
 name: validate-skills
 description: Use when verifying all skills in the repository are well-formed before a release or after adding/editing a skill.
-disable-model-invocation: true
 ---
 
 # Validate Skills
