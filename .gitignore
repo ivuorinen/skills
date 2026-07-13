@@ -1,13 +1,17 @@
 .DS_Store
 node_modules/
 *.local
-.claude/settings.local.json
 .ruff_cache/
 .pytest_cache/
 .venv
 __pycache__
 uv.lock
 .coverage
+
+# Unignore the CLAUDE.md and the whole .claude, then do certain ignores
+!CLAUDE.md
+!**/.claude/*
+.claude/settings.local.json
 
 # Dogfooding symlink: exposes the working-tree skill to Claude Code/Copilot as a project skill
 .claude/skills/nitpicker
