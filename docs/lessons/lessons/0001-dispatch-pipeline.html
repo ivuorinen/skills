@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lesson 0001 — The /nitpicker dispatch pipeline</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<p class="eyebrow">Lesson 0001 · Nitpicker dispatch</p>
+<h1>From <code>/nitpicker&nbsp;&lt;text&gt;</code> to a running command</h1>
+
+<p>
+  <strong>Your win for this lesson:</strong> by the end you can take any
+  <code>/nitpicker …</code> line and say, with certainty, <em>which single
+  command file runs</em> and <em>why</em> — including the two cases that trip
+  people up (aliases, and unknown words). That is the foundation the whole
+  "review and extend confidently" mission stands on.
+</p>
+
+<h2>The shape of an invocation</h2>
+<p>
+  Everything after <code>/nitpicker</code> is parsed as one small grammar
+  (<a class="cite" href="../../../skills/nitpicker/SKILL.md">SKILL.md → Dispatch</a>):
+</p>
+<pre><code>/nitpicker [command] [extra instructions]</code></pre>
+<p>
+  There is no argument parser, no flags library. It is just text: the
+  <strong>first word</strong> is a command candidate, and
+  <strong>everything after it</strong> is free-text instructions that constrain
+  the run (scope, focus, thresholds). Two of those instruction words are special
+  — <code>inline</code> and <code>changed-files</code> — and may appear anywhere
+  (<a class="cite" href="../../../skills/nitpicker/commands/_conventions.md">_conventions.md → Modifiers</a>).
+</p>
+
+<h2>The pipeline, step by step</h2>
+<ol class="pipeline">
+  <li><strong>Split the text.</strong> Take the first whitespace-delimited word
+    as the command candidate; keep the remainder as extra instructions.</li>
+  <li><strong>Resolve the first word</strong> against the command tables in
+    <code>SKILL.md</code>. Both <em>canonical names</em> (<code>tests</code>)
+    and <em>aliases</em> (<code>test-auditor</code>) resolve to the same file.</li>
+  <li><strong>Fall back on a miss.</strong> If the first word matches nothing —
+    or there is no text at all — the router runs the default <code>audit</code>
+    command and treats the <em>whole</em> text as extra instructions. A typo
+    never errors; it audits.</li>
+  <li><strong>Load in order.</strong> Read
+    <a class="cite" href="../../../skills/nitpicker/commands/_conventions.md"><code>commands/_conventions.md</code></a>
+    first (it binds every command — severity, findings store, rules), <em>then</em>
+    read <code>commands/&lt;resolved&gt;.md</code>.</li>
+  <li><strong>Execute exactly one.</strong> Run that single command with the
+    extra instructions applied. The router never chains commands on its own — if
+    a command tells you to run another first, you follow <em>that</em>, but the
+    router itself dispatches one and only one.</li>
+</ol>
+
+<h2>Three invocations, worked</h2>
+<table>
+  <thead><tr><th>You type</th><th>First word resolves to</th><th>What runs</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>/nitpicker tests only src/</code></td>
+      <td>canonical <code>tests</code></td>
+      <td><code>commands/tests.md</code>, scoped to <code>src/</code></td>
+    </tr>
+    <tr>
+      <td><code>/nitpicker test-auditor</code></td>
+      <td>alias → <code>tests</code></td>
+      <td>the same <code>commands/tests.md</code></td>
+    </tr>
+    <tr>
+      <td><code>/nitpicker frobnicate the code</code></td>
+      <td>no match → default</td>
+      <td><code>commands/audit.md</code>, with "frobnicate the code" as instructions</td>
+    </tr>
+  </tbody>
+</table>
+<p class="source-note">
+  This is exactly why invoking <code>teach</code> through the <em>published</em>
+  plugin — which does not know that command yet — would have fallen through to
+  <code>audit</code>: an unknown first word is not an error, it is the default.
+</p>
+
+<div class="callout">
+  <p class="label">Why this matters for extending</p>
+  <p>
+    Routing and <em>registration</em> are two sides of one coin. A command only
+    resolves in step&nbsp;2 because it has a row in a <code>SKILL.md</code>
+    command table. Add a command and you must do <em>both</em>: create
+    <code>commands/&lt;name&gt;.md</code> <strong>and</strong> add its table row.
+    The validator
+    <a class="cite" href="../../../scripts/validate-skill.py"><code>validate-skill.py</code></a>
+    enforces this as a strict <strong>1:1</strong>: a file with no row, or a row
+    with no file, fails CI. When you review a command PR, that is the first thing
+    to check.
+  </p>
+</div>
+
+<h2>Check yourself (recall, don't re-read)</h2>
+<p>Answer each out loud before opening it. Retrieval is what builds retention.</p>
+
+<details class="recall">
+  <summary>You type <code>/nitpicker teardown everything</code> and there is no
+    <code>teardown</code> command or alias. What runs?</summary>
+  <p class="answer">The default <code>audit</code> command, with "teardown
+    everything" passed through as extra instructions. Unknown first word →
+    fallback, never an error.</p>
+</details>
+
+<details class="recall">
+  <summary>In what order are files read once a command resolves, and why that
+    order?</summary>
+  <p class="answer"><code>_conventions.md</code> first, then the command file.
+    The conventions bind every command (severity, findings store, modifiers), so
+    they must be in force before the command's own instructions are applied.</p>
+</details>
+
+<details class="recall">
+  <summary>You add <code>commands/leaks.md</code> but forget the SKILL.md table
+    row. Two things break — what are they?</summary>
+  <p class="answer">(1) The word <code>leaks</code> resolves to nothing, so
+    <code>/nitpicker leaks</code> falls through to <code>audit</code>. (2)
+    <code>validate-skill.py</code> fails the 1:1 check in CI — a file with no
+    row.</p>
+</details>
+
+<h2>Read next (primary source)</h2>
+<p>
+  The single best source on this topic is the
+  <a href="../../../skills/nitpicker/SKILL.md"><strong>Dispatch</strong> section
+  of <code>skills/nitpicker/SKILL.md</code></a> — the ~25 lines that define
+  everything above. Read it once now that you have the mental model; it will read
+  as obvious, which is the point.
+</p>
+
+<footer>
+  <p>
+    Keep going: the compressed version of this lesson lives in the
+    <a href="../reference/dispatch-cheatsheet.html">dispatch cheat-sheet</a>, and
+    the sources are tracked in <a href="../RESOURCES.md">RESOURCES.md</a>.
+  </p>
+  <p>
+    <strong>I'm your teacher — ask me anything.</strong> If any step above is
+    fuzzy, or you want the alias-resolution case worked in depth (that's the
+    planned lesson 0002), just ask.
+  </p>
+</footer>
+
+</body>
+</html>

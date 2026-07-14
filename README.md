@@ -60,6 +60,12 @@ that run. The modifiers `inline` (nothing written to disk) and
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `plan`  | Turns a change request into a plan hardened by the audit lenses; writes a plan doc and stops for explicit approval before any implementation |
 
+### Learning
+
+| Command | What it does                                                                                                      |
+| ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `teach` | Teaches a skill or concept across sessions; builds a persistent `docs/lessons/` workspace — lessons, not findings |
+
 ### Security and data
 
 | Command         | What it hunts                                                                    |
@@ -186,6 +192,10 @@ Conventional Commits (`feat:` minor, `fix:` patch, `feat!:` major).
   [obra/superpowers](https://github.com/obra/superpowers) — the separation of
   planning from implementation, with explicit human sign-off before code is
   written — and hardens the plan with nitpicker's own adversarial audit lenses.
+- `/nitpicker teach` adapts the stateful teaching-workspace model from
+  [mattpocock/skills](https://github.com/mattpocock/skills) — mission-grounded
+  learning, spaced retrieval-practice lessons, and learning records as ADRs —
+  rewritten to this repo's command conventions with lessons under `docs/lessons/`.
 
 ## License
 
