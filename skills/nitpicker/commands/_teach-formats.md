@@ -104,9 +104,10 @@ recording _that_ this is now known and _why_ it changes what to teach next.
 
 Optional sections — include only when they add genuine value:
 
-- **Status** frontmatter (`active | superseded by <NNNN>`, where `<NNNN>` is the
-  filename number of the superseding record) — when an earlier understanding
-  turns out wrong and is replaced.
+- **Status** — a plain Markdown line, not YAML frontmatter (`Status: active` or
+  `Status: superseded by <NNNN>`, where `<NNNN>` is the filename number of the
+  superseding record) — when an earlier understanding turns out wrong and is
+  replaced.
 - **Evidence** — how the user demonstrated the understanding. Useful when the
   claim may be revisited.
 - **Implications** — what this unlocks or rules out for future sessions.

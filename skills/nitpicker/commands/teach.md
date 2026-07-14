@@ -29,7 +29,7 @@ The workspace is `docs/lessons/` in the current repository. Create it lazily —
 - `docs/lessons/assets/*` — reusable **components** shared across lessons (stylesheets, quiz widgets, simulators, diagram helpers).
 - `docs/lessons/NOTES.md` — a scratchpad for user preferences and working notes.
 
-`NNNN` is a zero-padded sequence (`0001`, `0002`, …); scan the directory for the highest existing number and increment.
+`NNNN` is a zero-padded sequence (`0001`, `0002`, …); scan the directory for the highest existing number and increment. Derive `<slug>` from the lesson topic as a short kebab-case identifier — lowercase letters, digits, and hyphens only, with any path separators or `..` stripped — never the raw topic string, so every artifact stays inside `docs/lessons/`.
 
 ## Philosophy
 
