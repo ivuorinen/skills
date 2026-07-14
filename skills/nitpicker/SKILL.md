@@ -61,6 +61,12 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | --- | --- |
 | `plan` | Turn a change request into an implementation plan hardened by the audit lenses; writes a plan doc and stops until the user approves implementation |
 
+### Learning
+
+| Command | Purpose |
+| --- | --- |
+| `teach` | Teach a skill or concept across sessions; builds a persistent teaching workspace under `docs/lessons/` (mission, resources, lessons, learning records). Writes lessons, not findings (adapted from mattpocock/skills) |
+
 ### Security and data
 
 | Command | Purpose |

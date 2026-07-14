@@ -48,6 +48,7 @@ If the user says… → run:
 - "be lazy / YAGNI / find bloat / over-engineering" → `/nitpicker complexity`
 - "find unwired code / is everything hooked up / incomplete implementations" → `/nitpicker unwired`
 - "plan this / how should we build X / design the implementation" → `/nitpicker plan`
+- "teach me X / help me learn X / explain X so it sticks / next lesson" → `/nitpicker teach`
 - "can we ship / release gate" → `/nitpicker release-gate`
 - "baseline the findings / accept existing debt / only fail on new findings" → `/nitpicker baseline`
 - "what audit commands are there / list the commands" → `/nitpicker help`
