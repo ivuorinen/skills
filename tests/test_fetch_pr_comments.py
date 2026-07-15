@@ -355,15 +355,34 @@ class TestFetchGraphql:
         assert threads[0]["path"] == "src/foo.py"
         assert threads[0]["comments"][0]["author"] == "reviewer"
 
-    def test_inner_comment_page_truncation_warns(self, capsys):
-        node = self._thread_node()
-        node["comments"]["pageInfo"] = {"hasNextPage": True}
+    def test_inner_comment_pagination_fetches_all_pages(self):
+        # A thread whose first comment page reports hasNextPage must follow the
+        # inner cursor and include the remaining comments, not truncate at 100.
+        node = self._thread_node()  # first page: comment C_1
+        node["comments"]["pageInfo"] = {"hasNextPage": True, "endCursor": "cc1"}
         resp = self._graphql_response([node])
-        with patch.object(_mod, "_gh_graphql", return_value=resp):
+        inner = {
+            "data": {
+                "node": {
+                    "comments": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [
+                            {
+                                "id": "C_2",
+                                "body": "second page",
+                                "createdAt": "2026-01-02",
+                                "author": {"login": "reviewer2"},
+                                "diffHunk": "@@ @@",
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(_mod, "_gh_graphql", side_effect=[resp, inner]):
             threads = fetch_graphql("owner", "repo", 1)
         assert len(threads) == 1
-        err = capsys.readouterr().err
-        assert "[warn] thread T_1 comments truncated at 100" in err
+        assert [c["id"] for c in threads[0]["comments"]] == ["C_1", "C_2"]
 
     def test_null_pull_request_raises_not_found(self):
         resp = {"data": {"repository": {"pullRequest": None}}}

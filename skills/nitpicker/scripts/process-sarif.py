@@ -160,7 +160,7 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:
 
         # Message
         msg_raw = result.get("message", {})
-        message = msg_raw.get("text", "") if isinstance(msg_raw, dict) else str(msg_raw)
+        message = str(msg_raw.get("text") or "") if isinstance(msg_raw, dict) else str(msg_raw)
 
         # Location
         uri, start_line, start_col = "", 0, 0
