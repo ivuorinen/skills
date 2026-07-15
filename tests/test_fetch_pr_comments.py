@@ -384,6 +384,18 @@ class TestFetchGraphql:
         assert len(threads) == 1
         assert [c["id"] for c in threads[0]["comments"]] == ["C_1", "C_2"]
 
+    def test_thread_deleted_mid_inner_pagination_does_not_crash(self):
+        # A thread deleted/hidden between pages returns data.node == null; keep
+        # the comments already fetched instead of crashing on None["comments"].
+        node = self._thread_node()  # first page: comment C_1
+        node["comments"]["pageInfo"] = {"hasNextPage": True, "endCursor": "cc1"}
+        resp = self._graphql_response([node])
+        gone = {"data": {"node": None}}
+        with patch.object(_mod, "_gh_graphql", side_effect=[resp, gone]):
+            threads = fetch_graphql("owner", "repo", 1)
+        assert len(threads) == 1
+        assert [c["id"] for c in threads[0]["comments"]] == ["C_1"]
+
     def test_null_pull_request_raises_not_found(self):
         resp = {"data": {"repository": {"pullRequest": None}}}
         with (

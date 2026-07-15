@@ -188,7 +188,10 @@ def _all_thread_comments(node: dict[str, Any]) -> list[dict[str, Any]]:
         sub = _gh_graphql(_THREAD_COMMENTS_QUERY, {"id": node["id"], "cursor": cursor})
         if "errors" in sub:
             raise RuntimeError(json.dumps(sub["errors"]))
-        conn = sub["data"]["node"]["comments"]
+        node_data = (sub.get("data") or {}).get("node")
+        if not node_data:
+            break  # thread deleted or hidden mid-pagination — keep what we have
+        conn = node_data["comments"]
         comments.extend(_gql_comment(c) for c in conn["nodes"])
         info = conn.get("pageInfo") or {}
         cursor = info.get("endCursor")
