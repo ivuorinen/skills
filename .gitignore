@@ -15,3 +15,7 @@ uv.lock
 
 # Dogfooding symlink: exposes the working-tree skill to Claude Code/Copilot as a project skill
 .claude/skills/nitpicker
+
+# Graphify recommended ignores
+graphify-out/cost.json
+graphify-out/cache/
