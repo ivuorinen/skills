@@ -56,7 +56,7 @@ Two classes (see `.claude/rules/use-uv-runner.md`):
 
 ## Conventions
 
-Skill/command writing style and lifecycle are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, `use-uv-runner.md`, `github-actions-security.md` (SHA-pinned actions + least-privilege, gated by the `zizmor` pre-commit hook), `use-context-mode.md` (route inspection commands through context-mode; `# ctx-ok` only for real mutations), `commit-gate-integrity.md` (CI `Validate` is the authoritative gate; no `--no-verify` on governed files), and `write-surgical-code.md` (how the repo's own Python gets written — surgical, simplicity-first, verifiable; from Karpathy's LLM-coding notes).
+Skill/command writing style and lifecycle are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, `use-uv-runner.md`, `github-actions-security.md` (SHA-pinned actions + least-privilege, gated by the `zizmor` pre-commit hook), `use-context-mode.md` (route inspection commands through context-mode; `# ctx-ok` only for real mutations), `commit-gate-integrity.md` (CI `Validate` is the authoritative gate; no `--no-verify` on governed files), `write-surgical-code.md` (how the repo's own Python gets written — surgical, simplicity-first, verifiable; from Karpathy's LLM-coding notes), and `vendored-skills.md` (skills not authored by us — e.g. `graphify` — are skipped by `validate-skill.py` via an owner-approved `VENDORED_SKILLS` allowlist an agent never edits on its own).
 
 ## Plugin Metadata
 

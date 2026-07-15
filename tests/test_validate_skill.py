@@ -44,6 +44,34 @@ VALID = (
 )
 
 
+class TestVendoredSkip:
+    def test_vendored_skill_is_filtered_out(self):
+        targets = [
+            Path(".claude/skills/graphify/SKILL.md"),
+            Path("skills/nitpicker/SKILL.md"),
+        ]
+        kept, skipped = _mod.filter_vendored(targets)
+        assert Path("skills/nitpicker/SKILL.md") in kept
+        assert Path(".claude/skills/graphify/SKILL.md") not in kept
+        assert "graphify" in skipped
+
+    def test_authored_skills_all_kept(self):
+        targets = [
+            Path(f".claude/skills/{n}/SKILL.md")
+            for n in ("new-command", "release-prep", "skill-tester", "skills", "validate-skills")
+        ]
+        kept, skipped = _mod.filter_vendored(targets)
+        assert kept == targets
+        assert skipped == []
+
+    def test_allowlist_contains_only_approved_entries(self):
+        # Governance guard: the vendored allowlist is human-curated. graphify is
+        # the only user-approved entry. If this fails because an entry was added,
+        # the addition needs explicit user approval — do not "fix" it by editing
+        # this assertion.
+        assert frozenset({"graphify"}) == _mod.VENDORED_SKILLS
+
+
 class TestValidate:
     def test_valid_skill_no_errors(self, tmp_path):
         assert _errors(tmp_path, VALID) == []
