@@ -159,8 +159,8 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:
         severity = _normalize_severity(result.get("level"), security_sev, tool_severity)
 
         # Message
-        msg_raw = result.get("message", {})
-        message = msg_raw.get("text", "") if isinstance(msg_raw, dict) else str(msg_raw)
+        msg_raw = result.get("message") or {}
+        message = str(msg_raw.get("text") or "") if isinstance(msg_raw, dict) else str(msg_raw)
 
         # Location
         uri, start_line, start_col = "", 0, 0

@@ -48,7 +48,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
           isResolved
           path
           comments(first: 100) {
-            pageInfo { hasNextPage }
+            pageInfo { hasNextPage endCursor }
             nodes {
               id
               body
@@ -57,6 +57,27 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
               diffHunk
             }
           }
+        }
+      }
+    }
+  }
+}
+"""
+
+# Follow-up query paging the remaining comments of a single thread whose first
+# page reported hasNextPage — keyed by the thread's node id.
+_THREAD_COMMENTS_QUERY = """
+query($id: ID!, $cursor: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          body
+          createdAt
+          author { login }
+          diffHunk
         }
       }
     }
@@ -146,6 +167,37 @@ def _build_comment(comment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gql_comment(c: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": c["id"],
+        "author": (c.get("author") or {}).get("login", "unknown"),
+        "body": c["body"],
+        "created_at": c["createdAt"],
+        "diff_hunk": c.get("diffHunk", ""),
+    }
+
+
+def _all_thread_comments(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """All comments for one thread, following the inner `comments` cursor so a
+    thread with >100 comments is not silently truncated to its first page."""
+    conn = node["comments"]
+    comments = [_gql_comment(c) for c in conn["nodes"]]
+    info = conn.get("pageInfo") or {}
+    cursor = info.get("endCursor")
+    while info.get("hasNextPage") and cursor:
+        sub = _gh_graphql(_THREAD_COMMENTS_QUERY, {"id": node["id"], "cursor": cursor})
+        if "errors" in sub:
+            raise RuntimeError(json.dumps(sub["errors"]))
+        node_data = (sub.get("data") or {}).get("node")
+        if not node_data:
+            break  # thread deleted or hidden mid-pagination — keep what we have
+        conn = node_data["comments"]
+        comments.extend(_gql_comment(c) for c in conn["nodes"])
+        info = conn.get("pageInfo") or {}
+        cursor = info.get("endCursor")
+    return comments
+
+
 def fetch_graphql(owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
     threads: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -165,21 +217,7 @@ def fetch_graphql(owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]
         for node in page["nodes"]:
             if node["isResolved"]:
                 continue
-            if (node["comments"].get("pageInfo") or {}).get("hasNextPage"):
-                print(
-                    f"[warn] thread {node['id']} comments truncated at 100",
-                    file=sys.stderr,
-                )
-            comments = [
-                {
-                    "id": c["id"],
-                    "author": (c.get("author") or {}).get("login", "unknown"),
-                    "body": c["body"],
-                    "created_at": c["createdAt"],
-                    "diff_hunk": c.get("diffHunk", ""),
-                }
-                for c in node["comments"]["nodes"]
-            ]
+            comments = _all_thread_comments(node)
             threads.append(
                 {
                     "thread_id": node["id"],

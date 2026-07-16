@@ -11,6 +11,36 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from common import parse_frontmatter  # noqa: E402  # type: ignore[import-not-found]
 
+# Vendored skills — authored by someone else and installed into this repo (e.g.
+# via `/graphify`), NOT held to our SKILL.md conventions. Skills named here are
+# skipped by the validator (their descriptions, body length, etc. are their
+# authors' concern, not ours).
+#
+# GOVERNANCE: this list is human-curated. It may contain ONLY vendored skills
+# the repo owner has explicitly approved. An agent MUST NOT add an entry on its
+# own — any skill not authored by us requires the owner's explicit confirmation
+# before it goes here. `test_allowlist_contains_only_approved_entries` guards
+# this; if it fails because of a new entry, that entry needs approval, not a
+# test edit.
+VENDORED_SKILLS: frozenset[str] = frozenset({"graphify"})
+
+
+def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
+    """Split SKILL.md targets into (validate, skipped-vendored-names).
+
+    A target is vendored when its skill directory (the SKILL.md's parent) is
+    named in VENDORED_SKILLS. Applies to both explicit args and auto-discovery,
+    so an edited vendored SKILL.md is skipped rather than failing our checks.
+    """
+    kept: list[Path] = []
+    skipped: list[str] = []
+    for t in targets:
+        if t.parent.name in VENDORED_SKILLS:
+            skipped.append(t.parent.name)
+        else:
+            kept.append(t)
+    return kept, skipped
+
 
 def strip_fences(lines: list[str]) -> list[str]:
     """Return lines outside fenced code blocks.
@@ -206,8 +236,13 @@ def main() -> None:
             [*repo_root.glob("skills/*/SKILL.md"), *repo_root.glob(".claude/skills/*/SKILL.md")]
         )
 
+    targets, skipped = filter_vendored(targets)
+    for name in skipped:
+        print(f"  SKIP   {name} (vendored — not authored by us, not validated)")
+
     if not targets:
-        print("No SKILL.md files found.")
+        if not skipped:
+            print("No SKILL.md files found.")
         sys.exit(0)
 
     for t in targets:

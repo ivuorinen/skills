@@ -132,9 +132,22 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
                     elif ".." in Path(glob).parts:
                         msg = f"'paths:' glob must not traverse root: {glob!r}"
                         issue("Medium", "traversal_glob", msg)
-                    elif not any(True for _ in project_root.glob(glob)):
-                        msg = f"'paths:' glob matches no files (stale?): {glob!r}"
-                        issue("Low", "stale_glob", msg)
+                    else:
+                        try:
+                            matched = any(True for _ in project_root.glob(glob))
+                        except ValueError:
+                            # '**' mixed with other chars in a path component raises
+                            # ValueError on CPython <3.13; treat it as a bad pattern
+                            # rather than crashing the whole run (uncaught otherwise).
+                            issue(
+                                "Medium",
+                                "invalid_glob",
+                                f"'paths:' glob is not a valid pattern: {glob!r}",
+                            )
+                            continue
+                        if not matched:
+                            msg = f"'paths:' glob matches no files (stale?): {glob!r}"
+                            issue("Low", "stale_glob", msg)
 
     if not body.strip():
         issue("Medium", "empty_body", "Body is empty after frontmatter — no rules defined")
