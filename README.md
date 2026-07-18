@@ -170,6 +170,15 @@ Legacy IDs (`N-042`) stay valid. All 1.x skill invocations
 aliases — the `## Commands` tables in `skills/nitpicker/SKILL.md` list
 every alias next to its command.
 
+## MCP server
+
+Installing the plugin registers a stdlib-only stdio MCP server (`nitpicker`)
+that exposes skill introspection (`list_skills`, `read_skill`, `read_command`,
+`list_commands`) and findings management (`list_findings`, `show_finding`,
+`findings_index`, `validate_store`, `new_finding`, `resolve_finding`). See the
+"MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
+non-interactive mutate contract.
+
 ## Development
 
 ```bash

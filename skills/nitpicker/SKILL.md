@@ -154,3 +154,24 @@ All bundled tools are stdlib-only and run with plain `python3 <path>` — no
 uv or package installs required on the host. In Claude Code the skill
 directory is `${CLAUDE_SKILL_DIR}`; other agents resolve the path relative
 to this file.
+
+## MCP server
+
+Installing this plugin registers a stdio MCP server (`nitpicker`) via the
+plugin-root `.mcp.json`. It is stdlib-only Python 3.11+ (`scripts/mcp_server.py`),
+starts automatically, and exposes 10 tools:
+
+| Scope | Tools |
+| --- | --- |
+| Plugin skills (introspection) | `list_skills`, `read_skill`, `read_command`, `list_commands` |
+| Findings — read | `list_findings`, `show_finding`, `findings_index`, `validate_store` |
+| Findings — mutate | `new_finding`, `resolve_finding` |
+
+Skill tools read the plugin's own bundled skills. Findings tools act on the
+audited project's store — pass `project_dir`, or the server falls back to
+`CLAUDE_PROJECT_DIR` then the working directory's repo root.
+
+The mutate tools run **without** the interactive consent prompts of the
+`/nitpicker` command flow: git is the safety net — every change is a
+reviewable, revertible working-tree edit and nothing is pushed. The server is
+Claude-native and not portable to Copilot/pi.
