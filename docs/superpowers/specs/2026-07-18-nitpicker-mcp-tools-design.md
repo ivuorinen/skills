@@ -24,6 +24,15 @@ Three design forks were resolved with the repo owner during brainstorming:
    `scripts/`). Rationale below.
 3. **Tool surface:** all four categories — skills list/read, findings
    read-only, findings mutate, repo meta.
+4. **Distribution:** the MCP server ships **inside the plugin** and is
+   installed/started automatically when the user installs the nitpicker plugin
+   via `/plugins` — the owner runs this on multiple machines. This resolves
+   former open decision D2 in favour of distribution (not repo-local only).
+5. **Two roots by scope:** skill/command tools are scoped to the **plugin's
+   own** bundled skills (owner's choice — introspect what nitpicker can do
+   anywhere); findings tools are scoped to the **project being audited**. The
+   two roots are resolved by different, independent mechanisms (see Root
+   resolution).
 
 ## Architecture
 
@@ -76,47 +85,101 @@ standalone stdlib CLI (mirroring `findings.py`'s library-plus-`main()` split):
 
 ### Root resolution
 
-`findings.py` addresses its store as cwd-relative `docs/audit/findings`. The
-server resolves the workspace root in this order: `CLAUDE_PROJECT_DIR` env →
-`findings.find_repo_root(cwd)` → cwd, and passes it explicitly into every
-backing call. Per Open decision D2 the recommendation is to resolve **per
-call** (not once at startup) so a stale binding can't outlive a workspace
-change, and to scope this iteration to a repo-local `.mcp.json`.
+A plugin-bundled stdio server's **cwd and environment are unspecified by
+Claude Code** (confirmed: the docs do not define them). So neither root may
+depend on cwd. Two independent roots:
 
-### Registration
+**Plugin root (skill/command tools) — derived from `__file__`.** The server
+lives at `<plugin>/skills/nitpicker/scripts/mcp_server.py`, so the plugin root
+is `Path(__file__).resolve().parents[3]` — deterministic, no cwd, no env, no
+`${CLAUDE_PLUGIN_ROOT}` interpolation needed. `skill_catalog.py` globs
+`<plugin>/skills/*/SKILL.md` and `<plugin>/.claude/skills/*/SKILL.md` under
+that root. This is also how `mcp_server.py` locates its sibling modules
+(`sys.path.insert(0, str(Path(__file__).resolve().parent))`).
 
-`.mcp.json` at repo root:
+**Project root (findings tools) — explicit arg first, then fallbacks.** The
+findings store lives in the *audited* repo, which the server cannot reliably
+infer from cwd. Resolution order, **per call**:
+
+1. an optional `project_dir` argument on each findings tool — the calling
+   agent always knows its absolute workspace path, so this is the reliable
+   override that works regardless of how the server was launched;
+2. `CLAUDE_PROJECT_DIR` env (passed through `.mcp.json` `env`, if Claude Code
+   interpolates it — see Unknowns);
+3. `findings.find_repo_root(cwd)` → cwd.
+
+Resolving per call (not once at startup) means a stale binding can't outlive a
+workspace change. `find_repo_root` returning the wrong tree is why the explicit
+arg is first, not last.
+
+### Registration (plugin distribution)
+
+Claude Code auto-detects an **`.mcp.json` at the plugin root** (not inside
+`.claude-plugin/`, and not in `plugin.json`). Because this repo *is* the
+plugin, that file lives at the repo root and serves both installed users and
+in-repo development:
 
 ```json
 {
   "mcpServers": {
     "nitpicker": {
+      "type": "stdio",
       "command": "python3",
-      "args": ["skills/nitpicker/scripts/mcp_server.py"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/nitpicker/scripts/mcp_server.py"],
+      "env": {
+        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
     }
   }
 }
 ```
 
-This iteration is **scoped to repo-local `.mcp.json`** (see Open decision D2).
-Plugin-distribution wiring (so `/plugins` installs the server) is deferred —
-it interacts with root resolution and is a separate follow-up. The server is
-not portable to Copilot/pi — accepted trade-off.
+- **Launch path** uses `${CLAUDE_PLUGIN_ROOT}` so it resolves in the installed
+  plugin regardless of cwd. This variable's availability in `.mcp.json`
+  `args` is **not officially documented** — see Unknowns; the implementation
+  plan must verify it empirically and fall back to a relative path if needed.
+- **`env`** forwards `CLAUDE_PROJECT_DIR` as fallback #2 for the project root.
+  Interpolation here is also unconfirmed (Unknowns); the `project_dir` tool
+  arg (fallback #1) is what makes correctness independent of it.
+- **`python3` requirement.** The server is stdlib-only Python 3.11+, same
+  assumption every shipped nitpicker tool already makes. If `python3` is
+  absent the server fails to start — an existing, accepted constraint.
+- **User approval on install.** A plugin-bundled MCP server prompts for consent
+  on first install (launching a process), and may not surface that prompt in
+  headless/CI. Documented, not a blocker.
+
+The server is not portable to Copilot/pi — accepted trade-off.
+
+### Unknowns to verify during implementation
+
+Two Claude Code behaviours are not settled by the docs and must be confirmed on
+a real install before the launch config is trusted; correctness does **not**
+depend on either, because the `__file__`-derived plugin root and the
+`project_dir` tool arg cover both:
+
+1. Whether `${CLAUDE_PLUGIN_ROOT}` interpolates inside `.mcp.json` `args`.
+   Fallback: relative path `./skills/nitpicker/scripts/mcp_server.py`.
+2. Whether `${CLAUDE_PROJECT_DIR}` interpolates inside `.mcp.json` `env`.
+   Fallback: rely on the `project_dir` tool arg (already fallback #1).
 
 ## Tool surface (10 tools)
 
+Skill/command tools are **plugin-scoped** (plugin root, no root arg). Findings
+tools are **project-scoped** and every one takes an optional `project_dir`
+(fallback #1 for the project root, per Root resolution).
+
 | Category | Tool | Args | Backed by |
 | --- | --- | --- | --- |
-| Skills | `list_skills` | — | `skill_catalog.py` |
-| Skills | `read_skill` | `name` | `skill_catalog.py` |
-| Skills | `read_command` | `command` | `skill_catalog.py` |
-| Findings (read) | `list_findings` | `auditor?`, `severity?`, `status?`, `limit?` | `findings.iter_open` + `read_ledger` (server-side filter/merge) |
-| Findings (read) | `show_finding` | `id` | `findings.show_finding` |
-| Findings (read) | `findings_index` | — | `findings.build_index` |
-| Findings (read) | `validate_store` | — | `findings.validate_store` |
-| Findings (mutate) | `new_finding` | `auditor`, `severity`, `category`, `area`, `title`, `problem`, `evidence`, `impact`, `fix` | `findings.new_finding` (server assembles `body`) |
-| Findings (mutate) | `resolve_finding` | `id`, `status`, `note` | `findings.resolve_finding` |
-| Meta | `list_commands` | `skill?` | `skill_catalog.py` |
+| Skills | `list_skills` | — | `skill_catalog.py` (plugin root) |
+| Skills | `read_skill` | `name` | `skill_catalog.py` (plugin root) |
+| Skills | `read_command` | `command` | `skill_catalog.py` (plugin root) |
+| Findings (read) | `list_findings` | `project_dir?`, `auditor?`, `severity?`, `status?`, `limit?` | `findings.iter_open` + `read_ledger` (server-side filter/merge) |
+| Findings (read) | `show_finding` | `project_dir?`, `id` | `findings.show_finding` |
+| Findings (read) | `findings_index` | `project_dir?` | `findings.build_index` |
+| Findings (read) | `validate_store` | `project_dir?` | `findings.validate_store` |
+| Findings (mutate) | `new_finding` | `project_dir?`, `auditor`, `severity`, `category`, `area`, `title`, `problem`, `evidence`, `impact`, `fix` | `findings.new_finding` (server assembles `body`) |
+| Findings (mutate) | `resolve_finding` | `project_dir?`, `id`, `status`, `note` | `findings.resolve_finding` |
+| Meta | `list_commands` | `skill?` | `skill_catalog.py` (plugin root) |
 
 Each tool declares a JSON Schema `inputSchema` in `tools/list`. Read tools
 return text/JSON content; mutate tools return the created id / ledger record.
@@ -177,9 +240,9 @@ from the repository under audit. Two boundaries must hold:
 
 Under `tests/` (uv-run, pytest — internal tooling, not shipped):
 
-- `test_skills_py.py` — skill enumeration (incl. vendored skip), frontmatter
-  parse, Commands-table parse (name + aliases), command-file read, unknown-name
-  handling.
+- `test_skill_catalog.py` — skill enumeration (incl. vendored skip),
+  frontmatter parse, Commands-table parse (name + aliases), command-file read,
+  unknown-name handling, and plugin-root derivation from `__file__`.
 - `test_mcp_server.py` — drive the loop with crafted `initialize`,
   `tools/list`, and `tools/call` frames over an in-memory pipe; assert framing
   and payloads. Include one mutate round-trip (`new_finding` → `list_findings`
@@ -206,8 +269,7 @@ Under `tests/` (uv-run, pytest — internal tooling, not shipped):
 
 ## Open decisions (owner call)
 
-These two came out of the adversarial review as genuine design choices, not
-mechanical fixes. Recommendations given; not yet locked.
+One design choice remains open. (D2 is resolved — see below.)
 
 **D1 — Consent model for mutate tools (from H3).** `_conventions.md` gates
 every findings mutation behind human prompts (Apply fixes? / Commit to git?)
@@ -224,17 +286,13 @@ without a prompt.
 - **Alternative:** expose `new_finding` only and keep `resolve_finding`
   CLI-only, since resolution is the destructive half (unlink + ledger append).
 
-**D2 — Root resolution & distribution scope (from M2).** Resolving the repo
-root once at startup binds the whole session to one tree; with a global
-install it can `find_repo_root` the *wrong* tree.
-
-- **Recommended:** scope this iteration to a repo-local `.mcp.json` (cwd is the
-  project) and resolve the root **per call** rather than once at startup — cheap
-  hardening that also lets a future global install pass an explicit root. Drop
-  plugin-distribution wiring to Deferred.
-- **Alternative:** commit to distribution now and add an explicit `root` arg to
-  every findings tool. More surface, more to validate; not worth it until the
-  repo-local version proves out.
+**D2 — Root resolution & distribution scope (from M2) — RESOLVED.** The owner
+distributes the server as part of the plugin and runs it on multiple machines,
+so distribution is in scope. A plugin server's cwd/env are unspecified, so
+root resolution does **not** rely on them: the plugin root is derived from
+`__file__`, and the project root comes from an explicit `project_dir` tool arg
+(with env/cwd fallbacks), resolved per call. See Root resolution and
+Registration.
 
 ## Deferred (YAGNI)
 
@@ -242,7 +300,6 @@ install it can `find_repo_root` the *wrong* tree.
   workflow needs them over MCP.
 - `baseline` / `migrate` / `migrate-resolved` tools — maintenance ops, not
   agent-loop tools; keep them CLI-only.
-- Plugin-distribution wiring of the server — separate follow-up.
 
 ## Validation gates this must pass
 
