@@ -72,8 +72,11 @@ standalone stdlib CLI (mirroring `findings.py`'s library-plus-`main()` split):
   directory instead of the sibling module depending on launch method. A
   distinct module name removes the ambiguity entirely. Responsibilities:
   - enumerate skills: `glob("skills/*/SKILL.md")` +
-    `glob(".claude/skills/*/SKILL.md")`, skipping the `VENDORED_SKILLS`
-    set (reuse the same names as `validate-skill.py`);
+    `glob(".claude/skills/*/SKILL.md")`, listing **all** discovered skills.
+    No vendored-skip: `validate-skill.py`'s `VENDORED_SKILLS` governs
+    *validation*, and duplicating that owner-governed set into a shipped file
+    risks drift and is discouraged by `vendored-skills.md`; read-only listing
+    of every installed skill (graphify included) is just accurate;
   - parse frontmatter (`name`, `description`) reusing
     `findings.parse_frontmatter`;
   - parse the nitpicker Commands table (canonical name + aliases + purpose),
