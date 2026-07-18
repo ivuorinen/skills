@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-18
 **Branch:** `feat/tools`
-**Status:** Design (awaiting review before implementation)
+**Status:** Design complete — both open decisions resolved; ready for
+implementation plan
 
 ## Goal
 
@@ -267,24 +268,21 @@ Under `tests/` (uv-run, pytest — internal tooling, not shipped):
 - Module docstring in `mcp_server.py` enumerating the 10 tools.
 - No `_conventions.md` change (server adds no audit-command behavior).
 
-## Open decisions (owner call)
+## Resolved decisions
 
-One design choice remains open. (D2 is resolved — see below.)
+Both design choices from the adversarial review are settled.
 
-**D1 — Consent model for mutate tools (from H3).** `_conventions.md` gates
-every findings mutation behind human prompts (Apply fixes? / Commit to git?)
-that explicitly override autonomous mode. The MCP `new_finding` /
-`resolve_finding` tools sit outside that interactive flow — an agent can create
-and resolve findings (resolve deletes the open file + appends the ledger)
-without a prompt.
-
-- **Recommended:** keep both mutate tools, and document that the MCP surface is
-  intentionally outside the interactive consent model — git is the safety net
-  (every mutation is a reviewable, revertible working-tree change; nothing is
-  pushed). The consent prompts remain in force for the `/nitpicker` command
-  flow.
-- **Alternative:** expose `new_finding` only and keep `resolve_finding`
-  CLI-only, since resolution is the destructive half (unlink + ledger append).
+**D1 — Consent model for mutate tools (from H3) — RESOLVED: keep both.**
+`_conventions.md` gates findings mutations in the `/nitpicker` flow behind
+human prompts (Apply fixes? / Commit to git?). The MCP surface deliberately
+sits **outside** that interactive model: both `new_finding` and
+`resolve_finding` are exposed with no consent prompt. The safety net is git —
+every mutation (`new_finding` writes an open file; `resolve_finding` unlinks it
+and appends to the ledger) is a reviewable, revertible working-tree change and
+nothing is ever pushed. `mcp_server.py`'s docstring and the SKILL.md MCP
+section must state this non-interactive contract explicitly so it reads as
+intent, not oversight. The consent prompts remain fully in force for the
+`/nitpicker` command flow, which is unchanged.
 
 **D2 — Root resolution & distribution scope (from M2) — RESOLVED.** The owner
 distributes the server as part of the plugin and runs it on multiple machines,
