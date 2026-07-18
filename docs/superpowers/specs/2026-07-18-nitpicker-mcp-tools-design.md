@@ -55,8 +55,12 @@ standalone stdlib CLI (mirroring `findings.py`'s library-plus-`main()` split):
   directly. Because those functions **return** rather than `print`, the
   JSON-RPC stdout channel is never polluted (warnings go to stderr via
   `_note`, which is safe).
-- **`skills.py` — new** stdlib module + CLI under
-  `skills/nitpicker/scripts/`. Responsibilities:
+- **`skill_catalog.py` — new** stdlib module + CLI under
+  `skills/nitpicker/scripts/`. **Named `skill_catalog.py`, not `skills.py`:**
+  the repo root contains a `skills/` directory (a namespace package on the
+  import path), so `import skills` from `mcp_server.py` could bind to that
+  directory instead of the sibling module depending on launch method. A
+  distinct module name removes the ambiguity entirely. Responsibilities:
   - enumerate skills: `glob("skills/*/SKILL.md")` +
     `glob(".claude/skills/*/SKILL.md")`, skipping the `VENDORED_SKILLS`
     set (reuse the same names as `validate-skill.py`);
@@ -64,16 +68,20 @@ standalone stdlib CLI (mirroring `findings.py`'s library-plus-`main()` split):
     `findings.parse_frontmatter`;
   - parse the nitpicker Commands table (canonical name + aliases + purpose),
     reusing the approach in `validate-skill.py:table_commands`;
-  - read a SKILL.md or a `commands/<command>.md` file by name.
+  - resolve a skill or command **only by exact match against the enumerated
+    set** — never by building a path from the raw input (see Security below);
+  - read a SKILL.md or a `commands/<command>.md` file by validated name.
   - CLI subcommands: `list`, `read <skill>`, `commands [skill]`,
     `read-command <command>`.
 
 ### Root resolution
 
 `findings.py` addresses its store as cwd-relative `docs/audit/findings`. The
-server resolves the workspace root once at startup in this order:
-`CLAUDE_PROJECT_DIR` env → `findings.find_repo_root(cwd)` → cwd. That root is
-passed explicitly into every backing call; no per-tool cwd guessing.
+server resolves the workspace root in this order: `CLAUDE_PROJECT_DIR` env →
+`findings.find_repo_root(cwd)` → cwd, and passes it explicitly into every
+backing call. Per Open decision D2 the recommendation is to resolve **per
+call** (not once at startup) so a stale binding can't outlive a workspace
+change, and to scope this iteration to a repo-local `.mcp.json`.
 
 ### Registration
 
@@ -90,34 +98,50 @@ passed explicitly into every backing call; no per-tool cwd guessing.
 }
 ```
 
-Wiring into plugin distribution (so `/plugins` installs the server) is a
-follow-up, noted here but out of scope for this spec. The server is not
-portable to Copilot/pi — accepted trade-off.
+This iteration is **scoped to repo-local `.mcp.json`** (see Open decision D2).
+Plugin-distribution wiring (so `/plugins` installs the server) is deferred —
+it interacts with root resolution and is a separate follow-up. The server is
+not portable to Copilot/pi — accepted trade-off.
 
 ## Tool surface (10 tools)
 
 | Category | Tool | Args | Backed by |
 | --- | --- | --- | --- |
-| Skills | `list_skills` | — | `skills.py` |
-| Skills | `read_skill` | `name` | `skills.py` |
-| Skills | `read_command` | `command` | `skills.py` |
-| Findings (read) | `list_findings` | `auditor?`, `severity?`, `status?` | `findings.iter_open` + `read_ledger` |
+| Skills | `list_skills` | — | `skill_catalog.py` |
+| Skills | `read_skill` | `name` | `skill_catalog.py` |
+| Skills | `read_command` | `command` | `skill_catalog.py` |
+| Findings (read) | `list_findings` | `auditor?`, `severity?`, `status?`, `limit?` | `findings.iter_open` + `read_ledger` (server-side filter/merge) |
 | Findings (read) | `show_finding` | `id` | `findings.show_finding` |
 | Findings (read) | `findings_index` | — | `findings.build_index` |
 | Findings (read) | `validate_store` | — | `findings.validate_store` |
-| Findings (mutate) | `new_finding` | `auditor`, `severity`, `category`, `area`, `title`, `problem`, `evidence`, `impact`, `fix` | `findings.new_finding` |
+| Findings (mutate) | `new_finding` | `auditor`, `severity`, `category`, `area`, `title`, `problem`, `evidence`, `impact`, `fix` | `findings.new_finding` (server assembles `body`) |
 | Findings (mutate) | `resolve_finding` | `id`, `status`, `note` | `findings.resolve_finding` |
-| Meta | `list_commands` | `skill?` | `skills.py` |
+| Meta | `list_commands` | `skill?` | `skill_catalog.py` |
 
 Each tool declares a JSON Schema `inputSchema` in `tools/list`. Read tools
 return text/JSON content; mutate tools return the created id / ledger record.
+
+**`new_finding` body assembly (H1).** `findings.new_finding` takes a single
+`body: str`, not four section fields. The tool exposes the four fields
+(`problem`/`evidence`/`impact`/`fix`) for agent ergonomics and to enforce the
+store's required sections at the boundary; the server joins them into the
+`## Problem … ## Evidence … ## Impact … ## Fix` markdown that `new_finding`
+expects before the call. The tool signature and the function signature are
+different by design — the server bridges them.
+
+**`list_findings` merge/filter (M1).** `iter_open` returns *all* open findings
+with no filtering, and the resolved ledger is separate. The server does the
+work: `status=open` → `iter_open`; `status∈{fixed,invalid}` → `read_ledger`;
+no `status` → both merged. `auditor` and `severity` are filtered in Python
+after collection. `limit` truncates the result (default reasonable cap) so a
+large store cannot flood model context.
 
 ## Data flow
 
 ```text
 agent → tools/call (JSON-RPC over stdio)
       → mcp_server.py dispatch table
-      → skills.py  |  findings.py  (library functions, return data)
+      → skill_catalog.py | findings.py  (library functions, return data)
       → JSON result envelope → agent
 ```
 
@@ -131,6 +155,24 @@ agent → tools/call (JSON-RPC over stdio)
 - The read loop tolerates and skips blank lines; a decode error on one frame
   does not kill the server.
 
+## Security
+
+The tool arguments are model-controlled and may carry prompt-injected content
+from the repository under audit. Two boundaries must hold:
+
+- **No path construction from raw input.** `read_skill` / `read_command` /
+  `list_commands(skill)` resolve their name argument only by exact match
+  against the enumerated skill/command set that `list_skills` / `list_commands`
+  already build. Anything not in the set returns an `isError` result. A path is
+  never built as `base / f"{name}/SKILL.md"` from the raw argument — that would
+  make `read_command("../../../../etc/passwd")` an arbitrary-file-read
+  primitive.
+- **Import isolation.** The server module imports `findings` and
+  `skill_catalog` by distinct names (never `skills`, which collides with the
+  repo-root `skills/` namespace package). `mcp_server.py` prepends its own
+  directory to `sys.path` so the sibling modules resolve deterministically
+  regardless of launch cwd.
+
 ## Testing
 
 Under `tests/` (uv-run, pytest — internal tooling, not shipped):
@@ -142,8 +184,16 @@ Under `tests/` (uv-run, pytest — internal tooling, not shipped):
   `tools/list`, and `tools/call` frames over an in-memory pipe; assert framing
   and payloads. Include one mutate round-trip (`new_finding` → `list_findings`
   → `resolve_finding`) against a temp store to prove the wiring end to end.
+- **stdout-cleanliness test (M3) — load-bearing.** The stdio design rests on
+  backing functions never writing to stdout. Assert it directly: run a
+  `tools/call` (including a mutate, which writes files and refreshes the index)
+  and assert stdout contains **only** the JSON-RPC response frame(s) — zero
+  extra bytes. This pins the property the whole transport depends on so a
+  future stray `print` fails a test instead of silently corrupting the stream.
+- **Path-traversal test (C1).** `read_command("../../etc/passwd")` and an
+  unknown skill name both return `isError`, not file contents.
 
-`mcp_server.py` and `skills.py` must remain stdlib-only (gated by
+`mcp_server.py` and `skill_catalog.py` must remain stdlib-only (gated by
 `check-stdlib-only.py`); tests may use uv.
 
 ## Docs
@@ -153,6 +203,38 @@ Under `tests/` (uv-run, pytest — internal tooling, not shipped):
 - A README row/note.
 - Module docstring in `mcp_server.py` enumerating the 10 tools.
 - No `_conventions.md` change (server adds no audit-command behavior).
+
+## Open decisions (owner call)
+
+These two came out of the adversarial review as genuine design choices, not
+mechanical fixes. Recommendations given; not yet locked.
+
+**D1 — Consent model for mutate tools (from H3).** `_conventions.md` gates
+every findings mutation behind human prompts (Apply fixes? / Commit to git?)
+that explicitly override autonomous mode. The MCP `new_finding` /
+`resolve_finding` tools sit outside that interactive flow — an agent can create
+and resolve findings (resolve deletes the open file + appends the ledger)
+without a prompt.
+
+- **Recommended:** keep both mutate tools, and document that the MCP surface is
+  intentionally outside the interactive consent model — git is the safety net
+  (every mutation is a reviewable, revertible working-tree change; nothing is
+  pushed). The consent prompts remain in force for the `/nitpicker` command
+  flow.
+- **Alternative:** expose `new_finding` only and keep `resolve_finding`
+  CLI-only, since resolution is the destructive half (unlink + ledger append).
+
+**D2 — Root resolution & distribution scope (from M2).** Resolving the repo
+root once at startup binds the whole session to one tree; with a global
+install it can `find_repo_root` the *wrong* tree.
+
+- **Recommended:** scope this iteration to a repo-local `.mcp.json` (cwd is the
+  project) and resolve the root **per call** rather than once at startup — cheap
+  hardening that also lets a future global install pass an explicit root. Drop
+  plugin-distribution wiring to Deferred.
+- **Alternative:** commit to distribution now and add an explicit `root` arg to
+  every findings tool. More surface, more to validate; not worth it until the
+  repo-local version proves out.
 
 ## Deferred (YAGNI)
 
