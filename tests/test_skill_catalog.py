@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --quiet
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pytest"]
+# ///
 """Tests for skills/nitpicker/scripts/skill_catalog.py."""
 
 import importlib.util

@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --quiet
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pytest"]
+# ///
 """Tests for skills/nitpicker/scripts/mcp_server.py."""
 
 import contextlib
