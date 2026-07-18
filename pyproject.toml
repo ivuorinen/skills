@@ -33,3 +33,13 @@ known-first-party = ["scripts"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pyright]
+# Use the same virtualenv uv manages (`uv sync --extra dev`), so pyright sees
+# pytest and the rest of the dev deps.
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+# Shipped skill tools import sibling modules from their own scripts/ dir
+# (e.g. `from findings import ...`); add those dirs so pyright resolves them.
+extraPaths = ["skills/nitpicker/scripts"]
