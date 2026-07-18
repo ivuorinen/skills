@@ -56,9 +56,10 @@ that run. The modifiers `inline` (nothing written to disk) and
 
 ### Planning
 
-| Command | What it does                                                                                                                                 |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plan`  | Turns a change request into a plan hardened by the audit lenses; writes a plan doc and stops for explicit approval before any implementation |
+| Command        | What it does                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan`         | Turns a change request into a plan hardened by the audit lenses; writes a plan doc and stops for explicit approval before any implementation                                          |
+| `execute-plan` | Executes an approved plan task by task, verifying each task as it lands and stopping when blocked instead of guessing; finishes behind a gated commit/push menu. The sequel to `plan` |
 
 ### Learning
 
@@ -197,10 +198,13 @@ Conventional Commits (`feat:` minor, `fix:` patch, `feat!:` major).
 
 ## Credits
 
-- `/nitpicker plan` adapts the brainstorm → plan → gated-execution model from
+- `/nitpicker plan` and `/nitpicker execute-plan` adapt the brainstorm → plan →
+  gated-execution model from
   [obra/superpowers](https://github.com/obra/superpowers) — the separation of
   planning from implementation, with explicit human sign-off before code is
-  written — and hardens the plan with nitpicker's own adversarial audit lenses.
+  written. `plan` hardens the plan with nitpicker's own adversarial audit lenses;
+  `execute-plan` carries out its `executing-plans` skill — load-and-review,
+  per-task verification, stop-when-blocked, never-build-on-main, gated finish.
 - `/nitpicker teach` adapts the stateful teaching-workspace model from
   [mattpocock/skills](https://github.com/mattpocock/skills) — mission-grounded
   learning, spaced retrieval-practice lessons, and learning records as ADRs —
