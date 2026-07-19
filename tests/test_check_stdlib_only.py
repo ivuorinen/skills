@@ -104,6 +104,51 @@ def test_runner_internal_shebangless_library_exempt(tmp_path: Path) -> None:
     assert find_runner_violations(tmp_path) == []
 
 
+def test_nested_shipped_tool_is_scanned(tmp_path: Path) -> None:
+    # .pre-commit-config.yaml's pattern fires on nested shipped scripts, so the
+    # glob here must reach them too — a non-recursive glob left them unchecked.
+    d = tmp_path / "skills" / "x" / "scripts" / "lib"
+    d.mkdir(parents=True)
+    (d / "y.py").write_text("import requests\n", encoding="utf-8")
+    problems = find_violations(tmp_path)
+    assert len(problems) == 1
+    assert "requests" in problems[0]
+
+
+def test_nested_tool_importing_parent_dir_sibling_allowed(tmp_path: Path) -> None:
+    _tool(tmp_path, "helper.py", "X = 1\n")
+    nested = tmp_path / "skills" / "nitpicker" / "scripts" / "lib"
+    nested.mkdir(parents=True)
+    (nested / "y.py").write_text("import helper\n", encoding="utf-8")
+    assert find_violations(tmp_path) == []
+
+
+def test_exec_call_flagged(tmp_path: Path) -> None:
+    # exec/eval can import anything from a string this check cannot read.
+    _tool(tmp_path, "sneaky.py", "exec('import requests')\n")
+    problems = find_violations(tmp_path)
+    assert len(problems) == 1
+    assert "exec()" in problems[0]
+
+
+def test_eval_call_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "sneaky2.py", "x = eval('1 + 1')\n")
+    assert any("eval()" in p for p in find_violations(tmp_path))
+
+
+def test_main_checks_internal_scripts_when_no_shipped_tools(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # An empty shipped-tool glob must not short-circuit main(): the runner check
+    # also covers internal tooling, and an empty glob is itself a failure.
+    _internal(tmp_path, "tool.py", "#!/usr/bin/env python3\nimport json\n")
+    monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
+    assert _mod.main() == 1
+    out = capsys.readouterr().out
+    assert "uv run" in out
+    assert "glob is stale" in out
+
+
 def test_actual_tree_runner_contract_intact() -> None:
     # Regression guard: every shipped tool keeps the python3 shebang with no
     # PEP 723 block, and every internal runnable script keeps the uv shebang.

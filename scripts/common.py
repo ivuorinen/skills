@@ -1,30 +1,20 @@
 """Shared utilities for ivuorinen-skills scripts."""
 
+import importlib.util
 from pathlib import Path
 
+# Single source of truth for the SKILL.md frontmatter parser: the shipped,
+# stdlib-only findings.py. Internal tooling depending on a shipped tool points
+# the dependency the safe direction — shipped tools ship without scripts/, so
+# the shipped tool can never import back into here. Same precedent as
+# scripts/validate-rules.py, which path-loads check-rules-anatomy.py.
+_FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
+_spec = importlib.util.spec_from_file_location("findings_for_common", _FINDINGS_PATH)
+_findings = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_findings)  # type: ignore[union-attr]
 
-def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    """Parse YAML frontmatter from a SKILL.md file.
-
-    Returns (frontmatter_dict, body_text). Returns ({}, text) if no frontmatter found.
-    """
-    text = text.replace("\r\n", "\n")
-    if not text.startswith("---\n"):
-        return {}, text
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return {}, text
-    fm: dict[str, str] = {}
-    for line in text[4:end].splitlines():
-        if ": " in line:
-            k, _, v = line.partition(": ")
-            v = v.strip()
-            # Strip exactly one matching quote character from each end (e.g. name: "foo" → foo).
-            # Index slicing is intentional: lstrip/rstrip would strip multiple quote chars.
-            if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-                v = v[1:-1]
-            fm[k.strip()] = v
-    return fm, text[end + 5 :]
+# Re-exported so callers (and tests) keep importing it from this module.
+parse_frontmatter = _findings.parse_frontmatter
 
 
 def collect_skills(base: Path) -> list[tuple[str, str]]:

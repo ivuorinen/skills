@@ -100,6 +100,19 @@ def test_malformed_pyproject_reports_error_not_crash(tmp_path, capsys):
     assert "pyproject.toml" in out
 
 
+def test_null_plugins_reports_error_and_keeps_checking(tmp_path, capsys):
+    """A null 'plugins' raises TypeError in the extractor; an uncaught one would abort
+    the loop, leaving the later manifests unchecked and a real mismatch masked."""
+    _make_repo(tmp_path, marketplace='{"plugins": null}\n', manifest="9.9.9")
+    assert _run(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "marketplace.json" in out
+    # The manifest checked after marketplace.json must still be reported.
+    assert ".release-please-manifest.json" in out
+    assert "9.9.9" in out
+
+
 def test_empty_plugins_array_reports_error_not_crash(tmp_path, capsys):
     """An empty plugins array must report a clean ERROR (return 1), never IndexError on vals[0]."""
     _make_repo(tmp_path, marketplace='{"plugins": []}\n')

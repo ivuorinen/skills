@@ -64,7 +64,10 @@ def main() -> int:
     for rel_path, extract in CHECKS:
         try:
             vals = extract(read_json(rel_path))
-        except (KeyError, IndexError, OSError, json.JSONDecodeError) as e:
+        # TypeError: a null/wrong-typed value (e.g. "plugins": null) breaks the
+        # extractor's iteration — without it the loop aborts and the remaining
+        # manifests go unchecked, masking a real mismatch.
+        except (KeyError, IndexError, TypeError, OSError, json.JSONDecodeError) as e:
             print(f"  ERROR     {rel_path}: cannot read version — {e}")
             fail = True
             continue
