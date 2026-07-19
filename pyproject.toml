@@ -2,9 +2,15 @@
 name = "ivuorinen-skills"
 version = "2.0.0"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov"]
+# ruff is a test dependency, not just a linter: tests/test_hooks.py exercises
+# ruff-hook.py, which shells out to the real `ruff` binary.
+# ruff is pinned to the .pre-commit-config.yaml rev so `make lint` and the
+# pre-commit hook cannot disagree about what passes.
+dev = ["pytest>=9.1,<10", "pytest-cov>=7.1,<8", "ruff==0.15.21"]
 
 [tool.coverage.run]
 include = [
@@ -12,19 +18,27 @@ include = [
   "skills/nitpicker/scripts/fetch-pr-comments.py",
   "skills/nitpicker/scripts/check-rules-anatomy.py",
   "skills/nitpicker/scripts/process-sarif.py",
+  "skills/nitpicker/scripts/mcp_server.py",
+  "skills/nitpicker/scripts/skill_catalog.py",
   "scripts/*.py",
   "scripts/hooks/*.py",
 ]
 
+[tool.coverage.report]
+# Baseline measured at 88%; set below it so ordinary churn does not go red, but
+# a real drop does. Raise as coverage climbs — the point is a ratchet, not a target.
+fail_under = 85
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov --cov-report=term-missing"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH", "RUF"]
 ignore = ["SIM108"]
 
 [tool.ruff.lint.isort]

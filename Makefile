@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync audit-consistency index-check pre-commit lint format format-check list test help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync audit-consistency index-check pre-commit lint format format-check list test typecheck help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,7 +6,7 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + lint + format-check + test (default)"
+	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + index-check + lint + format-check + test + pre-commit (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
@@ -22,7 +22,7 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync audit-consistency index-check lint format-check test pre-commit
+check: validate validate-rules version-sync audit-consistency index-check lint format-check typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -42,22 +42,29 @@ index-check:
 	git diff --exit-code docs/audit/findings/INDEX.md
 
 pre-commit:
-	uv run --with pre-commit pre-commit run --all-files
+	uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
 
 list:
 	$(UV) scripts/list-skills.py
 
 test:
-	uv run --with pytest --with ruff pytest tests/
+	uv run --extra dev pytest tests/
+
+# Ratchet, not a waiver: 6 pre-existing errors (all tests/ monkeypatching module
+# attributes) are tolerated, 7 fails. Burn the baseline down to 0, then delete
+# the guard and run bare `pyright`. Mirrors the Type-check step in
+# .github/workflows/validate-skills.yml — change both together.
+typecheck:
+	uv run --with pyright==1.1.411 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s), baseline 6'); sys.exit(n > 6)"
 
 lint:
-	uv run --with ruff ruff check scripts/ tests/ skills/
+	uv run --extra dev ruff check scripts/ tests/ skills/
 
 format:
-	uv run --with ruff ruff format scripts/ tests/ skills/
+	uv run --with ruff==0.15.21 ruff format scripts/ tests/ skills/
 
 format-check:
-	uv run --with ruff ruff format --check scripts/ tests/ skills/
+	uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/
 
 bump-patch:
 	$(UV) scripts/bump-version.py patch
