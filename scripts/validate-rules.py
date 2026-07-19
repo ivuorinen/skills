@@ -85,15 +85,56 @@ def validate(path: Path, errors: list[str], warnings: list[str], repo_root: Path
         if ".." in Path(pattern).parts:
             err(f"'paths:' glob must not traverse outside repo root: '{pattern}'")
             continue
-        matched = False
-        for _ in repo_root.glob(pattern):
-            matched = True
-            break
+        try:
+            matched = any(True for _ in repo_root.glob(pattern))
+        except ValueError:
+            # '**' adjacent to other chars in a path component raises ValueError on
+            # CPython <3.13; report it as a bad pattern rather than crashing the run.
+            # Mirrors the guard in skills/nitpicker/scripts/check-rules-anatomy.py.
+            err(f"'paths:' glob is not a valid pattern: '{pattern}'")
+            continue
         if not matched:
             warn(f"'paths:' glob matches no files — may be stale: '{pattern}'")
 
     if not body.strip():
         warn("body is empty after frontmatter")
+
+
+# Two rules document enforcement that nothing checked. These close the halves
+# that are mechanically checkable; they are repo-wide, so main() runs them only
+# in whole-tree mode, not when a hook passes a single rule file.
+
+# skill-official-best-practices.md, "No Time-Sensitive Content": a shipped skill
+# body must not pin itself to a date. Only the date half is enforced — a bare
+# X.Y.Z literal is indistinguishable from the WCAG success criteria, IP masks,
+# and spec versions the command files legitimately cite, so flagging it would be
+# noise rather than a gate.
+_DATE_RE = re.compile(r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b")
+
+# use-uv-runner.md, internal half: every internal dev script runs under uv.
+_UV_SHEBANG = "#!/usr/bin/env -S uv run --quiet"
+# Import-only modules, never executed directly — a shebang would be a lie.
+_NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
+
+
+def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
+    for path in sorted(repo_root.glob("skills/**/*.md")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            m = _DATE_RE.search(line)
+            if m:
+                rel = path.relative_to(repo_root)
+                errors.append(
+                    f"  ERROR  {rel}:{lineno}: time-sensitive content — "
+                    f"date literal {m.group()!r} in a shipped skill body"
+                )
+
+    for path in sorted(repo_root.glob("scripts/**/*.py")):
+        if path.name in _NO_SHEBANG_OK:
+            continue
+        first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+        if first != _UV_SHEBANG:
+            rel = path.relative_to(repo_root)
+            errors.append(f"  ERROR  {rel}: first line must be '{_UV_SHEBANG}' (got {first!r})")
 
 
 def _discover_targets(repo_root: Path) -> list[Path]:
@@ -115,14 +156,11 @@ def main() -> None:
     if sys.argv[1:]:
         targets = [Path(a) for a in sys.argv[1:]]
     else:
+        check_repo_rules(repo_root, errors)
         rules_dir = repo_root / ".claude" / "rules"
         if not rules_dir.exists():
-            sys.exit(0)
+            sys.exit(1 if errors else 0)
         targets = _discover_targets(repo_root)
-
-    if not targets:
-        print("OK  0 rule(s) validated.")
-        sys.exit(0)
 
     for t in targets:
         validate(t, errors, warnings, repo_root)

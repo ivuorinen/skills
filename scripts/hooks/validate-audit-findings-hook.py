@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
+from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 FINDINGS = REPO_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
@@ -62,14 +62,14 @@ def main() -> None:
             print(
                 f"  audit-findings hook: {path.name} is not a valid finding file", file=sys.stderr
             )
-            print((result.stdout or result.stderr).rstrip(), file=sys.stderr, flush=True)
+            print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
             sys.exit(2)
     elif is_ledger:
         # The resolved ledger has no per-line file, so validate the store as a whole.
         result = subprocess.run([*py, "validate"], capture_output=True, text=True, cwd=REPO_ROOT)
         if result.returncode != 0:
             print("  audit-findings hook: resolved.jsonl failed store validation", file=sys.stderr)
-            print((result.stdout or result.stderr).rstrip(), file=sys.stderr, flush=True)
+            print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
             sys.exit(2)
 
     # No --root: cwd=REPO_ROOT lets findings.py resolve its DEFAULT_ROOT

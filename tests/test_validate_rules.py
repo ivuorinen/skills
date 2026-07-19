@@ -155,7 +155,69 @@ def test_column_zero_absolute_glob_is_rejected(tmp_path):
     assert _has(errors, "must be relative, not absolute")
 
 
+def test_invalid_double_star_glob_reported_not_crashed(tmp_path):
+    # '**' adjacent to other chars in a path component raises ValueError from
+    # Path.glob on CPython <3.13; the validator must report it, never traceback.
+    content = '---\npaths:\n  - "src/**foo/*.ts"\n---\n\nBody.\n'
+    errors, warnings = _run(tmp_path, content)  # must not raise ValueError
+    assert _has(errors, "not a valid pattern") or _has(warnings, "stale")
+
+
 def test_blank_line_inside_paths_list_keeps_all_items():
     text = '---\npaths:\n  - "stale/removed/*"\n\n  - "src/*"\n---\nbody\n'
     fm, _ = _mod.parse_rules_frontmatter(text)
     assert fm is not None and fm.get("paths") == ["stale/removed/*", "src/*"]
+
+
+# ── check_repo_rules: enforcement for two previously unenforced rules ─────────
+
+
+def _repo_errors(tmp_path: Path) -> list[str]:
+    errors: list[str] = []
+    _mod.check_repo_rules(tmp_path, errors)
+    return errors
+
+
+def _skill_md(tmp_path: Path, body: str) -> None:
+    d = tmp_path / "skills" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(body, encoding="utf-8")
+
+
+def _script(tmp_path: Path, name: str, body: str) -> None:
+    d = tmp_path / "scripts"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(body, encoding="utf-8")
+
+
+def test_date_literal_in_shipped_skill_is_rejected(tmp_path):
+    _skill_md(tmp_path, "# Skill\n\nAs of 2026-07-19 this holds.\n")
+    assert _has(_repo_errors(tmp_path), "time-sensitive content")
+
+
+def test_skill_without_a_date_is_accepted(tmp_path):
+    # Version-like literals (WCAG criteria, IP masks, spec versions) stay legal —
+    # only the date half is enforced.
+    _skill_md(tmp_path, "# Skill\n\nWCAG 1.4.3 contrast, and `0.0.0.0/0` ingress.\n")
+    assert _repo_errors(tmp_path) == []
+
+
+def test_internal_script_without_uv_shebang_is_rejected(tmp_path):
+    _script(tmp_path, "thing.py", "#!/usr/bin/env python3\nprint(1)\n")
+    assert _has(_repo_errors(tmp_path), "must be first line") or _has(
+        _repo_errors(tmp_path), "uv run --quiet"
+    )
+
+
+def test_internal_script_with_uv_shebang_is_accepted(tmp_path):
+    _script(tmp_path, "thing.py", "#!/usr/bin/env -S uv run --quiet\nprint(1)\n")
+    assert _repo_errors(tmp_path) == []
+
+
+def test_import_only_modules_are_exempt_from_the_shebang_rule(tmp_path):
+    # common.py and _hooklib.py are imported, never executed — a shebang there
+    # would claim a runner they do not have.
+    _script(tmp_path, "common.py", '"""Shared utilities."""\n')
+    (tmp_path / "scripts" / "hooks").mkdir(parents=True)
+    (tmp_path / "scripts" / "hooks" / "_hooklib.py").write_text('"""Shared."""\n', encoding="utf-8")
+    assert _repo_errors(tmp_path) == []

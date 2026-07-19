@@ -188,6 +188,7 @@ class TestCheckFile:
         f.write_text("# Rule\n\nPrefer rg over grep.\n", encoding="utf-8")
         findings = _check_file(f, tmp_path)
         assert _has(findings, "hedged_language")
+        assert _severity(findings, "hedged_language") == "High"
 
     def test_hedged_language_try_to(self, tmp_path):
         f = tmp_path / "hedged-rule.md"
@@ -314,8 +315,17 @@ class TestMain:
             _mod.main()
         return exc.value.code
 
-    def test_no_rules_dir_exits_0(self, tmp_path, capsys, monkeypatch):
+    def test_explicit_path_without_rules_dir_exits_1(self, tmp_path, capsys, monkeypatch):
+        # The argument is a project root. A supplied path lacking .claude/rules/
+        # is a misconfiguration (e.g. passing `.claude/rules/` itself), not a
+        # clean repo — it must fail rather than report a silently green run.
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
+        assert code == 1
+        assert "not found" in capsys.readouterr().err
+
+    def test_no_arg_and_no_rules_dir_exits_0(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        code = self._main(monkeypatch, ["prog"])
         assert code == 0
         data = __import__("json").loads(capsys.readouterr().out)
         assert data["exists"] is False
@@ -340,11 +350,17 @@ class TestMain:
         assert code == 1
 
     def test_rules_with_only_low_issue_exits_0(self, tmp_path, capsys, monkeypatch):
-        self._setup_rules(tmp_path, {"my-rule.md": "# Rule\n\nPrefer rg.\n"})
+        self._setup_rules(tmp_path, {"MyRule.md": "# Rule\n\nNever use grep.\n"})
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
         assert code == 0
         data = __import__("json").loads(capsys.readouterr().out)
         assert data["summary"]["with_issues"] == 1
+
+    def test_hedged_language_exits_1(self, tmp_path, monkeypatch):
+        # Hedged phrasing blocks: a detector that never sets the exit code is
+        # decoration, and unconditional phrasing is the point of a rule file.
+        self._setup_rules(tmp_path, {"my-rule.md": "# Rule\n\nPrefer rg.\n"})
+        assert self._main(monkeypatch, ["prog", str(tmp_path)]) == 1
 
     def test_default_cwd_used_when_no_arg(self, tmp_path, capsys, monkeypatch):
         (tmp_path / ".claude" / "rules").mkdir(parents=True)
@@ -388,21 +404,18 @@ class TestAdditionalCoverage:
         assert "name" in fm
         assert "Never use grep" in body
 
-    @pytest.mark.skipif(
-        hasattr(__import__("os"), "geteuid") and __import__("os").geteuid() == 0,
-        reason="root ignores file permission bits, so chmod 0o000 stays readable",
-    )
     def test_check_file_oserror_on_read(self, tmp_path):
-        """OSError reading the file (lines 98-100)."""
+        """OSError reading the file (lines 98-100).
+
+        Patches the read rather than chmod'ing to 0o000: root ignores
+        permission bits, so a permission-based test silently skips under any
+        container-based or self-hosted CI running as root.
+        """
         f = tmp_path / "unreadable.md"
         f.write_text("Never use grep.\n", encoding="utf-8")
-        original_mode = f.stat().st_mode
-        try:
-            f.chmod(0o000)
+        with patch.object(Path, "read_text", side_effect=OSError("denied")):
             findings = _check_file(f, tmp_path)
-            assert any(fi["code"] == "unreadable" for fi in findings)
-        finally:
-            f.chmod(original_mode)
+        assert any(fi["code"] == "unreadable" for fi in findings)
 
     def test_iter_rules_permission_error(self, tmp_path):
         """PermissionError in os.scandir is swallowed (lines 175-176)."""

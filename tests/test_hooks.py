@@ -39,7 +39,13 @@ def _run(mod, stdin_text: str, monkeypatch):
 
 # ── shared contract across the four stdin-driven PostToolUse hooks ─────────────
 
-STDIN_HOOKS = ["validate-json-hook", "validate-skill-hook", "check-version-sync-hook", "ruff-hook"]
+STDIN_HOOKS = [
+    "validate-json-hook",
+    "validate-skill-hook",
+    "check-version-sync-hook",
+    "ruff-hook",
+    "validate-rules-hook",
+]
 
 
 @pytest.mark.parametrize("name", STDIN_HOOKS)
@@ -119,6 +125,13 @@ def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     scripts.mkdir()
     shutil.copy(SCRIPTS_DIR / "validate-skill.py", scripts / "validate-skill.py")
     shutil.copy(SCRIPTS_DIR / "common.py", scripts / "common.py")
+    # common.py path-loads the shipped parser, so the fake repo needs it too.
+    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
+    shipped.mkdir(parents=True)
+    shutil.copy(
+        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
+        shipped / "findings.py",
+    )
 
     skill = tmp_path / "skills" / "foo" / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -176,17 +189,78 @@ def test_ruff_hook_lint_error_exits_2(monkeypatch, tmp_path, capsys):
     assert "F821" in capsys.readouterr().err
 
 
+def test_ruff_hook_missing_binary_is_silent_noop(monkeypatch, tmp_path, capsys):
+    """No ruff on PATH: fail open like every sibling, not a FileNotFoundError traceback."""
+    mod = _load("ruff-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda _: None)
+
+    def _boom(*a, **k):
+        raise AssertionError("ruff must not be invoked when the binary is absent")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+
+    f = tmp_path / "bad.py"
+    f.write_text("x = undefined_name\n", encoding="utf-8")
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(f)}}
+    _run(mod, json.dumps(payload), monkeypatch)  # returns cleanly, no SystemExit
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+# ── _hooklib.repo_root: empty env vars must not win the fallback chain ────────
+
+
+def _hooklib():
+    return _load("_hooklib")
+
+
+def _fake_checkout(root):
+    """A tree repo_root() will accept — it probes for scripts/hooks/_hooklib.py."""
+    (root / "scripts" / "hooks").mkdir(parents=True)
+    (root / "scripts" / "hooks" / "_hooklib.py").touch()
+    return root
+
+
+def test_repo_root_empty_claude_project_dir_falls_through(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    monkeypatch.setenv("REPO_ROOT", str(_fake_checkout(tmp_path)))
+    assert _hooklib().repo_root() == tmp_path
+
+
+def test_repo_root_ignores_env_dir_that_is_not_this_checkout(monkeypatch, tmp_path):
+    """CLAUDE_PROJECT_DIR is the session launch dir — a parent dir must not win.
+
+    Accepting it aims every gate at a tree with no scripts in it, so each gate is
+    skipped and the hook exits 0 having validated nothing.
+    """
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("REPO_ROOT", raising=False)
+    assert _hooklib().repo_root() == HOOKS_DIR.parent.parent
+
+
+def test_repo_root_both_empty_falls_back_to_parents(monkeypatch):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    monkeypatch.setenv("REPO_ROOT", "")
+    assert _hooklib().repo_root() == HOOKS_DIR.parent.parent
+
+
 # ── stop-reminder: gate on git porcelain output ───────────────────────────────
 
 
-def _fake_staged(monkeypatch, mod, staged_paths):
-    """Stub `git diff --cached --name-only -z` output (NUL-separated paths)."""
+def _fake_staged(monkeypatch, mod, staged_paths, worktree_paths=()):
+    """Stub the two `git diff --name-only -z` calls (staged, then working tree)."""
 
-    class _Result:
-        returncode = 0
-        stdout = "\0".join([*staged_paths, ""])
+    def _run(argv, *a, **k):
+        paths = staged_paths if "--cached" in argv else worktree_paths
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result())
+        class _Result:
+            returncode = 0
+            stdout = "\0".join([*paths, ""])
+
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _run)
 
 
 def test_stop_reminder_flags_staged_skill(monkeypatch, capsys):
@@ -197,8 +271,31 @@ def test_stop_reminder_flags_staged_skill(monkeypatch, capsys):
         mod.main()
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "Staged skill changes detected" in err
+    assert "Pending skill changes detected" in err
     assert "skills/nitpicker/SKILL.md" in err
+
+
+def test_stop_reminder_flags_unstaged_skill(monkeypatch, capsys):
+    """`git commit -am` stages and commits in one call, so nothing is ever seen
+    staged at stop time — the working-tree scope is what catches it."""
+    mod = _load("stop-reminder")
+    _fake_staged(monkeypatch, mod, [], worktree_paths=["skills/nitpicker/SKILL.md"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert "skills/nitpicker/SKILL.md" in capsys.readouterr().err
+
+
+def test_stop_reminder_dedupes_across_scopes(monkeypatch, capsys):
+    """A path dirty in both index and working tree must be listed once."""
+    mod = _load("stop-reminder")
+    p = "skills/nitpicker/SKILL.md"
+    _fake_staged(monkeypatch, mod, [p], worktree_paths=[p])
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit):
+        mod.main()
+    assert capsys.readouterr().err.count(p) == 1
 
 
 def test_stop_reminder_flags_staged_command_file(monkeypatch, capsys):
@@ -213,8 +310,8 @@ def test_stop_reminder_flags_staged_command_file(monkeypatch, capsys):
 
 def test_stop_reminder_silent_when_no_staged_skill(monkeypatch, capsys):
     mod = _load("stop-reminder")
-    # A skill edit in the working tree but NOT staged must stay quiet now.
-    _fake_staged(monkeypatch, mod, ["README.md"])
+    # Dirty paths that are not skill files must stay quiet in either scope.
+    _fake_staged(monkeypatch, mod, ["README.md"], worktree_paths=["README.md"])
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     mod.main()
     assert capsys.readouterr().err == ""

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # noqa: E402  # type: ignore[import-not-found]
+from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 
