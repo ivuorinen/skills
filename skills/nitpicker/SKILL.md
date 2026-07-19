@@ -60,6 +60,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | Command | Purpose |
 | --- | --- |
 | `plan` | Turn a change request into an implementation plan hardened by the audit lenses; writes a plan doc and stops until the user approves implementation |
+| `execute-plan` | Execute an approved plan task by task, verifying each task as it lands, stopping when blocked instead of guessing; the sequel to `plan` (adapted from obra/superpowers) |
 
 ### Learning
 
