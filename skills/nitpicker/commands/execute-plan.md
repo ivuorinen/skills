@@ -65,7 +65,7 @@ Ask a specific question with concrete options — not a vague "help". **This ove
 
 After every task is complete and each task's verify is green:
 
-1. **Run the project check command from Step 1** as the final gate. It must be green, and you must read its output — not "it should pass". If it fails, determine whether the plan's changes caused the failure: fix a plan-caused failure and re-run until clean; a pre-existing failure unrelated to the plan's changes is a blocker to report (Step 3), not license to edit unrelated files.
+1. **Run the project check command from Step 1** as the final gate. It must be green, and you must read its output — not "it should pass". If it fails, determine whether the plan's changes caused the failure: fix a plan-caused failure and re-run until clean; a plan-caused failure the fix does not resolve, and any pre-existing failure unrelated to the plan's changes, is a blocker to report (Step 3), not license to edit unrelated files or loop indefinitely.
 2. **Present the finish menu.** Never commit, push, or claim done without an explicit choice here:
 
    ```text

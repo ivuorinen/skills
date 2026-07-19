@@ -100,7 +100,7 @@ For each **Implement** verdict, in order:
 1. Make the minimal change that directly addresses the comment. No unrelated cleanup.
 2. Run the check command identified in Step 1.
 3. Confirm the fix fully and directly resolves the flagged issue — not merely nearby code.
-4. If the check fails, first determine whether this comment's fix caused it. Fix only a fix-caused failure and re-run until clean before the next comment; a pre-existing or unrelated failure is not this comment's to fix — stop and report it, never edit unrelated files to make it pass.
+4. If the check fails, first determine whether this comment's fix caused it. Fix only a fix-caused failure; a pre-existing or unrelated failure is not this comment's to fix — stop and report it, never edit unrelated files to make it pass. If the minimal repair does not turn the check green, stop and report a blocker — do not keep editing or advance to the next comment.
 5. Search the codebase (`rg '<pattern>'`) for identical or structurally similar instances of the same defect. Fix every instance found. Run the check again — must be clean before moving on.
 
 ### Step 5 — Draft replies (do not post yet)
