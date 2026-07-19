@@ -23,6 +23,12 @@ live in `skills/nitpicker/commands/<command>.md`; shared conventions
 | `release-prep`    | Release-readiness gatekeeper; runs the audit gates, offers to open a PR, never tags or bumps         |
 | `skills`          | Launcher — routes a user request to the right `/nitpicker` command (Routing Guide in its SKILL.md)   |
 
+`.claude/skills/` holds two further entries that are not internal dev skills:
+`graphify` is vendored third-party (not authored here, exempt from our SKILL.md
+conventions — see `.claude/rules/vendored-skills.md`), and `nitpicker` is a
+symlink to `skills/nitpicker` so Claude Code discovers the shipped public skill
+alongside these.
+
 ## Audit Flow
 
 ```mermaid
@@ -33,7 +39,7 @@ flowchart TD
     CF --> CV[commands/_conventions.md\nseverity + findings protocol]
     CF --> FP[scripts/findings.py\nstdlib-only CLI]
     CV --> FP
-    FP --> FS[("docs/audit/findings/\n&lt;auditor&gt;/open|resolved/&lt;id&gt;.md\n+ generated INDEX.md")]
+    FP --> FS[("docs/audit/findings/\n&lt;auditor&gt;/open/&lt;id&gt;.md\n+ resolved.jsonl ledger\n+ generated INDEX.md")]
 ```
 
 The launcher selects exactly one command per request and never chains

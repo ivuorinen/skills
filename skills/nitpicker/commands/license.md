@@ -8,7 +8,6 @@ Hostile audit of the project's licensing surface: assume the project has no lice
 - A dependency was added and you need to confirm its license is compatible with the project's and does not impose obligations the project cannot meet
 - Before a release, relicense, or acquisition, to prove the license chain is clean
 - When asked to "audit the licenses", "check license compatibility", "is this dependency's license OK", "are we GPL-contaminated", or "check attribution"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: dependency health beyond licensing (unused, outdated, CVEs) routes to `/nitpicker deps`; committed secrets and credentials to `/nitpicker security` or `/nitpicker config`. This lens is almost never fully N/A — even a private, non-distributed repo needs its own license declared and its dependency obligations understood — but a repo with no declared license, no dependencies, and no bundled third-party assets gets the verdict "no third-party license surface; project itself is unlicensed" (which is itself a finding).
 
@@ -51,7 +50,7 @@ Out of scope: dependency health beyond licensing (unused, outdated, CVEs) routes
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Add a `LICENSE` file and set the manifest `license` SPDX field to match the intended license
 - Reconcile a file/manifest license-mismatch to one identifier

@@ -17,7 +17,8 @@ review surface the skill offers.
 - Apply each lens using its specialist command as the authority. Deep-run
   that command file when the lens is high-risk or the user named it as the
   focus; otherwise apply the lens inline.
-- File findings via `findings.py` as they are confirmed. Findings from a
+- File findings as they are confirmed, through whichever store interface
+  `_conventions.md` puts first. Findings from a
   deep-run specialist land under that command's auditor key; lenses applied
   inline land under `audit`.
 - Close each task in exactly one state:

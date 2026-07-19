@@ -8,7 +8,6 @@ Hostile single-shot performance audit: assume every data path degrades superline
 - When asked "why is this slow", "find performance issues", "will this scale", or "run a perf audit"
 - After adding a data path that fans out per item — loops over query results, per-item API calls, per-file network writes
 - When `/nitpicker complexity` (or any other command) routes a performance finding here
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: correctness bugs route to `/nitpicker review`; security to `/nitpicker security`; over-engineering and bloat to `/nitpicker complexity`; whole-repo defect audit is `/nitpicker audit`. Micro-optimizations without a growth driver are out of scope here and everywhere — do not route them, drop them.
 
@@ -50,7 +49,7 @@ File a finding only when the class, the traced code path, and the growth driver 
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Hoist loop-invariant work out of the loop
 - Replace a per-item query with the batch form the same API already exposes (`IN` clause, `prefetch`/`select_related`, bulk fetch)

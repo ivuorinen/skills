@@ -8,7 +8,6 @@ Hostile audit of application error handling: assume failures are being swallowed
 - When asked to "find silent failures", "audit error handling", or "what errors are we swallowing"
 - After an incident where a failure surfaced late or never — to find its siblings before they fire
 - Before a release, to prove no failure path exits the system unobserved
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: fail-open hooks and unenforced rules on the agent enforcement surface route to `/nitpicker agent-loopholes`; general correctness bugs in the happy path to `/nitpicker review`; security vulnerabilities to `/nitpicker security`.
 
@@ -47,7 +46,7 @@ Out of scope: fail-open hooks and unenforced rules on the agent enforcement surf
 
 Every fix changes the error path only. The happy path's inputs, outputs, and side effects are identical before and after every fix — a fix that fails this test is reverted.
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Narrow an overbroad catch to the exception types the guarded operation raises
 - Add cause chaining and context to an existing rethrow (`raise X from e`, `new Error(msg, { cause: e })`)

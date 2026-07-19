@@ -8,7 +8,6 @@ Hostile audit of the static type layer: assume every `any`, every suppression, a
 - The type checker reports zero errors and you need to know whether that is soundness or suppression
 - Before trusting a refactor, a public API, or a "fully typed" claim
 - When asked to "audit the types", "check type safety", "find the `any`s", "are the type ignores real", or "is this actually typed"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: runtime input validation at trust boundaries routes to `/nitpicker security`; test-suite quality to `/nitpicker tests`; public API surface vs semver to `/nitpicker contract`; general correctness to `/nitpicker audit`. A repo with no static type system anywhere — no `.ts`, no annotations, no `py.typed`, no checker config, and no typed source in any language — gets the explicit verdict "no static-typing surface — untyped by declared scope". A single typed file puts the repo in scope.
 
@@ -48,7 +47,7 @@ Out of scope: runtime input validation at trust boundaries routes to `/nitpicker
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Narrow a blanket `@ts-ignore`/`# type: ignore` to `@ts-expect-error <reason>` / `# type: ignore[code]` once the code is known
 - Delete a stale `@ts-expect-error`

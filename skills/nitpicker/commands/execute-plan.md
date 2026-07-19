@@ -10,7 +10,7 @@ Execute an already-approved implementation plan task by task, verifying each tas
 
 Not for producing a plan — that is `/nitpicker plan`, which this command's precondition requires to already exist. Not for auditing code — that is `/nitpicker review` or `/nitpicker audit`. Not for implementing GitHub PR review comments — that is `/nitpicker cr`.
 
-This command writes no findings file: it changes code, not the findings store, and never runs `findings.py`. The interactive branch/commit/push flow below overrides the findings-store protocol in `_conventions.md`.
+This command writes no findings file: it changes code, not the findings store, and never mutates the store through either interface — neither `findings.py` nor the `np_*` MCP tools. The interactive branch/commit/push flow below overrides the findings-store protocol in `_conventions.md`.
 
 ## Mindset
 

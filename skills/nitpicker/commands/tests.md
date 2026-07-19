@@ -49,7 +49,7 @@ Not for: bugs in application code (`/nitpicker review` — this command audits t
 
 All fixes edit test files only. Application/production source is never modified — not to make a test pass, not to add a hook for testability, not for any reason.
 
-Auto-applicable (on approval):
+**Auto-applicable:**
 
 - Add the missing assertion to an assertion-free test when the expected value is derivable from the code under test's current behavior
 - Repoint a mock-of-subject test's assertions onto the real unit's output, keeping mocks only at its dependencies

@@ -9,8 +9,6 @@ Hostile single-shot application/runtime configuration audit: cross-reference eve
 - After adding a config-reading code path — a new env var, setting, or feature flag
 - When config sources have diverged and you need to know which is authoritative
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 **Not this command:** whether an unsafe default or committed secret is _exploitable_ → `/nitpicker security` (this command owns that it is mis-configured, undocumented, or drifted; security owns the exploit). CI/pipeline environment and workflow secrets → `/nitpicker ci`. Whether config errors are logged or observable → `/nitpicker observability`. Whole-repo defect audit → `/nitpicker audit`. A value with a genuinely safe default and full documentation is not a finding — do not route it, drop it.
 
 ## Mindset
@@ -59,7 +57,7 @@ File a finding only when the config value is actually read by code AND the speci
 
 ## Fix strategy
 
-**Auto-applicable (through the apply-fixes prompt):**
+**Auto-applicable:**
 
 - Add a missing var to `.env.example` or the config schema with a SAFE placeholder — never a real value
 - Add startup validation using the project's existing config/validation library

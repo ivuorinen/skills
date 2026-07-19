@@ -8,7 +8,6 @@ Hostile code review of a diff, file, or module: assume the code is broken and pr
 - Stress-testing code before a release
 - Auditing a specific file or module for defects
 - Someone asks to "tear this apart", "find what's wrong", or "assume this is broken"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Not for style feedback, feature suggestions, or general code improvement. Not for whole-repository sweeps — that is `/nitpicker audit`. For a copy-paste-ready GitHub review comment, use `/nitpicker pr`.
 

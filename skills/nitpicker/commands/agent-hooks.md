@@ -8,7 +8,6 @@ Hostile audit of a project's hook _coverage_ against its own evidence base: assu
 - A pattern of repeated fixes, reverts, or audit findings keeps recurring with no automated guard
 - When asked to "enforce hooks", "harden hook coverage", "add the hooks we keep needing", "make sure context-mode is used where it should be", or "stop large command output from bloating the context window"
 - Before a release, to prove every evidence-backed, hook-preventable failure class is guarded
-- Run standalone or by the `/nitpicker` default audit flow
 
 Not for checking whether an _existing_ hook, rule, or permission can be evaded — that is `/nitpicker agent-loopholes`. Not for rule quality and placement — that is `/nitpicker agent-rules`. Not for application-source security — that is `/nitpicker security`.
 
@@ -42,7 +41,7 @@ Mine all of these every run. Never sample, and never substitute "the current hoo
 | --- | --- |
 | Current hooks | Every hook entry in `.claude/settings.json` and `.claude/settings.local.json` — event, matcher, command — and every hook script under any hooks directory (`scripts/hooks/`, `.claude/hooks/`) whether wired or not |
 | Available context-saving tools | Every installed plugin/MCP/CLI that executes a shell command or fetch and returns only a derived result rather than raw bytes to the conversation (context-mode `ctx_execute`/`ctx_execute_file`/`ctx_batch_execute`/`ctx_fetch_and_index` is the reference implementation). Record every candidate considered, including rejects and why; the routing findings below require at least one qualifying tool |
-| Findings history | Every finding in the store (`findings.py list`, all auditors and statuses) plus any legacy `docs/audit/*-findings.md` files. A defect class that recurs — or that a fixed entry shows was hand-fixed — is a recurring, hook-preventable candidate |
+| Findings history | Every finding in the store (`np_list_findings`, else `findings.py list` — all auditors and statuses) plus any legacy `docs/audit/*-findings.md` files. A defect class that recurs — or that a fixed entry shows was hand-fixed — is a recurring, hook-preventable candidate |
 | Git history | Repeated fix/revert commits touching the same concern (`git log` for `fix:`/`revert` clusters on one file or rule). A recurring manual fix is a missing automated guard |
 | Project memory | Every `feedback`/`project` memory entry under the project memory directory that implies an automated guard the user expects. Absent memory is one empty source, recorded as empty — not a reason to skip the run |
 | Project mandates | Every `.claude/rules/` mandate and CLAUDE.md convention. Flag only those with no hook AND an automatable shape — the violation is detectable by inspecting a file path, a file's text, or a tool name on stdin without running the project; do not re-file the loopholes unenforced-rule evasion analysis |
@@ -125,7 +124,7 @@ A proposed hook is "enforced" only after it is wired and fired on the evidence i
 
 ## Fix strategy
 
-**Auto-applicable (ask first, apply only on approval):**
+**Auto-applicable:**
 
 - Wire an existing-but-dead hook script into the detected harness's settings
 - Correct a wrong-event hook to its blocking-capable event (PostToolUse→PreToolUse for block-intent)

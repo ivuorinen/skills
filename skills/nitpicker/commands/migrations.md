@@ -8,8 +8,6 @@ Hostile single-shot audit of database schema and data migrations: assume every m
 - After a migration incident — a lock storm, a lost column, a failed rollback — to find its siblings before they fire
 - Triggers: "audit the migrations", "is this migration safe", "review the schema changes"
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 Out of scope: SQL injection and access control inside migrations route to `/nitpicker security`; query performance outside migration files routes to `/nitpicker perf`.
 
 ## Mindset
@@ -57,7 +55,9 @@ Check every audit-set migration against every class. A finding is filed only wit
 
 Every migration edit happens only on approval through the fix gate. A migration applied to any shared environment (step 5) is never edited — its fix is a new migration.
 
-**Auto-applicable (ask first, apply only on approval; unapplied migrations only):**
+**Auto-applicable:**
+
+Unapplied migrations only.
 
 - Swap a locking op for the engine-specific safe form (`CREATE INDEX CONCURRENTLY` outside a transaction; `ALGORITHM=INPLACE, LOCK=NONE`; `NOT VALID` + `VALIDATE`)
 - Write the missing down-migration that restores what the up changes

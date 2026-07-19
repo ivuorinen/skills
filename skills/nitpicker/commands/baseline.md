@@ -34,7 +34,8 @@ waive.
      python3 findings.py list --status open --exclude-baseline
    release-gate reads this: any open finding at or above the threshold whose id
    is NOT baselined fails the gate; baselined debt is waived.
-3. Pay down debt: `findings.py resolve <id> --status fixed` as each is truly
+3. Pay down debt: resolve each as `fixed` (`np_resolve_finding`, else
+   `findings.py resolve <id> --status fixed`) as it is truly
    fixed — it leaves open/ and drops out of the gate on its own.
 4. Do not re-baseline to "clean up". A resolved finding drops from the gate
    whether or not it stays in the baseline (step 3), so a stale baselined id is

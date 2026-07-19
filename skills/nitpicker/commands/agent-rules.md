@@ -9,7 +9,6 @@ Audits the project's `.claude/rules/` configuration end-to-end: validates every 
 - A `.claude/rules/` file is vague, covers too many topics, or duplicates another file
 - You want to discover implicit rules from architectural, security, or code-quality audits
 - Setting up or reviewing Claude Code configuration for a new or existing project
-- Run standalone or by the `/nitpicker` default audit flow
 
 Not for enforcement bypasses — whether rules and hooks actually bind is `/nitpicker agent-loopholes`. Not for missing hook coverage — that is `/nitpicker agent-hooks`.
 
@@ -32,7 +31,8 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
    - Find all CLAUDE.md files in the project (root + any subdirectory).
    - If `.claude/rules/` does not exist or is empty, record this as a finding and continue.
    - Collect every available artifact from the Prerequisite Artifacts table
-     (`findings.py list --auditor <name>` for store-backed artifacts).
+     (`np_list_findings` with `auditor: <name>`, else
+     `findings.py list --auditor <name>`, for store-backed artifacts).
    - Read `.claude/settings.json`, `.claude/settings.local.json`, and
      `~/.claude/settings.json` for `claudeMdExcludes` patterns. Any `.claude/rules/`
      file whose absolute path matches an exclusion glob is flagged Advisory: "Rule
@@ -172,7 +172,7 @@ Do not invent intermediate thresholds — use this table exactly.
 
 ## Fix strategy
 
-**Auto-applicable (ask first, apply only on approval):**
+**Auto-applicable:**
 
 - Create `.claude/rules/<filename>.md` from a misplaced CLAUDE.md rule
 - Remove the migrated rule from CLAUDE.md after the rules file is created
