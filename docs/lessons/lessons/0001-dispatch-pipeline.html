@@ -9,6 +9,8 @@
 <body>
 
 <p class="eyebrow">Lesson 0001 · Nitpicker dispatch</p>
+
+<main>
 <h1>From <code>/nitpicker&nbsp;&lt;text&gt;</code> to a running command</h1>
 
 <p>
@@ -35,7 +37,7 @@
 </p>
 
 <h2>The pipeline, step by step</h2>
-<ol class="pipeline">
+<ol class="pipeline" role="list">
   <li><strong>Split the text.</strong> Take the first whitespace-delimited word
     as the command candidate; keep the remainder as extra instructions.</li>
   <li><strong>Resolve the first word</strong> against the command tables in
@@ -57,7 +59,7 @@
 
 <h2>Three invocations, worked</h2>
 <table>
-  <thead><tr><th>You type</th><th>First word resolves to</th><th>What runs</th></tr></thead>
+  <thead><tr><th scope="col">You type</th><th scope="col">First word resolves to</th><th scope="col">What runs</th></tr></thead>
   <tbody>
     <tr>
       <td><code>/nitpicker tests only src/</code></td>
@@ -133,6 +135,7 @@
   everything above. Read it once now that you have the mental model; it will read
   as obvious, which is the point.
 </p>
+</main>
 
 <footer>
   <p>
