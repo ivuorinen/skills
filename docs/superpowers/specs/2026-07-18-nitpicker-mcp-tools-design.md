@@ -3,7 +3,8 @@
 **Date:** 2026-07-18
 **Branch:** `feat/tools`
 **Status:** Design complete — both open decisions resolved; ready for
-implementation plan
+implementation plan. Repo-meta tools dropped during implementation (444a84c);
+not shipped.
 
 ## Goal
 
@@ -23,8 +24,8 @@ Three design forks were resolved with the repo owner during brainstorming:
 2. **Deps + placement:** stdlib-only, hand-rolled JSON-RPC loop, living under
    `skills/nitpicker/scripts/` (recommended over an `mcp`-SDK server under
    `scripts/`). Rationale below.
-3. **Tool surface:** all four categories — skills list/read, findings
-   read-only, findings mutate, repo meta.
+3. **Tool surface:** three categories — skills list/read, findings read-only,
+   findings mutate. (A fourth, repo meta, was dropped during implementation.)
 4. **Distribution:** the MCP server ships **inside the plugin** and is
    installed/started automatically when the user installs the nitpicker plugin
    via `/plugins` — the owner runs this on multiple machines. This resolves

@@ -9,7 +9,7 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 ## Development Commands
 
 ```bash
-make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + pytest + pre-commit suite (run before every commit)
+make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + pyright typecheck + pytest + pre-commit suite (run before every commit)
 make validate     # SKILL.md + command-file structure (public + internal)
 make test         # run pytest unit tests
 make list         # list the skill and its commands
@@ -34,7 +34,7 @@ The authoritative command listing (categorized, with aliases) is `## Commands` i
 One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed exclusively through the shipped, stdlib-only CLI:
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|migrate|migrate-resolved ...
+python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
 ```
 
 IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
@@ -56,7 +56,18 @@ Two classes (see `.claude/rules/use-uv-runner.md`):
 
 ## Conventions
 
-Skill/command writing style and lifecycle are enforced by `.claude/rules/` — see `skill-format.md`, `skill-style.md`, `skill-lifecycle.md`, `use-uv-runner.md`, `github-actions-security.md` (SHA-pinned actions + least-privilege, gated by the `zizmor` pre-commit hook), `use-context-mode.md` (route inspection commands through context-mode; `# ctx-ok` only for real mutations), `commit-gate-integrity.md` (CI `Validate` is the authoritative gate; no `--no-verify` on governed files), `write-surgical-code.md` (how the repo's own Python gets written — surgical, simplicity-first, verifiable; from Karpathy's LLM-coding notes), and `vendored-skills.md` (skills not authored by us — e.g. `graphify` — are skipped by `validate-skill.py` via an owner-approved `VENDORED_SKILLS` allowlist an agent never edits on its own).
+Skill/command writing style, lifecycle, and repo conventions live in `.claude/rules/`. How much of each rule is machine-enforced varies — several are gated only in part, and some not at all. Each rule states its own enforcement; read that statement in the rule itself rather than assuming a rule here is gated end to end.
+
+- `skill-format.md`
+- `skill-style.md`
+- `skill-lifecycle.md` (agent discipline; no gate)
+- `skill-official-best-practices.md`
+- `use-uv-runner.md`
+- `github-actions-security.md`
+- `use-context-mode.md`
+- `commit-gate-integrity.md`
+- `write-surgical-code.md` (agent discipline; no gate)
+- `vendored-skills.md`
 
 ## Plugin Metadata
 
@@ -71,12 +82,12 @@ Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `
 
 [Semantic Versioning](https://semver.org/) with [release-please](https://github.com/googleapis/release-please):
 
-| Prefix                               | Effect                                      |
-| ------------------------------------ | ------------------------------------------- |
-| `feat:`                              | Minor bump (new command or feature)         |
-| `fix:`                               | Patch bump (command improvement or bug fix) |
-| `feat!:` / `BREAKING CHANGE:` footer | Major bump                                  |
-| `chore:`, `docs:`, `refactor:`       | No bump                                     |
+| Prefix                                | Effect                                      |
+| ------------------------------------- | ------------------------------------------- |
+| `feat:`                               | Minor bump (new command or feature)         |
+| `fix:`                                | Patch bump (command improvement or bug fix) |
+| `feat!:` / `BREAKING CHANGE:` footer  | Major bump                                  |
+| `chore:`, `docs:`, `refactor:`, `ci:` | No bump                                     |
 
 Merge to `main` → release-please opens a Release PR → merging it creates the GitHub Release and tag.
 
@@ -91,6 +102,20 @@ Merge to `main` → release-please opens a Release PR → merging it creates the
 - `check-version-sync-hook.py` — warns when a version file edit desyncs the five manifests
 - `ruff-hook.py` — auto-fixes and lints any edited `.py` file
 - `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
+- `validate-rules-hook.py` — validates any edited `.claude/rules/*.md` file (`validate-rules.py` + `check-rules-anatomy.py`)
+
+Plus a **Bash** PostToolUse hook, `post-bash-revalidate.py`: Write/Edit matchers
+never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so this one
+re-runs the whole-tree gates when `git status` shows a governed path dirty.
+
+Plus two **PreToolUse** hooks, which can *block* a tool call before it runs — the
+most behaviour-changing entries in the file:
+
+- matcher `Bash` — `graphify hook-guard search`
+- matcher `Read|Glob` — `graphify hook-guard read`
+
+Both invoke a bare `graphify` from `PATH`, so a clone without graphify installed
+sees these hooks fail on every matching tool call.
 
 Plus a Stop hook, `stop-reminder.py`, which reminds about **staged** skill files (`git diff --cached`) before Claude hands back control — so it fires at commit time, not on every turn a working-tree edit exists.
 

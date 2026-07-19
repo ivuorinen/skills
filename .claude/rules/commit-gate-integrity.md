@@ -1,9 +1,12 @@
 # Commit Gate Integrity
 
 The CI `Validate` job is the authoritative enforcement gate. PostToolUse hooks
-fire only on Write/Edit and never on Bash edits (`sed -i`, redirection,
-`git mv`), and pre-commit is skippable, so CI is the only check that binds every
-change on its way into a protected branch.
+now cover both surfaces — `Write|Edit` validators on edited files, and
+`post-bash-revalidate.py` on `Bash`, which re-runs the whole-tree gates when
+`git status` shows a governed path dirty after a Bash edit (`sed -i`,
+redirection, `git mv`). But a hook runs only inside an agent session and
+pre-commit is skippable, so CI is still the only check that binds every change
+on its way into a protected branch.
 
 Never pass `--no-verify` when committing changes to skill files, version
 manifests, or the findings store — it skips the pre-commit validators that guard

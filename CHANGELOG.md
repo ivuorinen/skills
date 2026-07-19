@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## Unreleased
+
+> **Correction (2026-07-19):** commit `955fac3` ("feat: add write-surgical-code
+> rule from Karpathy's LLM-coding guidelines", [#61]) touches only
+> `.claude/rules/write-surgical-code.md`, `.gitignore` and `CLAUDE.md` — no path
+> under `skills/`, so no installed consumer sees a difference. It should have
+> been `docs:` or `chore:` and warrants no minor bump. See
+> `.claude/rules/commit-types.md`.
+
+> **Correction (2026-07-19):** commit `a7aa066` ("feat: graphify integration,
+> vendored-skill validator support, and tool hardening", [#63]) bundles three
+> separable concerns across 25 files — vendoring a third-party skill, adding a
+> validator allowlist plus its rule, and hardening three shipped scripts. It
+> should have been split into three commits. The vendoring half landed without
+> the `LICENSE` and `NOTICE` entries `.claude/rules/vendored-skills.md` requires
+> (both added later); a single-concern vendoring commit would have surfaced that
+> gap in review. See `.claude/rules/commit-types.md`.
+
+[#61]: https://github.com/ivuorinen/skills/issues/61
+[#63]: https://github.com/ivuorinen/skills/issues/63
+
 ## [2.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.8.0...ivuorinen-skills-v2.0.0) (2026-07-10)
 
 
@@ -40,9 +61,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [1.7.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.6.0...ivuorinen-skills-v1.7.0) (2026-07-05)
 
-### ⚠ BREAKING CHANGES
-
-- **deps:** update actions/checkout action (v6.0.3 → v7.0.0) ([#29](https://github.com/ivuorinen/skills/issues/29))
+> **Correction (2026-07-19):** this entry originally carried a "BREAKING
+> CHANGES" section naming the actions/checkout v6→v7 bump (#29). That commit
+> used `chore(deps)!:` for a change confined to `.github/workflows/`, which
+> touches no published surface — 1.7.0 shipped no breaking change and the
+> section has been removed. See `.claude/rules/commit-types.md`.
 
 ### Features
 
