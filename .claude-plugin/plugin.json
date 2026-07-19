@@ -24,7 +24,7 @@
       "command": "python3",
       "args": ["${CLAUDE_PLUGIN_ROOT}/skills/nitpicker/scripts/mcp_server.py"],
       "env": {
-        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+        "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR:-.}"
       }
     }
   }
