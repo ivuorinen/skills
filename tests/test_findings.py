@@ -894,3 +894,122 @@ def test_ensure_store_gitattributes_skips_when_gitignored(tmp_path):
     store.mkdir(parents=True)
     findings.ensure_store_gitattributes(store)
     assert not (store / ".gitattributes").exists()
+
+
+# ── ledger durability: resolve deletes the open file on the strength of the
+#    ledger write, so every way that write can silently not-happen is a test ───
+
+
+def test_append_ledger_refuses_truncated_last_line(tmp_path):
+    """A newline-less last line would merge two records into one unparseable line."""
+    _new(tmp_path)
+    ledger = findings.ledger_path(tmp_path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text('{"id": "x"}', encoding="utf-8")  # no trailing newline
+    with pytest.raises(findings.FindingError, match="truncated"):
+        findings.append_ledger(tmp_path, {"id": "y"})
+
+
+def test_append_ledger_raises_on_short_write(tmp_path, monkeypatch):
+    """A short write commits half a record; resolve would then delete a live finding."""
+    real_write = findings.os.write
+    monkeypatch.setattr(findings.os, "write", lambda fd, data: real_write(fd, data[:5]))
+    with pytest.raises(findings.FindingError, match="short write"):
+        findings.append_ledger(tmp_path, {"id": "y"})
+
+
+def test_resolve_leaves_no_orphan_when_ledger_append_refuses(tmp_path):
+    """The open file must survive a refused append — that is the whole point."""
+    path = _new(tmp_path)
+    fid = findings.parse_frontmatter(path.read_text(encoding="utf-8"))[0]["id"]
+    ledger = findings.ledger_path(tmp_path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text('{"id": "x"}', encoding="utf-8")
+    with pytest.raises(findings.FindingError):
+        findings.resolve_finding(tmp_path, fid, "fixed", "done")
+    assert path.exists(), "open finding deleted despite the ledger append failing"
+
+
+# ── INDEX.md freshness: `make check` and CI both fail on a stale index ────────
+
+
+@pytest.mark.parametrize("mutation", ["new", "resolve"])
+def test_cli_mutation_leaves_index_fresh(tmp_path, mutation):
+    """Regenerating after a CLI mutation must be a no-op, or index-check goes red."""
+    findings.main(
+        [
+            "new",
+            "--root",
+            str(tmp_path),
+            "--auditor",
+            "security",
+            "--severity",
+            "high",
+            "--category",
+            "security",
+            "--area",
+            "src/auth.py",
+            "--body",
+            BODY,
+            "Token compared with ==",
+        ]
+    )
+    if mutation == "resolve":
+        fid = findings.finding_id("security", "src/auth.py", "Token compared with ==")
+        findings.main(
+            ["resolve", "--root", str(tmp_path), fid, "--status", "fixed", "--notes", "d"]
+        )
+    after_mutation = (tmp_path / "INDEX.md").read_text(encoding="utf-8")
+    findings.write_index(tmp_path)
+    assert (tmp_path / "INDEX.md").read_text(encoding="utf-8") == after_mutation
+
+
+def test_read_baseline_reports_corruption_instead_of_masking_it(tmp_path):
+    """A damaged baseline must be distinguishable from an empty one."""
+    _new(tmp_path)
+    findings.baseline_path(tmp_path).write_text("{not json", encoding="utf-8")
+    errors: list[str] = []
+    assert findings.read_baseline(tmp_path, errors) == set()
+    assert errors and "unreadable baseline" in errors[0]
+
+    findings.baseline_path(tmp_path).write_text('{"accepted": []}', encoding="utf-8")
+    errors = []
+    assert findings.read_baseline(tmp_path, errors) == set()
+    assert errors and "no 'ids' list" in errors[0]
+
+
+def test_secrets_never_reach_the_written_finding(tmp_path):
+    """The redaction convention is enforced at the writer, not by instruction."""
+    token = "ghp_" + "A" * 30
+    path = _new(
+        tmp_path,
+        title="Token leak",
+        body=BODY.replace("Timing side-channel.", f"Found {token} for alice@example.com"),
+    )
+    written = path.read_text(encoding="utf-8")
+    assert token not in written
+    assert "ghp_***AAAA" in written
+    assert "alice@example.com" not in written and "<email>" in written
+
+
+def test_resolve_notes_are_redacted_before_the_append_only_ledger(tmp_path):
+    path = _new(tmp_path)
+    fid = findings.parse_frontmatter(path.read_text(encoding="utf-8"))[0]["id"]
+    findings.resolve_finding(tmp_path, fid, "fixed", "rotated AKIAIOSFODNN7EXAMPLE")
+    ledger = findings.ledger_path(tmp_path).read_text(encoding="utf-8")
+    assert "AKIAIOSFODNN7EXAMPLE" not in ledger
+    assert "AKIA***MPLE" in ledger
+
+
+def test_redact_leaves_ordinary_prose_untouched():
+    """A redactor that mangles normal evidence is worse than none."""
+    prose = "`src/auth.py:42` uses `token == expected` — see RFC 6749 section 4.1."
+    assert findings.redact(prose) == prose
+
+
+def test_parse_frontmatter_ignores_indented_keys():
+    """Indented lines are nested values; check-rules-anatomy's parser agrees."""
+    fm, _ = findings.parse_frontmatter("---\n  indented: v\n---\nbody")
+    assert fm == {}
+    fm, _ = findings.parse_frontmatter("---\nname: v\n---\nbody")
+    assert fm == {"name": "v"}
