@@ -47,7 +47,7 @@ For each task, in plan order:
 3. **Make the minimal change the task specifies.** No unrelated cleanup, no gold-plating, no task skipped for being inconvenient.
 4. **Run that task's `verify:` step now, before the next task.** Never batch verifications to the end — the per-task verify is what localizes a failure to one task. A slow verify is still run to completion and its output read before the task is marked done; slowness licenses waiting, never skipping. Confirm the verify actually exercises this task's change: a verify that passes against the unmodified code — a tautology, `true`, an assertion on unchanged behaviour — is not evidence, and the task is not done until a real check is green.
 5. **A task with no `verify:` step cannot be marked done.** Derive an observable check that would fail if the change were absent and run it; if none can be derived, treat the missing verification as a blocker (Step 3). Never complete a task on zero evidence.
-6. If the verify fails: diagnose and fix before moving on; re-run until green. A repeated failure you cannot resolve is a blocker (Step 3). Never carry a red state into the next task.
+6. If the verify fails, first determine whether this task's change caused the failure. Fix only a task-caused failure and re-run until green; a pre-existing or unrelated failure is out of scope — stop and report it as a blocker (Step 3), never edit unrelated files to make it pass. A task-caused failure you cannot resolve is also a blocker. Never carry a red state into the next task.
 7. Mark the task completed only after its verify is observed green.
 
 ### Step 3 — Blockers: stop, do not guess
@@ -65,7 +65,7 @@ Ask a specific question with concrete options — not a vague "help". **This ove
 
 After every task is complete and each task's verify is green:
 
-1. **Run the project check command from Step 1** as the final gate. It must be green, and you must read its output — not "it should pass". If it fails, the work is not done: diagnose, fix, re-run until clean.
+1. **Run the project check command from Step 1** as the final gate. It must be green, and you must read its output — not "it should pass". If it fails, determine whether the plan's changes caused the failure: fix a plan-caused failure and re-run until clean; a pre-existing failure unrelated to the plan's changes is a blocker to report (Step 3), not license to edit unrelated files.
 2. **Present the finish menu.** Never commit, push, or claim done without an explicit choice here:
 
    ```text
