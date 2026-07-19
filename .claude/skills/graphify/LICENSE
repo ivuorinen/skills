@@ -1,8 +1,11 @@
-Portions of this software are derived from third-party works; see NOTICE.
+This directory contains the graphify skill, vendored from
+https://github.com/Graphify-Labs/graphify (version 0.9.16) and redistributed
+under its own license, reproduced verbatim below. It is not covered by the
+repository's own LICENSE.
 
 MIT License
 
-Copyright (c) 2026 Ismo Vuorinen
+Copyright (c) 2026 Safi Shamsi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
