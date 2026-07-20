@@ -33,9 +33,10 @@ agent — that decision rule holds even when the working tree is clean.
 - **Silence defaults to "n"** — for this question and for every y/n prompt
   in the Process below. Declaring the user unreachable is never a path to
   "yes".
-- Re-filing a v1 finding's content into the v2 store by hand (via
-  `findings.py new` or file writes) **is** migration and sits behind the
-  same gate — "I didn't run `migrate`" is not a defense.
+- Re-filing a v1 finding's content into the v2 store by hand — via
+  `findings.py new`, the `np_new_finding` MCP tool, or a direct file write —
+  **is** migration and sits behind the same gate. Neither "I didn't run
+  `migrate`" nor "I used the MCP tool, not the CLI" is a defense.
 
 ## Process
 

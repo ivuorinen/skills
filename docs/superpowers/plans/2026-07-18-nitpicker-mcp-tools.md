@@ -1,5 +1,14 @@
 # Nitpicker MCP Tools Implementation Plan
 
+**Status:** Implemented in 444a84c — the unchecked `- [ ]` boxes below are the
+original task list, not outstanding work. Repo-meta tools were dropped during
+implementation and are not shipped. This document is a historical record and
+has drifted from the shipped surface: the ten tool names were later prefixed
+`np_` (`np_list_skills`, `np_new_finding`, …), and registration moved off the
+plugin-root `.mcp.json` described below to the `mcpServers` block in
+`.claude-plugin/plugin.json` plus `.claude/mcp.json` for project scope.
+`skills/nitpicker/SKILL.md` is the authority for the shipped surface.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a stdlib-only stdio MCP server inside the nitpicker plugin that exposes 10 tools for listing/reading the plugin's skills and for reading/managing a project's audit-findings store.

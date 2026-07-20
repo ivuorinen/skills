@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "deny": [
+      "Read(./.claude/agents/**)",
+      "Edit(./.claude/agents/**)",
+      "Write(./.claude/agents/**)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
@@ -45,6 +52,24 @@
             "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-audit-findings-hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-rules-hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-bash-revalidate.py\""
+          }
+        ]
       }
     ],
     "Stop": [
@@ -63,7 +88,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graphify hook-guard search"
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v graphify >/dev/null && graphify hook-guard search || exit 0"
           }
         ]
       },
@@ -72,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "graphify hook-guard read"
+            "command": "command -v graphify >/dev/null && graphify hook-guard read || exit 0"
           }
         ]
       }

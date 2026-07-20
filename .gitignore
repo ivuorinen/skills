@@ -5,8 +5,10 @@ node_modules/
 .pytest_cache/
 .venv
 __pycache__
-uv.lock
 .coverage
+
+# findings.py's flock file — must stay on disk for locking, never committed
+docs/audit/findings/.lock
 
 # Unignore the CLAUDE.md and the whole .claude, then do certain ignores
 !CLAUDE.md

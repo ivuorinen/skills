@@ -8,7 +8,6 @@ Hostile audit of infrastructure-as-code — container images (Dockerfiles), orch
 - A new service, container, or cloud resource was added and you need to confirm it is not world-exposed, root-privileged, or leaking secrets
 - Before a deploy, to prove no resource ships public, unencrypted, or over-permissioned
 - When asked to "audit the infra", "audit the Dockerfiles", "check Terraform security", "is this k8s manifest hardened", or "review the IaC"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: CI/CD pipeline definitions (`.github/workflows/`, `.gitlab-ci.yml`) route to `/nitpicker ci`; application-source vulnerabilities and committed secrets in application code to `/nitpicker security`; runtime env-var documentation and config drift in the app layer to `/nitpicker config`; dependency CVEs to `/nitpicker deps`. A repo with no infrastructure-as-code files gets the explicit verdict "no IaC surface".
 
@@ -18,7 +17,7 @@ Out of scope: CI/CD pipeline definitions (`.github/workflows/`, `.gitlab-ci.yml`
 2. **Run installed analyzers.** Probe with `command -v` for `hadolint` (Dockerfiles), `checkov`, `tfsec`, `trivy` (`trivy config`), `terrascan`, `kics`, `kube-score`, `kubesec`, `kubeconform`. Run each tool found against the matching files (`hadolint <file>`; `checkov -d . --compact`; `trivy config --format json .`); record a missing tool as "not available" and a crashed tool as "errored: <message>" — a tool failure never aborts the run. Never install a tool. Parse output into findings, deduplicating on file + line + class; list every source in Evidence. Tool output supplements the manual sweep in step 3 — it never replaces it: scanners miss cross-file exposure (a public LB in front of a no-authn service), intent, and drift from the running environment.
 3. **Manual defect-class sweep.** Check every enumerated file against every applicable class in the defect classes table. Read each Dockerfile instruction, container `securityContext`, security-group/firewall rule, IAM policy document, and storage/database resource end-to-end — grep alone misses a `USER` reset by a later stage, an IAM `Action: "*"` split across a variable, and ingress opened in a separate rule block.
 4. **Trace exposure end-to-end.** For each network-reachable resource, follow the path from the internet inward: an open security group (`0.0.0.0/0`) is Critical in front of an unauthenticated database, Advisory in front of a public CDN. A `LoadBalancer`/`Ingress` with no auth, a storage bucket with public-read ACL or policy, and a database with a public endpoint are each traced to what they expose. Missing exposure analysis is a coverage gap, not a pass.
-5. **File findings** via the store protocol in `_conventions.md`, using `--auditor iac`. Each finding records the class, the tool sources (hadolint, checkov, manual), Evidence (file:line plus the concrete attack or blast radius), Impact (what an attacker reaches or what fails), and Fix (the exact remediation: the `securityContext` block, the CIDR to narrow to, the `encrypted = true` line, the base-image digest to pin). Never print an actual secret value — redact to first 4 + last 4 characters with `***` between (values of 8 characters or fewer become `[REDACTED]`); a committed secret is filed regardless and its rotation instructed.
+5. **File findings** via the store protocol in `_conventions.md`, using `--auditor iac`. Each finding records the class, the tool sources (hadolint, checkov, manual), Evidence (file:line plus the concrete attack or blast radius), Impact (what an attacker reaches or what fails), and Fix (the exact remediation: the `securityContext` block, the CIDR to narrow to, the `encrypted = true` line, the base-image digest to pin). A committed secret is filed regardless and its rotation instructed.
 6. **Summarize and fix.** The summary states the run verdict (COMPLETE only if every enumerated file was examined and every exposed resource traced), tool coverage, and counts by resource type. Fix application and the commit gate follow `_conventions.md`, with this override: the (s)afe option applies only additive hardening that cannot break a running deploy (pinning a base image digest, adding a `securityContext`, adding `encrypted = true` to a not-yet-created resource) — never a CIDR narrowing or a resource replacement that can sever live access. After each fix, re-check the cited location and re-run the analyzer on the changed file.
 
 ### Defect classes
@@ -55,7 +54,7 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Add a non-root `USER`/`securityContext` (`runAsNonRoot`, `allowPrivilegeEscalation: false`, drop `ALL` capabilities)
 - Pin a base image to `tag@sha256:<digest>`

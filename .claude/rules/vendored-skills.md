@@ -25,6 +25,33 @@ test in `tests/test_validate_skill.py` pins the exact set; a new entry fails tha
 test until the owner approves it. Resolve a failure by removing the unapproved
 entry or by obtaining approval — never by editing the test to match.
 
+The allowlist and the test that pins it live in the same tree the agent edits,
+so the assertion alone is not a control — a two-line diff satisfies both.
+The intended human gate is `.github/CODEOWNERS` owning `scripts/validate-skill.py`
+and `tests/test_validate_skill.py`, so a human sees every allowlist change.
+
+That gate is currently INERT: `.github/CODEOWNERS` is not tracked in git, and
+`require_code_owner_review` is false on the main ruleset. Both halves are part
+of the control — commit the file and enable "Require review from Code Owners"
+on the protected branches. Until both are done, nothing but review discipline
+stops an agent from widening `VENDORED_SKILLS`.
+
+## Provenance
+
+Vendored content is redistributed under its upstream license, never under this
+repo's. A vendored skill carries `<skill-dir>/LICENSE` containing the verbatim
+upstream license text and copyright notice, and an entry in the root `NOTICE`
+naming the upstream repository, author, version, and SPDX identifier. Both
+exist before the skill's name goes on `VENDORED_SKILLS`;
+`test_vendored_skills_carry_a_license` in `tests/test_validate_skill.py`
+enforces the LICENSE half.
+
+The same obligation covers adapted content, not only wholly vendored skills:
+whenever an "Adapted from" line is added to a command file, that upstream gets
+a `NOTICE` entry. A prose credit names the author but reproduces neither the
+copyright notice nor the permission notice MIT requires be carried in all
+copies.
+
 ## Keeping vendored content out of scans
 
 `.claude/skills/.graphifyignore` excludes the symlinked `nitpicker/*` skill from

@@ -10,6 +10,8 @@ Release readiness checks, CI gates, "can we ship", "run the release gate".
 
 ```text
 1. python3 findings.py list --status open
+   CLI, not np_list_findings: the MCP tool has no exclude_baseline argument,
+   so it cannot express the waiver this gate depends on.
    If docs/audit/findings/baseline.json exists, add --exclude-baseline so
    findings accepted by `/nitpicker baseline` are waived (they stay open). If
    baseline.json exists but does not parse, report "baseline unreadable — no

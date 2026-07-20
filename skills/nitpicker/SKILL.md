@@ -150,6 +150,8 @@ flow.
 | `scripts/fetch-pr-comments.py` | `cr` |
 | `scripts/process-sarif.py` | `security` |
 | `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` |
+| `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
+| `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
 
 All bundled tools are stdlib-only and run with plain `python3 <path>` — no
 uv or package installs required on the host. In Claude Code the skill
@@ -158,19 +160,31 @@ to this file.
 
 ## MCP server
 
-Installing this plugin registers a stdio MCP server (`nitpicker`) via the
-plugin-root `.mcp.json`. It is stdlib-only Python 3.11+ (`scripts/mcp_server.py`),
-starts automatically, and exposes 10 tools:
+Installing this plugin registers a stdio MCP server (`nitpicker`) from the
+`mcpServers` block in `.claude-plugin/plugin.json` (plugin scope, resolved via
+`${CLAUDE_PLUGIN_ROOT}`); this repo additionally registers the same server for
+project scope from `.mcp.json`. It is stdlib-only Python 3.11+
+(`scripts/mcp_server.py`), starts automatically, and exposes 10 tools:
+
+Every tool name carries the `np_` prefix, so a nitpicker tool stays
+recognizable wherever a name appears without its server qualifier.
 
 | Scope | Tools |
 | --- | --- |
-| Plugin skills (introspection) | `list_skills`, `read_skill`, `read_command`, `list_commands` |
-| Findings — read | `list_findings`, `show_finding`, `findings_index`, `validate_store` |
-| Findings — mutate | `new_finding`, `resolve_finding` |
+| Plugin skills (introspection) | `np_list_skills`, `np_read_skill`, `np_read_command`, `np_list_commands` |
+| Findings — read | `np_list_findings`, `np_show_finding`, `np_findings_index`, `np_validate_store` |
+| Findings — mutate | `np_new_finding`, `np_resolve_finding` |
 
 Skill tools read the plugin's own bundled skills. Findings tools act on the
 audited project's store — pass `project_dir`, or the server falls back to
-`CLAUDE_PROJECT_DIR` then the working directory's repo root.
+`CLAUDE_PROJECT_DIR` then the working directory's repo root. `project_dir` may
+only narrow that root, never escape it.
+
+When these tools are available, commands prefer them over `scripts/findings.py`
+for every operation both cover; `_conventions.md` holds the mapping and the
+CLI-only exceptions. The preference is never a dependency — the server is
+Claude-native, so in Copilot, pi, or CI the CLI is the only interface and is
+fully sufficient.
 
 The mutate tools run **without** the interactive consent prompts of the
 `/nitpicker` command flow: git is the safety net — every change is a

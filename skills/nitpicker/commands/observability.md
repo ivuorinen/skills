@@ -9,8 +9,6 @@ Hostile single-shot audit of the signal surface a codebase emits: assume every p
 - Before a release, to prove no money, auth, or data-loss path is invisible in production
 - Triggers: "audit observability", "check our logging", "can we debug this at 3am"
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 This is not `/nitpicker errors`. That command finds errors being swallowed on the error path; this one asks whether usable signal exists at all — on success and on failure. Both meet at "the failure is invisible": this command files the missing emission; that one files the swallowing handler. Out of scope: swallowed exceptions and fail-open handlers route to `/nitpicker errors`; hardcoded secrets in source route to `/nitpicker security` — but personal data or credentials _emitted to logs_ is this command's pii-in-logs class; happy-path logic bugs route to `/nitpicker review`. Dashboards, pager routing, and log-shipping infra outside the repo are unverifiable — report each in the summary naming what to check and where, never skip the check silently.
 
 ## Defect classes
@@ -53,7 +51,7 @@ Check every enumerated element against every applicable class. A finding is file
 
 Every fix adds or corrects emissions only. Business logic — control flow, return values, side effects other than the added signal — is identical before and after every fix; a fix that fails this test is reverted. Every added emission must itself pass this command's defect classes: no personal data or credentials, bounded label values, a level at or above the deployed threshold, and the identifiers needed to act.
 
-**Auto-applicable (ask first, apply only on approval):**
+**Auto-applicable:**
 
 - Correct the level of an existing log statement
 - Add entity IDs, operation names, or the propagated correlation ID to an existing log statement

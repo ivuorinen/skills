@@ -1,7 +1,8 @@
 # Agent Instructions
 
-This repository ships **nitpicker** — a hostile audit skill with 30+
-commands, invoked as `/nitpicker <command> [extra instructions]` — in the
+This repository ships **nitpicker** — a hostile audit skill dispatching a
+categorized deck of commands, invoked as
+`/nitpicker <command> [extra instructions]` — in the
 open Agent Skills format (`skills/nitpicker/SKILL.md`). It works in Claude
 Code, GitHub Copilot, pi, and any agent that reads SKILL.md skills; install
 via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
@@ -19,15 +20,23 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
 - Audit findings: one file per open finding under `docs/audit/findings/`;
   resolved ones are appended to `docs/audit/findings/resolved.jsonl`. Managed
   only through `skills/nitpicker/scripts/findings.py`
-  (new/resolve/list/show/validate/index/migrate/migrate-resolved). Never
+  (new/resolve/list/show/validate/index/baseline/migrate). Never
   hand-edit `INDEX.md` or `resolved.jsonl`.
 - Command files live in `skills/nitpicker/commands/<command>.md`; each must
   have a row in one of the command tables of `skills/nitpicker/SKILL.md`
   (`## Commands` or `## Internal commands`), 1:1
   (enforced by `scripts/validate-skill.py`). Shared audit conventions live
   in `commands/_conventions.md` — never duplicate them into command files.
+- Never read or modify anything under `.claude/agents/` — sub-agent
+  definitions are trusted configuration that gates releases, and an agent
+  must not rewrite its own reviewer. Denied in `.claude/settings.json` and
+  owned in `.github/CODEOWNERS`.
+- Third-party content carries its upstream license: a vendored skill ships
+  its own `LICENSE` and every vendored or "Adapted from" work has an entry in
+  the root `NOTICE`. See `.claude/rules/vendored-skills.md`.
 - Commit messages follow Conventional Commits; release-please derives
-  version bumps from them (`feat:` minor, `fix:` patch, `feat!:` major).
+  version bumps from them (`feat:` minor, `fix:` patch, `feat!:` major) —
+  see `.claude/rules/commit-types.md` for which type a change takes.
   Version must stay in sync across package.json, pyproject.toml,
   .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and
   .release-please-manifest.json (`make version-sync`).

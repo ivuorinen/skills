@@ -9,8 +9,6 @@ Hostile audit of the project's public contract surface: assume the contract has 
 - After a refactor that touched route handlers, resolvers, exports, or the CLI parser
 - Triggers: "audit the api contract", "does the spec match the code", "is this change breaking"
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 Two axes. **Axis 1 — declaration vs implementation:** OpenAPI/Swagger paths, methods, parameters, request/response shapes, status codes, and auth requirements vs the actual route handlers; GraphQL schema vs resolvers; published TypeScript types and library exports vs runtime behavior; documented CLI flags vs the argument parser. **Axis 2 — surface change vs semver:** every removed or renamed exported symbol, function, or endpoint, narrowed parameter type, widened return type, changed default, removed or retyped response field, and stricter validation on an existing input since the last release tag, each classified breaking or non-breaking and checked against the version bump the commit messages declare.
 
 Out of scope: prose documentation accuracy routes to `/nitpicker docs`; whether a commit message's label matches its diff routes to `/nitpicker commits` — the two semver commands pair: `/nitpicker commits` checks the label against the diff, this command checks the surface against the label; cross-reference overlapping findings by name when both fire. Architectural boundary violations route to `/nitpicker arch`. Internal or private API churn is not a contract and is never filed.

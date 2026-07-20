@@ -9,8 +9,6 @@ Hostile single-shot concurrency-safety audit: assume every piece of state reacha
 - After adding shared mutable state reachable from concurrent contexts — a request-scoped singleton, a module global touched by handlers, a field mutated across an `await`
 - When `/nitpicker review` (or any other command) routes a concurrency finding here
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 **Not this command:** lock contention as a throughput problem → `/nitpicker perf`; a blocking/sync call stalling an async event loop → `/nitpicker perf` (its `sync-in-async` class owns the blocking itself; this command owns only shared-state corruption _across_ an await, not the stall the blocking causes — that split is load-bearing, keep it); ordinary single-threaded logic bugs → `/nitpicker review`; whether a database _migration_ is concurrency-safe to apply → `/nitpicker migrations`; whole-repo defect audit → `/nitpicker audit`. A racy-looking construct with no second concurrent context reaching the state is out of scope here and everywhere — do not route it, drop it.
 
 ## Mindset
@@ -54,7 +52,7 @@ File a finding only when the class, the shared state, ≥2 concrete concurrent c
 
 ## Fix strategy
 
-**Auto-applicable (through the apply-fixes prompt):**
+**Auto-applicable:**
 
 - Wrap an existing read-modify-write in a lock already present in the same scope
 - Replace `counter++` or manual accumulation with the language's atomic type

@@ -41,9 +41,9 @@ Analyze all of:
    other coverage task still runs.
 4. Work the task list in order. For each task: apply the lens (using its
    specialist command as the authority; deep-run `<command>.md`
-   when the lens is high-risk), and file findings via findings.py as they
-   are confirmed — under the specialist's auditor key when you deep-run it,
-   under `--auditor audit` when you apply the lens inline. Close each task in
+   when the lens is high-risk), and file findings as they are confirmed —
+   under the specialist's auditor key when you deep-run it, under the `audit`
+   auditor key when you apply the lens inline. Close each task in
    exactly one of the states `_audit-coverage.md` defines (findings filed,
    clean, or N/A with a reason). Do not close the audit while any task is open.
 5. Run the findings-store protocol in `_conventions.md` (index refresh,

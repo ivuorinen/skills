@@ -71,6 +71,16 @@ class TestVendoredSkip:
         # this assertion.
         assert frozenset({"graphify"}) == _mod.VENDORED_SKILLS
 
+    def test_vendored_skills_carry_a_license(self):
+        # Vendored content is redistributed under its upstream license, not
+        # ours. No LICENSE in the skill dir means the allowlist grew without
+        # provenance — see .claude/rules/vendored-skills.md.
+        repo_root = Path(__file__).parent.parent
+        for name in _mod.VENDORED_SKILLS:
+            assert (repo_root / ".claude" / "skills" / name / "LICENSE").is_file(), (
+                f"vendored skill {name!r} has no LICENSE"
+            )
+
 
 class TestValidate:
     def test_valid_skill_no_errors(self, tmp_path):
@@ -129,6 +139,19 @@ class TestValidate:
     def test_name_mismatch_errors(self, tmp_path):
         text = "---\nname: wrong-name\ndescription: Use when testing\n---\nbody\n"
         assert _has(_errors(tmp_path, text), "does not match directory")
+
+    def test_name_over_64_chars_errors(self, tmp_path):
+        long_name = "a" * 65
+        text = f"---\nname: {long_name}\ndescription: Use when testing\n---\nbody\n"
+        assert _has(_errors(tmp_path, text, long_name), "must be ≤64")
+
+    def test_name_with_invalid_characters_errors(self, tmp_path):
+        text = "---\nname: My_Skill\ndescription: Use when testing\n---\nbody\n"
+        assert _has(_errors(tmp_path, text, "My_Skill"), "lowercase letters, digits and hyphens")
+
+    def test_name_with_reserved_word_errors(self, tmp_path):
+        text = "---\nname: claude-helper\ndescription: Use when testing\n---\nbody\n"
+        assert _has(_errors(tmp_path, text, "claude-helper"), "reserved word 'claude'")
 
     def test_header_level_jump_errors(self, tmp_path):
         text = VALID + "\n#### [N-001] Jump skipping h3\n"

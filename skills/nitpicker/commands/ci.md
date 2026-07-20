@@ -9,7 +9,6 @@ Hostile audit of a project's CI/CD pipeline definitions (GitHub Actions first-cl
 - Before a release, to prove every merge-gating check actually gates and no failure passes green
 - After a supply-chain incident in an action you use, to find every mutable reference
 - When asked to "audit the CI", "audit workflows", "check GitHub Actions security", or "harden the pipelines"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: application-source vulnerabilities, dependency CVEs, and committed secrets in the codebase route to `/nitpicker security`; agent-harness hooks and `.claude/settings.json` enforcement to `/nitpicker agent-hooks` or `/nitpicker agent-loopholes`; general code quality is `/nitpicker audit`.
 
@@ -19,7 +18,7 @@ Out of scope: application-source vulnerabilities, dependency CVEs, and committed
 2. **Run installed analyzers.** Probe with `command -v actionlint` and `command -v zizmor`. Run each tool found (`actionlint -format '{{json .}}'`; `zizmor --pedantic --format json .` — the repository root discovers both workflows and composite actions); record a missing tool as "not available" and a crashed tool as "errored: <message>" in the run summary — a tool failure never aborts the run. Never install a tool. Parse tool output into findings, deduplicating on file + line + class; list every source in the finding's Evidence. Tool output supplements the manual sweep in step 3 — it never replaces it: neither tool verifies gating, permissions semantics, or concurrency intent.
 3. **Manual defect-class sweep.** Check every enumerated file against every class in the defect classes table. Read each `run:` block, `permissions:` block, trigger, `env:` indirection, and composite action input end-to-end — grep alone misses env-var indirection and composite inputs.
 4. **Verify gating.** A gate candidate is any workflow triggered on pull_request/merge_request whose jobs run tests, linters, builds, or validators. Zero candidates in a repo that has such workflows is a misclassification, not a pass. Run `gh auth status`; if authenticated, verify each candidate is required via `gh api repos/{owner}/{repo}/branches/{branch}/protection --jq '.required_status_checks.checks[].context'` and `gh api repos/{owner}/{repo}/rulesets`. A gate-shaped workflow not listed as required is a non-gating-check finding. If unauthenticated or the API returns 401/403/404, file the finding marked Unverifiable with the exact command above for the user to run — never skip gating, and never mark it verified. On a non-GitHub host, verify via that host's protected-branch API (e.g. `glab api projects/:id/protected_branches`) or file Unverifiable with that host's command. Unverifiable findings stay open until verified.
-5. **File findings** via the store protocol in `_conventions.md`, using `--auditor ci`. Each finding records the class, the tool sources (actionlint, zizmor, manual), Evidence (file:line plus the concrete attack or failure scenario), Impact (what an attacker gains or what failure ships), and Fix (the exact remediation: the resolved commit SHA to pin, the permissions block to add, the env-var rewrite). Non-gating-check findings record Verified or Unverifiable with the verification command. Never print an actual secret value in a finding — redact to first 4 + last 4 characters with `***` between (values of 8 characters or fewer become `[REDACTED]`).
+5. **File findings** via the store protocol in `_conventions.md`, using `--auditor ci`. Each finding records the class, the tool sources (actionlint, zizmor, manual), Evidence (file:line plus the concrete attack or failure scenario), Impact (what an attacker gains or what failure ships), and Fix (the exact remediation: the resolved commit SHA to pin, the permissions block to add, the env-var rewrite). Non-gating-check findings record Verified or Unverifiable with the verification command.
 6. **Summarize and fix.** The summary states the run verdict (COMPLETE only if every enumerated file was examined and every gate candidate verified or filed Unverifiable), tool coverage, and gating counts. Fix application and the commit gate follow `_conventions.md`, with this override: the (s)afe option applies only SHA pinning and env-var interpolation rewrites. After each fix, re-check the cited location and re-run the analyzers on the changed file.
 
 ### Defect classes
@@ -49,7 +48,7 @@ Out of scope: application-source vulnerabilities, dependency CVEs, and committed
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Pin an action: resolve the tag's current commit SHA and rewrite to `@<sha> # vX.Y.Z`
 - Add a least-privilege `permissions:` block (top-level `contents: read`, per-job additions)

@@ -9,8 +9,6 @@ Hostile single-shot data-privacy audit: assume every element of personal data is
 - When another command routes a data-handling concern here
 - Triggers: "privacy audit", "PII audit", "data protection audit", "GDPR check", "find unprotected personal data"
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 Out of scope: whether plaintext personal data is _exploitable via a vulnerability_ (SQL injection reaching the column, an auth bypass exposing it) routes to `/nitpicker security` — file the at-rest fact here, route the exploit there, never double-file. Personal data appearing in a _log line_ routes to `/nitpicker observability` — it owns pii-in-logs; this command owns the store, third-party, and response sinks. A whole-repo defect sweep is `/nitpicker audit`.
 
 ## The identifiability bar
@@ -53,7 +51,7 @@ File a finding only when the element is identifiably personal from concrete code
 
 Privacy fixes alter data semantics or product behavior and carry legal weight — bias toward approval-gated. Name every change.
 
-**Auto-applicable (ask first via the fix prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Redact or drop a personal-data field before an EXISTING analytics or third-party telemetry call — a non-consumer-facing sink
 

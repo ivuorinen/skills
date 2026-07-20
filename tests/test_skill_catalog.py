@@ -1,8 +1,3 @@
-#!/usr/bin/env -S uv run --quiet
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["pytest"]
-# ///
 """Tests for skills/nitpicker/scripts/skill_catalog.py."""
 
 import importlib.util
@@ -30,10 +25,15 @@ def test_list_skills_includes_nitpicker_with_commands():
     assert "review" in nit["commands"]
 
 
-def test_list_skills_dedupes_symlinked_nitpicker():
-    # .claude/skills/nitpicker symlinks to skills/nitpicker — must appear once.
+def test_list_skills_lists_nitpicker_once():
     names = [s["name"] for s in sc.list_skills()]
     assert names.count("nitpicker") == 1
+
+
+def test_list_skills_excludes_the_internal_dot_claude_tier():
+    # `.claude/skills/` is the internal dev tier here and the user's own private
+    # skill directory on a consumer machine — never part of what this tool reads.
+    assert all(s["path"].startswith("skills/") for s in sc.list_skills())
 
 
 def test_read_skill_returns_frontmatter_text():

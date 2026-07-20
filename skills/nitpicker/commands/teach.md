@@ -13,7 +13,7 @@ Not for a single throwaway explanation the user will not revisit — answer that
 
 ## Not an audit — what this command produces
 
-This command teaches; it does not hunt defects. It writes a teaching workspace under `docs/lessons/`, not findings. The entire `_conventions.md` **Findings store** section is overridden — the findings store, `findings.py`, the severity table, the `Apply fixes?` prompt, and Run-protocol step 0 (the legacy `docs/audit/*-findings.md` migration-consent gate) all bind the audit commands and never fire for `teach`. The `inline` and `changed-files` modifiers do not apply either: the persistent workspace under `docs/lessons/` is always the deliverable, never a response-only or scoped-down answer. Only two `_conventions.md` execution rules carry over: run the Process below as a task list (one tracker entry per step), and preflight every external tool with `command -v` before invoking it.
+This command teaches; it does not hunt defects. It writes a teaching workspace under `docs/lessons/`, not findings. The entire `_conventions.md` **Findings store** section is overridden — the findings store and both its interfaces (`findings.py` and the `np_*` MCP tools), the severity table, the `Apply fixes?` prompt, and Run-protocol step 0 (the legacy `docs/audit/*-findings.md` migration-consent gate) all bind the audit commands and never fire for `teach`. The `inline` and `changed-files` modifiers do not apply either: the persistent workspace under `docs/lessons/` is always the deliverable, never a response-only or scoped-down answer. Only two `_conventions.md` execution rules carry over: run the Process below as a task list (one tracker entry per step), and preflight every external tool with `command -v` before invoking it.
 
 Never trust your parametric knowledge as the source of truth. Ground every claim in a resource the user can verify, and cite it. Knowledge you "know cold" is exactly the trap: settled, stable, unchanged-for-years facts still get a citation, because the citation — not your confidence — is what the user verifies and returns to. Fetching and citing sources is never over-engineering here; it is the command's core. When no source can be fetched (no network or fetch capability in the environment), tell the user sourcing is unavailable and either defer the lesson or record the gap under `## Gaps` in `RESOURCES.md` — never silently fall back to teaching from memory.
 
@@ -78,6 +78,7 @@ A lesson is one self-contained HTML file in `docs/lessons/lessons/` (the nested 
 - **Linked.** Cross-link via HTML anchors to related lessons and reference documents.
 - **Sourced.** Recommend one primary source — the highest-quality resource found on the topic — for the user to read or watch.
 - **Interactive follow-up.** End with a reminder that the user can ask you, their teacher, to clarify anything.
+- **Accessible.** Every lesson meets WCAG 2.2 AA: `<html lang="...">`, a unique non-empty `<title>`, heading levels that descend without skipping, `alt` text on every image (`alt=""` if purely decorative), link text meaningful out of context, 4.5:1 contrast for normal text and 3:1 for large text and UI boundaries in _both_ light and dark schemes, all interactive controls reachable and operable by keyboard with a visible focus indicator, and any motion wrapped in `@media (prefers-reduced-motion: reduce)`.
 
 After writing a lesson, open it for the user with the platform's file-opener — `open` on macOS, `xdg-open` on Linux, `start` on Windows — when one is present (`command -v`).
 
@@ -86,6 +87,8 @@ After writing a lesson, open it for the user with the platform's file-opener —
 Lessons are built from reusable **components** in `docs/lessons/assets/`: stylesheets, quiz widgets, simulators, diagram helpers — anything a second lesson reuses.
 
 Reuse is the default. Read `docs/lessons/assets/` before authoring a lesson and build from what already exists. When a lesson needs something new and reusable, write it as a component in `assets/` and link to it — never inline code a future lesson would duplicate. A shared stylesheet is the first component every workspace earns: every lesson links it, so the course reads as one consistent whole. Grow the component library as the workspace grows.
+
+Every new interactive component — quiz widget, simulator, diagram helper — is keyboard-operable and labelled before it ships: reachable in tab order, operable without a pointer, carrying the ARIA role/state its native-element equivalent would supply (`aria-checked`, `aria-expanded`, `aria-live` for feedback the loop emits), and showing a visible focus indicator. A component that fails this is not reusable — fix it in `assets/`, once, rather than working around it per lesson.
 
 ## Knowledge
 
@@ -128,9 +131,10 @@ Run these steps as a task list. Never skip a step; a step whose precondition is 
 3. **Populate resources.** If `RESOURCES.md` is thin for what the mission needs, search for high-trust sources and record them (annotated) before teaching. Record community preferences.
 4. **Locate the zone of proximal development.** From the learning records and mission, choose the single most relevant next thing to teach — unless the user named an exact target.
 5. **Teach.** Author the lesson as an HTML file in `lessons/`, reusing `assets/` components. Cite sources, cross-link, recommend one primary source, and close with the interactive follow-up reminder. Open it for the user with the platform file-opener when one is present.
-6. **Capture reference material.** Write or update reference documents and the glossary for durable units of knowledge.
-7. **Record learning.** When the user demonstrates genuine understanding, discloses prior knowledge, corrects a misconception, or shifts the mission, write a learning record (format in `_teach-formats.md`).
-8. **Commit.** Ask "Commit the teaching workspace to git? (y/n)" — never commit silently.
+6. **Verify accessibility.** Run `/nitpicker a11y docs/lessons/` after authoring. Fix every Critical and High finding before the lesson is presented as done — an inaccessible lesson is an undelivered lesson.
+7. **Capture reference material.** Write or update reference documents and the glossary for durable units of knowledge.
+8. **Record learning.** When the user demonstrates genuine understanding, discloses prior knowledge, corrects a misconception, or shifts the mission, write a learning record (format in `_teach-formats.md`).
+9. **Commit.** Ask "Commit the teaching workspace to git? (y/n)" — never commit silently.
 
 ## Common mistakes
 

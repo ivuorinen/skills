@@ -15,7 +15,8 @@ Checks each .md file under <project_root>/.claude/rules/ for:
 
 Outputs a JSON report to stdout. Each file entry lists findings with severity and detail.
 
-Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found.
+Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, or
+an explicitly supplied <project_root> that has no .claude/rules/ subdirectory.
 """
 
 import json
@@ -166,7 +167,10 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
         if m:
             snippet = line.strip()[:80]
             issue(
-                "Low",
+                # High, so it sets the exit code: unconditional phrasing is the
+                # property this repo states most emphatically for its own rule
+                # files, and a detector whose result never blocks is decoration.
+                "High",
                 "hedged_language",
                 f"Line {lineno}: hedged '{m.group()}' — rules must be unconditional: \"{snippet}\"",
             )
@@ -202,8 +206,18 @@ def _iter_rules(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
 
 
 def main() -> None:
-    project_root = Path(sys.argv[1]).resolve() if sys.argv[1:] else Path.cwd()
+    explicit = bool(sys.argv[1:])
+    project_root = Path(sys.argv[1]).resolve() if explicit else Path.cwd()
     rules_dir = project_root / ".claude" / "rules"
+
+    if not rules_dir.exists() and explicit:
+        # The argument is a PROJECT ROOT, not a rules dir. Pointing it at
+        # `.claude/rules/` itself yields `.claude/rules/.claude/rules` and used
+        # to exit 0 — a silently green gate. A supplied path that has no rules
+        # dir is a misconfiguration, so fail loudly; the no-argument case stays
+        # exit 0 because a consumer repo with no .claude/rules/ is clean.
+        print(f"ERROR  {rules_dir} not found — argument must be a project root", file=sys.stderr)
+        sys.exit(1)
 
     if not rules_dir.exists():
         print(

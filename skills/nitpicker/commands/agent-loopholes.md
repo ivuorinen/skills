@@ -8,7 +8,6 @@ Hostile audit of the project's agent enforcement surface: assume every constrain
 - A new rule, hook, skill, or settings change was added and you want to confirm it actually binds
 - Before a release, to prove the enforcement surface has no silent gaps
 - When asked to "close the loopholes", "harden the Claude Code setup", or "find ways our rules can be bypassed"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Not for rule _quality and placement_ (kebab-case, grab-bags, misplaced CLAUDE.md rules) — that is `/nitpicker agent-rules`. Not for application source security — that is `/nitpicker security`. This command checks whether the enforcement — rules, hooks, settings, and skills together — can be _evaded_.
 
@@ -110,7 +109,7 @@ Non-Claude agents resolve the path relative to the nitpicker skill directory. It
 
 ## Fix strategy
 
-**Auto-applicable (ask first, apply only on approval):**
+**Auto-applicable:**
 
 - Wire an existing-but-unreferenced hook script into `.claude/settings.json`
 - Change a fail-open hook to fail closed (non-zero exit on error/unexpected input)

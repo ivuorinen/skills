@@ -174,16 +174,17 @@ every alias next to its command.
 ## MCP server
 
 Installing the plugin registers a stdlib-only stdio MCP server (`nitpicker`)
-that exposes skill introspection (`list_skills`, `read_skill`, `read_command`,
-`list_commands`) and findings management (`list_findings`, `show_finding`,
-`findings_index`, `validate_store`, `new_finding`, `resolve_finding`). See the
-"MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
-non-interactive mutate contract.
+that exposes skill introspection (`np_list_skills`, `np_read_skill`,
+`np_read_command`, `np_list_commands`) and findings management
+(`np_list_findings`, `np_show_finding`, `np_findings_index`,
+`np_validate_store`, `np_new_finding`, `np_resolve_finding`). Every tool is
+prefixed `np_`. See the "MCP server" section of `skills/nitpicker/SKILL.md`
+for scope and the non-interactive mutate contract.
 
 ## Development
 
 ```bash
-make check     # validate skill + commands, rules, version sync, findings store, findings index, lint, format, tests, pre-commit
+make check     # validate skill + commands, rules, version sync, findings store, findings index, lint, format, typecheck, tests, pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```
@@ -210,6 +211,20 @@ Conventional Commits (`feat:` minor, `fix:` patch, `feat!:` major).
   learning, spaced retrieval-practice lessons, and learning records as ADRs —
   rewritten to this repo's command conventions with lessons under `docs/lessons/`.
 
+## Third-party content
+
+This repo redistributes work by other authors: the vendored `graphify` skill
+under `.claude/skills/graphify/`, and command files adapted from
+[obra/superpowers](https://github.com/obra/superpowers),
+[DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail), and
+[mattpocock/skills](https://github.com/mattpocock/skills). All four are MIT.
+[NOTICE](NOTICE) carries each upstream's copyright and permission notice,
+repository, author, and SPDX identifier; the vendored skill also ships its
+upstream license at `.claude/skills/graphify/LICENSE`.
+
 ## License
 
 [MIT](LICENSE) © Ismo Vuorinen
+
+Portions of this software are derived from third-party works; see
+[NOTICE](NOTICE).

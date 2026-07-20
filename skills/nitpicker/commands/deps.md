@@ -8,7 +8,6 @@ Hostile audit of every dependency the project already declares or silently relie
 - Before a release, or after a refactor or feature removal, to prove the manifest matches what the code actually imports
 - A dependency tree that has grown for years without an audit
 - When asked to "audit dependencies", "find unused dependencies", "prune deps", or "check dependency health"
-- Run standalone or by the `/nitpicker` default audit flow
 
 Out of scope: CVEs, vulnerable versions, and supply-chain advisories route to `/nitpicker security`. Whether a proposed NEW dependency is justified routes to `/nitpicker complexity` — its ladder governs the decision before the add; this command audits what is already installed. General code defects are `/nitpicker audit`.
 
@@ -73,7 +72,7 @@ A tool's candidate list is input, not a finding — verify every candidate again
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Regenerate a drifted lockfile with the ecosystem's lockfile-only command (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`)
 - Move a misclassified dependency between sections at its current version

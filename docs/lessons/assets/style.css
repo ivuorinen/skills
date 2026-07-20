@@ -2,11 +2,14 @@
    Goals: clean readable typography, prints well, works offline (no CDN). */
 
 :root {
+  color-scheme: light dark;
   --ink: #1a1a1a;
   --muted: #5b5b5b;
   --bg: #fdfdfb;
   --rule: #d9d6cf;
   --accent: #7a2e2e;
+  /* Text drawn on top of --accent; must flip with it to stay WCAG 1.4.3 legible. */
+  --accent-on: #ffffff;
   --code-bg: #f2f0ea;
   --callout-bg: #f5f2ea;
   --measure: 38rem;
@@ -19,6 +22,7 @@
     --bg: #1b1b19;
     --rule: #3a3833;
     --accent: #e0a3a3;
+    --accent-on: #1b1b19;
     --code-bg: #26251f;
     --callout-bg: #232219;
   }
@@ -87,7 +91,7 @@ ol.pipeline > li::before {
   top: 0;
   width: 1.9rem; height: 1.9rem;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-on);
   border-radius: 50%;
   display: grid; place-items: center;
   font-family: -apple-system, sans-serif;
@@ -145,10 +149,21 @@ th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var
 th { font-family: -apple-system, sans-serif; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
 @media print {
+  /* prefers-color-scheme: dark still matches while printing, so the dark
+     palette would be painted onto forced white paper. Reset to light. */
+  :root {
+    --ink: #1a1a1a;
+    --muted: #5b5b5b;
+    --bg: #fdfdfb;
+    --rule: #d9d6cf;
+    --accent: #7a2e2e;
+    --accent-on: #ffffff;
+    --code-bg: #f2f0ea;
+    --callout-bg: #f5f2ea;
+  }
   body { max-width: 100%; margin: 0; font-size: 11pt; color: #000; background: #fff; }
   h2 { border-color: #000; }
   a { color: #000; text-decoration: underline; }
+  /* answers print when opened — native <details> behaviour, no CSS needed */
   details.recall { break-inside: avoid; }
-  details.recall[open] { } /* answers print when opened */
-  .no-print { display: none; }
 }

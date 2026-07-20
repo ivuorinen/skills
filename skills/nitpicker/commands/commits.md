@@ -8,7 +8,6 @@ Hostile audit of every commit message in a range against the diff it labels: ass
 - After a suspicious version bump — a major nobody intended, a shipped feature missing from the changelog
 - Verifying a PR's commits or a squash-merge title against the full diff before merge
 - When asked to "audit the commits", "check commit messages", or "verify conventional commits"
-- Run standalone or by the `/nitpicker` default audit flow
 
 The extra instructions may name the range: an explicit `<base>..<head>` range, or a PR number (audit that PR's commits).
 
@@ -46,7 +45,7 @@ Out of scope: code defects inside the diffs route to `/nitpicker review`; CI/CD 
 
 ## Fix strategy
 
-**Auto-applicable (via the batch prompt, apply only on approval):**
+**Auto-applicable:**
 
 - Amend the message of an unpushed HEAD commit (`git commit --amend -m` with the corrected message)
 - Reword a deeper unpushed commit (show old → new message per commit before applying)

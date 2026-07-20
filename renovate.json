@@ -1,6 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "local>ivuorinen/renovate-config"
-  ]
+  "description": [
+    "The extends preset is pinned to a commit SHA, matching the SHA-pinning discipline .claude/rules/github-actions-security.md imposes on actions: the thing that keeps our action SHAs current is itself pinned, so an edit upstream cannot silently change update policy here. Bump the SHA deliberately.",
+    "enabledManagers and automerge are declared here, not inherited, so the external preset cannot silently drop manifest coverage or turn automerge on."
+  ],
+  "extends": ["local>ivuorinen/renovate-config#10a624a19237fa5a3662af0d8f9959c738c01c7f"],
+  "enabledManagers": ["npm", "pep621", "pre-commit", "github-actions"],
+  "automerge": false
 }

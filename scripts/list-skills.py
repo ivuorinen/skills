@@ -9,7 +9,7 @@ import textwrap
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import collect_skills  # noqa: E402  # type: ignore[import-not-found]
+from common import collect_skills  # type: ignore[import-not-found]
 
 MAX_WIDTH = 100
 
@@ -26,7 +26,8 @@ def print_section(title: str, skills: list[tuple[str, str]]) -> None:
     prefix = " " * (2 + name_width + 2)
     desc_width = max(20, MAX_WIDTH - len(prefix))
     for name, description in skills:
-        lines = textwrap.wrap(description, width=desc_width)
+        # wrap("") returns [] — fall back to one blank line so lines[0] is safe.
+        lines = textwrap.wrap(description, width=desc_width) or [""]
         print(f"  {name:<{name_width}}  {lines[0]}")
         for line in lines[1:]:
             print(f"{prefix}{line}")

@@ -7,11 +7,12 @@ on:
     branches:
       - main
   pull_request:
-    # `edited` is needed by the pr-title job (title/body lint); `reopened` keeps
-    # the required Validate check from going stale when a PR is reopened with no
-    # new commits. The validate job below is scoped off `edited` so a title tweak
-    # does not rerun the full suite.
-    types: [opened, edited, reopened, synchronize]
+    # No `edited`: this workflow carries the required Validate check, and a job
+    # skipped by an `if:` reports as success to branch protection — so a title
+    # edit could satisfy the gate for a failing commit. Title linting lives in
+    # pr-title.yml, which owns the `edited` event. `reopened` keeps the required
+    # check from going stale when a PR is reopened with no new commits.
+    types: [opened, reopened, synchronize]
   # Manual trigger so Validate can be run on the release-please branch, which
   # GITHUB_TOKEN-authored PRs cannot auto-trigger (see release-please.yml).
   workflow_dispatch:
@@ -23,22 +24,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pr-title:
-    name: Lint PR title
+  commit-lint:
+    name: Lint commit messages
+    # The pre-commit `conventional-commit-msg` hook runs at the commit-msg stage,
+    # which `pre-commit run --all-files` never executes — so without this job CI
+    # validates only the PR title, and that is a complete gate only under
+    # squash-merge. release-please silently ignores unparseable commits.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: read # read-only: the action only reads the PR title to lint it
+      contents: read # read-only: reads the PR commit range to lint subjects
     steps:
-      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # full history: the base..head range must be walkable
+          persist-credentials: false
+
+      - name: Validate commit subjects
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The regex is read out of .pre-commit-config.yaml at runtime rather than
+        # copied, so this gate and the commit-msg hook cannot drift apart.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          config = open(".pre-commit-config.yaml").read()
+          m = re.search(
+              r"id: conventional-commit-msg[\s\S]*?^\s*entry: '([^']+)'$", config, re.M
+          )
+          if not m:
+              sys.exit("could not read conventional-commit-msg regex from .pre-commit-config.yaml")
+          pattern = re.compile(m.group(1))
+
+          subjects = subprocess.run(
+              ["git", "log", "--format=%s", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              check=True, capture_output=True, text=True,
+          ).stdout.splitlines()
+
+          bad = [s for s in subjects if not pattern.search(s)]
+          for s in bad:
+              print(f"::error::non-conventional commit subject: {s}")
+          print(f"checked {len(subjects)} commit(s), {len(bad)} invalid")
+          sys.exit(1 if bad else 0)
+          PY
 
   validate:
     name: Validate
-    # Skip the full suite on metadata-only PR edits (title/body); `synchronize`
-    # still covers new commits, and push/workflow_dispatch are unaffected.
-    if: github.event_name != 'pull_request' || github.event.action != 'edited'
     runs-on: ubuntu-latest
     permissions:
       contents: read # read-only: only reads the checkout to validate it
@@ -70,15 +103,22 @@ jobs:
           git diff --exit-code docs/audit/findings/INDEX.md
 
       - name: Run tests
-        # --with ruff: tests/test_hooks.py exercises ruff-hook.py, which shells out
-        # to the real `ruff` binary; without it the run fails with FileNotFoundError.
-        run: uv run --with pytest --with ruff pytest tests/
+        run: uv run --extra dev pytest tests/
 
       - name: Lint scripts
-        run: uv run --with ruff ruff check scripts/ tests/ skills/
+        run: uv run --extra dev ruff check scripts/ tests/ skills/
+
+      - name: Type-check
+        # Ratchet, not a waiver: 6 pre-existing errors (all tests/ monkeypatching
+        # module attributes) are tolerated, 7 fails. Burn the baseline down to 0,
+        # then delete the guard and run bare `pyright`. Mirrors the `typecheck`
+        # target in the Makefile — change both together.
+        run: |
+          uv run --with pyright==1.1.411 pyright --outputjson \
+            | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s), baseline 6'); sys.exit(n > 6)"
 
       - name: Check script formatting
-        run: uv run --with ruff ruff format --check scripts/ tests/ skills/
+        run: uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/
 
       - name: Run pre-commit suite
-        run: uv run --with pre-commit pre-commit run --all-files --show-diff-on-failure
+        run: uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure

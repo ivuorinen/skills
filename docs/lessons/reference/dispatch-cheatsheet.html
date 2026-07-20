@@ -9,6 +9,8 @@
 <body>
 
 <p class="eyebrow">Reference · Nitpicker dispatch</p>
+
+<main>
 <h1>Dispatch cheat-sheet</h1>
 <p class="source-note">
   Compressed essence of <a href="../lessons/0001-dispatch-pipeline.html">lesson 0001</a>.
@@ -33,7 +35,7 @@
 
 <h2>Resolution cases</h2>
 <table>
-  <thead><tr><th>First word is…</th><th>Result</th></tr></thead>
+  <thead><tr><th scope="col">First word is…</th><th scope="col">Result</th></tr></thead>
   <tbody>
     <tr><td>a canonical name (<code>perf</code>)</td><td>that command file</td></tr>
     <tr><td>an alias (<code>perf-auditor</code>)</td><td>the same command file</td></tr>
@@ -43,7 +45,7 @@
 
 <h2>Adding a command = two edits, enforced 1:1</h2>
 <table>
-  <thead><tr><th>Do</th><th>Enforced by</th></tr></thead>
+  <thead><tr><th scope="col">Do</th><th scope="col">Enforced by</th></tr></thead>
   <tbody>
     <tr><td>Create <code>commands/&lt;name&gt;.md</code></td><td rowspan="2"><a href="../../../scripts/validate-skill.py"><code>validate-skill.py</code></a> — a file without a row, or a row without a file, fails CI</td></tr>
     <tr><td>Add its row to a <code>SKILL.md</code> command table</td></tr>
@@ -52,7 +54,7 @@
 
 <h2>Glossary</h2>
 <table>
-  <thead><tr><th>Term</th><th>Means</th></tr></thead>
+  <thead><tr><th scope="col">Term</th><th scope="col">Means</th></tr></thead>
   <tbody>
     <tr><td>Router</td><td><code>skills/nitpicker/SKILL.md</code> — the only file that dispatches; it parses the text and resolves one command.</td></tr>
     <tr><td>Command file</td><td><code>commands/&lt;name&gt;.md</code> — the full behaviour of one command. No frontmatter.</td></tr>
@@ -64,6 +66,7 @@
     <tr><td>1:1 rule</td><td>Every non-<code>_</code> command file has exactly one <code>SKILL.md</code> table row and vice versa; <code>_</code>-prefixed files (shared references) are exempt.</td></tr>
   </tbody>
 </table>
+</main>
 
 <footer>
   <p><a href="../lessons/0001-dispatch-pipeline.html">← Back to lesson 0001</a> · Glossary terms here bind every future lesson.</p>

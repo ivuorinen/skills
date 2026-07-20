@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -468,7 +469,7 @@ class TestFetchRestToken:
 
 
 class TestMain:
-    _THREADS = [
+    _THREADS: ClassVar[list[dict]] = [
         {
             "thread_id": "T_1",
             "path": "f.py",

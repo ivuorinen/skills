@@ -9,8 +9,6 @@ Hostile single-shot resource-lifecycle audit: assume every acquired resource lea
 - After adding a path that acquires a scarce resource — a connection, a file handle, an event listener, a background task
 - When `/nitpicker perf` (or any other command) routes a resource-lifecycle finding here
 
-Run standalone or by the `/nitpicker` default audit flow.
-
 **Not this command:** `/nitpicker perf` owns _unbounded growth by design on the hot path_ — a cache with no eviction policy, a queue that fills faster than it drains; this command owns _acquire-without-release, especially on the failure path_. For a pool: borrowed handles not returned → this command; pool simply too small for the offered load → `/nitpicker perf`. `/nitpicker errors` owns the _swallowed error itself_ — the empty catch, the fail-open default; this command owns the _resource orphaned when that error unwinds_. General logic bugs → `/nitpicker review`; security → `/nitpicker security`; whole-repo defect audit → `/nitpicker audit`. A resource released on every path is not a finding — do not route it, drop it.
 
 ## Mindset
@@ -54,7 +52,7 @@ File a finding only when the class, the acquisition site, the specific path wher
 
 ## Fix strategy
 
-**Auto-applicable (through the apply-fixes prompt):**
+**Auto-applicable:**
 
 - Wrap an acquisition in the language's guaranteed-release construct — `with`, `try-finally`, `defer`, `using`, `try-with-resources`
 - Return a pooled resource in a `finally` so the error path releases it back to the pool

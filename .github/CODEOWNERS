@@ -1,0 +1,25 @@
+# Code owners — reviewer gate on files whose only other control is an in-tree
+# assertion an agent could edit alongside the thing it guards.
+#
+# Requires "Require review from Code Owners" on protected branches to bind;
+# without that branch-protection setting this file is advisory only.
+
+# Default owner.
+*                               @ivuorinen
+
+# Vendored-skill allowlist and the test that pins it. See
+# .claude/rules/vendored-skills.md — the allowlist and its assertion live in
+# the same tree, so a human must see every change to either.
+/scripts/validate-skill.py      @ivuorinen
+/tests/test_validate_skill.py   @ivuorinen
+
+# Sub-agent definitions: trusted configuration that gates releases. An agent
+# must not weaken its own reviewer.
+/.claude/agents/                @ivuorinen
+
+# Hook and permission configuration.
+/.claude/settings.json          @ivuorinen
+
+# Licensing and third-party provenance.
+/LICENSE                        @ivuorinen
+/NOTICE                         @ivuorinen

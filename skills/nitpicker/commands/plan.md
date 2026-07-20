@@ -76,7 +76,7 @@ Present the plan and STOP. Offer revision. Wait for explicit approval before any
 
 ## Output
 
-Write the plan to `docs/plans/<YYYY-MM-DD>-<slug>.md` (create `docs/plans/` if absent). Derive `<slug>` from the change request as a short kebab-case identifier — lowercase letters, digits, and hyphens only, with any path separators or `..` stripped — never the raw request string, so the plan stays inside `docs/plans/`. This command writes a plan, not findings: it does not touch the findings store or run `findings.py`. Structure:
+Write the plan to `docs/plans/<YYYY-MM-DD>-<slug>.md` (create `docs/plans/` if absent). Derive `<slug>` from the change request as a short kebab-case identifier — lowercase letters, digits, and hyphens only, with any path separators or `..` stripped — never the raw request string, so the plan stays inside `docs/plans/`. This command writes a plan, not findings: it does not touch the findings store through either interface — neither `findings.py` nor the `np_*` MCP tools. Structure:
 
 ```text
 # Plan: <title>

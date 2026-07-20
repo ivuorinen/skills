@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
 # /// script
-# requires-python = ">=3.11"
+# requires-python = "==3.11.*"
 # ///
 """Enforce the shipped/internal script contract from `.claude/rules/use-uv-runner.md`.
 
@@ -18,11 +18,20 @@ internal-tooling shebang/metadata block — in a shipped tool breaks it under
 plain `python3`, exactly the failure the rule forbids. Ruff cannot catch either
 (it resolves neither imports nor shebangs), so this check gates the directory.
 
-Limitations: a dynamic import with a *computed* module name (not a string
-literal) cannot be resolved statically. The stdlib allowlist is the running
-interpreter's ``sys.stdlib_module_names``; run this under the minimum supported
-Python (3.11) so a module added to the stdlib in a later version is not
-wrongly accepted for a 3.11 consumer.
+Limitations — three static-analysis blind spots:
+
+* a dynamic import with a *computed* module name (not a string literal) cannot
+  be resolved statically;
+* an alias bound to the import function hides the call
+  (``imp = importlib.import_module`` then ``imp("requests")``);
+* a module name reaching the interpreter through ``exec``/``eval`` string
+  arguments is never parsed as an import at all — so a call to either is
+  flagged outright (see ``_uncheckable_calls``).
+
+The stdlib allowlist is the running interpreter's ``sys.stdlib_module_names``.
+The PEP 723 block above pins the interpreter to ``==3.11.*`` — the minimum
+supported Python — so uv cannot select a newer one whose allowlist would
+wrongly accept a module added to the stdlib after 3.11.
 """
 
 import ast
@@ -69,25 +78,86 @@ def _module_roots(tree: ast.AST) -> set[str]:
     return roots
 
 
-def find_violations(repo_root: Path) -> list[str]:
+def _uncheckable_calls(tree: ast.AST) -> list[str]:
+    """Names of ``exec``/``eval`` calls — imports hidden in a string this check cannot read.
+
+    A shipped tool has no legitimate use for either, so their presence is a
+    violation rather than a limitation to document.
+    """
+    return sorted(
+        {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"exec", "eval"}
+        }
+    )
+
+
+SHIPPED_GLOB = "skills/*/scripts/**/*.py"
+
+# A shipped tool's source, or the error that prevented reading it.
+Collected = tuple[list[Path], dict[Path, "str | Exception"], dict[Path, set[str]]]
+
+
+def _tree_root(repo_root: Path, script: Path) -> Path:
+    """The `skills/<skill>/scripts` dir a shipped tool lives under."""
+    return repo_root.joinpath(*script.relative_to(repo_root).parts[:3])
+
+
+def collect(repo_root: Path) -> Collected:
+    """Glob and read every shipped tool once: (scripts, sources, first-party names by tree).
+
+    Hoisted out of the check functions so a run globs the tree once and reads
+    each file once, instead of once per check — and so the sibling lookup is
+    built per skill rather than per script.
+    """
+    scripts = sorted(repo_root.glob(SHIPPED_GLOB))
+    sources: dict[Path, str | Exception] = {}
+    siblings_by_tree: dict[Path, set[str]] = {}
+    for script in scripts:
+        try:
+            sources[script] = script.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            sources[script] = e
+        # The skill's whole scripts/ tree is first-party, so a nested module
+        # importing a parent-dir sibling is not mistaken for an external package.
+        tree_root = _tree_root(repo_root, script)
+        if tree_root not in siblings_by_tree:
+            names = {p.stem for p in tree_root.rglob("*.py")}
+            siblings_by_tree[tree_root] = names | {n.replace("-", "_") for n in names}
+    return scripts, sources, siblings_by_tree
+
+
+def find_violations(repo_root: Path, collected: Collected | None = None) -> list[str]:
     """Return one message per non-stdlib import found in a shipped skill tool."""
+    scripts, sources, siblings_by_tree = collected or collect(repo_root)
     stdlib = set(sys.stdlib_module_names) | {"__future__"}
     problems: list[str] = []
-    for script in sorted(repo_root.glob("skills/*/scripts/*.py")):
-        # A sibling .py in the same scripts/ dir is first-party, not external.
-        siblings = {p.stem for p in script.parent.glob("*.py")}
-        siblings |= {s.replace("-", "_") for s in siblings}
-        try:
-            tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
-        except (OSError, SyntaxError, UnicodeDecodeError) as e:
-            problems.append(f"  {script.relative_to(repo_root)}: cannot parse — {e}")
+    for script in scripts:
+        rel = script.relative_to(repo_root)
+        text = sources[script]
+        if isinstance(text, Exception):
+            problems.append(f"  {rel}: cannot parse — {text}")
             continue
+        try:
+            tree = ast.parse(text, filename=str(script))
+        except SyntaxError as e:
+            problems.append(f"  {rel}: cannot parse — {e}")
+            continue
+        siblings = siblings_by_tree[_tree_root(repo_root, script)]
         for root in sorted(_module_roots(tree)):
             if root in stdlib or root in siblings:
                 continue
             problems.append(
-                f"  {script.relative_to(repo_root)}: non-stdlib import '{root}' "
+                f"  {rel}: non-stdlib import '{root}' "
                 "— shipped tools run under plain python3 (see .claude/rules/use-uv-runner.md)"
+            )
+        for name in _uncheckable_calls(tree):
+            problems.append(
+                f"  {rel}: call to {name}() — a shipped tool must not run code from a "
+                "string; it hides imports from this check"
             )
     return problems
 
@@ -101,17 +171,18 @@ def _has_pep723(text: str) -> bool:
     return any(line.strip() == "# /// script" for line in text.splitlines())
 
 
-def find_runner_violations(repo_root: Path) -> list[str]:
+def find_runner_violations(repo_root: Path, collected: Collected | None = None) -> list[str]:
     """One message per shebang/metadata breach of the two-tier runner contract."""
+    scripts, sources, _ = collected or collect(repo_root)
     problems: list[str] = []
-    for script in sorted(repo_root.glob("skills/*/scripts/*.py")):
+    for script in scripts:
         rel = script.relative_to(repo_root)
-        try:
-            text = script.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as e:
-            problems.append(f"  {rel}: cannot read — {e}")
+        text = sources[script]
+        if isinstance(text, Exception):
+            problems.append(f"  {rel}: cannot read — {text}")
             continue
-        first = text.splitlines()[0] if text.splitlines() else ""
+        lines = text.splitlines()
+        first = lines[0] if lines else ""
         if first != SHIPPED_SHEBANG:
             problems.append(
                 f"  {rel}: shipped tool must start with '{SHIPPED_SHEBANG}' (got {first!r})"
@@ -132,7 +203,8 @@ def find_runner_violations(repo_root: Path) -> list[str]:
         except (OSError, UnicodeDecodeError) as e:
             problems.append(f"  {rel}: cannot read — {e}")
             continue
-        first = text.splitlines()[0] if text.splitlines() else ""
+        lines = text.splitlines()
+        first = lines[0] if lines else ""
         # A shebang-less, metadata-less file is an imported library — exempt.
         if (first.startswith("#!") or _has_pep723(text)) and first != INTERNAL_SHEBANG:
             problems.append(
@@ -142,20 +214,25 @@ def find_runner_violations(repo_root: Path) -> list[str]:
 
 
 def main() -> int:
-    scripts = sorted(REPO_ROOT.glob("skills/*/scripts/*.py"))
+    # Both checks always run: find_runner_violations also covers internal
+    # tooling, which an early return on an empty shipped-tool glob would skip.
+    collected = collect(REPO_ROOT)
+    scripts = collected[0]
+    import_problems = find_violations(REPO_ROOT, collected)
+    runner_problems = find_runner_violations(REPO_ROOT, collected)
+    if import_problems:
+        print("Non-stdlib imports in shipped skill tools:")
+        print("\n".join(import_problems))
+    if runner_problems:
+        print("Script-runner contract violations (see .claude/rules/use-uv-runner.md):")
+        print("\n".join(runner_problems))
+    total = len(import_problems) + len(runner_problems)
     if not scripts:
-        print("OK  no shipped skill tools found.")
-        return 0
-    import_problems = find_violations(REPO_ROOT)
-    runner_problems = find_runner_violations(REPO_ROOT)
-    if import_problems or runner_problems:
-        if import_problems:
-            print("Non-stdlib imports in shipped skill tools:")
-            print("\n".join(import_problems))
-        if runner_problems:
-            print("Script-runner contract violations (see .claude/rules/use-uv-runner.md):")
-            print("\n".join(runner_problems))
-        total = len(import_problems) + len(runner_problems)
+        # This repo ships skill tools; matching none means the glob is broken,
+        # which would silently pass every shipped tool through unchecked.
+        print(f"  ERROR  no shipped skill tool matched '{SHIPPED_GLOB}' — the glob is stale.")
+        return 1
+    if total:
         print(f"\n{total} violation(s).")
         return 1
     print(f"OK  {len(scripts)} shipped skill tool(s): stdlib-only, runner contract intact.")

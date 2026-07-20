@@ -10,13 +10,12 @@ installed plugin whose cwd is unspecified. Names are resolved only against the
 enumerated skill/command set, never by building a path from raw input.
 """
 
-import argparse
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import parse_frontmatter  # noqa: E402  (sibling shipped module)
+from findings import parse_frontmatter
 
 _CMD_ROW = re.compile(r"^\|\s*`([a-z0-9][a-z0-9-]*)`\s*\|\s*(.+?)\s*\|$")
 _ALIAS = re.compile(r"alias(?:es)?:\s*([^)]+)")
@@ -29,19 +28,11 @@ def plugin_root() -> Path:
 
 
 def _skill_files(root: Path) -> list[Path]:
-    # `.claude/skills/nitpicker` is a symlink to `skills/nitpicker`, so both
-    # globs can resolve to the same real SKILL.md — dedupe by real path,
-    # keeping the first (skills/* before .claude/skills/*).
-    seen: set[Path] = set()
-    files: list[Path] = []
-    for path in sorted(root.glob("skills/*/SKILL.md")) + sorted(
-        root.glob(".claude/skills/*/SKILL.md")
-    ):
-        real = path.resolve()
-        if real not in seen:
-            seen.add(real)
-            files.append(path)
-    return files
+    # Only `skills/*` — the tier this plugin ships. `.claude/skills/` is the
+    # internal dev tier here and the user's own private skill directory on a
+    # consumer machine, so reading it would hand back skills this tool's
+    # contract never promised.
+    return sorted(root.glob("skills/*/SKILL.md"))
 
 
 def _nitpicker_dir(root: Path) -> Path:
@@ -103,32 +94,3 @@ def read_command(command: str, root: Path | None = None) -> str:
     if command not in valid:
         raise KeyError(command)
     return (cmd_dir / f"{command}.md").read_text(encoding="utf-8")
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("list", help="list skills")
-    p_rs = sub.add_parser("read", help="print a skill's SKILL.md")
-    p_rs.add_argument("name")
-    sub.add_parser("commands", help="list nitpicker commands")
-    p_rc = sub.add_parser("read-command", help="print a command file")
-    p_rc.add_argument("command")
-    args = parser.parse_args(argv)
-
-    if args.cmd == "list":
-        for s in list_skills():
-            print(f"{s['name']:20} {s['description'][:70]}")
-    elif args.cmd == "read":
-        print(read_skill(args.name), end="")
-    elif args.cmd == "commands":
-        for c in list_commands():
-            extra = f"  (aliases: {', '.join(c['aliases'])})" if c["aliases"] else ""
-            print(f"{c['name']:20}{extra}")
-    elif args.cmd == "read-command":
-        print(read_command(args.command), end="")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

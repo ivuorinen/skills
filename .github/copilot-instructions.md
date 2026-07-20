@@ -21,10 +21,14 @@ skills/nitpicker/
     _conventions.md        # Shared conventions binding every command (severity, findings protocol)
     <command>.md           # One file per command, no frontmatter
   scripts/                 # Shipped tools: findings.py, fetch-pr-comments.py,
-                           #   process-sarif.py, check-rules-anatomy.py — stdlib-only, plain python3
+                           #   process-sarif.py, check-rules-anatomy.py,
+                           #   mcp_server.py, skill_catalog.py — stdlib-only, plain python3
 .claude/
   skills/                  # Internal dev skills (new-command, release-prep, skills, skill-tester,
-                           #   validate-skills) — not shipped to consumers
+                           #   validate-skills) — not shipped to consumers.
+                           #   Also holds graphify (vendored third-party — see
+                           #   .claude/rules/vendored-skills.md) and nitpicker,
+                           #   a symlink to skills/nitpicker
   rules/                   # Enforced conventions (skill-format, skill-style, use-uv-runner, …)
   settings.json            # Shared PostToolUse hooks
   agents/                  # Sub-agent definitions — do NOT read or modify
@@ -80,7 +84,7 @@ docs/audit/findings/
 Drive the store only through the shipped CLI:
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|migrate|migrate-resolved ...
+python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
 ```
 
 Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migrate` converts
@@ -96,7 +100,7 @@ Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migra
 ## Validation — Run Before Every Commit
 
 ```bash
-make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + pytest + pre-commit
+make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + typecheck + pytest + pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```

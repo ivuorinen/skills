@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import parse_frontmatter  # noqa: E402  # type: ignore[import-not-found]
+from common import parse_frontmatter  # type: ignore[import-not-found]
 
 # Vendored skills — authored by someone else and installed into this repo (e.g.
 # via `/graphify`), NOT held to our SKILL.md conventions. Skills named here are
@@ -23,6 +23,10 @@ from common import parse_frontmatter  # noqa: E402  # type: ignore[import-not-fo
 # this; if it fails because of a new entry, that entry needs approval, not a
 # test edit.
 VENDORED_SKILLS: frozenset[str] = frozenset({"graphify"})
+
+# Name Constraints (.claude/rules/skill-official-best-practices.md): lowercase
+# letters, digits and hyphens only.
+_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
@@ -109,6 +113,17 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     expected_name = path.parent.name
     if name and name != expected_name:
         err(f"name '{name}' does not match directory '{expected_name}'")
+
+    # Name Constraints from .claude/rules/skill-official-best-practices.md. Vendored
+    # skills are their authors' concern (same skip as filter_vendored applies).
+    if name and path.parent.name not in VENDORED_SKILLS:
+        if len(name) > 64:
+            err(f"name is {len(name)} chars; must be ≤64")
+        if not _NAME_RE.match(name):
+            err(f"name '{name}' must contain only lowercase letters, digits and hyphens")
+        for reserved in ("anthropic", "claude"):
+            if reserved in name.lower():
+                err(f"name '{name}' contains reserved word '{reserved}'")
 
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
