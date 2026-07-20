@@ -43,6 +43,30 @@ Severity reflects actual risk, never preference.
   stdlib-only and run with plain `python3`; if `python3` itself is absent,
   stop with a clear error rather than proceeding as though the tool ran clean.
 
+## Tool preference
+
+Reach for the most specific tool that covers the operation; drop to raw shell or
+a direct `scripts/*.py` call only when nothing higher does. Highest first:
+
+1. **A purpose-built MCP tool, whenever the session exposes it.** The `nitpicker`
+   MCP tools for every findings-store operation (see Findings store below); a
+   GitHub MCP for pull-request, issue, and repository operations; a documentation
+   MCP for library and API references. These need no shell, path resolution,
+   or quoting.
+2. **context-mode for anything you read rather than act on** — listing files,
+   `grep`, `git status`/`log`/`diff`, test and build output, parsing data,
+   fetching a URL. The raw bytes stay in the sandbox; only the extract you print
+   enters the context window.
+3. **Raw shell or a direct script call, last.** Reserve it for a state mutation
+   with no MCP equivalent (git writes, file create/delete/move, `chmod`, package
+   install), an external scanner the skill preflights (above), a tiny
+   fixed-output command, or the CLI-only findings operations named below.
+
+Availability-conditioned: in Copilot, pi, CI, or any session without a given
+server, fall through to the next tier — the shell is a valid last resort, never
+a first reach. Reading a file you are about to change with Edit is not
+inspection; read it directly so the exact bytes are in hand.
+
 ## Findings store
 
 Open findings live one file each under `docs/audit/findings/<auditor>/open/`
@@ -51,17 +75,20 @@ finding appends a record to the append-only `docs/audit/findings/resolved.jsonl`
 ledger and deletes the open file, so the tree never accumulates resolved files
 and PR review stays readable.
 
-Drive the store through one of two equivalent interfaces, in this order:
+Drive the store through one of two equivalent interfaces. Per the tool
+preference above, the MCP tools are the default and the CLI is the fallback:
 
-1. **The `nitpicker` MCP tools, when the session exposes them.** They call the
-   same functions the CLI does, so the result is identical — but they need no
-   shell, no path resolution, and no heredoc quoting, and their arguments are
-   schema-checked before anything is written. Prefer them for every operation
-   in the table below.
-2. **`scripts/findings.py` otherwise** — the portable path. The MCP server is
-   Claude-native; in Copilot, pi, CI, or any session without the server, the
-   CLI is the only interface and is fully sufficient. Never treat an absent
-   MCP tool as a reason to skip filing a finding.
+1. **The `nitpicker` MCP tools — the default whenever the session exposes
+   them.** They call the same functions the CLI does, so the result is identical
+   — but they need no shell, no path resolution, and no heredoc quoting, and
+   the server enforces each tool's required parameters before dispatch (value
+   checks stay in the backing functions, exactly as for the CLI). Use them for
+   every operation in the table below; in a session that has them, dropping to
+   the CLI for an operation a tool covers is a last resort, not a convenience.
+2. **`scripts/findings.py` — the fallback.** The MCP server is Claude-native; in
+   Copilot, pi, CI, or any session without the server, the CLI is the only
+   interface and is fully sufficient. Never treat an absent MCP tool as a reason
+   to skip filing a finding.
 
 | Operation | MCP tool | CLI equivalent |
 | --- | --- | --- |
