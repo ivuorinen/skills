@@ -51,8 +51,8 @@ a direct `scripts/*.py` call only when nothing higher does. Highest first:
 1. **A purpose-built MCP tool, whenever the session exposes it.** The `nitpicker`
    MCP tools for every findings-store operation (see Findings store below); a
    GitHub MCP for pull-request, issue, and repository operations; a documentation
-   MCP for library and API references. These are schema-checked and need no
-   shell, path resolution, or quoting.
+   MCP for library and API references. These need no shell, path resolution,
+   or quoting.
 2. **context-mode for anything you read rather than act on** — listing files,
    `grep`, `git status`/`log`/`diff`, test and build output, parsing data,
    fetching a URL. The raw bytes stay in the sandbox; only the extract you print
@@ -81,7 +81,8 @@ preference above, the MCP tools are the default and the CLI is the fallback:
 1. **The `nitpicker` MCP tools — the default whenever the session exposes
    them.** They call the same functions the CLI does, so the result is identical
    — but they need no shell, no path resolution, and no heredoc quoting, and
-   their arguments are schema-checked before anything is written. Use them for
+   the server enforces each tool's required parameters before dispatch (value
+   checks stay in the backing functions, exactly as for the CLI). Use them for
    every operation in the table below; in a session that has them, dropping to
    the CLI for an operation a tool covers is a last resort, not a convenience.
 2. **`scripts/findings.py` — the fallback.** The MCP server is Claude-native; in
