@@ -44,6 +44,16 @@ def test_first_party_sibling_allowed(tmp_path: Path) -> None:
     assert find_violations(tmp_path) == []
 
 
+def test_aliased_import_module_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "bad.py", "import importlib\nimp = importlib.import_module\nimp('requests')\n")
+    assert any("requests" in p for p in find_violations(tmp_path))
+
+
+def test_getattr_import_module_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "bad.py", "import importlib\ngetattr(importlib, 'import_module')('requests')\n")
+    assert any("requests" in p for p in find_violations(tmp_path))
+
+
 def test_relative_import_ignored(tmp_path: Path) -> None:
     _tool(tmp_path, "rel.py", "from . import whatever\nfrom .mod import thing\n")
     assert find_violations(tmp_path) == []

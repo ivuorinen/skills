@@ -41,17 +41,53 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 
 
-def _dynamic_import_root(call: ast.Call) -> str | None:
-    """Root module of a string-literal ``__import__``/``importlib.import_module`` call.
+_IMPORT_ATTRS = {"import_module", "__import__"}
+
+
+def _is_dynamic_import_func(func: ast.expr, aliases: set[str]) -> bool:
+    """True if ``func`` is a dynamic-import callable: ``__import__``,
+    ``x.import_module``/``x.__import__``, a name aliased to one of those
+    (``imp = importlib.import_module``), or ``getattr(x, "import_module")``.
+    """
+    if isinstance(func, ast.Name):
+        return func.id == "__import__" or func.id in aliases
+    if isinstance(func, ast.Attribute):
+        return func.attr in _IMPORT_ATTRS
+    if isinstance(func, ast.Call):  # getattr(x, "import_module")(...)
+        gf = func.func
+        if isinstance(gf, ast.Name) and gf.id == "getattr" and len(func.args) >= 2:
+            attr = func.args[1]
+            return isinstance(attr, ast.Constant) and attr.value in _IMPORT_ATTRS
+    return False
+
+
+def _import_aliases(tree: ast.AST) -> set[str]:
+    """Local names bound to ``importlib.import_module``/``__import__`` — an alias
+    hides the module name from a naive direct-call check.
+    """
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            v = node.value
+            bound = (isinstance(v, ast.Attribute) and v.attr in _IMPORT_ATTRS) or (
+                isinstance(v, ast.Name) and v.id == "__import__"
+            )
+            if bound:
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        aliases.add(t.id)
+    return aliases
+
+
+def _dynamic_import_root(call: ast.Call, aliases: set[str] | None = None) -> str | None:
+    """Root module of a string-literal dynamic-import call.
 
     Only literal arguments are resolvable; a computed module name cannot be
     determined statically (documented limitation in the module docstring).
+    ``aliases`` names locals bound to the import function; pass the set from
+    ``_import_aliases`` to catch aliased/``getattr`` forms.
     """
-    func = call.func
-    is_dynamic = (isinstance(func, ast.Name) and func.id == "__import__") or (
-        isinstance(func, ast.Attribute) and func.attr in {"import_module", "__import__"}
-    )
-    if is_dynamic and call.args:
+    if _is_dynamic_import_func(call.func, aliases or set()) and call.args:
         first = call.args[0]
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             return first.value.split(".")[0]
@@ -62,9 +98,11 @@ def _module_roots(tree: ast.AST) -> set[str]:
     """Top-level module name of every import (relative imports skipped).
 
     Covers static ``import``/``from ... import`` and string-literal dynamic
-    imports (``__import__("x")``, ``importlib.import_module("x")``).
+    imports (``__import__("x")``, ``importlib.import_module("x")``, aliased and
+    ``getattr``-wrapped forms).
     """
     roots: set[str] = set()
+    aliases = _import_aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -72,7 +110,7 @@ def _module_roots(tree: ast.AST) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
             roots.add(node.module.split(".")[0])
         elif isinstance(node, ast.Call):
-            root = _dynamic_import_root(node)
+            root = _dynamic_import_root(node, aliases)
             if root:
                 roots.add(root)
     return roots

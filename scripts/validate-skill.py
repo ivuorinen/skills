@@ -67,6 +67,24 @@ def strip_fences(lines: list[str]) -> list[str]:
     return result
 
 
+def _unterminated_fence(lines: list[str]) -> bool:
+    """True if a fenced code block is opened but never closed.
+
+    An unclosed fence makes strip_fences swallow the rest of the file, silently
+    disabling every structural check below it — so this must fail validation,
+    not pass unnoticed.
+    """
+    fence = ""
+    for line in lines:
+        stripped = line.lstrip()
+        if fence:
+            if stripped.startswith(fence):
+                fence = ""
+        elif stripped.startswith(("```", "~~~")):
+            fence = stripped[:3]
+    return bool(fence)
+
+
 def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
@@ -124,6 +142,10 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
         for reserved in ("anthropic", "claude"):
             if reserved in name.lower():
                 err(f"name '{name}' contains reserved word '{reserved}'")
+
+    # An unterminated fence makes every fence-aware check below go silent.
+    if _unterminated_fence(body.splitlines()):
+        err("unterminated code fence — every ``` or ~~~ must be closed")
 
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
@@ -184,12 +206,36 @@ def table_commands(skill_body: str) -> set[str]:
     return cmds
 
 
+def _duplicate_table_commands(skill_body: str) -> list[str]:
+    """Command names that appear in more than one Commands-table row.
+
+    table_commands() dedupes into a set, so a command listed twice would
+    otherwise pass the 1:1 sync check unflagged.
+    """
+    seen: set[str] = set()
+    dups: list[str] = []
+    for line in strip_fences(skill_body.splitlines()):
+        m = _CMD_ROW.match(line.strip())
+        if m and m.group(1) != "command":
+            name = m.group(1)
+            if name in seen and name not in dups:
+                dups.append(name)
+            seen.add(name)
+    return dups
+
+
 def validate_commands(
     commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
 ) -> None:
     """Cross-check the SKILL.md Commands table against commands/*.md files."""
 
     table_cmds = table_commands(skill_body)
+
+    for dup in _duplicate_table_commands(skill_body):
+        errors.append(
+            f"  ERROR  {commands_dir.parent / 'SKILL.md'}: command `{dup}` "
+            "appears in more than one Commands-table row"
+        )
 
     file_cmds = {p.stem: p for p in sorted(commands_dir.glob("*.md")) if not p.name.startswith("_")}
 
@@ -214,6 +260,9 @@ def validate_commands(
 
         if text.startswith("---\n"):
             cerr("command files must not have YAML frontmatter (only the router SKILL.md does)")
+
+        if _unterminated_fence(text.splitlines()):
+            cerr("unterminated code fence — every ``` or ~~~ must be closed")
 
         # All structural checks ignore fenced code blocks.
         content_lines = strip_fences(text.splitlines())

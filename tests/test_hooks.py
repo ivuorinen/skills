@@ -336,3 +336,28 @@ def test_stop_reminder_does_not_loop_when_active(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"stop_hook_active": True})))
     mod.main()  # returns cleanly, no SystemExit
     assert capsys.readouterr().err == ""
+
+
+# ── deny-agents-path-hook: the substring bypasses must now be blocked ──────────
+
+
+def test_deny_agents_blocks_cd_bypass(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "cd .claude/agents && cat > x.md"}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_deny_agents_blocks_double_slash(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "sed -i s/a/b/ .claude//agents/foo.md"}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_deny_agents_allows_unrelated_command(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "ls .claude/rules/"}})
+    _run(mod, event, monkeypatch)  # no SystemExit

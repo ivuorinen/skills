@@ -109,13 +109,12 @@ jobs:
         run: uv run --extra dev ruff check scripts/ tests/ skills/
 
       - name: Type-check
-        # Ratchet, not a waiver: 6 pre-existing errors (all tests/ monkeypatching
-        # module attributes) are tolerated, 7 fails. Burn the baseline down to 0,
-        # then delete the guard and run bare `pyright`. Mirrors the `typecheck`
-        # target in the Makefile — change both together.
+        # Zero floor: any pyright error fails the gate. A count threshold could
+        # mask a new error by fixing an old one, so the tolerated set stays empty.
+        # Mirrors the `typecheck` target in the Makefile — change both together.
         run: |
           uv run --with pyright==1.1.411 pyright --outputjson \
-            | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s), baseline 6'); sys.exit(n > 6)"
+            | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
 
       - name: Check script formatting
         run: uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/

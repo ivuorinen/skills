@@ -44,6 +44,16 @@ VALID = (
 )
 
 
+def test_unterminated_fence_in_skill_body_flagged(tmp_path):
+    content = VALID + "\n```python\nunclosed fence\n"
+    assert _has(_errors(tmp_path, content), "unterminated code fence")
+
+
+def test_duplicate_table_commands_detected():
+    body = "| `foo` | a |\n| `foo` | dup |\n| `bar` | b |\n"
+    assert _mod._duplicate_table_commands(body) == ["foo"]
+
+
 class TestVendoredSkip:
     def test_vendored_skill_is_filtered_out(self):
         targets = [
