@@ -122,7 +122,7 @@ graphify hook-guard …`, so on a clone without graphify installed it exits 0 an
 is a no-op; when graphify is on `PATH` the guard's own exit code propagates and
 can block the call.
 
-Plus a Stop hook, `stop-reminder.py`, which reminds about **staged** skill files (`git diff --cached`) before Claude hands back control — so it fires at commit time, not on every turn a working-tree edit exists.
+Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`) and the working tree (`git diff`), so **unstaged** edits count too — before Claude hands back control. A `stop_hook_active` guard surfaces the reminder once rather than looping on every turn a skill edit remains uncommitted.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
