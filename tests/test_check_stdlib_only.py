@@ -54,6 +54,16 @@ def test_getattr_import_module_flagged(tmp_path: Path) -> None:
     assert any("requests" in p for p in find_violations(tmp_path))
 
 
+def test_importfrom_alias_import_module_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "bad.py", "from importlib import import_module as imp\nimp('requests')\n")
+    assert any("requests" in p for p in find_violations(tmp_path))
+
+
+def test_keyword_only_module_name_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "bad.py", "import importlib\nimportlib.import_module(name='requests')\n")
+    assert any("requests" in p for p in find_violations(tmp_path))
+
+
 def test_relative_import_ignored(tmp_path: Path) -> None:
     _tool(tmp_path, "rel.py", "from . import whatever\nfrom .mod import thing\n")
     assert find_violations(tmp_path) == []

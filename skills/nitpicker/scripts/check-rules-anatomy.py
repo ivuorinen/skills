@@ -155,19 +155,22 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
         return findings
 
     fm_line_count = len(text.splitlines()) - len(body.splitlines())
-    # Match fences by their exact opening marker (``` closed only by ```, ~~~ only
-    # by ~~~). A naive boolean toggle left an unclosed fence "open" for the rest of
-    # the file, silently disabling the hedged-language gate below it.
+    # Match fences by their full opening run (``` closed only by a run of ``` at
+    # least as long, ~~~ likewise) — a four-backtick opener is not closed by a
+    # three-backtick line. A naive toggle left an unclosed fence "open" for the
+    # rest of the file, silently disabling the hedged-language gate below it.
     fence = ""
     for body_lineno, line in enumerate(body.splitlines(), 1):
         lineno = fm_line_count + body_lineno
         stripped = line.strip()
         if fence:
-            if stripped.startswith(fence):
+            close = re.fullmatch(r"(`{3,}|~{3,})\s*", stripped)
+            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
                 fence = ""
             continue
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            fence = stripped[:3]
+        opener = re.match(r"(`{3,}|~{3,})", stripped)
+        if opener:
+            fence = opener.group(1)
             continue
         if not stripped or stripped.startswith("#"):
             continue

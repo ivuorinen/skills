@@ -468,6 +468,13 @@ def test_unterminated_fence_flagged_high(tmp_path):
     assert _severity(findings, "unterminated_fence") == "High"
 
 
+def test_four_backtick_fence_not_closed_by_three(tmp_path):
+    f = tmp_path / "four.md"
+    f.write_text("---\ntitle: R\n---\n\nAlways do X.\n\n````\n```\n", encoding="utf-8")
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "unterminated_fence")
+
+
 def test_hedged_word_after_closed_fence_still_detected(tmp_path):
     # A code fence must not silence the hedged-language gate for later lines.
     f = tmp_path / "hedged.md"

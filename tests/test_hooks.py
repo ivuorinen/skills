@@ -361,3 +361,19 @@ def test_deny_agents_allows_unrelated_command(monkeypatch):
     mod = _load("deny-agents-path-hook")
     event = json.dumps({"tool_input": {"command": "ls .claude/rules/"}})
     _run(mod, event, monkeypatch)  # no SystemExit
+
+
+def test_deny_agents_blocks_dot_segment(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "cat .claude/./agents/x.md"}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_deny_agents_blocks_escaped_slash(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "cat .claude\\/agents/x.md"}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2

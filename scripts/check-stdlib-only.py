@@ -63,7 +63,9 @@ def _is_dynamic_import_func(func: ast.expr, aliases: set[str]) -> bool:
 
 def _import_aliases(tree: ast.AST) -> set[str]:
     """Local names bound to ``importlib.import_module``/``__import__`` — an alias
-    hides the module name from a naive direct-call check.
+    hides the module name from a naive direct-call check. Covers both an
+    assignment (``imp = importlib.import_module``) and an import-alias
+    (``from importlib import import_module as imp``).
     """
     aliases: set[str] = set()
     for node in ast.walk(tree):
@@ -76,6 +78,10 @@ def _import_aliases(tree: ast.AST) -> set[str]:
                 for t in node.targets:
                     if isinstance(t, ast.Name):
                         aliases.add(t.id)
+        elif isinstance(node, ast.ImportFrom) and node.module in ("importlib", "builtins"):
+            for a in node.names:
+                if a.name in _IMPORT_ATTRS:
+                    aliases.add(a.asname or a.name)
     return aliases
 
 
@@ -85,12 +91,22 @@ def _dynamic_import_root(call: ast.Call, aliases: set[str] | None = None) -> str
     Only literal arguments are resolvable; a computed module name cannot be
     determined statically (documented limitation in the module docstring).
     ``aliases`` names locals bound to the import function; pass the set from
-    ``_import_aliases`` to catch aliased/``getattr`` forms.
+    ``_import_aliases`` to catch aliased/``getattr`` forms. The module name may
+    be passed positionally or as the ``name=`` keyword.
     """
-    if _is_dynamic_import_func(call.func, aliases or set()) and call.args:
-        first = call.args[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            return first.value.split(".")[0]
+    if not _is_dynamic_import_func(call.func, aliases or set()):
+        return None
+    arg: ast.expr | None = None
+    if call.args:
+        arg = call.args[0]
+    else:
+        # import_module and __import__ both take the module as `name`.
+        for kw in call.keywords:
+            if kw.arg == "name":
+                arg = kw.value
+                break
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value.split(".")[0]
     return None
 
 

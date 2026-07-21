@@ -70,12 +70,15 @@ def list_commands(root: Path | None = None) -> list[dict]:
     root = root or plugin_root()
     body = (_nitpicker_dir(root) / "SKILL.md").read_text(encoding="utf-8")
     out: list[dict] = []
-    in_fence = False
+    fence = ""
     for line in body.splitlines():
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
+        opener = re.match(r"(`{3,}|~{3,})", line.lstrip())
+        if fence:
+            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence):
+                fence = ""
             continue
-        if in_fence:
+        if opener:
+            fence = opener.group(1)
             continue
         m = _CMD_ROW.match(line.strip())
         if not m or m.group(1) == "command":

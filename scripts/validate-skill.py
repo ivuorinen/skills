@@ -46,22 +46,43 @@ def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
     return kept, skipped
 
 
+_FENCE_OPEN_RE = re.compile(r"(`{3,}|~{3,})")
+_FENCE_CLOSE_RE = re.compile(r"(`{3,}|~{3,})\s*")
+
+
+def _fence_open(stripped: str) -> str:
+    """The opening fence run (``` / ~~~, 3+ chars) at the start of a line, else ''."""
+    m = _FENCE_OPEN_RE.match(stripped)
+    return m.group(1) if m else ""
+
+
+def _fence_closes(stripped: str, fence: str) -> bool:
+    """True if the line closes an open ``fence`` run: only the run (plus optional
+    trailing whitespace), the same marker char, and at least as long — so a
+    four-backtick block is not closed by a three-backtick line.
+    """
+    m = _FENCE_CLOSE_RE.fullmatch(stripped)
+    return bool(m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence))
+
+
 def strip_fences(lines: list[str]) -> list[str]:
     """Return lines outside fenced code blocks.
 
-    Handles indented fences and distinct markers: a block opened with ```
-    is only closed by ```, and one opened with ~~~ only by ~~~.
+    Handles indented fences, distinct markers (``` closed only by ```, ~~~ by
+    ~~~), and the full delimiter length (a four-backtick opener is not closed by
+    a three-backtick line).
     """
     result: list[str] = []
     fence = ""
     for line in lines:
         stripped = line.lstrip()
         if fence:
-            if stripped.startswith(fence):
+            if _fence_closes(stripped, fence):
                 fence = ""
             continue
-        if stripped.startswith(("```", "~~~")):
-            fence = stripped[:3]
+        opened = _fence_open(stripped)
+        if opened:
+            fence = opened
             continue
         result.append(line)
     return result
@@ -78,10 +99,10 @@ def _unterminated_fence(lines: list[str]) -> bool:
     for line in lines:
         stripped = line.lstrip()
         if fence:
-            if stripped.startswith(fence):
+            if _fence_closes(stripped, fence):
                 fence = ""
-        elif stripped.startswith(("```", "~~~")):
-            fence = stripped[:3]
+        else:
+            fence = _fence_open(stripped) or fence
     return bool(fence)
 
 
