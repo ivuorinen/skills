@@ -218,18 +218,32 @@ def v1_auditor(filename: str) -> str:
     return V1_AUDITOR_MAP.get(stem, stem)
 
 
+def _fence_marker(stripped: str) -> str:
+    """The full fence run (``` or ~~~, 3+ chars) at the start of a line, else ''."""
+    m = re.match(r"(`{3,}|~{3,})", stripped)
+    return m.group(1) if m else ""
+
+
+def _fence_closes(marker: str, fence: str) -> bool:
+    """A closing run matches an open ``fence`` only if it is the same marker char
+    and at least as long — so a four-backtick block is not closed by a
+    three-backtick line."""
+    return bool(marker) and marker[0] == fence[0] and len(marker) >= len(fence)
+
+
 def _normalize_body(body: str) -> str:
     """Make a body markdownlint-clean outside code fences: blank lines around
     headings, blank-line runs collapsed. Fenced content is preserved verbatim,
-    and a fence only closes on the marker that opened it (``` vs ~~~)."""
+    and a fence only closes on the marker that opened it (``` vs ~~~), honoring
+    the full delimiter length."""
     out: list[str] = []
     fence = ""  # opening marker while inside a fence, else ""
     for line in body.strip().splitlines():
         stripped = line.rstrip()
-        marker = stripped[:3] if stripped.startswith(("```", "~~~")) else ""
+        marker = _fence_marker(stripped)
         if fence:
             out.append(line)
-            if marker == fence:
+            if _fence_closes(marker, fence):
                 fence = ""
         elif marker:
             fence = marker
@@ -257,9 +271,9 @@ def _strip_fenced(body: str) -> str:
     fence = ""
     for line in body.splitlines():
         stripped = line.rstrip()
-        marker = stripped[:3] if stripped.startswith(("```", "~~~")) else ""
+        marker = _fence_marker(stripped)
         if fence:
-            if marker == fence:
+            if _fence_closes(marker, fence):
                 fence = ""
             continue
         if marker:
@@ -766,13 +780,16 @@ def new_finding(
                 raise FindingError(
                     f"finding {fid} already exists (resolved) in the ledger; use --force to re-open"
                 )
-        elif fid in ledger:
-            # Re-opening a resolved finding: drop its ledger record so it is not both.
-            write_ledger(root, [r for r in records if r.get("id") != fid])
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text(render_finding(fm, title, body), encoding="utf-8")
         tmp.replace(path)
+        if force and fid in ledger:
+            # Re-opening a resolved finding: drop its ledger record only AFTER the
+            # open file exists, so a crash leaves it open+ledger (which validate
+            # catches) rather than in neither half — mirrors resolve_finding's
+            # append-before-delete ordering.
+            write_ledger(root, [r for r in records if r.get("id") != fid])
     return path
 
 
@@ -984,6 +1001,7 @@ def validate_store(root: Path) -> list[str]:
             raw = lpath.read_text(encoding="utf-8")
         except OSError as e:
             return [*errors, f"{lpath}: cannot read: {e}"]
+        ledger_seen: dict[str, int] = {}
         for i, line in enumerate(raw.splitlines(), 1):
             s = line.strip()
             if not s:
@@ -1001,6 +1019,14 @@ def validate_store(root: Path) -> list[str]:
             if rid and rid in seen:
                 # A finding cannot be both open (a file) and resolved (the ledger).
                 errors.append(f"{lpath}:{i}: id {rid} is also open at {seen[rid]}")
+            if rid and rid in ledger_seen:
+                # Two ledger records with the same id: reads key by id (last wins),
+                # so the earlier record is silently shadowed.
+                errors.append(
+                    f"{lpath}:{i}: duplicate ledger id {rid} (also line {ledger_seen[rid]})"
+                )
+            elif rid:
+                ledger_seen[rid] = i
     return errors
 
 
@@ -1121,8 +1147,15 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:
                 rec["date_synthesised"] = True
             if fid not in existing:
                 planned.append((path, rec))
+                # Record it now so a second file with the same legacy id later in
+                # this same run is compared against it — not appended again, which
+                # would shadow one finding and delete both source files.
+                existing[fid] = rec
             elif _comparable(existing[fid]) != _comparable(rec):
-                conflicts.append(f"{path}: id {fid} already in the ledger with different content")
+                conflicts.append(
+                    f"{path}: id {fid} already recorded (ledger or earlier in this run) "
+                    "with different content"
+                )
             else:
                 deletable.append(path)
 
@@ -1224,7 +1257,7 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:
     entry: dict[str, str] = {}
     fields: dict[str, str] = {}
     last_field = ""
-    in_fence = False
+    fence = ""
     buffered: list[tuple] = []
     known_sections = {
         "open findings": "open",
@@ -1242,13 +1275,16 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:
 
     for line in text.splitlines():
         stripped = line.rstrip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
+        marker = _fence_marker(stripped)
+        if fence:
             # A fence inside a field value is content, not structure.
             if entry and last_field:
                 fields[last_field] += "\n" + line
+            if _fence_closes(marker, fence):
+                fence = ""
             continue
-        if in_fence:
+        if marker:
+            fence = marker
             if entry and last_field:
                 fields[last_field] += "\n" + line
             continue
@@ -1355,6 +1391,60 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:
         return len(to_write_files) + len(to_append)
 
 
+def gather_findings(
+    root: Path,
+    *,
+    auditor: str = "",
+    status: str = "",
+    severity: str = "",
+    exclude_baseline: bool = False,
+    limit: int | None = None,
+) -> list[dict]:
+    """Open findings + resolved ledger as normalized rows, filtered.
+
+    The single listing primitive behind both the CLI ``list`` command and the MCP
+    ``np_list_findings`` tool, so the two cannot drift on which filters exist or
+    how they behave.
+    """
+    rows: list[dict] = []
+    if status in ("", "open"):
+        for path, fm, title in iter_open(root):
+            rows.append(
+                {
+                    "id": fm.get("id", path.stem),
+                    "status": "open",
+                    "auditor": fm.get("auditor", ""),
+                    "severity": fm.get("severity", ""),
+                    "area": fm.get("area", ""),
+                    "title": title,
+                }
+            )
+    if status in ("", "fixed", "invalid"):
+        for rec in sorted(resolved_records(root).values(), key=lambda r: r.get("id", "")):
+            if status and rec.get("status") != status:
+                continue
+            rows.append(
+                {
+                    "id": rec.get("id", ""),
+                    "status": rec.get("status", ""),
+                    "auditor": rec.get("auditor", ""),
+                    "severity": rec.get("severity") or "",
+                    "area": rec.get("area", ""),
+                    "title": rec.get("title", ""),
+                }
+            )
+    if auditor:
+        rows = [r for r in rows if r["auditor"] == auditor]
+    if severity:
+        rows = [r for r in rows if r["severity"] == severity]
+    if exclude_baseline:
+        baselined = read_baseline(root)
+        rows = [r for r in rows if r["id"] not in baselined]
+    if limit is not None:
+        rows = rows[: max(0, int(limit))]
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1386,6 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
     add_root(p_list)
     p_list.add_argument("--auditor", default=None)
     p_list.add_argument("--status", default=None, choices=STATUSES)
+    p_list.add_argument("--severity", default=None, help="only findings of this severity")
     p_list.add_argument(
         "--exclude-baseline",
         action="store_true",
@@ -1463,36 +1554,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "list":
-        entries: list[tuple[str, str, str, str, str]] = []
-        for path, fm, title in iter_open(args.root):
-            entries.append(
-                (
-                    fm.get("id", path.stem),
-                    fm.get("status", "open"),
-                    fm.get("severity", "-"),
-                    title,
-                    fm.get("auditor", "?"),
-                )
-            )
-        for rec in sorted(resolved_records(args.root).values(), key=lambda r: r.get("id", "")):
-            entries.append(
-                (
-                    rec.get("id", "?"),
-                    rec.get("status", "?"),
-                    rec.get("severity") or "-",
-                    rec.get("title", ""),
-                    rec.get("auditor", "?"),
-                )
-            )
-        baselined = read_baseline(args.root) if args.exclude_baseline else set()
-        for fid, status, severity, title, auditor in entries:
-            if args.auditor and auditor != args.auditor:
-                continue
-            if args.status and status != args.status:
-                continue
-            if fid in baselined:
-                continue
-            print(f"{fid:24} {status:8} {severity:9} {title}")
+        rows = gather_findings(
+            args.root,
+            auditor=args.auditor or "",
+            status=args.status or "",
+            severity=args.severity or "",
+            exclude_baseline=args.exclude_baseline,
+        )
+        for r in rows:
+            print(f"{r['id']:24} {r['status']:8} {r['severity'] or '-':9} {r['title']}")
         return 0
 
     if args.cmd == "show":

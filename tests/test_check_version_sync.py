@@ -40,7 +40,7 @@ def _make_repo(
 
 def _run(tmp_path):
     mod = _load_mod()
-    mod.REPO_ROOT = tmp_path
+    mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
     return mod.main()
 
 

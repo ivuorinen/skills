@@ -667,3 +667,29 @@ def test_bad_file_skipped_good_findings_emitted(tmp_path, capsys, monkeypatch):
     data = json.loads(capsys.readouterr().out)
     assert data["meta"]["total_raw"] == 1  # good findings still emitted
     assert len(data["findings"]) == 1
+
+
+def test_unmapped_tool_severity_fails_safe_to_high():
+    # BLOCKER/MAJOR now mapped; a genuinely unknown token fails safe to High rather
+    # than silently taking the coarse SARIF level.
+    assert _normalize_severity("warning", None, "BLOCKER") == "Critical"
+    assert _normalize_severity("warning", None, "MAJOR") == "Medium"
+    assert _normalize_severity("warning", None, "totally-unknown") == "High"
+    assert _normalize_severity("warning", None, None) == "Medium"  # no tool severity
+
+
+def test_deeply_nested_sarif_degrades_instead_of_recursionerror(tmp_path):
+    p = tmp_path / "deep.sarif"
+    p.write_text("[" * 60000 + "]" * 60000, encoding="utf-8")
+    with pytest.raises(SystemExit):  # caught RecursionError -> exit, not an uncaught crash
+        _parse_sarif(p)
+
+
+def test_locationless_findings_with_shared_prefix_not_deduped():
+    prefix = "x" * 100
+    r1 = _result(rule_id="", uri="", message=prefix + "-alpha")
+    r2 = _result(rule_id="", uri="", message=prefix + "-beta")
+    out = _extract_findings(_run(results=[r1, r2]), "s.sarif")
+    unique, removed = _deduplicate(out)
+    assert removed == 0
+    assert len(unique) == 2

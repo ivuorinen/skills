@@ -108,16 +108,21 @@ Plus a **Bash** PostToolUse hook, `post-bash-revalidate.py`: Write/Edit matchers
 never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so this one
 re-runs the whole-tree gates when `git status` shows a governed path dirty.
 
-Plus two **PreToolUse** hooks, which can *block* a tool call before it runs — the
-most behaviour-changing entries in the file:
+Plus three **PreToolUse** hooks, which can *block* a tool call before it runs —
+the most behaviour-changing entries in the file:
 
+- matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command that
+  reaches into `.claude/agents/` (the `permissions.deny` block covers only the
+  Read/Edit/Write tools, not Bash).
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 
-Both invoke a bare `graphify` from `PATH`, so a clone without graphify installed
-sees these hooks fail on every matching tool call.
+Each graphify guard is wrapped `command -v graphify >/dev/null || exit 0; exec
+graphify hook-guard …`, so on a clone without graphify installed it exits 0 and
+is a no-op; when graphify is on `PATH` the guard's own exit code propagates and
+can block the call.
 
-Plus a Stop hook, `stop-reminder.py`, which reminds about **staged** skill files (`git diff --cached`) before Claude hands back control — so it fires at commit time, not on every turn a working-tree edit exists.
+Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`) and the working tree (`git diff`), so **unstaged** edits count too — before Claude hands back control. A `stop_hook_active` guard surfaces the reminder once rather than looping on every turn a skill edit remains uncommitted.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 

@@ -46,25 +46,64 @@ def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
     return kept, skipped
 
 
+_FENCE_OPEN_RE = re.compile(r"(`{3,}|~{3,})")
+_FENCE_CLOSE_RE = re.compile(r"(`{3,}|~{3,})\s*")
+
+
+def _fence_open(stripped: str) -> str:
+    """The opening fence run (``` / ~~~, 3+ chars) at the start of a line, else ''."""
+    m = _FENCE_OPEN_RE.match(stripped)
+    return m.group(1) if m else ""
+
+
+def _fence_closes(stripped: str, fence: str) -> bool:
+    """True if the line closes an open ``fence`` run: only the run (plus optional
+    trailing whitespace), the same marker char, and at least as long — so a
+    four-backtick block is not closed by a three-backtick line.
+    """
+    m = _FENCE_CLOSE_RE.fullmatch(stripped)
+    return bool(m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence))
+
+
 def strip_fences(lines: list[str]) -> list[str]:
     """Return lines outside fenced code blocks.
 
-    Handles indented fences and distinct markers: a block opened with ```
-    is only closed by ```, and one opened with ~~~ only by ~~~.
+    Handles indented fences, distinct markers (``` closed only by ```, ~~~ by
+    ~~~), and the full delimiter length (a four-backtick opener is not closed by
+    a three-backtick line).
     """
     result: list[str] = []
     fence = ""
     for line in lines:
         stripped = line.lstrip()
         if fence:
-            if stripped.startswith(fence):
+            if _fence_closes(stripped, fence):
                 fence = ""
             continue
-        if stripped.startswith(("```", "~~~")):
-            fence = stripped[:3]
+        opened = _fence_open(stripped)
+        if opened:
+            fence = opened
             continue
         result.append(line)
     return result
+
+
+def _unterminated_fence(lines: list[str]) -> bool:
+    """True if a fenced code block is opened but never closed.
+
+    An unclosed fence makes strip_fences swallow the rest of the file, silently
+    disabling every structural check below it — so this must fail validation,
+    not pass unnoticed.
+    """
+    fence = ""
+    for line in lines:
+        stripped = line.lstrip()
+        if fence:
+            if _fence_closes(stripped, fence):
+                fence = ""
+        else:
+            fence = _fence_open(stripped) or fence
+    return bool(fence)
 
 
 def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
@@ -125,6 +164,10 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
             if reserved in name.lower():
                 err(f"name '{name}' contains reserved word '{reserved}'")
 
+    # An unterminated fence makes every fence-aware check below go silent.
+    if _unterminated_fence(body.splitlines()):
+        err("unterminated code fence — every ``` or ~~~ must be closed")
+
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
     for line in strip_fences(body.splitlines()):
@@ -184,12 +227,36 @@ def table_commands(skill_body: str) -> set[str]:
     return cmds
 
 
+def _duplicate_table_commands(skill_body: str) -> list[str]:
+    """Command names that appear in more than one Commands-table row.
+
+    table_commands() dedupes into a set, so a command listed twice would
+    otherwise pass the 1:1 sync check unflagged.
+    """
+    seen: set[str] = set()
+    dups: list[str] = []
+    for line in strip_fences(skill_body.splitlines()):
+        m = _CMD_ROW.match(line.strip())
+        if m and m.group(1) != "command":
+            name = m.group(1)
+            if name in seen and name not in dups:
+                dups.append(name)
+            seen.add(name)
+    return dups
+
+
 def validate_commands(
     commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
 ) -> None:
     """Cross-check the SKILL.md Commands table against commands/*.md files."""
 
     table_cmds = table_commands(skill_body)
+
+    for dup in _duplicate_table_commands(skill_body):
+        errors.append(
+            f"  ERROR  {commands_dir.parent / 'SKILL.md'}: command `{dup}` "
+            "appears in more than one Commands-table row"
+        )
 
     file_cmds = {p.stem: p for p in sorted(commands_dir.glob("*.md")) if not p.name.startswith("_")}
 
@@ -214,6 +281,9 @@ def validate_commands(
 
         if text.startswith("---\n"):
             cerr("command files must not have YAML frontmatter (only the router SKILL.md does)")
+
+        if _unterminated_fence(text.splitlines()):
+            cerr("unterminated code fence — every ``` or ~~~ must be closed")
 
         # All structural checks ignore fenced code blocks.
         content_lines = strip_fences(text.splitlines())

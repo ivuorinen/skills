@@ -97,7 +97,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null && graphify hook-guard search || exit 0"
+            "command": "command -v graphify >/dev/null || exit 0; exec graphify hook-guard search"
           }
         ]
       },
@@ -106,7 +106,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null && graphify hook-guard read || exit 0"
+            "command": "command -v graphify >/dev/null || exit 0; exec graphify hook-guard read"
           }
         ]
       }

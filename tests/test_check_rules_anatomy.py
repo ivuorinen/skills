@@ -460,6 +460,32 @@ def test_unindented_block_sequence_matches_indented():
     assert _parse_frontmatter(unindented)[0] == _parse_frontmatter(indented)[0]
 
 
+def test_unterminated_fence_flagged_high(tmp_path):
+    f = tmp_path / "unclosed.md"
+    f.write_text("---\ntitle: R\n---\n\nAlways do X.\n\n```\nunclosed fence\n", encoding="utf-8")
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "unterminated_fence")
+    assert _severity(findings, "unterminated_fence") == "High"
+
+
+def test_four_backtick_fence_not_closed_by_three(tmp_path):
+    f = tmp_path / "four.md"
+    f.write_text("---\ntitle: R\n---\n\nAlways do X.\n\n````\n```\n", encoding="utf-8")
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "unterminated_fence")
+
+
+def test_hedged_word_after_closed_fence_still_detected(tmp_path):
+    # A code fence must not silence the hedged-language gate for later lines.
+    f = tmp_path / "hedged.md"
+    f.write_text(
+        "---\ntitle: R\n---\n\n```\ncode\n```\n\nYou should consider skipping this.\n",
+        encoding="utf-8",
+    )
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "hedged_language")
+
+
 def test_unindented_block_sequence_runs_path_glob_checks(tmp_path):
     """paths from an unindented block sequence must not be dropped (else all glob checks skip)."""
     f = tmp_path / "abs-rule.md"

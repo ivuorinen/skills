@@ -50,12 +50,11 @@ list:
 test:
 	uv run --extra dev pytest tests/
 
-# Ratchet, not a waiver: 6 pre-existing errors (all tests/ monkeypatching module
-# attributes) are tolerated, 7 fails. Burn the baseline down to 0, then delete
-# the guard and run bare `pyright`. Mirrors the Type-check step in
-# .github/workflows/validate-skills.yml — change both together.
+# Zero floor: any pyright error fails the gate. A count threshold could mask a
+# new error by fixing an old one, so the tolerated set must stay empty. Mirrors
+# the Type-check step in .github/workflows/validate-skills.yml — change both together.
 typecheck:
-	uv run --with pyright==1.1.411 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s), baseline 6'); sys.exit(n > 6)"
+	uv run --with pyright==1.1.411 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
 
 lint:
 	uv run --extra dev ruff check scripts/ tests/ skills/

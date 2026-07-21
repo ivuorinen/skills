@@ -119,6 +119,26 @@ def _gh_rest_paginate(path: str) -> list[Any]:
     return [item for page in pages for item in page]
 
 
+class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strip the Authorization header on a redirect to any host other than the
+    GitHub API. urllib follows 3xx transparently and, unlike requests, keeps the
+    header across hosts — so without this a cross-host redirect from api.github.com
+    would forward the token off-host, defeating the same-host guard below.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != "api.github.com":
+            for key in [k for k in new.headers if k.lower() == "authorization"]:
+                del new.headers[key]
+        return new
+
+
+# Install as the process default so plain urllib.request.urlopen (below) inherits
+# the off-host Authorization stripping without a call-site change.
+urllib.request.install_opener(urllib.request.build_opener(_TokenSafeRedirectHandler()))
+
+
 def _token_rest_paginate(base_url: str, token: str) -> list[Any]:
     results: list[Any] = []
     url: str | None = f"{base_url}?per_page=100"
@@ -291,6 +311,30 @@ def main() -> None:
         try:
             threads = fetch_graphql(owner, repo, pr_number)
         except Exception as graphql_err:
+            # GraphQL is the only source of `isResolved`; the REST fallback returns
+            # every thread with is_resolved=None. A transient GraphQL error
+            # (secondary rate limit, 5xx) must therefore NOT silently downgrade to
+            # REST — that re-surfaces already-resolved threads as unresolved. Hard-
+            # fail so the caller retries; only a permanent error falls back to REST.
+            msg = str(graphql_err).lower()
+            if any(
+                s in msg
+                for s in (
+                    "rate limit",
+                    "rate_limit",
+                    "ratelimited",
+                    "secondary",
+                    "502",
+                    "503",
+                    "504",
+                )
+            ):
+                print(
+                    f"[error] GraphQL transiently unavailable ({graphql_err}); resolved "
+                    "state unknown — retry rather than fall back to resolved-blind REST.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             print(f"[warn] GraphQL failed ({graphql_err}), falling back to REST", file=sys.stderr)
             try:
                 threads = fetch_rest_gh(owner, repo, pr_number)

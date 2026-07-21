@@ -23,10 +23,12 @@ REPO_ROOT = repo_root()
 # Substring markers — a porcelain line mentioning any of these is governed.
 # ponytail: substring match, not per-entry parsing; a false positive only costs
 # one validator run, and rename entries stay covered either way.
+# `.claude/agents/` is deliberately absent: no gate here validates agent-definition
+# content, so listing it would imply a re-check that does not happen. Bash edits to
+# that tree are blocked upstream by deny-agents-path-hook.py instead.
 GOVERNED = (
     "skills/",
     ".claude/rules/",
-    ".claude/agents/",
     "docs/audit/findings/",
     "package.json",
     "pyproject.toml",
@@ -48,8 +50,11 @@ GATES = (
 
 
 def main() -> None:
+    # --ignored so a Bash edit to a gitignored findings store still shows up:
+    # plain --porcelain omits ignored paths, and the store supports being
+    # gitignored, so without this those edits skipped the findings gates.
     status = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--ignored"],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,

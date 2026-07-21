@@ -43,7 +43,7 @@ class TestBumpVersion:
 class TestUpdateToml:
     def _run(self, tmp_path, toml_content, new_version):
         mod = _load_mod()
-        mod.REPO_ROOT = tmp_path
+        mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         (tmp_path / "pyproject.toml").write_text(toml_content, encoding="utf-8")
         return mod.update_toml("pyproject.toml", new_version)
 
@@ -64,7 +64,7 @@ class TestUpdateToml:
 
     def test_missing_project_version_exits(self, tmp_path):
         mod = _load_mod()
-        mod.REPO_ROOT = tmp_path
+        mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         toml = '[build-system]\nrequires = ["setuptools"]\n'
         (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
         with pytest.raises(SystemExit):
@@ -103,7 +103,7 @@ class TestMain:
     def test_main_bumps_all_five_manifests(self, tmp_path, monkeypatch):
         self._make_repo(tmp_path)
         mod = _load_mod()
-        mod.REPO_ROOT = tmp_path
+        mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         monkeypatch.setattr(sys, "argv", ["bump-version.py", "minor"])
         assert mod.main() == 0
         pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
@@ -123,7 +123,7 @@ class TestMain:
     def test_main_unknown_part_returns_1(self, tmp_path, monkeypatch):
         self._make_repo(tmp_path)
         mod = _load_mod()
-        mod.REPO_ROOT = tmp_path
+        mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         monkeypatch.setattr(sys, "argv", ["bump-version.py", "bogus"])
         assert mod.main() == 1
         # Nothing written on the guard path.
@@ -139,7 +139,7 @@ class TestMain:
             '{"plugins": [ BROKEN', encoding="utf-8"
         )
         mod = _load_mod()
-        mod.REPO_ROOT = tmp_path
+        mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         monkeypatch.setattr(sys, "argv", ["bump-version.py", "minor"])
         with pytest.raises(json.JSONDecodeError):
             mod.main()

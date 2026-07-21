@@ -38,13 +38,16 @@ _SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Advisory"]
 _SEVERITY_RANK = {s: i for i, s in enumerate(_SEVERITY_ORDER)}
 
 _TOOL_SEVERITY_MAP = {
+    "BLOCKER": "Critical",  # SonarQube's highest tier
     "CRITICAL": "Critical",
     "HIGH": "High",
     "ERROR": "High",
+    "MAJOR": "Medium",  # SonarQube
     "MEDIUM": "Medium",
     "MODERATE": "Medium",
     "WARNING": "Medium",
     "WARN": "Medium",
+    "MINOR": "Low",  # SonarQube
     "LOW": "Low",
     "NOTE": "Low",
     "INFO": "Low",
@@ -87,15 +90,29 @@ def _normalize_severity(
             pass
 
     # Tool-specific severity string (also free-form; may be a non-string)
+    unmapped_tool = ""
     if tool_severity:
         mapped = _TOOL_SEVERITY_MAP.get(str(tool_severity).upper())
         if mapped:
             candidates.append(mapped)
+        else:
+            unmapped_tool = str(tool_severity)
 
     # Take the most severe of the mapped signals so a coarse tool string
     # (WARNING) can never bury an explicit CVSS Critical, and vice-versa.
     if candidates:
         return min(candidates, key=lambda s: _SEVERITY_RANK[s])
+
+    # An explicit tool severity we don't recognise must not be silently
+    # downgraded to the coarse SARIF level — a scanner's own top tier would land
+    # in Medium/Low and be gated as mid-tier. Fail safe to High and surface the
+    # token so the map can be extended.
+    if unmapped_tool:
+        print(
+            f"[warn] unmapped tool severity {unmapped_tool!r}; treating as High",
+            file=sys.stderr,
+        )
+        return "High"
 
     # SARIF level fallback (only when neither CVSS nor tool string was usable)
     lvl = (level or "").lower()
@@ -187,7 +204,9 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:
         # location-less findings (e.g. different CVEs from grype with an empty
         # message) don't collapse into one fingerprint.
         location_key = (
-            f"{uri}:{start_line}:{start_col}" if uri else f"{cve_or_rule}:{message[:100]}"
+            f"{uri}:{start_line}:{start_col}"
+            if uri
+            else f"{cve_or_rule}:{start_line}:{start_col}:{message}"
         )
         fingerprint = hashlib.sha256(f"{tool_name}|{rule_id}|{location_key}".encode()).hexdigest()[
             :16
@@ -216,7 +235,10 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:
 def _parse_sarif(path: Path) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, ValueError, RecursionError, OSError) as e:
+        # RecursionError: a deeply nested JSON array; ValueError: other decode
+        # failures. All must degrade to skip-this-file, never abort the run and
+        # discard findings already collected from valid files.
         print(f"[error] Cannot parse {path}: {e}", file=sys.stderr)
         sys.exit(1)
 
