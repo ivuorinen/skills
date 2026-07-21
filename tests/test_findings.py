@@ -861,6 +861,60 @@ def test_migrate_resolved_moves_legacy_files_to_ledger(tmp_path):
     assert findings.migrate_resolved(tmp_path) == (0, 0)
 
 
+def test_new_finding_runs_inside_store_lock(tmp_path, monkeypatch):
+    entered = []
+    orig = findings.store_lock
+    monkeypatch.setattr(findings, "store_lock", lambda root: entered.append(root) or orig(root))
+    _new(tmp_path)
+    assert entered, "new_finding must acquire store_lock"
+
+
+def test_resolve_finding_runs_inside_store_lock(tmp_path, monkeypatch):
+    path = _new(tmp_path)
+    entered = []
+    orig = findings.store_lock
+    monkeypatch.setattr(findings, "store_lock", lambda root: entered.append(root) or orig(root))
+    findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
+    assert entered, "resolve_finding must acquire store_lock"
+
+
+def test_resolve_force_refuses_to_drop_unparseable_ledger_line(tmp_path):
+    path = _new(tmp_path)
+    fid = path.stem
+    findings.resolve_finding(tmp_path, fid, "fixed", "done")
+    ledger = findings.ledger_path(tmp_path)
+    ledger.write_text(ledger.read_text(encoding="utf-8") + "{ not json\n", encoding="utf-8")
+    with pytest.raises(findings.FindingError, match="would be lost"):
+        findings.resolve_finding(tmp_path, fid, "invalid", "again", force=True)
+
+
+def test_validate_flags_duplicate_ledger_id(tmp_path):
+    path = _new(tmp_path)
+    findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
+    ledger = findings.ledger_path(tmp_path)
+    line = ledger.read_text(encoding="utf-8").strip()
+    ledger.write_text(line + "\n" + line + "\n", encoding="utf-8")
+    assert any("duplicate ledger id" in e for e in findings.validate_store(tmp_path))
+
+
+def test_migrate_resolved_same_run_duplicate_id_conflicts(tmp_path):
+    # Two legacy files share a hand-assigned id but differ in content: this must be a
+    # conflict, not a silent shadow that appends both and deletes both sources.
+    base = _new(tmp_path)
+    text = base.read_text(encoding="utf-8").replace("status: open", "status: fixed")
+    text = text.replace("found: 2026-07-08", "found: 2026-07-08\nresolved: 2026-07-09")
+    text = re.sub(r"^id: .*$", "id: DUP-1", text, count=1, flags=re.M)
+    base.unlink()
+    for auditor, title in (("security", "First finding"), ("arch", "Second finding")):
+        d = tmp_path / auditor / "resolved"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "DUP-1.md").write_text(
+            re.sub(r"^# .*$", f"# {title}", text, count=1, flags=re.M), encoding="utf-8"
+        )
+    with pytest.raises(findings.FindingError, match="different content"):
+        findings.migrate_resolved(tmp_path)
+
+
 def test_review_hygiene_warns_without_mark_or_gitignore(tmp_path):
     (tmp_path / ".git").mkdir()
     store = tmp_path / "docs" / "audit" / "findings"

@@ -137,7 +137,12 @@ def _project_root(args: dict) -> Path:
         return allowed
     root = Path(pd).resolve()
     if root != allowed and not root.is_relative_to(allowed):
-        raise ValueError(f"project_dir {pd!r} is outside the allowed project root {allowed}")
+        # Keep the server's absolute root/username on stderr only — the caller-
+        # visible message must not disclose the filesystem layout.
+        print(
+            f"[nitpicker] project_dir {pd!r} resolved to {root}, outside {allowed}", file=sys.stderr
+        )
+        raise ValueError("project_dir is outside the allowed project root")
     return root
 
 
@@ -183,42 +188,15 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
     },
 )
 def _list_findings(args: dict) -> str:
-    store = _store(args)
-    status = args.get("status")
-    rows: list[dict] = []
-    if status in (None, "open"):
-        for path, fm, title in findings.iter_open(store):
-            rows.append(
-                {
-                    "id": fm.get("id", path.stem),
-                    "status": "open",
-                    "auditor": fm.get("auditor", ""),
-                    "severity": fm.get("severity", ""),
-                    "area": fm.get("area", ""),
-                    "title": title,
-                }
-            )
-    if status in (None, "fixed", "invalid"):
-        for rec in findings.read_ledger(store):
-            if status and rec.get("status") != status:
-                continue
-            rows.append(
-                {
-                    "id": rec.get("id", ""),
-                    "status": rec.get("status", ""),
-                    "auditor": rec.get("auditor", ""),
-                    "severity": rec.get("severity", ""),
-                    "area": rec.get("area", ""),
-                    "title": rec.get("title", ""),
-                }
-            )
-    if args.get("auditor"):
-        rows = [r for r in rows if r["auditor"] == args["auditor"]]
-    if args.get("severity"):
-        rows = [r for r in rows if r["severity"] == args["severity"]]
-    limit = args.get("limit")
-    if limit is not None:
-        rows = rows[: max(0, int(limit))]
+    # Shared listing primitive with the CLI `list` command — see
+    # findings.gather_findings — so the two interfaces cannot drift on filtering.
+    rows = findings.gather_findings(
+        _store(args),
+        auditor=args.get("auditor") or "",
+        status=args.get("status") or "",
+        severity=args.get("severity") or "",
+        limit=args.get("limit"),
+    )
     return _fenced(json.dumps(rows, indent=2))
 
 

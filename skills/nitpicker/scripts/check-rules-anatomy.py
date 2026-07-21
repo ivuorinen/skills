@@ -155,13 +155,21 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
         return findings
 
     fm_line_count = len(text.splitlines()) - len(body.splitlines())
-    in_fence = False
+    # Match fences by their exact opening marker (``` closed only by ```, ~~~ only
+    # by ~~~). A naive boolean toggle left an unclosed fence "open" for the rest of
+    # the file, silently disabling the hedged-language gate below it.
+    fence = ""
     for body_lineno, line in enumerate(body.splitlines(), 1):
         lineno = fm_line_count + body_lineno
         stripped = line.strip()
+        if fence:
+            if stripped.startswith(fence):
+                fence = ""
+            continue
         if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-        if in_fence or not stripped or stripped.startswith("#"):
+            fence = stripped[:3]
+            continue
+        if not stripped or stripped.startswith("#"):
             continue
         m = _HEDGED_RE.search(line)
         if m:
@@ -174,6 +182,14 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
                 "hedged_language",
                 f"Line {lineno}: hedged '{m.group()}' — rules must be unconditional: \"{snippet}\"",
             )
+
+    if fence:
+        issue(
+            "High",
+            "unterminated_fence",
+            "unterminated code fence — every ``` or ~~~ must be closed; an open "
+            "fence silences the hedged-language check for the rest of the file",
+        )
 
     return findings
 
