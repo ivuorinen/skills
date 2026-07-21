@@ -10,7 +10,7 @@ license-files = ["LICENSE"]
 # ruff-hook.py, which shells out to the real `ruff` binary.
 # ruff is pinned to the .pre-commit-config.yaml rev so `make lint` and the
 # pre-commit hook cannot disagree about what passes.
-dev = ["pytest>=9.1,<10", "pytest-cov>=7.1,<8", "ruff==0.15.21"]
+dev = ["pytest>=9.1,<10", "pytest-cov>=7.1,<8", "ruff==0.15.22"]
 
 [tool.coverage.run]
 include = [
