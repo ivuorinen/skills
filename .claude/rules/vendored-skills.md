@@ -30,11 +30,10 @@ so the assertion alone is not a control — a two-line diff satisfies both.
 The intended human gate is `.github/CODEOWNERS` owning `scripts/validate-skill.py`
 and `tests/test_validate_skill.py`, so a human sees every allowlist change.
 
-That gate is currently INERT: `.github/CODEOWNERS` is not tracked in git, and
-`require_code_owner_review` is false on the main ruleset. Both halves are part
-of the control — commit the file and enable "Require review from Code Owners"
-on the protected branches. Until both are done, nothing but review discipline
-stops an agent from widening `VENDORED_SKILLS`.
+That gate is now LIVE: `.github/CODEOWNERS` is tracked in git, and the active
+`main` ruleset sets `require_code_owner_review` true, so a code-owner review is
+required on every PR that touches the allowlist or its pinning test — an agent
+cannot widen `VENDORED_SKILLS` without a human on the review.
 
 ## Provenance
 
