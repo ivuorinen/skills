@@ -43,6 +43,7 @@ If the user says… → run:
 - "i18n audit / find hardcoded strings" → `/nitpicker i18n`
 - "find race conditions / is this thread-safe" → `/nitpicker concurrency`
 - "is this safe to retry / will this double-charge / audit reliability / retry idempotency timeouts" → `/nitpicker reliability`
+- "audit the cache / is this cache safe / why is this data stale / will this cache leak across tenants" → `/nitpicker cache`
 - "close loopholes / can our rules be bypassed" → `/nitpicker agent-loopholes`
 - "enforce hooks / harden hook coverage" → `/nitpicker agent-hooks`
 - "audit .claude/rules / rules placement" → `/nitpicker agent-rules`

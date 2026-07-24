@@ -88,6 +88,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `errors` | Find swallowed exceptions, fail-open defaults, masking fallbacks (alias: `silent-failure-hunter`) |
 | `leaks` | Acquire-without-guaranteed-release: handles, pools, listeners, tasks (alias: `resource-leak-auditor`) |
 | `reliability` | Resilience under failure: non-idempotent retries, missing timeouts, retry storms, crash-window duplication, dropped work |
+| `cache` | Cache correctness: stale reads, key collisions, unbounded growth, stampede, serialization drift |
 
 ### Structure and contracts
 
