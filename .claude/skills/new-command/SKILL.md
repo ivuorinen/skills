@@ -155,9 +155,11 @@ validator exit line. A checkbox ticked without its evidence is a skipped
 phase, not a passed gate.
 
 - [ ] Phase 1 RED: subagent dispatched, rationalizations enumerated
+- [ ] Phase 2 SCAFFOLD: command file created, every RED rationalization mapped to the sentence that counters it
 - [ ] Phase 3 GREEN: subagent re-dispatched with command loaded, every RED rationalization blocked
 - [ ] Phase 4 REFACTOR verify: subagent re-run, no new loopholes
 - [ ] Phase 5 `/nitpicker review`: no HIGH or CRITICAL findings remain
 - [ ] Phase 6 `uv run scripts/validate-skill.py skills/nitpicker/SKILL.md` exits 0
 - [ ] Phase 6 `/validate-skills` exits clean
 - [ ] Phase 7 `/nitpicker pr`: no HIGH or CRITICAL findings in the diff
+- [ ] Phase 7 commit: `feat: add /nitpicker <name> command`, made after the clean PR review
