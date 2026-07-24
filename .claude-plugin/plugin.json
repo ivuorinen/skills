@@ -2,7 +2,7 @@
   "$schema": "../schemas/plugin.schema.json",
   "name": "ivuorinen-skills",
   "description": "Nitpicker — hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, architecture, perf, deps, CI, migrations, a11y, privacy, concurrency, and more). Also installable in Copilot, pi, and any Agent Skills-compatible agent.",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": {
     "name": "Ismo Vuorinen",
     "email": "ismo@ivuorinen.net"
@@ -22,7 +22,9 @@
     "nitpicker": {
       "type": "stdio",
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/skills/nitpicker/scripts/mcp_server.py"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/skills/nitpicker/scripts/mcp_server.py"
+      ],
       "env": {
         "CLAUDE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR:-.}"
       }
