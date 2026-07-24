@@ -49,7 +49,7 @@ For architecture-specific documentation drift, run `/nitpicker arch` instead —
 ## Process
 
 1. Re-validate open findings per `_conventions.md`.
-2. Collect all documentation sources (see Documentation scanned above); read `docs/audit/arch-profile.md` if present.
+2. Collect all documentation sources (see Documentation scanned above); read `docs/audit/arch-profile.md` if present. For a changelog or release notes, also collect the git tag list, the published releases, and the commit history — these are the reference each entry is verified against for `Changelog drift`.
 3. Audit all docs against the codebase in both directions.
 4. File findings via the store protocol in `_conventions.md`, using `--auditor docs` and `--category docs`. Fold the domain fields into the finding body: Problem names the finding type and quotes the exact claim being challenged; Evidence states what the code actually does — file path and relevant detail; Impact states why the inaccuracy matters; Fix is the minimal correction. The finding's area is the document containing the claim.
 5. Present the summary and offer fixes per `_conventions.md`.
