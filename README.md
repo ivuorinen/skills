@@ -85,6 +85,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | `concurrency` | Data races, TOCTOU, deadlock ordering, unsafe publication              |
 | `errors`      | Swallowed exceptions, fail-open defaults, masking fallbacks            |
 | `leaks`       | Resources acquired without guaranteed release on failure paths         |
+| `reliability` | Non-idempotent retries, timeouts, crash-window dup, dropped work       |
 
 ### Structure and contracts
 

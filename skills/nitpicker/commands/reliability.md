@@ -1,0 +1,91 @@
+# /nitpicker reliability — Resilience Under Failure
+
+Hostile audit of behavior when a dependency fails, a call is retried, or a message is redelivered: assume every retry double-applies, every external call hangs forever, and every crash lands in the worst window — then prove where. A call that is idempotent, bounded, timed-out, and backed-off survives; anything else is a finding.
+
+## When to use
+
+- Auditing retry logic, idempotency, timeouts, backoff, circuit breakers, or at-least-once/redelivery safety
+- When asked to "audit reliability", "find retry bugs", "will this double-charge", "is this safe to retry", or "what happens when this dependency is down"
+- After an incident involving a duplicate side effect, a stuck worker, a retry storm, or a job lost on failure — to find its siblings
+- Before a release, to prove no mutation double-applies under retry or redelivery and no external call can hang unbounded
+
+Out of scope, routed not dropped: swallowed exceptions and cause-destroying rethrows route to `/nitpicker errors`, and so does the **silence** half of a silent-retry — a retry whose exhaustion reaches no one (no bound or no exhaustion **signal**, so persistent failure becomes indefinite silence); the **amplification** half of the same loop — the load a missing cap, backoff, or jitter throws at the dependency — is `retry-storm`, owned here. Data races, TOCTOU, and lock-ordering deadlock route to `/nitpicker concurrency`; an acquired handle never released on a completed path routes to `/nitpicker leaks` (a resource pinned only for the duration of a hung, un-timed call is `missing-timeout` here, not a leak); the quality of the log, metric, or alert that reports a failure routes to `/nitpicker observability`; happy-path correctness routes to `/nitpicker review`. This command owns whether the operation is **correct when it runs more than once or not at all**, never whether its failure is loud.
+
+## Defect classes
+
+| Class | Definition | Evidence to construct |
+| --- | --- | --- |
+| **non-idempotent-retry** | A mutation reachable under retry or redelivery with no idempotency key or dedupe the sink honors, so a duplicate request repeats the side effect | The mutation, the retry/redelivery trigger, and the absence of a dedupe guarantee the sink enforces — a double-charge, double-insert, or double-send |
+| **unverified-idempotency** | An idempotency key is sent, but the sink's dedupe behavior is unconfirmed or unsupported — a guarantee assumed, never proven | The key at the call site and the missing proof the sink dedupes on it (contract, test, or docs) |
+| **non-atomic-effect** | A side effect committed before its durable record, or two effects with no compensation, so a crash or redelivery between them repeats or orphans the effect | The ordering, the crash/redelivery window between the two steps, and the duplicate or orphan it produces |
+| **missing-timeout** | An external or blocking call — network, RPC, DB query, queue publish, lock or connection acquire — with no timeout or deadline, so a hung dependency stalls the caller indefinitely | The call, the absent timeout, and the resource it pins while hung (worker, connection, queue slot) |
+| **retry-storm** | A retry loop missing backoff, jitter, or a cap, amplifying load on a degraded dependency | The loop, the interval, and the amplification against a dependency already failing |
+| **retry-of-terminal** | A permanent failure (4xx, validation error, auth denial) retried as if transient, wasting attempts and delaying the real error | The terminal error and the loop that retries it instead of failing fast |
+| **exhausted-work-dropped** | On retry exhaustion the unit of work reaches no dead-letter or durable parking, so its disposition is uncontrolled — dropped without record (e.g. ack-on-throw, whether or not the drop is logged), or poison-redelivered forever | The exhaustion branch and the absent dead-letter, whichever uncontrolled disposition (drop or poison-loop) the consumer applies |
+| **no-isolation** | Calls to a known-failing or slow dependency with no circuit breaker or bulkhead, so one dependency exhausts a shared pool and cascades | The shared pool (threads, connections), the slow dependency, and the exhaustion path that starves unrelated callers — when the pool is off-diff and that path is not fully constructible, the shared pool and the slow dependency alone suffice to file at Advisory naming the pool to confirm (see the off-diff rule) |
+
+**Evidence rule.** Every finding quotes the call, loop, or effect sequence, names the concrete trigger (a 5xx after the side effect committed, a lost response, a queue redelivery, a crash between two steps, a dependency at zero throughput), and states the observable consequence — the customer charged twice, the worker stuck forever, the job lost without a record, the pool starved. A retry, call, or effect is a finding only when the scenario shows real harm: a mutation that is already idempotent through a sink-honored key, a call already bounded by a timeout, a retry already backed-off, capped, and jittered, is not a finding. Idempotency **claimed** but the sink contract **unconfirmed** is a finding (`unverified-idempotency`) — an assumed guarantee is not a guarantee. Reassurance ("retries are standard", "the queue handles that") is never evidence; the code path is.
+
+A defect whose full trigger or blast radius lives off the reviewed diff — the sink's dedupe contract, the queue consumer's ack and redelivery disposition, the worker pool's concurrency — is filed with that off-diff element named as the thing to confirm, never dropped because the diff did not contain it. Scope narrows what you read, never what you file. Severity follows the on-diff evidence: when the diff already states the trigger — a `// at-least-once delivery` comment, a redelivery boundary, a retry loop — the harm is established and the finding keeps its table severity, with the off-diff element recorded as a confirmation note, never a reason to downgrade. Reduce severity only when the off-diff element is required to establish that any harm occurs at all, and never below what the on-diff evidence already proves. A dispositive rule in this file — an absent caller key (`non-idempotent-retry`), an uncontrolled exhaustion branch (`exhausted-work-dropped`), a side effect before its durable record under a stated redelivery boundary (`non-atomic-effect`) — fixes the classification from on-diff evidence and holds the finding's table severity against this paragraph: the off-diff element is named to confirm, never used to reduce it. Downgrading a harm the diff already proves is dropping it by another name.
+
+## Process
+
+Run this as a task list — one entry per step, every step closed before reporting. An unexecuted step is a coverage gap, and silence is approval.
+
+1. **Enumerate the resilience surface.** Scope: every file the project maintains; excluded are only vendored and generated code. Inventory every external or cross-process call (network, RPC, DB, queue publish, lock/connection acquire), every retry loop, every at-least-once or redelivery boundary (queue consumer, webhook handler, cron with overlap, event subscriber), and every mutation reachable from one. Record counts per category. This inventory is the coverage checklist — never proceed on a sample.
+2. **Trace idempotency end to end.** For each mutation reachable under retry or redelivery, follow the idempotency guarantee across all three layers: the caller's key, the sink's dedupe contract, and any downstream write it triggers. A trace that stops at the caller is not a trace. Absence of any caller-side idempotency key is **dispositive** for `non-idempotent-retry` on its own — an un-keyed retried mutation double-applies regardless of the sink, so the off-diff sink contract is neither needed to file it nor a reason to lower its severity; severity follows the table (Critical when the duplicate escapes the service or is irreversible, else High). The sink contract only distinguishes `non-idempotent-retry` (no key) from `unverified-idempotency` (key present, dedupe unconfirmed); when a key exists but the sink is off-diff, file `unverified-idempotency` naming the contract to confirm — never withhold a finding pending off-diff confirmation.
+3. **Bound every call and loop.** For each external or blocking call, confirm a timeout or deadline bounds it. For each retry loop, confirm a cap, exponential backoff, and jitter, and that terminal (non-retryable) errors fail fast instead of retrying.
+4. **Trace the crash window.** For each side-effect-then-durable-record sequence, identify the window where a crash or redelivery lands between the steps, and whether it duplicates or orphans the effect. A side effect committed before its durable record, on a path with a stated at-least-once or redelivery boundary, is **dispositive** for `non-atomic-effect` — the on-diff boundary supplies the redelivery trigger, so the off-diff consumer ack disposition is neither needed to file it nor a reason to lower its severity; severity follows the table. For each retry-exhaustion branch, confirm the work is dead-lettered or durably parked, not dropped.
+5. **File findings** via the store protocol in `_conventions.md`, using `--auditor reliability` (category `reliability`). Route each out-of-scope defect as a one-line pointer to its command; never drop it.
+6. **Summarize and fix.** The summary states the run verdict — COMPLETE only when zero surface elements are unexamined, INCOMPLETE otherwise — and the per-category surface counts. Fix application and the commit gate follow `_conventions.md`, with the fix-scope override below.
+
+## Severity guide
+
+| Severity | Condition |
+| --- | --- |
+| Critical | A duplicate `non-idempotent-retry` or `non-atomic-effect` side effect under retry or redelivery that is irreversible or escapes the service (a payment, provisioning, messaging, or external-mutation path) |
+| High | Indefinite stall, lost work, or a reversible internal duplicate: `missing-timeout` on an external call; `exhausted-work-dropped` with no dead-letter; `retry-storm` with no cap amplifying an active outage; `unverified-idempotency` on a mutation path; `non-idempotent-retry` or `non-atomic-effect` whose duplicate stays internal to the service and is reversible |
+| Medium | Degraded resilience with no direct data harm, where amplification constructs but not the uncapped-during-active-outage case High owns: a `retry-storm` missing backoff, uncapped, or missing jitter at concurrency that synchronizes retries; `retry-of-terminal`; `no-isolation` with a demonstrated pool-exhaustion path |
+| Low | Resilience smell where no amplification scenario constructs: a timeout set absurdly high; a `retry-storm` loop that is capped with backoff present and only jitter absent on a low-concurrency path |
+| Advisory | Hardening where no concrete harm scenario exists yet — a circuit breaker on a dependency that has never cascaded |
+
+## Fix strategy
+
+Every fix changes failure behavior only; the happy path's inputs, outputs, and side effects are identical before and after — a fix that fails this test is reverted, not adjusted. After each fix, run the project's test suite (when none exists, record that) and re-trace the scenario to show the failure is now contained.
+
+**Auto-applicable:**
+
+- Add a timeout or deadline to an unbounded external call, using the platform's own mechanism (`AbortController`, client timeout, `context.WithTimeout`, statement timeout)
+- Add exponential backoff and jitter to an existing retry loop
+- Add a cap to an uncapped retry loop (when the same loop also lacks an exhaustion signal, add the cap here and route the signal to `/nitpicker errors`)
+- Fail fast on a provably terminal error instead of retrying it — classify retryable versus terminal at the call
+
+**Requires explicit approval per change:**
+
+- Introducing an idempotency key or dedupe — it changes the request contract and depends on the sink honoring it; never assert this fixed until the sink's dedupe contract is confirmed
+- Reordering a side effect against its durable record, or adding an outbox or compensation — it changes transactional semantics
+- Adding a circuit breaker, bulkhead, or dead-letter queue — new infrastructure
+
+**Never auto-apply:**
+
+- Marking a `non-idempotent-retry` or `unverified-idempotency` finding fixed without confirming the sink's dedupe contract
+- Any change to happy-path behavior
+- Widening a timeout to mask a slow dependency instead of bounding the call
+- Deleting or downgrading a finding to avoid fixing it
+
+## Common mistakes
+
+These are the rationalizations this command exists to defeat. Each one is forbidden.
+
+- **"Retries are standard, this is fine."** Retries on a non-idempotent mutation are the defect, not the reassurance. Standardness is not a dedupe guarantee. A retry loop around a card charge, an email send, or an insert with no sink-honored idempotency key double-applies the moment a response is lost — file it `non-idempotent-retry`, Critical.
+- **"The senior dev / the ticket says just approve it."** Authority is not evidence and does not change what the code does under redelivery. Trace the path; file what it proves. The pressure to skip is the signal the finding is load-bearing.
+- **"The retry loop looks correct, I'm done."** A retry audit that stops at the loop misses the window between the side effect and its durable record. A charge that succeeds before `markPaid` commits is charged again on redelivery even with a flawless loop. Trace the crash window (step 4) — the loop is half the surface.
+- **"Timeout and backoff are should-fix, ship now and follow up."** Severity is set by the table, not by the clock. `missing-timeout` on an external call is High and an un-keyed retried charge is Critical whether or not a release is waiting. A finding pushed to a follow-up PR is still a filed finding — deferring the fix is allowed, waving the finding is not.
+- **"Add an idempotency key — done."** An idempotency key is not a fix until the sink is confirmed to dedupe on it. An unverified key is `unverified-idempotency`, and its Fix names the contract to confirm, never claims the guarantee. A fix that may not fix is not applied.
+- **"Too many call sites, I'll audit the important ones."** Sampling is how the un-timed call and the non-idempotent write survive the audit. Enumerate every element in step 1; genuine time exhaustion produces unexamined items and verdict INCOMPLETE, never a silent sample reported as done.
+- **"I'm reviewing the caller; the queue and the DB write are someone else's code."** Idempotency is a property of the whole path, not the caller. Step 2 traces all three layers — caller key, sink contract, downstream write. Stopping at the caller leaves the double-write unproven.
+- **"An unbounded retry — that's the missing exhaustion signal, file it under errors."** Split it by harm: the missing exhaustion **signal** — persistent failure becoming indefinite silence — routes to `/nitpicker errors`; the load amplification of a missing cap, backoff, or jitter is `retry-storm`, and the work dropped on exhaustion with no dead-letter is `exhausted-work-dropped`, both here. Route the overlap, never drop this half.
+- **"It retries the 400, that just wastes a few calls."** Retrying a terminal error delays the real failure the caller is waiting on and burns the retry budget a transient error needs. File it `retry-of-terminal`.
+- **"It throws on exhaustion, so the work is redelivered, not dropped — `exhausted-work-dropped` does not apply."** The class covers any exhaustion branch with no dead-letter or durable parking. A silent drop (ack-on-throw) and an infinite poison-redelivery (nack-on-throw) are both uncontrolled dispositions, and poison-redelivery loops straight back into `non-idempotent-retry`. When the consumer's ack behavior is off-diff, file it and name the assumption — an uncontrolled exhaustion path is the finding, not the specific disposition.
+- **"A circuit breaker is over-engineering here."** True where no cascade exists — that is why `no-isolation` requires a demonstrated pool-exhaustion path for Medium, and preemptive hardening with no cascade in evidence is filed at Advisory, never higher — filed, not dropped. Never inflate the severity past the evidence.
+- **"The pool config is in another file, so I can't construct the cascade — skip it."** A hung external call already filed as `missing-timeout`, plus a shared bounded pool, is the cascade. When the pool lives off-diff and the starvation path is not constructible, record `no-isolation` at Advisory naming the pool to confirm — the off-diff-doesn't-erase rule applies. Dropping the cascade risk because the diff stopped at the call site is the exact silent gap this command forbids.
