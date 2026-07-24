@@ -48,6 +48,7 @@ If the user says… → run:
 - "audit .claude/rules / rules placement" → `/nitpicker agent-rules`
 - "be lazy / YAGNI / find bloat / over-engineering" → `/nitpicker complexity`
 - "find unwired code / is everything hooked up / incomplete implementations" → `/nitpicker unwired`
+- "find dead code / what can we delete / unused exports / is this still used" → `/nitpicker dead-code`
 - "plan this / how should we build X / design the implementation" → `/nitpicker plan`
 - "execute the plan / implement the approved plan / build what we planned" → `/nitpicker execute-plan`
 - "teach me X / help me learn X / explain X so it sticks / next lesson" → `/nitpicker teach`

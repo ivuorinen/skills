@@ -54,6 +54,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `cr` | Fetch unresolved PR review comments, evaluate, implement valid ones one at a time (alias: `cr-implementer`) |
 | `complexity` | Force the laziest working solution; audit for over-engineering (alias: `complexity-hunter`) |
 | `unwired` | Find unwired and incomplete implementations; wire, merge into a wired twin, or remove — each per-finding user-confirmed |
+| `dead-code` | Find unreferenced or unreachable code — unused exports, dead branches, orphaned files — with reachability-proven safe deletion |
 
 ### Planning
 

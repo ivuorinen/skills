@@ -53,6 +53,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | `cr`               | Unresolved PR review comments — evaluates and implements the valid ones                                |
 | `complexity`       | Over-engineering; forces the laziest solution that works                                               |
 | `unwired`          | Implementations never wired in, or left incomplete; wires, merges, or removes with per-finding consent |
+| `dead-code`        | Unreferenced or unreachable code; reachability-proven, public and orphan removals approval-gated       |
 
 ### Planning
 
