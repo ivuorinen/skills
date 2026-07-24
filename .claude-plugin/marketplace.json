@@ -11,7 +11,7 @@
     {
       "name": "ivuorinen-skills",
       "description": "Nitpicker — hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, architecture, perf, deps, CI, migrations, a11y, privacy, concurrency, and more).",
-      "version": "2.0.0",
+      "version": "3.0.0",
       "license": "MIT",
       "source": "./",
       "author": {

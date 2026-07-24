@@ -26,6 +26,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 [#61]: https://github.com/ivuorinen/skills/issues/61
 [#63]: https://github.com/ivuorinen/skills/issues/63
 
+## [3.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v2.0.0...ivuorinen-skills-v3.0.0) (2026-07-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** update pre-commit hook pre-commit/pre-commit-hooks (3e8a8703264a2f4a69428a0aa4dcb512790b2c8c → v6.0.0) ([#71](https://github.com/ivuorinen/skills/issues/71))
+
+### Features
+
+* add /nitpicker cache command ([#77](https://github.com/ivuorinen/skills/issues/77)) ([8d0c237](https://github.com/ivuorinen/skills/commit/8d0c23702070533d3b7f02823058116455bec77a))
+* add /nitpicker contributing command ([#57](https://github.com/ivuorinen/skills/issues/57)) ([4ec92d5](https://github.com/ivuorinen/skills/commit/4ec92d51b11f573ec26503817c0efe26b5581784))
+* add /nitpicker dead-code command ([#76](https://github.com/ivuorinen/skills/issues/76)) ([a392ec6](https://github.com/ivuorinen/skills/commit/a392ec66ccfac4207f2a1cf94f6747d2d8fb96a7))
+* add /nitpicker execute-plan command ([#65](https://github.com/ivuorinen/skills/issues/65)) ([1d718c9](https://github.com/ivuorinen/skills/commit/1d718c927e9e7fd54b188d6e64d30dc8fdeaf932))
+* add /nitpicker reliability command ([#75](https://github.com/ivuorinen/skills/issues/75)) ([8553e0c](https://github.com/ivuorinen/skills/commit/8553e0c5dd01103135c4ff1bd32ea347f04febd7))
+* add /nitpicker teach command ([#62](https://github.com/ivuorinen/skills/issues/62)) ([0aa2eb3](https://github.com/ivuorinen/skills/commit/0aa2eb34ae6d5d08837cf588676f6a829e40d326))
+* add nitpicker MCP server (skill introspection + findings tools) ([#64](https://github.com/ivuorinen/skills/issues/64)) ([444a84c](https://github.com/ivuorinen/skills/commit/444a84cdac0ee50b0b666239e7fa773f6e5510ff))
+* add write-surgical-code rule from Karpathy's LLM-coding guidelines ([#61](https://github.com/ivuorinen/skills/issues/61)) ([955fac3](https://github.com/ivuorinen/skills/commit/955fac3fc89cbbdc2a88aee245b954c26b584a3e))
+* graphify integration, vendored-skill validator support, and tool hardening ([#63](https://github.com/ivuorinen/skills/issues/63)) ([a7aa066](https://github.com/ivuorinen/skills/commit/a7aa066a0f4e715f82cfa517b8293da0ceb8df54))
+* harden the enforcement surface and the findings store ([#66](https://github.com/ivuorinen/skills/issues/66)) ([2dce882](https://github.com/ivuorinen/skills/commit/2dce882c9904f2543fd681ae132407d6bdad4b41))
+
+
+### Bug Fixes
+
+* **deps:** update dependency ruff (0.15.21 → 0.15.22) ([#73](https://github.com/ivuorinen/skills/issues/73)) ([1309b54](https://github.com/ivuorinen/skills/commit/1309b540f7b57d2395becf5772571723cc6239dd))
+* harden shipped audit tools and enforcement surface (nitpicker audit) ([#72](https://github.com/ivuorinen/skills/issues/72)) ([6a6499d](https://github.com/ivuorinen/skills/commit/6a6499dc6f67d033af6aa2b92c6ee6b753659771))
+* make MCP tools the default and shell the last resort in the conventions ([#68](https://github.com/ivuorinen/skills/issues/68)) ([513f52f](https://github.com/ivuorinen/skills/commit/513f52f369a4b52c6534d5c234bd9c6d561e41fa))
+
+
+### Miscellaneous Chores
+
+* **deps:** update pre-commit hook pre-commit/pre-commit-hooks (3e8a8703264a2f4a69428a0aa4dcb512790b2c8c → v6.0.0) ([#71](https://github.com/ivuorinen/skills/issues/71)) ([b394d25](https://github.com/ivuorinen/skills/commit/b394d2560d4b52b18abf87fa5743975b461c7792))
+
 ## [2.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.8.0...ivuorinen-skills-v2.0.0) (2026-07-10)
 
 
