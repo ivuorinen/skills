@@ -34,6 +34,7 @@ For architecture-specific documentation drift, run `/nitpicker arch` instead —
 | Outdated architecture | Describes a structural pattern, layer, or component that has changed or been removed |
 | Contradiction | Two documentation sources make conflicting claims about the same thing |
 | Broken link | Internal link to a file, heading, or section that does not resolve |
+| Changelog drift | A changelog or release-notes entry that misstates, omits, or misattributes a shipped change — a wrong version or date, a user-facing change with no entry, or an entry for a change that never shipped — verified against tags, releases, and the commit history |
 
 ## Severity guide
 
