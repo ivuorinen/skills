@@ -87,6 +87,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | `errors`      | Swallowed exceptions, fail-open defaults, masking fallbacks            |
 | `leaks`       | Resources acquired without guaranteed release on failure paths         |
 | `reliability` | Non-idempotent retries, timeouts, crash-window dup, dropped work       |
+| `cache`       | Stale reads, key collisions, unbounded growth, stampede, drift         |
 
 ### Structure and contracts
 
