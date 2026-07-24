@@ -86,6 +86,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `concurrency` | Data races, TOCTOU, deadlock ordering, unsafe publication (alias: `concurrency-auditor`) |
 | `errors` | Find swallowed exceptions, fail-open defaults, masking fallbacks (alias: `silent-failure-hunter`) |
 | `leaks` | Acquire-without-guaranteed-release: handles, pools, listeners, tasks (alias: `resource-leak-auditor`) |
+| `reliability` | Resilience under failure: non-idempotent retries, missing timeouts, retry storms, crash-window duplication, dropped work |
 
 ### Structure and contracts
 
