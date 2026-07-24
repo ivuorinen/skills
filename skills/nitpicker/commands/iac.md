@@ -60,7 +60,7 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Pin a base image to `tag@sha256:<digest>`
 - Add `encrypted = true` / a KMS key to a not-yet-created resource
 - Require IMDSv2 (`http_tokens = "required"`) and enable audit logging on a not-yet-created resource
-- Add `resources.limits`/`requests` and liveness/readiness probes
+- Add `resources.limits`/`requests`, liveness/readiness probes, and a Dockerfile `HEALTHCHECK`
 - Add a `.dockerignore` excluding `.git` and secret paths
 
 **Requires explicit approval per change:**
