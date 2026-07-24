@@ -60,7 +60,7 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Pin a base image to `tag@sha256:<digest>`
 - Add `encrypted = true` / a KMS key to a not-yet-created resource
 - Require IMDSv2 (`http_tokens = "required"`) and enable audit logging on a not-yet-created resource
-- Add `resources.limits`/`requests`, liveness/readiness probes, and a Dockerfile `HEALTHCHECK`
+- Add `resources.limits`/`requests` and liveness/readiness probes
 - Add a `.dockerignore` excluding `.git` and secret paths
 
 **Requires explicit approval per change:**
@@ -69,6 +69,7 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Removing `publicly_accessible`/public ACL on an existing resource (can break current consumers)
 - Scoping an IAM policy (can break a workload silently relying on the breadth)
 - Moving state to a remote backend, or enabling deletion protection on a live resource (a migration, not an edit)
+- Adding a Dockerfile `HEALTHCHECK` — the health command is image- and service-specific, and a wrong or unreachable command marks a healthy container unhealthy, changing restart and load-balancer routing
 
 **Never auto-apply:**
 
