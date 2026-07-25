@@ -53,6 +53,7 @@ If the user says… → run:
 - "plan this / how should we build X / design the implementation" → `/nitpicker plan`
 - "execute the plan / implement the approved plan / build what we planned" → `/nitpicker execute-plan`
 - "teach me X / help me learn X / explain X so it sticks / next lesson" → `/nitpicker teach`
+- "which commands should I run / where do I start / scope the audit / triage this repo" → `/nitpicker triage`
 - "can we ship / release gate" → `/nitpicker release-gate`
 - "baseline the findings / accept existing debt / only fail on new findings" → `/nitpicker baseline`
 - "what audit commands are there / list the commands" → `/nitpicker help`

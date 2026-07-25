@@ -127,6 +127,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 
 | Command | Purpose |
 | --- | --- |
+| `triage` | Selector, not auditor: scan the repo and emit a ranked run-plan of which commands to run, each justified by a cited repo signal; files nothing, runs nothing |
 | `baseline` | Snapshot open findings as accepted; gate fails only on new ones |
 | `release-gate` | Fail if open findings at or above a threshold exist (default: High) |
 | `help` | Print this command listing (alias: `list`) |
