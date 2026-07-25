@@ -126,6 +126,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 
 | Command        | What it hunts                                               |
 | -------------- | ----------------------------------------------------------- |
+| `triage`       | Ranked run-plan of which commands to run; files nothing     |
 | `baseline`     | Snapshots open findings as accepted; gate fails only on new |
 | `release-gate` | Fails if any open finding at/above threshold (default High) |
 | `help`         | Prints the command listing                                  |
