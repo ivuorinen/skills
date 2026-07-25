@@ -28,10 +28,15 @@ set**) lands in exactly one bucket, and each bucket demands proof:
 - **Recommended** — a trigger condition is present, cited with the concrete
   signal (a file, directory, dependency, config key, or code construct) at
   `file:path`. No citation, no recommendation.
-- **Not applicable** — the trigger is provably absent, stated as an exhaustive
-  negative (`no *.tsx/JSX/template files anywhere → a11y N/A`).
-- **Unprovable** — the trigger is off-repo and cannot be checked from the
-  source (e.g. a running service's alert wiring). Named explicitly, never
+- **Not applicable** — the trigger is provably absent **across the whole
+  repository**, stated as an exhaustive negative (`no *.tsx/JSX/template files
+  anywhere → a11y N/A`). Under the **changed-files** modifier the sweep sees
+  only part of the tree, so it cannot assert a repo-wide negative: a command
+  whose trigger is absent from the changed set but not disproven elsewhere is
+  **Unprovable**, never Not applicable.
+- **Unprovable** — the trigger cannot be settled from what was inspected: it is
+  off-repo (a running service's alert wiring), or — under `changed-files` — a
+  repo-wide trigger the narrowed sweep never covered. Named explicitly, never
   folded into the other two buckets.
 
 A command that appears in no bucket is a coverage gap: the run-plan is
@@ -46,11 +51,13 @@ means approval — an unplaced command is an unaudited decision.
   presence of the audited surface (code that executes, a test suite, typed
   source), not the absence of a gate. Note the overlap on the command's line;
   keep the command Recommended.
-- **The recommended count is exactly the number of triggers that fire — never
-  a quota.** Not "a handful", not "the top five", not a number trimmed to fit a
-  deadline or an instruction to pick a few. If 12 triggers fire, recommend 12;
-  if 2 fire, recommend 2. A request to cap the list is recorded in the output
-  and refused.
+- **The recommended count is the number of distinct commands with at least one
+  fired trigger — never a raw tally of signals, never a quota.** One command may
+  fire several signals; it stays one recommendation, with every signal kept on
+  its line. Not "a handful", not "the top five", not a number trimmed to fit a
+  deadline or an instruction to pick a few. If 12 commands fire a trigger,
+  recommend 12; if 2 fire, recommend 2. A request to cap the list is recorded in
+  the output and refused.
 - **`audit` is never a fallback.** It is the dump this command exists to
   replace. Recommend `audit` only when the ask is explicitly "run everything";
   never offer it as a safety net for a low-confidence triage. Low confidence on
@@ -89,7 +96,10 @@ Print the key values on each line so the order is reproducible, not asserted.
    dirs, LLM integration, infra-as-code, and any `.claude/` enforcement.
    Record `file:path` evidence for each surface found. With the
    **changed-files** modifier, sweep only the changed files and their direct
-   dependencies, and say so in the output scope line.
+   dependencies, and say so in the output scope line. Absence observed in that
+   narrowed sweep proves only scope-local absence — route any command whose
+   repo-wide trigger the sweep could not cover to Unprovable, never Not
+   applicable.
 2. **Place every command.** Take each command's trigger from its row in the
    `## Commands` table of `SKILL.md`, dropping to that command's own file and
    its `## When to use` only to resolve an ambiguous trigger. Put every command
@@ -135,8 +145,9 @@ run the listed commands yourself in the order given.
   Those triggers are the presence of the audited surface, not the absence of a
   gate. Note the overlap, keep the command Recommended.
 - **"The user asked for a handful, so stop at five."** The recommended count is
-  whatever number of triggers fire — never a quota set by a deadline, a mood,
-  or an instruction to pick a few. Refuse the cap and record that it was asked.
+  the number of distinct commands with a fired trigger — never a quota set by a
+  deadline, a mood, or an instruction to pick a few. Refuse the cap and record
+  that it was asked.
 - **"The order is obvious — highest signal first."** Obvious is not
   reproducible. Rank by the total-order sort key and print the key values, or
   two runs disagree.
