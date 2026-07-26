@@ -220,7 +220,9 @@ def _iter_rules(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
                 elif entry.name.endswith(".md"):
                     results.append(p)
     except PermissionError:
-        pass
+        # A dir the process cannot read silently narrows the gate — surface it so
+        # a green result is not mistaken for "nothing to flag under here".
+        print(f"[warn] cannot scan {rules_dir}: permission denied", file=sys.stderr)
     return sorted(results)
 
 

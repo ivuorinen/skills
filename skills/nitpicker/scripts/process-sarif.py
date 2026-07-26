@@ -257,9 +257,17 @@ def _parse_sarif(path: Path) -> list[dict]:
 
 
 def _deduplicate(findings: list[dict]) -> tuple[list[dict], int]:
+    def _rank(finding: dict) -> int:
+        sev = finding.get("severity")
+        return _SEVERITY_RANK.get(sev, 99) if isinstance(sev, str) else 99
+
     seen: dict[str, dict] = {}
     for f in findings:
-        if f["fingerprint"] not in seen:
+        prior = seen.get(f["fingerprint"])
+        # Keep the most-severe on a fingerprint collision: the same rule at the
+        # same location can arrive at two severities across files/runs, and the
+        # severity sort runs after dedup, so a dropped higher severity is lost.
+        if prior is None or _rank(f) < _rank(prior):
             seen[f["fingerprint"]] = f
     unique = list(seen.values())
     return unique, len(findings) - len(unique)
@@ -277,8 +285,11 @@ def main() -> None:
     for arg in sys.argv[1:]:
         path = Path(arg)
         if not path.exists():
+            # Match the parse-error path below: record and continue so findings
+            # already collected from valid files are not discarded by one bad arg.
             print(f"[error] File not found: {path}", file=sys.stderr)
-            sys.exit(1)
+            had_error = True
+            continue
         # A single unparseable file must not discard findings already collected
         # from valid files; _parse_sarif reports to stderr then exits, so catch
         # that, skip the file, and fail the run at the end instead.

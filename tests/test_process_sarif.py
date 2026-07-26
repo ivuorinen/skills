@@ -19,6 +19,33 @@ _parse_sarif = _mod._parse_sarif
 _deduplicate = _mod._deduplicate
 
 
+def test_deduplicate_keeps_most_severe_on_collision():
+    low = {"fingerprint": "fp1", "severity": "Low", "uri": "a", "start_line": 1}
+    crit = {"fingerprint": "fp1", "severity": "Critical", "uri": "a", "start_line": 1}
+    unique, removed = _deduplicate([low, crit])
+    assert removed == 1
+    assert [f["severity"] for f in unique] == ["Critical"]
+
+
+def test_deduplicate_keeps_most_severe_regardless_of_order():
+    crit = {"fingerprint": "fp1", "severity": "Critical", "uri": "a", "start_line": 1}
+    low = {"fingerprint": "fp1", "severity": "Low", "uri": "a", "start_line": 1}
+    unique, _ = _deduplicate([crit, low])
+    assert unique[0]["severity"] == "Critical"
+
+
+def test_main_missing_file_does_not_discard_collected_findings(tmp_path, monkeypatch, capsys):
+    good = tmp_path / "good.sarif"
+    good.write_text(json.dumps(_sarif([_run(results=[_result(level="error")])])), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["process-sarif.py", str(good), str(tmp_path / "nope.sarif")])
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 1  # a bad arg still fails the run at the end...
+    out = capsys.readouterr()
+    assert "good.sarif" in out.out  # ...but does not discard the valid file's findings
+    assert "File not found" in out.err
+
+
 def _sarif(runs: list) -> dict:
     return {"version": "2.1.0", "$schema": "...", "runs": runs}
 
