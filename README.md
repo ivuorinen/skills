@@ -127,6 +127,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | Command        | What it hunts                                               |
 | -------------- | ----------------------------------------------------------- |
 | `triage`       | Ranked run-plan of which commands to run; files nothing     |
+| `reverify`     | Re-verifies open findings vs code; resolves the stale       |
 | `baseline`     | Snapshots open findings as accepted; gate fails only on new |
 | `release-gate` | Fails if any open finding at/above threshold (default High) |
 | `help`         | Prints the command listing                                  |
