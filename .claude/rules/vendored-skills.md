@@ -30,10 +30,15 @@ so the assertion alone is not a control — a two-line diff satisfies both.
 The intended human gate is `.github/CODEOWNERS` owning `scripts/validate-skill.py`
 and `tests/test_validate_skill.py`, so a human sees every allowlist change.
 
-That gate is now LIVE: `.github/CODEOWNERS` is tracked in git, and the active
-`main` ruleset sets `require_code_owner_review` true, so a code-owner review is
-required on every PR that touches the allowlist or its pinning test — an agent
-cannot widen `VENDORED_SKILLS` without a human on the review.
+That gate binds only while branch protection requires it: `.github/CODEOWNERS`
+is tracked in git, and *when* the active `main` ruleset sets
+`require_code_owner_review` true, a code-owner review is required on every PR
+that touches the allowlist or its pinning test — so an agent cannot widen
+`VENDORED_SKILLS` without a human on the review. That ruleset setting is a
+server-side GitHub configuration no in-repo artifact verifies; if it is ever
+disabled, `.github/CODEOWNERS` is advisory only (as CODEOWNERS itself states)
+and the allowlist becomes editable behind a two-line diff. The gate is real but
+conditional — treat the ruleset setting as the load-bearing part, not this file.
 
 ## Provenance
 
