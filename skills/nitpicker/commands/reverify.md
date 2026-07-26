@@ -33,8 +33,11 @@ Re-read the current code at each finding's cited location — found by its quote
 Evidence, never by the stale line number — and assign exactly one:
 
 - **still-live** — the defect, or its pattern, still exists in the current tree.
-  Keep the finding **open**. If it moved, update the finding's cited `file:line`
-  to the new location. Evidence: the still-present code.
+  Keep the finding **open**. If it moved, record the current location in the
+  report — do not rewrite the finding file: the store has no update operation,
+  and a finding's `area` is part of its content-hashed id, so a cross-file move
+  cannot be edited in place (the owning auditor re-files it at the new area on
+  its next run). Evidence: the still-present code.
 - **fixed** — the defect was real and is now provably gone: the specific
   construct is absent **and** the surrounding code addresses the class (the
   concatenation is replaced by a parameterized query, not merely deleted and
@@ -61,8 +64,8 @@ Evidence, never by the stale line number — and assign exactly one:
 - **`fixed` needs positive proof the defect class is gone, never just a missing
   line.** A grep that no longer matches the quoted snippet is a hint, not proof —
   read the current code and confirm the class is absent, not relocated or
-  renamed. A defect that **moved** is still-live (update its location), never
-  fixed.
+  renamed. A defect that **moved** is still-live (record its new location in the
+  report), never fixed.
 - **A vanished location is not `invalid`.** `invalid` means the finding was wrong
   from the start. A deleted file or unrecognizably-rewritten code where the
   defect can no longer be found is **unverifiable** when you cannot tell, or
@@ -77,19 +80,20 @@ Evidence, never by the stale line number — and assign exactly one:
 
 ## Process
 
-1. **List every open finding.** `np_list_findings` with `status: "open"` (all
-   auditors; narrow by `auditor` or area only if the extra instructions scope
-   it), else `findings.py list --status open`. Copy the list into the task
-   tracker — one entry per finding.
+1. **List every open finding** (`status: open`; all auditors — narrow by
+   `auditor` or area only if the extra instructions scope it). Copy the list
+   into the task tracker, one entry per finding.
 2. **Adjudicate each, in id order.** Read the finding's Evidence; locate the
    cited code in the current tree by its quoted snippet; assign one of the four
-   dispositions with current-code evidence. For a still-live defect that moved,
-   record the new location.
-3. **Resolve the settled ones.** For each `fixed` / `invalid`,
-   `np_resolve_finding` (else `findings.py resolve <id> --status fixed|invalid
-   --notes "<current-code evidence>"`). Leave still-live and unverifiable open.
-4. **Refresh the index** (`np_findings_index`, else `findings.py index`).
+   dispositions with current-code evidence. Record the current location of a
+   moved still-live defect.
+3. **Resolve the settled ones** — resolve each `fixed` / `invalid` with `--notes`
+   citing the current-code evidence. Leave still-live and unverifiable open.
+4. **Refresh the index.**
 5. **Report, then run the commit gate** — "Commit findings to git? (y/n)".
+
+The store operations (list, resolve, index) and their MCP/CLI interface are
+defined in `_conventions.md`; this command does not restate them.
 
 ## Output
 
@@ -102,7 +106,7 @@ Open findings re-verified: N
 - <id> (<auditor>) — invalid — <why it was never a defect>
 
 ## Kept open
-- <id> (<auditor>) — still-live — <current location, updated if moved>
+- <id> (<auditor>) — still-live — <current location, noted if moved>
 - <id> (<auditor>) — unverifiable — <why it cannot be settled; needs human>
 
 ## Coverage
