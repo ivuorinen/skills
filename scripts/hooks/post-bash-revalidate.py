@@ -8,7 +8,11 @@ The five Write|Edit validators never see a Bash-mediated mutation (`sed -i`,
 `>` redirection, `git mv`, `cp`, `patch`), so those edits bypassed the whole
 enforcement surface. A Bash event carries no file_path, so this hook asks git
 what is dirty instead, and runs the whole-tree gates only when something under
-a governed path changed — a read-only Bash call costs one `git status`.
+a governed path is dirty. On a clean tree a read-only Bash call costs one
+`git status`; while a governed path stays dirty the gates re-run on each Bash
+call. That over-validation is deliberate and fail-safe: a `git status` snapshot
+cannot distinguish a fresh mutation from a pre-existing dirty file without
+per-file content hashing, so the hook prefers redundant work over missing an edit.
 """
 
 import subprocess
@@ -73,7 +77,10 @@ def main() -> None:
             continue
         result = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
         if result.returncode != 0:
-            failures.append((result.stdout + result.stderr).rstrip())
+            detail = (result.stdout + result.stderr).rstrip()
+            # A gate that exits non-zero with no output would otherwise block the
+            # call with an empty message; name the gate so the block is diagnosable.
+            failures.append(detail or f"{' '.join(cmd)} failed (exit {result.returncode})")
 
     if failures:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.

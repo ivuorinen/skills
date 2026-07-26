@@ -30,12 +30,19 @@ def main() -> None:
         return
 
     # `--name-only -z` lists paths NUL-separated and unquoted (safe for spaces).
-    # Renames report just the new path. `--cached` is the index, the bare form is
-    # the working tree; a path can appear in both, so dedupe while keeping order.
+    # Renames report just the new path. `--cached` is the index, the bare `diff` is
+    # the working tree, and `ls-files --others --exclude-standard` is the untracked
+    # set — a brand-new SKILL.md/command file shows up in neither diff form (git
+    # diff never lists untracked) yet is the most common pending-skill change. A
+    # path can appear in more than one, so dedupe while keeping order.
     paths: list[str] = []
-    for scope in (["--cached"], []):
+    for cmd in (
+        ["git", "diff", "--cached", "--name-only", "-z"],
+        ["git", "diff", "--name-only", "-z"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    ):
         result = subprocess.run(
-            ["git", "diff", *scope, "--name-only", "-z"],
+            cmd,
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,

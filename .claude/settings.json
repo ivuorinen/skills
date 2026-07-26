@@ -3,7 +3,8 @@
     "deny": [
       "Read(./.claude/agents/**)",
       "Edit(./.claude/agents/**)",
-      "Write(./.claude/agents/**)"
+      "Write(./.claude/agents/**)",
+      "NotebookEdit(./.claude/agents/**)"
     ]
   },
   "hooks": {
