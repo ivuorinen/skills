@@ -17,7 +17,8 @@ record, keeping the store honest.
 
 Not for finding new defects — that is the specific audit commands. `reverify`
 only adjudicates what is already filed. When a defect has moved, it keeps the
-finding open and updates its location; it never files a new finding.
+finding open and records its current location in the report; it never files a
+new finding.
 
 `reverify` **uses** the findings store — it drives `np_list_findings` /
 `np_resolve_finding` (else `findings.py list` / `resolve`) and the commit gate
