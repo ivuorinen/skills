@@ -132,21 +132,39 @@ def _module_roots(tree: ast.AST) -> set[str]:
     return roots
 
 
+def _exec_eval_name(func: ast.expr) -> str | None:
+    """The exec/eval name a call targets — bare (`exec(...)`), attribute
+    (`builtins.exec(...)`), or `getattr(x, "exec")(...)` — else None. The bare-Name
+    check alone left the attribute and getattr forms as an open hole in the gate."""
+    if isinstance(func, ast.Name) and func.id in {"exec", "eval"}:
+        return func.id
+    if isinstance(func, ast.Attribute) and func.attr in {"exec", "eval"}:
+        return func.attr
+    if (
+        isinstance(func, ast.Call)
+        and isinstance(func.func, ast.Name)
+        and func.func.id == "getattr"
+        and len(func.args) >= 2
+        and isinstance(func.args[1], ast.Constant)
+        and func.args[1].value in {"exec", "eval"}
+    ):
+        return str(func.args[1].value)
+    return None
+
+
 def _uncheckable_calls(tree: ast.AST) -> list[str]:
     """Names of ``exec``/``eval`` calls — imports hidden in a string this check cannot read.
 
     A shipped tool has no legitimate use for either, so their presence is a
     violation rather than a limitation to document.
     """
-    return sorted(
-        {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in {"exec", "eval"}
-        }
-    )
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _exec_eval_name(node.func)
+            if name:
+                names.add(name)
+    return sorted(names)
 
 
 SHIPPED_GLOB = "skills/*/scripts/**/*.py"
