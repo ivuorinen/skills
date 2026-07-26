@@ -492,3 +492,27 @@ def test_unindented_block_sequence_runs_path_glob_checks(tmp_path):
     f.write_text("---\npaths:\n- /absolute/*.ts\n---\n\nAlways add types.\n", encoding="utf-8")
     findings = _check_file(f, tmp_path)
     assert _has(findings, "absolute_glob")
+
+
+def test_unreadable_rules_dir_fails_the_gate(monkeypatch, tmp_path, capsys):
+    """A rules subtree the process cannot read must fail the gate, not exit 0 on a
+    silently narrowed scan."""
+    rules = tmp_path / ".claude" / "rules"
+    (rules / "sub").mkdir(parents=True)
+    (rules / "ok.md").write_text(
+        "---\nname: x\n---\n\nAlways add explicit types.\n", encoding="utf-8"
+    )
+
+    real_scandir = _mod.os.scandir
+
+    def _scandir(path, *a, **k):
+        if str(path).endswith("sub"):
+            raise PermissionError(13, "denied")
+        return real_scandir(path, *a, **k)
+
+    monkeypatch.setattr(_mod.os, "scandir", _scandir)
+    monkeypatch.setattr(sys, "argv", ["check-rules-anatomy.py", str(tmp_path)])
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 1
+    assert "cannot scan" in capsys.readouterr().err

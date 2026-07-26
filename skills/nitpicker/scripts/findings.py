@@ -694,8 +694,14 @@ def ensure_store_gitattributes(root: Path) -> None:
     try:
         root.mkdir(parents=True, exist_ok=True)
         gitignore = root / ".gitignore"
-        if not gitignore.exists():
-            gitignore.write_text(".lock\n*.tmp\n", encoding="utf-8")
+        managed = (".lock", "*.tmp")
+        existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+        missing = [pat for pat in managed if pat not in existing]
+        if missing:
+            # Preserve any pre-existing rules and append only the managed patterns
+            # that are absent, so an existing .gitignore still ends up covering the
+            # transient .lock/*.tmp rather than being skipped and leaving them tracked.
+            gitignore.write_text("\n".join(existing + missing) + "\n", encoding="utf-8")
         if not store_gitattributes_present(root):
             (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
     except OSError:

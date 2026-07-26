@@ -963,6 +963,17 @@ def test_ensure_store_gitattributes_writes_mark(tmp_path):
     assert findings.check_review_hygiene(store) is None
 
 
+def test_ensure_store_gitignore_augments_existing_without_clobbering(tmp_path):
+    (tmp_path / ".git").mkdir()
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    (store / ".gitignore").write_text("custom-artifact/\n", encoding="utf-8")
+    findings.ensure_store_gitattributes(store)
+    lines = (store / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "custom-artifact/" in lines  # pre-existing rule preserved
+    assert ".lock" in lines and "*.tmp" in lines  # managed patterns appended
+
+
 def test_ensure_store_gitattributes_skips_when_gitignored(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / ".gitignore").write_text("docs/audit/\n", encoding="utf-8")
