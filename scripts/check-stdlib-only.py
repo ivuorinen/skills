@@ -132,19 +132,32 @@ def _module_roots(tree: ast.AST) -> set[str]:
     return roots
 
 
+_BUILTINS_NS = {"builtins", "__builtins__"}
+
+
 def _exec_eval_name(func: ast.expr) -> str | None:
-    """The exec/eval name a call targets — bare (`exec(...)`), attribute
-    (`builtins.exec(...)`), or `getattr(x, "exec")(...)` — else None. The bare-Name
-    check alone left the attribute and getattr forms as an open hole in the gate."""
+    """The exec/eval name a call targets — bare (`exec(...)`), a builtins-namespace
+    attribute (`builtins.exec(...)`), or `getattr(builtins, "exec")(...)` — else None.
+
+    The attribute and getattr forms match only when the receiver is the builtins
+    namespace, so a legitimate `worker.exec()` or `getattr(worker, "eval")()` on some
+    other object is not falsely flagged; the bare-name form has no receiver to check."""
     if isinstance(func, ast.Name) and func.id in {"exec", "eval"}:
         return func.id
-    if isinstance(func, ast.Attribute) and func.attr in {"exec", "eval"}:
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr in {"exec", "eval"}
+        and isinstance(func.value, ast.Name)
+        and func.value.id in _BUILTINS_NS
+    ):
         return func.attr
     if (
         isinstance(func, ast.Call)
         and isinstance(func.func, ast.Name)
         and func.func.id == "getattr"
         and len(func.args) >= 2
+        and isinstance(func.args[0], ast.Name)
+        and func.args[0].id in _BUILTINS_NS
         and isinstance(func.args[1], ast.Constant)
         and func.args[1].value in {"exec", "eval"}
     ):

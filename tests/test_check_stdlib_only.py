@@ -53,6 +53,13 @@ def test_uncheckable_flags_getattr_eval() -> None:
     assert _mod._uncheckable_calls(ast.parse("getattr(builtins, 'eval')('1')\n")) == ["eval"]
 
 
+def test_uncheckable_ignores_non_builtins_receiver() -> None:
+    # worker.exec()/getattr(worker, "eval") target some other object, not Python's
+    # builtins — not a hidden import, so the gate must not falsely flag them.
+    assert _mod._uncheckable_calls(ast.parse("worker.exec('x')\n")) == []
+    assert _mod._uncheckable_calls(ast.parse("getattr(worker, 'eval')('1')\n")) == []
+
+
 def test_first_party_sibling_allowed(tmp_path: Path) -> None:
     _tool(tmp_path, "common.py", "X = 1\n")
     _tool(tmp_path, "uses_sibling.py", "import common\n")
