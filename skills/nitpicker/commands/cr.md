@@ -173,6 +173,28 @@ This menu overrides autonomous/goal mode — never commit, push, or post without
   }
   ```
 
+## CodeRabbit review loop
+
+CodeRabbit (`coderabbitai[bot]`) is an **asynchronous** reviewer: it posts a review after the PR opens and re-reviews after each push, but a free-tier account throttles reviews (typically one per hour) while a paid account does not. When CodeRabbit is among the PR's reviewers and the user has authorised iterating to completion — the Step 6 commit + push + reply choice, made once, stands for every iteration of this loop — drive the PR to a clean state instead of stopping after one pass.
+
+1. **Handle the current batch** via Steps 2–6. Fetch every unresolved review thread **and** the review's *outside-diff-range* comments — CodeRabbit posts those in the review body (a `⚠️ Outside diff range comments` block), not as inline threads, so parse the latest `coderabbitai[bot]` review body too or they are silently missed. Evaluate, implement, push, reply, and resolve each.
+2. **Read the account tier from the summary comment** — the `coderabbitai[bot]` issue comment containing `summarize by coderabbit`:
+   - **Rate-limited (free):** it carries a `Review limit reached — Next review available in: N minutes` note. CodeRabbit cannot review now.
+   - **Not rate-limited (paid, or within quota):** no such note. CodeRabbit auto-reviews every push.
+3. **Get the next review:**
+   - **Paid / not rate-limited:** do **not** post a manual trigger — the push already queued an incremental review. Wait and poll until a new `coderabbitai[bot]` review appears (a review `submitted_at` after your push, or the summary comment's reviewed commit range advancing to include your latest commit).
+   - **Rate-limited (free):** wait until the stated window elapses **relative to the summary comment's last-edit time** (not relative to now), then post the issue comment `@coderabbitai review` to trigger the re-review. Then poll for it to land.
+4. **Handle the new batch** — back to step 1.
+5. **Terminate** when either the summary comment shows **`No actionable comments were generated in the recent review`** for a review whose reviewed commit range **includes your latest fix**, **or** CodeRabbit submits an `APPROVED` review. Report the outcome; never keep triggering after a clean pass.
+
+Loop rules:
+
+- **The loop never bypasses Step 6's consent.** It runs only after the user authorised commit + push + reply; that one authorisation covers every iteration. Without it, stop after one pass and tell the user CodeRabbit will re-review the push.
+- **A manual `@coderabbitai review` is only for a rate-limited account.** On a paid account it wastes a review and is forbidden — wait for the automatic incremental review instead.
+- **Confirm the review saw your fix before declaring clean.** A `Review finished` acknowledgement, or a `No actionable comments` on a review whose commit range predates your latest push, has **not** seen the fix — keep waiting. `Review finished` is an ack that the command was received, never a result.
+- **Bound each wait, not the loop.** Size each wait to the stated rate-limit window, or a short poll interval on a paid account; never spin faster than the reviewer can respond. The loop ends on clean-or-approved, never on a fixed iteration count that would abandon open findings.
+- **A re-raised finding you already Pushed Back is not a new batch.** If CodeRabbit repeats a comment you evaluated and declined with a technical reason, do not implement it to silence it and do not keep looping on it — restate the pushback once, surface the disagreement to the user, and treat that pass as clean for loop purposes. The loop drives to *resolved*, not to *CodeRabbit always wins*.
+
 ## Fix strategy
 
 - **One comment → one fix → one validation cycle.** Never batch multiple comments before running the check.
@@ -195,3 +217,7 @@ This menu overrides autonomous/goal mode — never commit, push, or post without
 - **Silent skipping**: every comment receives an explicit verdict and a drafted reply.
 - **Scope creep**: fixing identical instances of the same defect is in scope; fixing different defects noticed nearby is not.
 - **Marking already-resolved code as Implemented**: if the flagged code was fixed in a prior commit, the verdict is Skipped.
+- **Treating CodeRabbit's `Review finished` as a result**: it is an acknowledgement that the command was received. Wait for the actual review whose commit range includes your fix.
+- **Missing CodeRabbit's outside-diff-range comments**: they live in the review body, not as inline threads. Parse the review body or they are silently dropped from the batch.
+- **Manually triggering `@coderabbitai review` on a paid account**: it wastes a review. The manual trigger is only for a rate-limited account that cannot auto-review; a paid account re-reviews every push automatically.
+- **Declaring clean on a stale review**: `No actionable comments` on a review whose range predates your latest push has not seen the fix. Confirm the reviewed range includes your fix commit before ending the loop.
