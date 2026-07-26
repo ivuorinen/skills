@@ -97,7 +97,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `arch` | Audit architectural violations against detected or declared patterns (alias: `arch-auditor`) |
 | `arch-profile` | Detect architectural patterns; writes `docs/audit/arch-profile.md` (alias: `arch-detector`) |
 | `contract` | Declared API surface vs implementation vs declared semver bump (alias: `api-contract-auditor`) |
-| `deps` | Dependency health beyond CVEs: unused, phantom, duplicate, unmaintained (alias: `dep-auditor`) |
+| `deps` | Dependency health beyond CVEs: unused, phantom, duplicate, unmaintained, plus the supply-chain execution surface — install scripts, dependency-confusion, typosquats, integrity (alias: `dep-auditor`) |
 | `license` | License compliance: project license, dep compatibility, copyleft contamination, attribution |
 | `migrations` | Audit DB schema/data migrations for production safety (alias: `migration-auditor`) |
 
