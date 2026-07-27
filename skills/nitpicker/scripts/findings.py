@@ -753,10 +753,13 @@ def new_finding(
     force: bool = False,
 ) -> Path:
     _check_auditor(auditor)
-    # Redact before hashing: the id is derived from title+area, so redacting
-    # first keeps the id stable for the text actually written to disk.
-    title = redact(title)
-    area = redact(area)
+    # Redact and strip before hashing: the id is derived from title+area, so
+    # normalizing first keeps the id stable for the text actually written to
+    # disk — render writes `# {title}` and parse_finding reads it back stripped,
+    # so hashing the unstripped form would reject an idempotent re-file of a
+    # whitespace-padded title as a false collision.
+    title = redact(title).strip()
+    area = redact(area).strip()
     fid = finding_id(auditor, area, title)
     if not body.strip():
         body = "\n\n".join(f"## {s}\n" for s in OPEN_SECTIONS)

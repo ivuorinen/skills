@@ -389,6 +389,9 @@ def test_deny_agents_blocks_escaped_slash(monkeypatch):
         "A=agents; cat .claude/$A/reviewer.md",  # variable-built path
         "cat .claude/agent*/*.md",  # glob star
         "cat .claude/agent?/reviewer.md",  # glob question
+        "cat .claude/a*/reviewer.md",  # glob truncated before "agent"
+        "cat .claude/age*/reviewer.md",  # glob truncated mid-word
+        "printf x > .claude/a[g]ents/reviewer.md",  # bracket glob, no literal "agent"
     ],
 )
 def test_deny_agents_blocks_indirection_and_glob(monkeypatch, command):

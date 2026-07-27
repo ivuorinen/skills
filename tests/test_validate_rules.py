@@ -248,3 +248,15 @@ def test_import_only_modules_are_exempt_from_the_shebang_rule(tmp_path):
     (tmp_path / "scripts" / "hooks").mkdir(parents=True)
     (tmp_path / "scripts" / "hooks" / "_hooklib.py").write_text('"""Shared."""\n', encoding="utf-8")
     assert _repo_errors(tmp_path) == []
+
+
+def test_non_utf8_file_reports_error_not_traceback(tmp_path):
+    # A non-UTF-8 byte in a scanned .md or .py must produce a clean ERROR, not an
+    # uncaught UnicodeDecodeError crashing the whole validator.
+    (tmp_path / "skills" / "demo").mkdir(parents=True)
+    (tmp_path / "skills" / "demo" / "SKILL.md").write_bytes(b"\xff\xfe bad bytes")
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts" / "thing.py").write_bytes(b"\xff not utf-8")
+    errors = _repo_errors(tmp_path)  # must not raise
+    assert _has(errors, "cannot read file")
+    assert sum("cannot read file" in e for e in errors) == 2

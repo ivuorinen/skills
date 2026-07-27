@@ -62,9 +62,10 @@ Enforced by `scripts/validate-skill.py` (run via `make validate`, part of `make 
 - h1 `# /nitpicker <command> — <Title>` where `<command>` matches the filename
 - a `## When to use` section
 - no header-level jumps (h2 → h4 is an error)
-- every file in `commands/` must have a row in one of the command tables of SKILL.md
-  (`## Commands` or `## Internal commands`), **1:1**, enforced by `scripts/validate-skill.py` —
-  a table row without a file or a file without a row fails validation
+- every command file in `commands/` whose name does not begin with `_` must have a row in one
+  of the command tables of SKILL.md (`## Commands` or `## Internal commands`), **1:1**, enforced
+  by `scripts/validate-skill.py` — a table row without a file or a non-`_` file without a row
+  fails validation; shared files prefixed `_` (e.g. `_conventions.md`) are exempt from the cross-check
 - never restate `_conventions.md` content (severity table, findings protocol, generic rules)
 - no reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`) in skill bodies:
   arguments are parsed from the free text after the invocation so the skill works in Copilot and pi

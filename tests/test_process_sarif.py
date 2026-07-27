@@ -597,6 +597,22 @@ def test_normalize_severity_tolerates_nonstring_signals(sev):
         {"tool": {"driver": {"rules": ["notadict"]}}, "results": []},
         {"tool": {"driver": {"name": "t"}}, "results": ["notadict"]},
         {"tool": {"driver": {"name": "t"}}, "results": [{"ruleId": "x", "taxa": ["notadict"]}]},
+        # Wrong-typed location nodes (object where array expected, and vice-versa)
+        # must not raise KeyError/AttributeError and abort the whole run.
+        {"tool": {"driver": {"name": "t"}}, "results": [{"ruleId": "x", "locations": {"k": "v"}}]},
+        {
+            "tool": {"driver": {"name": "t"}},
+            "results": [
+                {
+                    "ruleId": "x",
+                    "locations": [{"physicalLocation": {"artifactLocation": [1], "region": [2]}}],
+                }
+            ],
+        },
+        {
+            "tool": {"driver": {"name": "t"}},
+            "results": [{"ruleId": "x", "locations": [{"physicalLocation": ["notadict"]}]}],
+        },
     ],
 )
 def test_extract_findings_skips_malformed_nodes(run):

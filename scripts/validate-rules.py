@@ -47,7 +47,7 @@ def validate(path: Path, errors: list[str], warnings: list[str], repo_root: Path
 
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         err(f"cannot read file: {e}")
         return
 
@@ -119,7 +119,12 @@ _NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
 
 def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
     for path in sorted(repo_root.glob("skills/**/*.md")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            errors.append(f"  ERROR  {path.relative_to(repo_root)}: cannot read file: {e}")
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
             m = _DATE_RE.search(line)
             if m:
                 rel = path.relative_to(repo_root)
@@ -131,7 +136,11 @@ def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
     for path in sorted(repo_root.glob("scripts/**/*.py")):
         if path.name in _NO_SHEBANG_OK:
             continue
-        first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+        try:
+            first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+        except (OSError, UnicodeDecodeError) as e:
+            errors.append(f"  ERROR  {path.relative_to(repo_root)}: cannot read file: {e}")
+            continue
         if first != _UV_SHEBANG:
             rel = path.relative_to(repo_root)
             errors.append(f"  ERROR  {rel}: first line must be '{_UV_SHEBANG}' (got {first!r})")

@@ -20,23 +20,28 @@ from _hooklib import load_event  # type: ignore[import-not-found]
 # `agents` catches `cd .claude/agents`, a bare `.claude/agents` argument, and
 # `.claude/agents/foo.md` alike. Arbitrary shell cannot be fully parsed in a hook,
 # but _canonicalize folds the filesystem-equivalent spellings (escaped, quoted,
-# repeated/`.` slashes) first, and _AGENTS_INDIRECT_RE catches the variable- and
-# glob-built paths the literal match misses.
+# repeated/`.` slashes, glob metacharacters) first, and _AGENTS_INDIRECT_RE
+# catches the variable-built paths and any `.claude/a…` spelling the literal
+# match misses.
 _DENIED_RE = re.compile(r"\.claude/agents\b")
 # Catch-all: the literal match misses shell-variable paths (`$D/agents/…`),
-# assignments (`A=agents; … $A …`), and globs (`.claude/agent*/…`). Fire whenever
-# `.claude` appears together with an `agents` path/assignment token or a
-# `.claude/agent`-glob. Broad on purpose — a false positive costs one blocked
-# Bash call; a false negative exposes the CODEOWNERS-gated agent definitions the
-# Read/Edit/Write deny list cannot reach for the Bash tool.
+# assignments (`A=agents; … $A …`), and globs. Because _canonicalize strips glob
+# metacharacters first, a truncated glob like `.claude/a*` or `.claude/a[g]ents`
+# folds to `.claude/a…` / `.claude/agents`; the `\.claude/a` branch fires on the
+# former and _DENIED_RE on the latter. `.claude/` has one `a*` child (`agents`),
+# so any `.claude/a…` the shell would expand resolves there. Broad on purpose — a
+# false positive costs one blocked Bash call; a false negative exposes the
+# CODEOWNERS-gated agent definitions the Read/Edit/Write deny list cannot reach
+# for the Bash tool.
 _CLAUDE_RE = re.compile(r"\.claude\b")
-_AGENTS_INDIRECT_RE = re.compile(r"[=/$]agents?\b|\.claude/agent[?*\[]")
+_AGENTS_INDIRECT_RE = re.compile(r"[=/$]agents?\b|\.claude/a")
 DENIED = ".claude/agents"
 
 
 def _canonicalize(command: str) -> str:
     command = command.replace("\\/", "/")  # escaped separators: `.claude\/agents`
     command = re.sub(r"[\"'\\]", "", command)  # quotes/backslashes: `agent"s"`, `\agents`
+    command = re.sub(r"[*?\[\]]", "", command)  # glob metachars: `.claude/a*`, `.claude/a[g]ents`
     command = re.sub(r"/{2,}", "/", command)  # repeated slashes: `.claude//agents`
     command = re.sub(r"/(?:\./)+", "/", command)  # `.` segments: `.claude/./agents`
     return command

@@ -181,12 +181,15 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:
 
         # Location
         uri, start_line, start_col = "", 0, 0
-        locations = result.get("locations") or []
-        first_loc = locations[0] if locations else None
+        locations = result.get("locations")
+        first_loc = locations[0] if isinstance(locations, list) and locations else None
         if isinstance(first_loc, dict):
-            phys = first_loc.get("physicalLocation") or {}
-            uri = (phys.get("artifactLocation") or {}).get("uri", "") or ""
-            region = phys.get("region") or {}
+            phys = first_loc.get("physicalLocation")
+            phys = phys if isinstance(phys, dict) else {}
+            al = phys.get("artifactLocation")
+            uri = (al.get("uri", "") or "") if isinstance(al, dict) else ""
+            region = phys.get("region")
+            region = region if isinstance(region, dict) else {}
             start_line = _int(region.get("startLine", 0))
             start_col = _int(region.get("startColumn", 0))
 
