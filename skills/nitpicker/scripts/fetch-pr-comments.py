@@ -310,7 +310,14 @@ def main() -> None:
     if _gh_available():
         try:
             threads = fetch_graphql(owner, repo, pr_number)
-        except Exception as graphql_err:
+        except (RuntimeError, subprocess.SubprocessError) as graphql_err:
+            # Only transport/permanent-API failures reach the REST fallback:
+            # _gh_graphql raises RuntimeError (gh stderr) on transport failure and
+            # fetch_graphql raises RuntimeError on GraphQL `errors`/PR-not-found.
+            # A response-shape bug (TypeError/KeyError/JSONDecodeError from an
+            # unexpected 200 body, e.g. `repository: null`) is NOT caught here — it
+            # propagates as a hard error rather than silently downgrading to
+            # resolved-blind REST and re-surfacing resolved threads as unresolved.
             # GraphQL is the only source of `isResolved`; the REST fallback returns
             # every thread with is_resolved=None. A transient GraphQL error
             # (secondary rate limit, 5xx) must therefore NOT silently downgrade to

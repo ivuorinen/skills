@@ -624,3 +624,25 @@ class TestMain:
         ):
             _mod.main()
         assert exc.value.code == 1
+
+
+def test_main_hard_fails_on_graphql_shape_bug_without_rest_downgrade(monkeypatch):
+    """A GraphQL response-shape bug (TypeError, e.g. `repository: null`) must NOT be
+    caught and downgraded to resolved-blind REST — it propagates as a hard error."""
+    monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py", "owner", "repo", "1"])
+    monkeypatch.setattr(_mod, "_gh_available", lambda: True)
+
+    def _shape_bug(*a):
+        raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr(_mod, "fetch_graphql", _shape_bug)
+    called = {"rest": False}
+
+    def _rest(*a):
+        called["rest"] = True
+        return []
+
+    monkeypatch.setattr(_mod, "fetch_rest_gh", _rest)
+    with pytest.raises(TypeError):
+        _mod.main()
+    assert called["rest"] is False  # did not silently fall back to resolved-blind REST

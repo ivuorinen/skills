@@ -683,14 +683,27 @@ def store_gitattributes_present(root: Path) -> bool:
 
 
 def ensure_store_gitattributes(root: Path) -> None:
-    """Write the in-store .gitattributes marking findings generated, unless the
-    store is gitignored or the mark is already present. The skill manages this
-    file in its own domain; it never touches the repo-root .gitattributes."""
-    if not root.exists() or is_store_gitignored(root) or store_gitattributes_present(root):
+    """Write the in-store hygiene files, unless the store is gitignored. The
+    .gitattributes marks findings linguist-generated; the .gitignore keeps the
+    transient .lock/*.tmp files out of consumer working trees — the store is
+    git-tracked and the skill ships no repo-root .gitignore, so without this every
+    audit run stages a stray .lock. The skill manages both in its own domain; it
+    never touches the repo-root files."""
+    if not root.exists() or is_store_gitignored(root):
         return
     try:
         root.mkdir(parents=True, exist_ok=True)
-        (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
+        gitignore = root / ".gitignore"
+        managed = (".lock", "*.tmp")
+        existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+        missing = [pat for pat in managed if pat not in existing]
+        if missing:
+            # Preserve any pre-existing rules and append only the managed patterns
+            # that are absent, so an existing .gitignore still ends up covering the
+            # transient .lock/*.tmp rather than being skipped and leaving them tracked.
+            gitignore.write_text("\n".join(existing + missing) + "\n", encoding="utf-8")
+        if not store_gitattributes_present(root):
+            (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
     except OSError:
         pass
 
@@ -780,6 +793,19 @@ def new_finding(
                 raise FindingError(
                     f"finding {fid} already exists (resolved) in the ledger; use --force to re-open"
                 )
+        if force and fid in ledger:
+            # write_ledger below refuses to run if the ledger has an unparseable
+            # line; check that BEFORE materializing the open file, so a corrupt
+            # ledger fails the whole op cleanly instead of leaving the id both open
+            # on disk and present in the ledger — the both-state validate flags.
+            ledger_errors: list[str] = []
+            read_ledger(root, ledger_errors)
+            if ledger_errors:
+                raise FindingError(
+                    f"refusing to re-open {fid}: {len(ledger_errors)} unparseable "
+                    "ledger line(s) would block the required ledger rewrite:\n"
+                    + "\n".join(ledger_errors)
+                )
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text(render_finding(fm, title, body), encoding="utf-8")
@@ -860,7 +886,12 @@ def show_finding(root: Path, fid: str) -> str:
     _check_id(fid)
     matches = sorted(root.glob(f"*/open/{fid}.md"))
     if matches:
-        return matches[0].read_text(encoding="utf-8")
+        try:
+            return matches[0].read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # A concurrent resolve unlinked the open file between the glob and
+            # here; fall through to the ledger, where it now lives as resolved.
+            pass
     rec = resolved_records(root).get(fid)
     if rec:
         fm = {k: rec.get(k, "") for k in _KNOWN_FM}
@@ -1405,6 +1436,12 @@ def gather_findings(
     The single listing primitive behind both the CLI ``list`` command and the MCP
     ``np_list_findings`` tool, so the two cannot drift on which filters exist or
     how they behave.
+
+    Read paths take no store lock. During a concurrent ``resolve``'s brief
+    append-then-unlink window a finding can appear as both an open file and a
+    ledger record, so ``list`` may transiently show it twice; this is
+    self-clearing (the unlink closes the window) and lossless — writers are
+    serialized under the store lock.
     """
     rows: list[dict] = []
     if status in ("", "open"):

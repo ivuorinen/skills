@@ -1,7 +1,10 @@
 """Tests for scripts/validate-rules.py — validate()."""
 
 import importlib.util
+import sys
 from pathlib import Path
+
+import pytest
 
 _spec = importlib.util.spec_from_file_location(
     "validate_rules",
@@ -11,6 +14,30 @@ _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 validate = _mod.validate
 _discover_targets = _mod._discover_targets
+
+
+def test_main_exits_zero_and_prints_ok_when_clean(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "r.md"
+    target.write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", str(target)])
+    monkeypatch.setattr(_mod, "validate", lambda *a, **k: None)
+    _mod.main()  # no SystemExit
+    assert "OK" in capsys.readouterr().out
+
+
+def test_main_exits_one_when_validate_reports_errors(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "r.md"
+    target.write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", str(target)])
+
+    def _fake(path, errors, warnings, repo_root):
+        errors.append("BOOM injected error")
+
+    monkeypatch.setattr(_mod, "validate", _fake)
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 1
+    assert "BOOM" in capsys.readouterr().out
 
 
 def _run(tmp_path: Path, content: str, filename: str = "my-rule.md") -> tuple[list[str], list[str]]:

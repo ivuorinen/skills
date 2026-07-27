@@ -1,5 +1,6 @@
 """Tests for scripts/check-stdlib-only.py."""
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -36,6 +37,27 @@ def test_third_party_import_flagged(tmp_path: Path) -> None:
     assert len(problems) == 1
     assert "requests" in problems[0]
     assert "bad.py" in problems[0]
+
+
+def test_uncheckable_flags_bare_exec() -> None:
+    assert _mod._uncheckable_calls(ast.parse("exec('x')\n")) == ["exec"]
+
+
+def test_uncheckable_flags_attribute_exec() -> None:
+    # `builtins.exec(...)` is an ast.Attribute call — the bare-Name check missed it.
+    tree = ast.parse("import builtins\nbuiltins.exec('import requests')\n")
+    assert _mod._uncheckable_calls(tree) == ["exec"]
+
+
+def test_uncheckable_flags_getattr_eval() -> None:
+    assert _mod._uncheckable_calls(ast.parse("getattr(builtins, 'eval')('1')\n")) == ["eval"]
+
+
+def test_uncheckable_ignores_non_builtins_receiver() -> None:
+    # worker.exec()/getattr(worker, "eval") target some other object, not Python's
+    # builtins — not a hidden import, so the gate must not falsely flag them.
+    assert _mod._uncheckable_calls(ast.parse("worker.exec('x')\n")) == []
+    assert _mod._uncheckable_calls(ast.parse("getattr(worker, 'eval')('1')\n")) == []
 
 
 def test_first_party_sibling_allowed(tmp_path: Path) -> None:

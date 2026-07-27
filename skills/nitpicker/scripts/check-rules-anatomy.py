@@ -197,7 +197,11 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:
     return findings
 
 
-def _iter_rules(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
+def _iter_rules(
+    rules_dir: Path,
+    seen: set[Path] | None = None,
+    errors: list[Path] | None = None,
+) -> list[Path]:
     if seen is None:
         seen = set()
     try:
@@ -216,11 +220,16 @@ def _iter_rules(rules_dir: Path, seen: set[Path] | None = None) -> list[Path]:
                 if entry.is_symlink() and not p.exists():
                     results.append(p)
                 elif entry.is_dir(follow_symlinks=True):
-                    results.extend(_iter_rules(p, seen))
+                    results.extend(_iter_rules(p, seen, errors))
                 elif entry.name.endswith(".md"):
                     results.append(p)
     except PermissionError:
-        pass
+        # A dir the process cannot read silently narrows the gate. Warn for a human,
+        # and record it so main() can fail the gate — a warning alone still lets CI
+        # exit 0 with rules unread.
+        print(f"[warn] cannot scan {rules_dir}: permission denied", file=sys.stderr)
+        if errors is not None:
+            errors.append(rules_dir)
     return sorted(results)
 
 
@@ -253,7 +262,16 @@ def main() -> None:
         )
         sys.exit(0)
 
-    rule_files = _iter_rules(rules_dir)
+    scan_errors: list[Path] = []
+    rule_files = _iter_rules(rules_dir, errors=scan_errors)
+
+    if scan_errors:
+        # An unreadable rule directory means the gate ran on an incomplete set;
+        # fail rather than exit 0 on a silently narrowed scan (including the case
+        # where the top rules dir itself is unreadable and rule_files is empty).
+        for d in scan_errors:
+            print(f"ERROR  cannot scan {d}: permission denied — rules left unread", file=sys.stderr)
+        sys.exit(1)
 
     if not rule_files:
         print(

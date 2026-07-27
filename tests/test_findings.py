@@ -888,6 +888,28 @@ def test_resolve_force_refuses_to_drop_unparseable_ledger_line(tmp_path):
         findings.resolve_finding(tmp_path, fid, "invalid", "again", force=True)
 
 
+def test_new_force_refuses_reopen_when_ledger_unparseable_and_writes_no_open_file(tmp_path):
+    # Re-opening a resolved finding must fail BEFORE the open file is written when
+    # the ledger has a corrupt line, so the store is never left both-open-and-
+    # resolved (a both-state validate would flag).
+    args = dict(
+        auditor="security",
+        severity="high",
+        category="security",
+        area="src/auth.py",
+        title="Token compared with ==",
+        body=BODY,
+        found="2026-07-08",
+    )
+    fid = findings.new_finding(tmp_path, **args).stem
+    findings.resolve_finding(tmp_path, fid, "fixed", "done")  # id now in ledger, open file gone
+    ledger = findings.ledger_path(tmp_path)
+    ledger.write_text(ledger.read_text(encoding="utf-8") + "{ not json\n", encoding="utf-8")
+    with pytest.raises(findings.FindingError, match="unparseable"):
+        findings.new_finding(tmp_path, force=True, **args)
+    assert not (tmp_path / "security" / "open" / f"{fid}.md").exists()
+
+
 def test_validate_flags_duplicate_ledger_id(tmp_path):
     path = _new(tmp_path)
     findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
@@ -939,6 +961,17 @@ def test_ensure_store_gitattributes_writes_mark(tmp_path):
     ga = store / ".gitattributes"
     assert ga.exists() and "linguist-generated" in ga.read_text(encoding="utf-8")
     assert findings.check_review_hygiene(store) is None
+
+
+def test_ensure_store_gitignore_augments_existing_without_clobbering(tmp_path):
+    (tmp_path / ".git").mkdir()
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    (store / ".gitignore").write_text("custom-artifact/\n", encoding="utf-8")
+    findings.ensure_store_gitattributes(store)
+    lines = (store / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "custom-artifact/" in lines  # pre-existing rule preserved
+    assert ".lock" in lines and "*.tmp" in lines  # managed patterns appended
 
 
 def test_ensure_store_gitattributes_skips_when_gitignored(tmp_path):

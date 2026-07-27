@@ -377,3 +377,89 @@ def test_deny_agents_blocks_escaped_slash(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         _run(mod, event, monkeypatch)
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cat .claude/agent"s"/reviewer.md',  # quote splice
+        "cat .claude/'agents'/reviewer.md",  # single-quote splice
+        "cat .claude/\\agents/reviewer.md",  # bare backslash escape
+        'D=.claude; printf x > "$D/agents/reviewer.md"',  # variable indirection
+        "A=agents; cat .claude/$A/reviewer.md",  # variable-built path
+        "cat .claude/agent*/*.md",  # glob star
+        "cat .claude/agent?/reviewer.md",  # glob question
+    ],
+)
+def test_deny_agents_blocks_indirection_and_glob(monkeypatch, command):
+    """Every spelling the shell resolves to .claude/agents/ must block — the literal
+    substring match missed quoting, backslash, variable indirection, and globs."""
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": command}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_deny_agents_allows_agents_word_without_path(monkeypatch):
+    # `.claude` present and the word "agents" present, but not as a path into the
+    # agents dir (grepping rules for the word) — must not false-positive.
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": "grep agents .claude/rules/foo.md"}})
+    _run(mod, event, monkeypatch)  # no SystemExit
+
+
+def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):
+    """The subprocess payload — run the two validators, set `failed`, surface stderr,
+    exit 2 — was untested; only the early-return guards were. Stub the validators as
+    failing and assert the hook blocks the call with their output."""
+    mod = _load("validate-rules-hook")
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    rule = rules / "bad.md"
+    rule.write_text("# Bad\n", encoding="utf-8")
+    # The existence guard needs both validator scripts present.
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-rules.py").touch()
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
+    anatomy.mkdir(parents=True)
+    (anatomy / "check-rules-anatomy.py").touch()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+
+    def _failing_run(cmd, *a, **k):
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "RULE VIOLATION: hedged language in bad.md\n"
+
+        return _R()
+
+    monkeypatch.setattr(mod.subprocess, "run", _failing_run)
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(rule)}}
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps(payload), monkeypatch)
+    assert exc.value.code == 2
+    assert "RULE VIOLATION" in capsys.readouterr().err
+
+
+def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):
+    """A brand-new unstaged command file appears only in `git ls-files --others`,
+    not in either `git diff` form — it must still be flagged."""
+    mod = _load("stop-reminder")
+
+    def _run_git(argv, *a, **k):
+        untracked = "--others" in argv
+        paths = ["skills/nitpicker/commands/newcmd.md"] if untracked else []
+
+        class _R:
+            returncode = 0
+            stdout = "\0".join([*paths, ""])
+
+        return _R()
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_git)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert "skills/nitpicker/commands/newcmd.md" in capsys.readouterr().err
