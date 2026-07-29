@@ -392,6 +392,9 @@ def test_deny_agents_blocks_escaped_slash(monkeypatch):
         "cat .claude/a*/reviewer.md",  # glob truncated before "agent"
         "cat .claude/age*/reviewer.md",  # glob truncated mid-word
         "printf x > .claude/a[g]ents/reviewer.md",  # bracket glob, no literal "agent"
+        "cat .?laude/agents/reviewer.md",  # glob obscures the "c" in .claude (no literal .claude)
+        "cat .cl*de/agents/reviewer.md",  # glob obscures "au" in .claude
+        "printf x > .?laude/agents/new-file.md",  # glob-obscured root, not-yet-existing file
     ],
 )
 def test_deny_agents_blocks_indirection_and_glob(monkeypatch, command):
