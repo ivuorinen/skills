@@ -395,6 +395,8 @@ def test_deny_agents_blocks_escaped_slash(monkeypatch):
         "cat .?laude/agents/reviewer.md",  # glob obscures the "c" in .claude (no literal .claude)
         "cat .cl*de/agents/reviewer.md",  # glob obscures "au" in .claude
         "printf x > .?laude/agents/new-file.md",  # glob-obscured root, not-yet-existing file
+        "cd .claude && cat a*/reviewer.md",  # cd shifts the glob base into .claude
+        "cd .?laude && cat a*/reviewer.md",  # glob-spelled cd target shifts the base
     ],
 )
 def test_deny_agents_blocks_indirection_and_glob(monkeypatch, command):
@@ -413,6 +415,22 @@ def test_deny_agents_allows_agents_word_without_path(monkeypatch):
     mod = _load("deny-agents-path-hook")
     event = json.dumps({"tool_input": {"command": "grep agents .claude/rules/foo.md"}})
     _run(mod, event, monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat /etc/*.conf",  # absolute glob outside the repo
+        "cat /tmp/.cl*de/agents/*.md",  # absolute glob-obscured path outside the repo
+        "find / -name a*",  # absolute root glob
+    ],
+)
+def test_deny_agents_absolute_glob_does_not_crash(command):
+    # Path.glob raises NotImplementedError/ValueError on absolute patterns; the
+    # guard must swallow that (fail-safe) rather than crash open. These point
+    # outside the repo, so they resolve to "allow".
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents(command) is False
 
 
 def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):

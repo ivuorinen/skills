@@ -26,11 +26,12 @@ _REPO_ROOT = repo_root()
 #    (`.claude/a*`, `.claude/a[g]ents`) after _canonicalize folds escaped,
 #    quoted, and repeated/`.`-slash forms.
 # 2. Glob expansion — _glob_reaches_agents actually expands glob tokens against
-#    the repo, so a metacharacter that obscures the `.claude` root itself
-#    (`.?laude/agents`, `.cl*de/agents`) — leaving no literal substring for the
-#    textual pass to match — is still caught by the shell's own semantics.
-#    _canonicalize therefore must NOT delete glob metacharacters: stripping the
-#    `?` in `.?laude` collapses it to `.laude` and hides the match.
+#    the repo (from the root and from any `cd` target), so a metacharacter that
+#    obscures the `.claude` root itself (`.?laude/agents`, `.cl*de/agents`) or a
+#    `cd .claude && cat a*/…` that shifts the glob base — neither leaving a
+#    literal substring for the textual pass — is still caught by the shell's own
+#    semantics. _canonicalize therefore must NOT delete glob metacharacters:
+#    stripping the `?` in `.?laude` collapses it to `.laude` and hides the match.
 #
 # Broad on purpose — a false positive costs one blocked Bash call; a false
 # negative exposes the CODEOWNERS-gated agent definitions the Read/Edit/Write
@@ -50,26 +51,57 @@ def _canonicalize(command: str) -> str:
     return command
 
 
+def _cd_bases(command: str) -> list[Path]:
+    """Directories the command `cd`s into, each a base a later relative glob would
+    resolve from. The repo root is always included. A glob-spelled `cd` target
+    (`cd .?laude`) is itself expanded from the repo root, so `cd .?laude && …`
+    resolves like `cd .claude && …`."""
+    bases = [_REPO_ROOT]
+    for match in re.finditer(r"(?:^|[\s;&|(])cd\s+([^\s;&|()<>]+)", command):
+        raw = match.group(1)
+        if _GLOB_META_RE.search(raw):
+            try:
+                bases.extend(_REPO_ROOT.glob(raw))
+            except (OSError, ValueError, NotImplementedError):
+                continue
+        else:
+            bases.append(_REPO_ROOT / raw)
+    return bases
+
+
 def _glob_reaches_agents(command: str) -> bool:
     """True if any glob token expands, under the shell's own semantics, to a path
     at or under .claude/agents/. Catches metacharacters that obscure the literal
     spelling (`.?laude/agents`, `.cl*de/agents`) which the textual pass cannot
-    see. Best-effort: expands relative to the repo root. The token's parent is
-    probed too, so a write to a not-yet-existing file under a glob-spelled agents
-    directory (`> .?laude/agents/new.md`) still resolves the directory itself."""
+    see. Globs are expanded both from the repo root and from any directory the
+    command `cd`s into, so `cd .claude && cat a*/reviewer.md` still resolves
+    there. The token's parent is probed too, so a write to a not-yet-existing
+    file under a glob-spelled agents directory (`> .?laude/agents/new.md`) still
+    resolves the directory itself. Absolute tokens are re-based onto the repo
+    when they point into it and skipped otherwise — never crashing the hook."""
+    agents_dir = (_REPO_ROOT / DENIED).resolve()
+    bases = _cd_bases(command)
     for token in re.split(r"[\s;&|<>()]+", command):
         if not token or not _GLOB_META_RE.search(token):
             continue
         for pattern in (token, str(PurePosixPath(token).parent)):
             if not pattern or pattern in (".", "/"):
                 continue
-            try:
-                for hit in _REPO_ROOT.glob(pattern):
-                    rel = hit.relative_to(_REPO_ROOT).as_posix()
-                    if rel == DENIED or rel.startswith(DENIED + "/"):
+            rel = pattern
+            if PurePosixPath(pattern).is_absolute():
+                try:
+                    rel = str(PurePosixPath(pattern).relative_to(_REPO_ROOT))
+                except ValueError:
+                    continue  # absolute but outside the repo — nothing to check
+            for base in bases:
+                try:
+                    hits = list(base.glob(rel))
+                except (OSError, ValueError, NotImplementedError):
+                    continue  # unsupported pattern must not crash the guard open
+                for hit in hits:
+                    resolved = hit.resolve()
+                    if resolved == agents_dir or agents_dir in resolved.parents:
                         return True
-            except (OSError, ValueError):
-                continue
     return False
 
 
