@@ -619,6 +619,15 @@ def test_new_collision_with_different_finding_named_in_error(tmp_path):
         _new(tmp_path)
 
 
+def test_new_whitespace_padded_title_refiles_idempotently(tmp_path):
+    # A title with surrounding whitespace is stripped before hashing and before
+    # writing, so re-filing the identical finding hits the "already exists"
+    # branch, not a false "different finding" collision.
+    _new(tmp_path, title="Padded title ")
+    with pytest.raises(findings.FindingError, match="already exists"):
+        _new(tmp_path, title="Padded title ")
+
+
 def test_cli_migrate_missing_source_errors_cleanly(tmp_path, capsys):
     rc = findings.main(["migrate", "--root", str(tmp_path), str(tmp_path / "missing.md")])
     assert rc == 1

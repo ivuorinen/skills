@@ -20,8 +20,8 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
 - Audit findings: one file per open finding under `docs/audit/findings/`;
   resolved ones are appended to `docs/audit/findings/resolved.jsonl`. Managed
   only through `skills/nitpicker/scripts/findings.py`
-  (new/resolve/list/show/validate/index/baseline/migrate). Never
-  hand-edit `INDEX.md` or `resolved.jsonl`.
+  (new/resolve/list/show/validate/index/baseline/migrate/migrate-resolved).
+  Never hand-edit `INDEX.md` or `resolved.jsonl`.
 - Command files live in `skills/nitpicker/commands/<command>.md`; each must
   have a row in one of the command tables of `skills/nitpicker/SKILL.md`
   (`## Commands` or `## Internal commands`), 1:1

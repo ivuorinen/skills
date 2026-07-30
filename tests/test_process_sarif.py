@@ -597,11 +597,43 @@ def test_normalize_severity_tolerates_nonstring_signals(sev):
         {"tool": {"driver": {"rules": ["notadict"]}}, "results": []},
         {"tool": {"driver": {"name": "t"}}, "results": ["notadict"]},
         {"tool": {"driver": {"name": "t"}}, "results": [{"ruleId": "x", "taxa": ["notadict"]}]},
+        # Wrong-typed location nodes (object where array expected, and vice-versa)
+        # must not raise KeyError/AttributeError and abort the whole run.
+        {"tool": {"driver": {"name": "t"}}, "results": [{"ruleId": "x", "locations": {"k": "v"}}]},
+        {
+            "tool": {"driver": {"name": "t"}},
+            "results": [
+                {
+                    "ruleId": "x",
+                    "locations": [{"physicalLocation": {"artifactLocation": [1], "region": [2]}}],
+                }
+            ],
+        },
+        {
+            "tool": {"driver": {"name": "t"}},
+            "results": [{"ruleId": "x", "locations": [{"physicalLocation": ["notadict"]}]}],
+        },
     ],
 )
 def test_extract_findings_skips_malformed_nodes(run):
     # Must return a list without raising, whatever the node types are.
     assert isinstance(_extract_findings(run, "bad.sarif"), list)
+
+
+@pytest.mark.parametrize("bad_uri", [123, ["x"], {"k": "v"}, None, True])
+def test_non_string_uri_falls_back_to_empty(bad_uri):
+    # A non-string artifactLocation.uri must not leak into the finding — the
+    # result is still produced, with uri defaulted to "".
+    result = {
+        "ruleId": "r1",
+        "level": "warning",
+        "message": {"text": "m"},
+        "locations": [{"physicalLocation": {"artifactLocation": {"uri": bad_uri}}}],
+    }
+    run = {"tool": {"driver": {"name": "t", "rules": []}}, "results": [result]}
+    got = _extract_findings(run, "x.sarif")
+    assert len(got) == 1
+    assert got[0]["uri"] == ""
 
 
 def test_parse_sarif_survives_nonconforming_result(tmp_path):

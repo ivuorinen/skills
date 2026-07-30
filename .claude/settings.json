@@ -4,7 +4,13 @@
       "Read(./.claude/agents/**)",
       "Edit(./.claude/agents/**)",
       "Write(./.claude/agents/**)",
-      "NotebookEdit(./.claude/agents/**)"
+      "NotebookEdit(./.claude/agents/**)",
+      "Edit(./scripts/hooks/**)",
+      "Write(./scripts/hooks/**)",
+      "NotebookEdit(./scripts/hooks/**)",
+      "Edit(./.claude/settings.json)",
+      "Write(./.claude/settings.json)",
+      "NotebookEdit(./.claude/settings.json)"
     ]
   },
   "hooks": {
@@ -89,7 +95,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing — deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\""
           }
         ]
       },

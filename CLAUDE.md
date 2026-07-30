@@ -25,7 +25,7 @@ The authoritative command listing (categorized, with aliases) is `## Commands` i
 
 - Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ").
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
-- Every file in `commands/` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
+- Every command file in `commands/` whose name does not begin with `_` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`; shared files prefixed `_` (e.g. `_conventions.md`, `_audit-coverage.md`) are exempt from the cross-check.
 - Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
 - No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
