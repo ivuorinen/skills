@@ -19,7 +19,7 @@ that run. In pi, invoke as `/skill:nitpicker <command> …`; in Copilot,
 | `commands/_conventions.md`       | Shared severity levels, findings protocol, rules — binds every command                      |
 | `commands/<command>.md`          | Full instructions for one command                                                           |
 | `scripts/findings.py`            | Findings store CLI (new/resolve/list/show/validate/index/baseline/migrate/migrate-resolved) |
-| `scripts/fetch-pr-comments.py`   | Used by `cr` — unresolved PR review threads via GraphQL                                     |
+| `scripts/fetch-pr-comments.py`   | Used by `cr` — PR review threads (GraphQL) plus review bodies and bot summary comments      |
 | `scripts/process-sarif.py`       | Used by `security` — SARIF parsing and dedup                                                |
 | `scripts/check-rules-anatomy.py` | Used by `agent-rules` — rule-file anatomy checks                                            |
 | `scripts/mcp_server.py`          | Bundled stdio MCP server (skill introspection + findings tools)                             |

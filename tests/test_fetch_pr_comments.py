@@ -25,6 +25,8 @@ _group_rest_comments = _mod._group_rest_comments
 fetch_graphql = _mod.fetch_graphql
 fetch_rest_gh = _mod.fetch_rest_gh
 fetch_rest_token = _mod.fetch_rest_token
+_rest_list_transport = _mod._rest_list_transport
+_fetch_out_of_thread_notes = _mod._fetch_out_of_thread_notes
 
 
 def _proc(stdout=b"", returncode=0, stderr=b"") -> MagicMock:
@@ -479,6 +481,13 @@ class TestMain:
         }
     ]
 
+    @pytest.fixture(autouse=True)
+    def _stub_notes(self):
+        # main() also fetches out-of-thread notes; stub it so these tests never hit
+        # the network. Tests exercising the real fetch live in TestOutOfThreadNotes.
+        with patch.object(_mod, "_fetch_out_of_thread_notes", return_value=([], [])):
+            yield
+
     def test_owner_repo_pr_format(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner", "repo", "42"])
         with (
@@ -487,7 +496,9 @@ class TestMain:
         ):
             _mod.main()
         data = json.loads(capsys.readouterr().out)
-        assert len(data) == 1
+        assert list(data.keys()) == ["threads", "review_bodies", "summary_comments"]
+        assert len(data["threads"]) == 1
+        assert data["review_bodies"] == [] and data["summary_comments"] == []
 
     def test_owner_slash_repo_format(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "42"])
@@ -624,6 +635,121 @@ class TestMain:
         ):
             _mod.main()
         assert exc.value.code == 1
+
+
+# ── _rest_list_transport ───────────────────────────────────────────────────────
+
+
+class TestRestListTransport:
+    def test_gh_available_returns_gh_paginate(self):
+        with patch.object(_mod, "_gh_available", return_value=True):
+            assert _rest_list_transport() is _mod._gh_rest_paginate
+
+    def test_no_gh_with_token_returns_callable(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        with patch.object(_mod, "_gh_available", return_value=False):
+            fn = _rest_list_transport()
+        assert callable(fn) and fn is not _mod._gh_rest_paginate
+
+    def test_no_gh_no_token_returns_none(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        with patch.object(_mod, "_gh_available", return_value=False):
+            assert _rest_list_transport() is None
+
+
+# ── _fetch_out_of_thread_notes ─────────────────────────────────────────────────
+
+
+class TestOutOfThreadNotes:
+    @staticmethod
+    def _rest_list(reviews, comments):
+        def _fake(path):
+            if path.endswith("/reviews"):
+                return reviews
+            if path.endswith("/comments"):
+                return comments
+            return []
+
+        return _fake
+
+    def test_review_bodies_keep_nonempty_any_author(self):
+        reviews = [
+            {
+                "user": {"login": "human"},
+                "state": "COMMENTED",
+                "commit_id": "abcdef1234567890",
+                "submitted_at": "t",
+                "body": "Outside diff range note",
+            },
+            {"user": {"login": "x[bot]"}, "state": "COMMENTED", "body": "   "},  # empty → dropped
+        ]
+        rb, _ = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list(reviews, []))
+        assert len(rb) == 1
+        assert rb[0]["author"] == "human"  # any author, not just bots
+        assert rb[0]["commit_id"] == "abcdef123456"  # truncated to 12
+        assert rb[0]["body"] == "Outside diff range note"
+
+    def test_summary_comments_bot_only_and_nonempty(self):
+        comments = [
+            {
+                "user": {"login": "coderabbitai[bot]"},
+                "created_at": "t",
+                "body": "Review limit reached",
+            },
+            {"user": {"login": "human"}, "created_at": "t", "body": "chatter"},  # human → dropped
+            {"user": {"login": "copilot[bot]"}, "created_at": "t", "body": "  "},  # empty → dropped
+        ]
+        _, sc = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list([], comments))
+        assert [c["author"] for c in sc] == ["coderabbitai[bot]"]
+        assert sc[0]["body"] == "Review limit reached"
+
+    def test_null_user_does_not_crash(self):
+        reviews = [{"user": None, "body": "note"}]
+        comments = [{"user": None, "body": "x"}]  # login "" is not a bot → dropped
+        rb, sc = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list(reviews, comments))
+        assert rb[0]["author"] == "unknown"
+        assert sc == []
+
+    def test_partial_failure_keeps_the_other_half(self, capsys):
+        # A failure fetching one section must not discard the other — review bodies
+        # (outside-diff-range comments) must survive a summary-comment fetch failure.
+        reviews = [
+            {
+                "user": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "body": "outside-diff note",
+            }
+        ]
+
+        def _rest(path):
+            if path.endswith("/reviews"):
+                return reviews
+            raise RuntimeError("comments endpoint rate-limited")
+
+        rb, sc = _fetch_out_of_thread_notes("o", "r", 1, _rest)
+        assert len(rb) == 1  # survived the comments-endpoint failure
+        assert sc == []
+        assert "could not fetch summary comments" in capsys.readouterr().err
+
+
+def test_main_notes_failure_still_returns_threads(capsys, monkeypatch):
+    # Out-of-thread fetch is best-effort: if it raises, main still returns the
+    # inline threads with the two note lists empty, and warns on stderr.
+    monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])
+    threads = [
+        {"thread_id": "T", "path": "f", "is_resolved": False, "diff_hunk": "", "comments": []}
+    ]
+    with (
+        patch.object(_mod, "_gh_available", return_value=True),
+        patch.object(_mod, "fetch_graphql", return_value=threads),
+        patch.object(_mod, "_fetch_out_of_thread_notes", side_effect=RuntimeError("boom")),
+    ):
+        _mod.main()
+    out = capsys.readouterr()
+    data = json.loads(out.out)
+    assert len(data["threads"]) == 1
+    assert data["review_bodies"] == [] and data["summary_comments"] == []
+    assert "could not fetch out-of-thread notes" in out.err
 
 
 def test_main_hard_fails_on_graphql_shape_bug_without_rest_downgrade(monkeypatch):
