@@ -17,8 +17,13 @@ Outputs a JSON object to stdout:
                         "created_at": "...", "diff_hunk": "..."}]
         }
       ],
-      "review_bodies":    [{"author", "state", "commit_id", "submitted_at", "body"}],
-      "summary_comments": [{"author", "created_at", "body"}]
+      "review_bodies": [
+        {"author": "...", "state": "...", "commit_id": "...",
+         "submitted_at": "...", "body": "..."}
+      ],
+      "summary_comments": [
+        {"author": "...", "created_at": "...", "updated_at": "...", "body": "..."}
+      ]
     }
 
 `threads` are the inline review threads (the original output). `review_bodies` and
@@ -293,16 +298,12 @@ def fetch_rest_token(owner: str, repo: str, pr_number: int, token: str) -> list[
     return _group_rest_comments(raw)
 
 
-def _rest_list_transport() -> Any:
-    """A callable(path) -> list[dict] for a paginated REST endpoint, using gh when
-    available and GITHUB_TOKEN otherwise, or None when neither is present. Shared
-    by the out-of-thread fetch so it uses the same auth as the thread fetch."""
-    if _gh_available():
-        return _gh_rest_paginate
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if token:
-        return lambda path: _token_rest_paginate(f"https://api.github.com/{path}", token)
-    return None
+def _token_transport(token: str) -> Any:
+    """A rest_list callable(path) -> list bound to the GITHUB_TOKEN REST transport.
+    main() hands the out-of-thread fetch whichever transport actually fetched the
+    threads, so a gh path that failed into token REST does not silently re-select
+    a broken gh for the notes."""
+    return lambda path: _token_rest_paginate(f"https://api.github.com/{path}", token)
 
 
 def _fetch_review_bodies(
@@ -326,12 +327,15 @@ def _fetch_review_bodies(
 def _fetch_summary_comments(
     owner: str, repo: str, pr_number: int, rest_list: Any
 ) -> list[dict[str, Any]]:
-    """Non-empty PR issue comments from bot accounts (login ending in `[bot]`) — bot summaries."""
+    """Non-empty PR issue comments from bot accounts (login ending in `[bot]`) — bot
+    summaries. `updated_at` is included so the CodeRabbit loop can measure a
+    rate-limit wait from the summary's last edit, not just its creation."""
     comments_raw = rest_list(f"repos/{owner}/{repo}/issues/{pr_number}/comments")
     return [
         {
             "author": (c.get("user") or {}).get("login", "unknown"),
             "created_at": c.get("created_at", ""),
+            "updated_at": c.get("updated_at", ""),
             "body": c.get("body", ""),
         }
         for c in comments_raw
@@ -391,9 +395,13 @@ def main() -> None:
             print(f"[error] invalid {label}: {value!r}", file=sys.stderr)
             sys.exit(2)
 
+    token = os.environ.get("GITHUB_TOKEN", "")
+    notes_rest: Any = None  # the transport that fetched threads, reused for the notes fetch
+
     if _gh_available():
         try:
             threads = fetch_graphql(owner, repo, pr_number)
+            notes_rest = _gh_rest_paginate
         except (RuntimeError, subprocess.SubprocessError) as graphql_err:
             # Only transport/permanent-API failures reach the REST fallback:
             # _gh_graphql raises RuntimeError (gh stderr) on transport failure and
@@ -429,8 +437,8 @@ def main() -> None:
             print(f"[warn] GraphQL failed ({graphql_err}), falling back to REST", file=sys.stderr)
             try:
                 threads = fetch_rest_gh(owner, repo, pr_number)
+                notes_rest = _gh_rest_paginate
             except Exception as rest_err:
-                token = os.environ.get("GITHUB_TOKEN", "")
                 if token:
                     print(
                         f"[warn] gh REST failed ({rest_err}), falling back to token REST",
@@ -438,6 +446,7 @@ def main() -> None:
                     )
                     try:
                         threads = fetch_rest_token(owner, repo, pr_number, token)
+                        notes_rest = _token_transport(token)
                     except Exception as token_err:
                         print(f"[error] REST API failed: {token_err}", file=sys.stderr)
                         sys.exit(1)
@@ -445,7 +454,6 @@ def main() -> None:
                     print(f"[error] gh REST failed: {rest_err}", file=sys.stderr)
                     sys.exit(1)
     else:
-        token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             print(
                 "[error] No auth available. Install gh CLI or set GITHUB_TOKEN.",
@@ -454,6 +462,7 @@ def main() -> None:
             sys.exit(1)
         try:
             threads = fetch_rest_token(owner, repo, pr_number, token)
+            notes_rest = _token_transport(token)
         except Exception as err:
             print(f"[error] REST API failed: {err}", file=sys.stderr)
             sys.exit(1)
@@ -462,11 +471,10 @@ def main() -> None:
     # failure here must not lose the threads that are the primary result.
     review_bodies: list[dict[str, Any]] = []
     summary_comments: list[dict[str, Any]] = []
-    rest_list = _rest_list_transport()
-    if rest_list is not None:
+    if notes_rest is not None:
         try:
             review_bodies, summary_comments = _fetch_out_of_thread_notes(
-                owner, repo, pr_number, rest_list
+                owner, repo, pr_number, notes_rest
             )
         except Exception as notes_err:
             print(

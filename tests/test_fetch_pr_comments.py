@@ -25,7 +25,7 @@ _group_rest_comments = _mod._group_rest_comments
 fetch_graphql = _mod.fetch_graphql
 fetch_rest_gh = _mod.fetch_rest_gh
 fetch_rest_token = _mod.fetch_rest_token
-_rest_list_transport = _mod._rest_list_transport
+_token_transport = _mod._token_transport
 _fetch_out_of_thread_notes = _mod._fetch_out_of_thread_notes
 
 
@@ -637,24 +637,65 @@ class TestMain:
         assert exc.value.code == 1
 
 
-# ── _rest_list_transport ───────────────────────────────────────────────────────
+# ── _token_transport ───────────────────────────────────────────────────────────
 
 
-class TestRestListTransport:
-    def test_gh_available_returns_gh_paginate(self):
-        with patch.object(_mod, "_gh_available", return_value=True):
-            assert _rest_list_transport() is _mod._gh_rest_paginate
+class TestTokenTransport:
+    def test_returns_callable_hitting_api_github(self):
+        fn = _token_transport("tok")
+        with patch.object(_mod, "_token_rest_paginate", return_value=[{"x": 1}]) as m:
+            out = fn("repos/o/r/pulls/1/reviews")
+        assert out == [{"x": 1}]
+        assert m.call_args[0][0] == "https://api.github.com/repos/o/r/pulls/1/reviews"
+        assert m.call_args[0][1] == "tok"
 
-    def test_no_gh_with_token_returns_callable(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        with patch.object(_mod, "_gh_available", return_value=False):
-            fn = _rest_list_transport()
-        assert callable(fn) and fn is not _mod._gh_rest_paginate
 
-    def test_no_gh_no_token_returns_none(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        with patch.object(_mod, "_gh_available", return_value=False):
-            assert _rest_list_transport() is None
+# ── main() carries the thread transport into the notes fetch ───────────────────
+
+
+def _capture_notes_transport(monkeypatch, **thread_patches):
+    """Run main() with the given thread-fetch patches and return the rest_list
+    callable main() handed to _fetch_out_of_thread_notes."""
+    captured = {}
+
+    def _capture(_o, _r, _p, rest_list):
+        captured["rest_list"] = rest_list
+        return ([], [])
+
+    monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "1"])
+    with patch.object(_mod, "_fetch_out_of_thread_notes", side_effect=_capture):
+        for name, patched in thread_patches.items():
+            monkeypatch.setattr(_mod, name, patched)
+        _mod.main()
+    return captured["rest_list"]
+
+
+def test_notes_use_gh_transport_when_graphql_succeeds(monkeypatch):
+    rest_list = _capture_notes_transport(
+        monkeypatch,
+        _gh_available=lambda: True,
+        fetch_graphql=lambda *a: [],
+    )
+    assert rest_list is _mod._gh_rest_paginate
+
+
+def test_notes_use_token_transport_when_threads_fell_back_to_token(monkeypatch):
+    # gh GraphQL and gh REST both fail, token REST succeeds → the notes fetch must
+    # NOT re-select the broken gh paginator (the bug CodeRabbit/Copilot flagged).
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    def _raise(*a):
+        raise RuntimeError("gh path down")
+
+    rest_list = _capture_notes_transport(
+        monkeypatch,
+        _gh_available=lambda: True,
+        fetch_graphql=_raise,
+        fetch_rest_gh=_raise,
+        fetch_rest_token=lambda *a: [],
+    )
+    assert rest_list is not _mod._gh_rest_paginate
+    assert callable(rest_list)
 
 
 # ── _fetch_out_of_thread_notes ─────────────────────────────────────────────────
@@ -693,7 +734,8 @@ class TestOutOfThreadNotes:
         comments = [
             {
                 "user": {"login": "coderabbitai[bot]"},
-                "created_at": "t",
+                "created_at": "t0",
+                "updated_at": "t1",
                 "body": "Review limit reached",
             },
             {"user": {"login": "human"}, "created_at": "t", "body": "chatter"},  # human → dropped
@@ -702,6 +744,7 @@ class TestOutOfThreadNotes:
         _, sc = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list([], comments))
         assert [c["author"] for c in sc] == ["coderabbitai[bot]"]
         assert sc[0]["body"] == "Review limit reached"
+        assert sc[0]["updated_at"] == "t1"  # loop measures rate-limit wait from last edit
 
     def test_null_user_does_not_crash(self):
         reviews = [{"user": None, "body": "note"}]

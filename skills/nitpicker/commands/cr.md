@@ -54,7 +54,11 @@ Non-Claude agents resolve the path relative to the nitpicker skill directory. It
 - `review_bodies` — every non-empty PR **review body** (any author). A reviewer's outside-diff-range comments (CodeRabbit's `⚠️ Outside diff range comments` block) live here, **not** as inline threads.
 - `summary_comments` — non-empty PR issue comments from bot accounts (login ending `[bot]`): CodeRabbit's `summarize by coderabbit` summary, rate-limit notes, Copilot summaries.
 
-**Evaluate all three sections in Step 3, not just `threads`.** Notices in `review_bodies`/`summary_comments` are the ones historically missed. They have no `thread_id`, so they cannot be resolved as threads — address the underlying issue and reply in the PR conversation (an issue comment) rather than a thread reply.
+**Evaluate all three sections in Step 3, not just `threads`.** Notices in `review_bodies`/`summary_comments` are the ones historically missed. They carry no `path`, `diff_hunk`, or `thread_id`, so the thread lifecycle does not apply to them directly — use this one instead:
+
+- **Scope.** A non-thread notice justifies edits only to the `file:path` (and line) it **names in its own body text** — outside-diff-range comments always cite one. If a notice names no file, or names something outside the PR's changed set, it is out of band: record it in the summary and do not act on it. Purely informational notices (a rate-limit note, a "no actionable comments" summary) drive the loop's control flow (see the CodeRabbit loop), not a code edit.
+- **Evaluate.** With no `diff_hunk`, open the cited `file:line` and confirm the flagged code still exists and the point is technically valid, exactly as Step 3 does for a thread. Assign the same verdict — Implement / Pushed Back / Skipped.
+- **Reply.** There is no thread to reply to or resolve. Post the reply as a **PR issue comment** (Method A: `gh pr comment {pr_number} --body-file <file>`; Method B: `POST /repos/{owner}/{repo}/issues/{pr_number}/comments`), quoting which notice it answers. `resolveReviewThread` applies to inline threads only — never attempt to "resolve" a review body or summary.
 
 If running the API calls manually instead, use the method chosen in Step 1:
 
@@ -183,11 +187,11 @@ This menu overrides autonomous/goal mode — never commit, push, or post without
 
 ## CodeRabbit review loop
 
-CodeRabbit (`coderabbitai[bot]`) is an **asynchronous** reviewer: it posts a review after the PR opens and re-reviews after each push, but a free-tier account throttles reviews (typically one per hour) while a paid account does not. When CodeRabbit is among the PR's reviewers and the user has authorized iterating to completion — the Step 6 **Autopilot** choice (option 4), made once, stands for every iteration of this loop — drive the PR to a clean state instead of stopping after one pass.
+CodeRabbit (`coderabbitai[bot]`) is an **asynchronous** reviewer: it posts a review after the PR opens and re-reviews after each push, but it applies per-developer hourly review limits on **every** plan — free-tier throttles hardest (often one per hour), and paid plans have their own hourly caps. Never assume a plan is exempt; drive the loop from **observed** throttling (the rate-limit note below), not from an assumed plan. When CodeRabbit is among the PR's reviewers and the user has authorized iterating to completion — the Step 6 **Autopilot** choice (option 4), made once, stands for every iteration of this loop — drive the PR to a clean state instead of stopping after one pass.
 
 1. **Handle the current batch** via Steps 2–6. The Step 2 fetcher returns the review's *outside-diff-range* comments and bot summaries (`review_bodies`, `summary_comments`) alongside the inline `threads` — CodeRabbit posts outside-diff comments in the review body (a `⚠️ Outside diff range comments` block), not as inline threads. Evaluate all three sections, not just `threads`; those non-thread notices are the ones historically missed. Evaluate, implement, push, reply, and resolve each.
 2. **Read CodeRabbit's state** — from the summary comment (the `coderabbitai[bot]` issue comment containing `summarize by coderabbit`) and the PR itself. Three states, each with a different next step:
-   - **Rate-limited:** the summary carries a `Review limit reached — Next review available in: N minutes` note. CodeRabbit cannot review until the window elapses (free tier; usually paid within a rolling window).
+   - **Rate-limited:** the summary carries a `Review limit reached — Next review available in: N minutes` note. CodeRabbit cannot review until the window elapses. Any plan can hit this — the note is the authority, not the plan tier.
    - **Auto-review paused/disabled:** the PR has a `@coderabbitai pause` or `@coderabbitai ignore`, or `.coderabbit.yaml` turns auto reviews off (or `auto_pause_after_reviewed_commits` is reached). No review arrives on its own — even on a paid account.
    - **Auto-review active:** no rate-limit note and not paused. CodeRabbit reviews every push automatically.
 3. **Get the next review** — and always confirm it **covers your latest commit**, never trusting the timestamp alone: a review can be submitted after a push while its commit context still reflects the prior PR state. Poll on `coderabbitai[bot]` having a review or summary whose reviewed commit range includes your latest commit — a `submitted_at` after the push is a hint, not proof.
@@ -196,6 +200,8 @@ CodeRabbit (`coderabbitai[bot]`) is an **asynchronous** reviewer: it posts a rev
    - **Auto-review paused/disabled:** post `@coderabbitai review` (or `@coderabbitai resume`) now — no automatic review is coming — then poll.
 4. **Handle the new batch** — back to step 1.
 5. **Terminate** when either the summary comment shows **`No actionable comments were generated in the recent review`** for a review whose reviewed commit range **includes your latest fix**, **or** CodeRabbit submits an `APPROVED` review. Report the outcome; never keep triggering after a clean pass.
+
+The termination signals come from **direct API polling**, not from the fetch batch alone: read the summary text and its `updated_at` (the fetcher returns `summary_comments[].updated_at`, the baseline for the rate-limit wait in step 3), and read a review's `state`/`commit_id` from the PR **reviews API** (or `gh pr view --json reviewDecision,statusCheckRollup`). An empty `APPROVED` review carries no body, so it is absent from `review_bodies` — detect approval from the reviews API state, never by expecting it in the fetch output.
 
 Loop rules:
 
