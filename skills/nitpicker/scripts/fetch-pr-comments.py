@@ -1,19 +1,39 @@
 #!/usr/bin/env python3
-"""Fetch unresolved review threads from a GitHub PR.
+"""Fetch a GitHub PR's review surface: inline threads AND out-of-thread notes.
 
 Usage:
     fetch-pr-comments.py <owner> <repo> <pr_number>
     fetch-pr-comments.py <owner>/<repo> <pr_number>
 
-Outputs a JSON array to stdout. Each element:
+Outputs a JSON object to stdout:
     {
-        "thread_id": "...",
-        "path": "src/foo.py",
-        "diff_hunk": "@@ ... @@",
-        "is_resolved": false | null,
-        "comments": [{"id": "...", "author": "...", "body": "...",
-                      "created_at": "...", "diff_hunk": "..."}]
+      "threads": [
+        {
+          "thread_id": "...",
+          "path": "src/foo.py",
+          "diff_hunk": "@@ ... @@",
+          "is_resolved": false | null,
+          "comments": [{"id": "...", "author": "...", "body": "...",
+                        "created_at": "...", "diff_hunk": "..."}]
+        }
+      ],
+      "review_bodies": [
+        {"author": "...", "state": "...", "commit_id": "...",
+         "submitted_at": "...", "body": "..."}
+      ],
+      "summary_comments": [
+        {"author": "...", "created_at": "...", "updated_at": "...", "body": "..."}
+      ]
     }
+
+`threads` are the inline review threads (the original output). `review_bodies` and
+`summary_comments` carry notices that do NOT appear as inline threads and were
+historically missed: a reviewer's outside-diff-range comments live in the review
+BODY, and bots (CodeRabbit, Copilot) post summaries as issue comments. Both are
+included so a single fetch surfaces every actionable notice. `review_bodies` holds
+every non-empty PR review body (any author); `summary_comments` holds non-empty
+issue comments from bot accounts (login ending in `[bot]`). Both are best-effort:
+if that fetch fails the run still returns `threads` with the two lists empty.
 
 is_resolved is false when using GraphQL (preferred). null means REST was used and
 resolved state is unknown — the caller must check whether the flagged code still exists.
@@ -278,6 +298,74 @@ def fetch_rest_token(owner: str, repo: str, pr_number: int, token: str) -> list[
     return _group_rest_comments(raw)
 
 
+def _token_transport(token: str) -> Any:
+    """A rest_list callable(path) -> list bound to the GITHUB_TOKEN REST transport.
+    main() hands the out-of-thread fetch whichever transport actually fetched the
+    threads, so a gh path that failed into token REST does not silently re-select
+    a broken gh for the notes."""
+    return lambda path: _token_rest_paginate(f"https://api.github.com/{path}", token)
+
+
+def _fetch_review_bodies(
+    owner: str, repo: str, pr_number: int, rest_list: Any
+) -> list[dict[str, Any]]:
+    """Every non-empty PR review body (any author) — outside-diff-range comments live here."""
+    reviews_raw = rest_list(f"repos/{owner}/{repo}/pulls/{pr_number}/reviews")
+    return [
+        {
+            "author": (r.get("user") or {}).get("login", "unknown"),
+            "state": r.get("state", ""),
+            "commit_id": (r.get("commit_id") or "")[:12],
+            "submitted_at": r.get("submitted_at", ""),
+            "body": r.get("body", ""),
+        }
+        for r in reviews_raw
+        if isinstance(r, dict) and (r.get("body") or "").strip()
+    ]
+
+
+def _fetch_summary_comments(
+    owner: str, repo: str, pr_number: int, rest_list: Any
+) -> list[dict[str, Any]]:
+    """Non-empty PR issue comments from bot accounts (login ending in `[bot]`) — bot
+    summaries. `updated_at` is included so the CodeRabbit loop can measure a
+    rate-limit wait from the summary's last edit, not just its creation."""
+    comments_raw = rest_list(f"repos/{owner}/{repo}/issues/{pr_number}/comments")
+    return [
+        {
+            "author": (c.get("user") or {}).get("login", "unknown"),
+            "created_at": c.get("created_at", ""),
+            "updated_at": c.get("updated_at", ""),
+            "body": c.get("body", ""),
+        }
+        for c in comments_raw
+        if isinstance(c, dict)
+        and (c.get("user") or {}).get("login", "").endswith("[bot]")
+        and (c.get("body") or "").strip()
+    ]
+
+
+def _fetch_out_of_thread_notes(
+    owner: str, repo: str, pr_number: int, rest_list: Any
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (review_bodies, summary_comments): the review surface that is NOT an
+    inline thread. Each half is fetched independently and best-effort, so a failure
+    of one (e.g. a rate-limited /issues/comments call) never discards the other —
+    the outside-diff-range comments in review_bodies are exactly what this fix
+    exists to surface, so they must survive a summary-comment fetch failure."""
+    review_bodies: list[dict[str, Any]] = []
+    summary_comments: list[dict[str, Any]] = []
+    try:
+        review_bodies = _fetch_review_bodies(owner, repo, pr_number, rest_list)
+    except Exception as err:
+        print(f"[warn] could not fetch review bodies ({err})", file=sys.stderr)
+    try:
+        summary_comments = _fetch_summary_comments(owner, repo, pr_number, rest_list)
+    except Exception as err:
+        print(f"[warn] could not fetch summary comments ({err})", file=sys.stderr)
+    return review_bodies, summary_comments
+
+
 def main() -> None:
     args = sys.argv[1:]
 
@@ -307,9 +395,13 @@ def main() -> None:
             print(f"[error] invalid {label}: {value!r}", file=sys.stderr)
             sys.exit(2)
 
+    token = os.environ.get("GITHUB_TOKEN", "")
+    notes_rest: Any = None  # the transport that fetched threads, reused for the notes fetch
+
     if _gh_available():
         try:
             threads = fetch_graphql(owner, repo, pr_number)
+            notes_rest = _gh_rest_paginate
         except (RuntimeError, subprocess.SubprocessError) as graphql_err:
             # Only transport/permanent-API failures reach the REST fallback:
             # _gh_graphql raises RuntimeError (gh stderr) on transport failure and
@@ -345,8 +437,8 @@ def main() -> None:
             print(f"[warn] GraphQL failed ({graphql_err}), falling back to REST", file=sys.stderr)
             try:
                 threads = fetch_rest_gh(owner, repo, pr_number)
+                notes_rest = _gh_rest_paginate
             except Exception as rest_err:
-                token = os.environ.get("GITHUB_TOKEN", "")
                 if token:
                     print(
                         f"[warn] gh REST failed ({rest_err}), falling back to token REST",
@@ -354,6 +446,7 @@ def main() -> None:
                     )
                     try:
                         threads = fetch_rest_token(owner, repo, pr_number, token)
+                        notes_rest = _token_transport(token)
                     except Exception as token_err:
                         print(f"[error] REST API failed: {token_err}", file=sys.stderr)
                         sys.exit(1)
@@ -361,7 +454,6 @@ def main() -> None:
                     print(f"[error] gh REST failed: {rest_err}", file=sys.stderr)
                     sys.exit(1)
     else:
-        token = os.environ.get("GITHUB_TOKEN", "")
         if not token:
             print(
                 "[error] No auth available. Install gh CLI or set GITHUB_TOKEN.",
@@ -370,11 +462,37 @@ def main() -> None:
             sys.exit(1)
         try:
             threads = fetch_rest_token(owner, repo, pr_number, token)
+            notes_rest = _token_transport(token)
         except Exception as err:
             print(f"[error] REST API failed: {err}", file=sys.stderr)
             sys.exit(1)
 
-    print(json.dumps(threads, indent=2))
+    # Out-of-thread notes (review bodies, bot summary comments) — best-effort: a
+    # failure here must not lose the threads that are the primary result.
+    review_bodies: list[dict[str, Any]] = []
+    summary_comments: list[dict[str, Any]] = []
+    if notes_rest is not None:
+        try:
+            review_bodies, summary_comments = _fetch_out_of_thread_notes(
+                owner, repo, pr_number, notes_rest
+            )
+        except Exception as notes_err:
+            print(
+                f"[warn] could not fetch out-of-thread notes ({notes_err}); "
+                "returning inline threads only",
+                file=sys.stderr,
+            )
+
+    print(
+        json.dumps(
+            {
+                "threads": threads,
+                "review_bodies": review_bodies,
+                "summary_comments": summary_comments,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
