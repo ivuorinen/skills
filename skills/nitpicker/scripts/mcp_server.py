@@ -51,8 +51,10 @@ SERVER_INFO = {"name": "nitpicker", "version": "1.0.0"}
 # Hint sets. `destructiveHint`/`idempotentHint` are meaningful only when
 # `readOnlyHint` is false, so the read set omits them rather than publishing
 # fields a client is told to disregard. Both sets pin `openWorldHint: False`:
-# every tool's domain is this repo's own files — no network, no external
-# service — and the field defaults to True, so silence would claim the opposite.
+# every tool's domain is closed — the local filesystem, and only under the two
+# roots resolved above (the plugin root for skill tools, `_allowed_root()` for
+# findings tools). No network, no external service. The field defaults to True,
+# so silence would claim the opposite.
 _READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
 # `destructiveHint` defaults to True; each mutate tool states its own value.
 _MUTATES = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False}

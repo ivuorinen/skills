@@ -179,8 +179,10 @@ def test_every_tool_publishes_annotations():
     for t in _tools(mod):
         ann = t["annotations"]
         assert ann["title"], f"{t['name']} has no title"
-        # Every tool's domain is this repo's own files: no network, no external
-        # service. The field defaults to True, so it must be stated.
+        # Every tool's domain is closed: the local filesystem only, under the
+        # plugin root (skill tools) or the allowed project root (findings
+        # tools). No network, no external service. The field defaults to True,
+        # so it must be stated.
         assert ann["openWorldHint"] is False, t["name"]
 
 
@@ -222,6 +224,13 @@ def test_mutate_tools_declare_their_blast_radius():
     assert seen["np_new_finding"]["destructiveHint"] is False
     assert seen["np_resolve_finding"]["readOnlyHint"] is False
     assert seen["np_resolve_finding"]["destructiveHint"] is True
+    # Neither is idempotent, and the hint drives client retry behaviour: a
+    # repeated np_new_finding with any field changed files a second finding,
+    # and a repeated np_resolve_finding fails outright because the first call
+    # deleted the open file. Asserting it keeps a flip to true from publishing
+    # wrong retry semantics silently.
+    assert seen["np_new_finding"]["idempotentHint"] is False
+    assert seen["np_resolve_finding"]["idempotentHint"] is False
 
 
 def test_protocol_version_is_negotiated_not_hardcoded():
