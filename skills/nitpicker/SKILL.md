@@ -185,6 +185,16 @@ audited project's store — pass `project_dir`, or the server falls back to
 `CLAUDE_PROJECT_DIR` then the working directory's repo root. `project_dir` may
 only narrow that root, never escape it.
 
+Every tool publishes MCP annotations. The eight read tools carry
+`readOnlyHint: true`; `np_new_finding` carries `destructiveHint: false` (it only
+adds); `np_resolve_finding` carries `destructiveHint: true`, because it deletes
+the open finding file and appends to the append-only ledger — neither half is
+reversible through this server. All ten carry `openWorldHint: false`: every
+tool's domain is closed — the local filesystem only, with no network and no
+external service, bounded by the plugin root for skill tools and the allowed
+project root for findings tools. These are hints a client weighs before
+calling, not access control; the root confinement above is the actual boundary.
+
 When these tools are available, commands prefer them over `scripts/findings.py`
 for every operation both cover; `_conventions.md` holds the mapping and the
 CLI-only exceptions. The preference is never a dependency — the server is
