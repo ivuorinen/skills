@@ -19,6 +19,12 @@ project root, where it is a reviewable, revertible working-tree change. Git alon
 is not the guarantee: an unconfined root can write outside any repository, where
 there is no diff and nothing to revert.
 
+Every tool publishes MCP tool annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`). They are behavioural hints, not access
+control — a client may ignore them — but they are the only machine-readable
+signal distinguishing the eight read tools from the two that mutate the store
+without a consent prompt. See `_READ_ONLY`/`_MUTATES` below.
+
 stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.
 """
@@ -32,8 +38,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings
 import skill_catalog
 
-PROTOCOL_VERSION = "2024-11-05"
+# Newest first. Annotations reached the spec in 2025-03-26, so a session pinned
+# to 2024-11-05 carries them as ignorable extra fields — hence advertising a
+# revision that defines them. 2025-03-26 itself is deliberately absent: it
+# mandates JSON-RPC batching, which `serve` does not implement (it skips list
+# frames), and 2025-06-18 removed that requirement again. Claiming a revision
+# whose mandatory features are missing is worse than negotiating down to one
+# that is honest.
+SUPPORTED_PROTOCOLS = ("2025-06-18", "2024-11-05")
 SERVER_INFO = {"name": "nitpicker", "version": "1.0.0"}
+
+# Hint sets. `destructiveHint`/`idempotentHint` are meaningful only when
+# `readOnlyHint` is false, so the read set omits them rather than publishing
+# fields a client is told to disregard. Both sets pin `openWorldHint: False`:
+# every tool's domain is this repo's own files — no network, no external
+# service — and the field defaults to True, so silence would claim the opposite.
+_READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
+# `destructiveHint` defaults to True; each mutate tool states its own value.
+_MUTATES = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False}
 
 TOOLS: list[dict] = []
 
@@ -42,10 +64,16 @@ class MethodError(Exception):
     """Raised for an unknown JSON-RPC method (mapped to error code -32601)."""
 
 
-def tool(name: str, description: str, schema: dict):
+def tool(name: str, description: str, schema: dict, annotations: dict):
     def register(fn):
         TOOLS.append(
-            {"name": name, "description": description, "inputSchema": schema, "handler": fn}
+            {
+                "name": name,
+                "description": description,
+                "inputSchema": schema,
+                "annotations": annotations,
+                "handler": fn,
+            }
         )
         return fn
 
@@ -60,7 +88,12 @@ def _text_result(text: str, is_error: bool = False) -> dict:
 _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
 
-@tool("np_list_skills", "List the plugin's bundled skills (name, description, commands).", _NO_ARGS)
+@tool(
+    "np_list_skills",
+    "List the plugin's bundled skills (name, description, commands).",
+    _NO_ARGS,
+    {**_READ_ONLY, "title": "List bundled skills"},
+)
 def _list_skills(args: dict) -> str:
     return json.dumps(skill_catalog.list_skills(), indent=2)
 
@@ -74,6 +107,7 @@ def _list_skills(args: dict) -> str:
         "required": ["name"],
         "additionalProperties": False,
     },
+    {**_READ_ONLY, "title": "Read a skill's SKILL.md"},
 )
 def _read_skill(args: dict) -> str:
     return skill_catalog.read_skill(args["name"])
@@ -88,12 +122,18 @@ def _read_skill(args: dict) -> str:
         "required": ["command"],
         "additionalProperties": False,
     },
+    {**_READ_ONLY, "title": "Read a nitpicker command file"},
 )
 def _read_command(args: dict) -> str:
     return skill_catalog.read_command(args["command"])
 
 
-@tool("np_list_commands", "List nitpicker commands with aliases and purpose.", _NO_ARGS)
+@tool(
+    "np_list_commands",
+    "List nitpicker commands with aliases and purpose.",
+    _NO_ARGS,
+    {**_READ_ONLY, "title": "List nitpicker commands"},
+)
 def _list_commands(args: dict) -> str:
     return json.dumps(skill_catalog.list_commands(), indent=2)
 
@@ -186,6 +226,7 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
         },
         "additionalProperties": False,
     },
+    {**_READ_ONLY, "title": "List findings"},
 )
 def _list_findings(args: dict) -> str:
     # Shared listing primitive with the CLI `list` command — see
@@ -209,6 +250,7 @@ def _list_findings(args: dict) -> str:
         "required": ["id"],
         "additionalProperties": False,
     },
+    {**_READ_ONLY, "title": "Show one finding"},
 )
 def _show_finding(args: dict) -> str:
     return _fenced(findings.show_finding(_store(args), args["id"]))
@@ -218,6 +260,7 @@ def _show_finding(args: dict) -> str:
     "np_findings_index",
     "Return the generated findings INDEX.md content.",
     {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    {**_READ_ONLY, "title": "Findings index"},
 )
 def _findings_index(args: dict) -> str:
     return _fenced(findings.build_index(_store(args)))
@@ -227,6 +270,7 @@ def _findings_index(args: dict) -> str:
     "np_validate_store",
     "Structurally validate the findings store; returns 'OK' or the errors.",
     {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    {**_READ_ONLY, "title": "Validate findings store"},
 )
 def _validate_store(args: dict) -> str:
     errors = findings.validate_store(_store(args))
@@ -263,6 +307,10 @@ def _assemble_body(args: dict) -> str:
         "required": ["auditor", "severity", "category", "area", "title"],
         "additionalProperties": False,
     },
+    # Not destructive: it adds a file and regenerates the index, removing
+    # nothing. Not idempotent either — the id is content-hashed, but a repeated
+    # call with any field changed yields a second, separate finding.
+    {**_MUTATES, "destructiveHint": False, "title": "Create a finding"},
 )
 def _new_finding(args: dict) -> str:
     # inputSchema enums are advisory — the server does not validate args against
@@ -302,6 +350,11 @@ def _new_finding(args: dict) -> str:
         "required": ["id", "status", "notes"],
         "additionalProperties": False,
     },
+    # The one destructive tool: it deletes the open finding file and appends to
+    # an append-only ledger, so neither half can be undone through this server.
+    # It also runs with no consent prompt, which makes this hint the only signal
+    # a client gets before the call.
+    {**_MUTATES, "destructiveHint": True, "title": "Resolve a finding"},
 )
 def _resolve_finding(args: dict) -> str:
     store = _store(args)
@@ -310,17 +363,35 @@ def _resolve_finding(args: dict) -> str:
     return json.dumps({"id": args["id"], "status": args["status"]})
 
 
+def _negotiate(requested) -> str:
+    """The protocol revision this session will speak.
+
+    MCP requires the server to echo the client's revision when it supports it,
+    and otherwise answer with one it does support — the client then decides
+    whether to continue. Echoing back whatever arrived would be the other
+    obvious reading and is wrong: it would claim support for every future
+    revision sight unseen. A non-string (or absent) value falls through to the
+    latest, since there is nothing to match against.
+    """
+    return requested if requested in SUPPORTED_PROTOCOLS else SUPPORTED_PROTOCOLS[0]
+
+
 def _handle(method: str, params: dict):
     if method == "ping":
         return {}  # MCP liveness check — empty result
     if method == "initialize":
         return {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": _negotiate(params.get("protocolVersion")),
             "capabilities": {"tools": {}},
             "serverInfo": SERVER_INFO,
         }
     if method == "tools/list":
-        return {"tools": [{k: t[k] for k in ("name", "description", "inputSchema")} for t in TOOLS]}
+        return {
+            "tools": [
+                {k: t[k] for k in ("name", "description", "inputSchema", "annotations")}
+                for t in TOOLS
+            ]
+        }
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}

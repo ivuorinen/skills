@@ -158,13 +158,97 @@ def test_initialize_handshake():
     assert "protocolVersion" in resp["result"]
 
 
+def _tools(mod) -> list[dict]:
+    (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    return resp["result"]["tools"]
+
+
 def test_tools_list_shape():
     mod = _load()
-    (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-    tools = resp["result"]["tools"]
+    tools = _tools(mod)
     assert isinstance(tools, list)
     for t in tools:
-        assert set(t) == {"name", "description", "inputSchema"}
+        assert set(t) == {"name", "description", "inputSchema", "annotations"}
+
+
+def test_every_tool_publishes_annotations():
+    # A tool with no annotations inherits the spec defaults — readOnlyHint false,
+    # destructiveHint true, openWorldHint true — which describes none of these
+    # tools. Silence is a wrong claim, not a missing one.
+    mod = _load()
+    for t in _tools(mod):
+        ann = t["annotations"]
+        assert ann["title"], f"{t['name']} has no title"
+        # Every tool's domain is this repo's own files: no network, no external
+        # service. The field defaults to True, so it must be stated.
+        assert ann["openWorldHint"] is False, t["name"]
+
+
+def test_read_tools_are_marked_read_only():
+    mod = _load()
+    read_only = {
+        "np_list_skills",
+        "np_read_skill",
+        "np_read_command",
+        "np_list_commands",
+        "np_list_findings",
+        "np_show_finding",
+        "np_findings_index",
+        "np_validate_store",
+    }
+    seen = {t["name"]: t["annotations"] for t in _tools(mod)}
+    assert read_only <= set(seen)
+    for name in read_only:
+        ann = seen[name]
+        assert ann["readOnlyHint"] is True, name
+        # destructiveHint/idempotentHint are defined as meaningful only when
+        # readOnlyHint is false; publishing them here tells a client to weigh a
+        # field the spec tells it to disregard.
+        assert "destructiveHint" not in ann, name
+        assert "idempotentHint" not in ann, name
+
+
+def test_mutate_tools_declare_their_blast_radius():
+    """`np_resolve_finding` is the only irreversible tool, and it must say so.
+
+    It deletes the open finding file and appends to an append-only ledger, with
+    no consent prompt in front of it — this hint is the only pre-call signal a
+    client gets. `np_new_finding` only adds, so marking it destructive would
+    train a client to ignore the flag that matters.
+    """
+    mod = _load()
+    seen = {t["name"]: t["annotations"] for t in _tools(mod)}
+    assert seen["np_new_finding"]["readOnlyHint"] is False
+    assert seen["np_new_finding"]["destructiveHint"] is False
+    assert seen["np_resolve_finding"]["readOnlyHint"] is False
+    assert seen["np_resolve_finding"]["destructiveHint"] is True
+
+
+def test_protocol_version_is_negotiated_not_hardcoded():
+    """The server echoes a revision it supports, and never one it does not.
+
+    Annotations are defined from 2025-03-26 onward, so answering 2024-11-05 to
+    every client would leave them inert. Echoing the client's value blindly is
+    the opposite failure: it claims support for revisions this server has never
+    seen.
+    """
+    mod = _load()
+
+    def negotiated(requested):
+        params = {} if requested is None else {"protocolVersion": requested}
+        (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params})
+        return resp["result"]["protocolVersion"]
+
+    latest = mod.SUPPORTED_PROTOCOLS[0]
+    for supported in mod.SUPPORTED_PROTOCOLS:
+        assert negotiated(supported) == supported
+    # Unknown, absent, and non-string all fall back to the latest supported.
+    assert negotiated("1999-01-01") == latest
+    assert negotiated(None) == latest
+    assert negotiated(42) == latest
+    # 2025-03-26 mandates JSON-RPC batching, which `serve` does not implement.
+    assert "2025-03-26" not in mod.SUPPORTED_PROTOCOLS
+    assert negotiated("2025-03-26") == latest
 
 
 def test_unknown_tool_is_error_result():
@@ -285,12 +369,7 @@ def test_read_command_tool_and_traversal():
 
 def test_skill_meta_tools_registered():
     mod = _load()
-    names = {
-        t["name"]
-        for t in _rpc(mod, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})[0][
-            "result"
-        ]["tools"]
-    }
+    names = {t["name"] for t in _tools(mod)}
     assert {"np_list_skills", "np_read_skill", "np_read_command", "np_list_commands"} <= names
 
 
