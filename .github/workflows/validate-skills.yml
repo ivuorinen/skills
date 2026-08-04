@@ -98,8 +98,11 @@ jobs:
           for sha in git("log", "--format=%H", rng).split():
               subject = git("log", "-1", "--format=%s", sha).strip()
               body = git("log", "-1", "--format=%b", sha)
+              # Conventional Commits treats `BREAKING CHANGE` and `BREAKING-CHANGE`
+              # as synonymous footer tokens and release-please honours both, so
+              # matching only the space form would miss half the spellings.
               marked = bool(re.match(r"^[a-z]+(\([^)]*\))?!:", subject)) or re.search(
-                  r"^BREAKING CHANGE:", body, re.M
+                  r"^BREAKING[ -]CHANGE:", body, re.M
               )
               if not marked:
                   continue

@@ -115,14 +115,17 @@ Plus three **PreToolUse** hooks, which can *block* a tool call before it runs �
 the most behaviour-changing entries in the file:
 
 - matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
-  text *names* `.claude/agents/` — literally, quoted, escaped, variable-built, or
-  glob-spelled (the `permissions.deny` block covers only the Read/Edit/Write
-  tools, not Bash). It raises the cost of reaching that tree; it does not close
-  it. The guard matches spellings of the path, so a command that locates the
-  files by name or content instead (`find . -name release-readiness-reviewer.md
-  -exec cat {} +`, `git ls-files | grep review | xargs cat`) carries no token to
-  match and passes. Treat `.github/CODEOWNERS` plus branch protection as the
-  binding control, not this hook.
+  text names `.claude/agents/` **or a full protected agent filename** —
+  literally, quoted, escaped, variable-built, or glob-spelled (the
+  `permissions.deny` block covers only the Read/Edit/Write tools, not Bash). So
+  `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
+  It raises the cost of reaching that tree; it does not close it. The guard
+  matches tokens, so a command that locates the files by **content** rather than
+  by path or name (`git ls-files | grep review | xargs cat`) carries neither
+  token and passes — the one token it does carry, `review`, is a nitpicker
+  command name that appears in ordinary commands constantly, so matching it
+  would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
+  the binding control, not this hook.
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 

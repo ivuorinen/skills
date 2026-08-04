@@ -10,7 +10,7 @@ of it is aspirational.
 make check
 ```
 
-`check` runs ten targets in this order (see `Makefile`):
+`check` runs eleven targets in this order (see `Makefile`):
 
 | Step                | What it does                                                              |
 | ------------------- | ------------------------------------------------------------------------- |

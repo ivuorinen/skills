@@ -64,10 +64,13 @@ repos:
       # CI step cannot disagree about what passes.
       - id: bandit
         args: [-c, pyproject.toml]
-        # tests/ is excluded via [tool.bandit] exclude_dirs, but pre-commit
-        # passes changed files explicitly, which bypasses exclude_dirs — so
-        # exclude it here too or every test edit fails on B101 (assert_used).
-        exclude: ^tests/
+        # pre-commit passes changed files explicitly, which bypasses both the
+        # `-r skills/ scripts/` roots and [tool.bandit] exclude_dirs. Restate
+        # both here, or this hook scans a different set than `make security`
+        # and the CI step: any .py added outside these roots would be gated by
+        # pre-commit alone, and every tests/ edit would fail on B101.
+        files: '^(?:skills|scripts)/'
+        exclude: '(^|/)(?:tests|\.venv|graphify-out|_extra)/'
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 6b63472e72e1a91ed8a2f6d483790dfb644fa1d3 # 0.37.4

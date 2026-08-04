@@ -474,6 +474,38 @@ def test_deny_agents_filename_match_does_not_false_positive(command, monkeypatch
     _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A longer filename that merely *contains* an agent filename is a
+        # different file. Substring matching blocked these; token-boundary
+        # matching does not.
+        "cat release-readiness-reviewer.md.bak",
+        "cat notes-about-skill-consistency-enforcer.md",
+        "git show HEAD:docs/release-readiness-reviewer.md.orig",
+    ],
+)
+def test_deny_agents_filename_match_is_token_bounded(command, monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp skill-consistency-enforcer.md /tmp/x",
+        "cat --file=release-readiness-reviewer.md",
+        "tar cf a.tar release-readiness-reviewer.md,skill-consistency-enforcer.md",
+    ],
+)
+def test_deny_agents_exact_filename_still_blocks_after_boundary_fix(command, monkeypatch):
+    """The boundary fix must not reopen the class it was added to close."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)
+    assert exc.value.code == 2
+
+
 def test_deny_agents_content_search_remains_a_known_gap():
     """Pins the documented boundary rather than pretending the surface is closed.
 
@@ -534,6 +566,34 @@ def test_bandit_pin_matches_the_pre_commit_rev_comment():
     assert re.search(rf"#\s*{re.escape(want)}\b", config), (
         f".pre-commit-config.yaml does not name bandit {want}"
     )
+
+
+def test_ci_breaking_marker_gate_matches_both_footer_spellings():
+    """Conventional Commits treats `BREAKING CHANGE` and `BREAKING-CHANGE` as
+    synonymous and release-please honours both, so a gate matching only the space
+    form would wave through half the spellings.
+
+    Reads the regex out of the workflow rather than restating it, so the test
+    cannot pass against a literal the workflow no longer uses.
+    """
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    m = re.search(r'r"(\^BREAKING[^"]*)"', workflow)
+    assert m, "could not find the breaking-footer regex in the workflow"
+    footer = re.compile(m.group(1), re.M)
+    assert footer.search("BREAKING CHANGE: drops the v1 store")
+    assert footer.search("BREAKING-CHANGE: drops the v1 store")
+    assert not footer.search("mentions a breaking change in prose")
+
+
+def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
+    """pre-commit passes changed files explicitly, bypassing both `-r skills/
+    scripts/` and [tool.bandit] exclude_dirs — so the hook must restate them or
+    it gates a different set than `make security` and CI."""
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    block = config.split("- id: bandit", 1)[1].split("- repo:", 1)[0]
+    assert "files:" in block, "bandit hook must bound itself to the scanned roots"
+    assert "skills" in block and "scripts" in block
+    assert "tests" in block, "tests/ must stay excluded (B101 is the test mechanism)"
 
 
 def test_bandit_scope_is_identical_in_the_makefile_and_ci():

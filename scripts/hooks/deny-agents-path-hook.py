@@ -120,13 +120,29 @@ def _glob_reaches_agents(command: str) -> bool:
     return False
 
 
+def _names_agent_file(command: str) -> bool:
+    """True if any shell token's final path segment is exactly a protected agent
+    filename.
+
+    Token-boundary, not substring: `name in command` would also block
+    `cat release-readiness-reviewer.md.bak`, a different file the guard has no
+    business touching. Splitting on shell separators (and `=`/`,`, so
+    `--file=<name>` and comma-joined lists still resolve) and comparing the
+    basename keeps the exact-name match while dropping the false positives.
+    """
+    for token in re.split(r"[\s;&|<>()=,]+", command):
+        if token and PurePosixPath(token).name in _AGENT_FILES:
+            return True
+    return False
+
+
 def _references_agents(command: str) -> bool:
     """True if the command reaches .claude/agents/ by any spelling the shell would
     resolve there — literal, quoted, escaped, variable-built, or glob."""
     c = _canonicalize(command)
     if _DENIED_RE.search(c) or (_CLAUDE_RE.search(c) and _AGENTS_INDIRECT_RE.search(c)):
         return True
-    if any(name in c for name in _AGENT_FILES):
+    if _names_agent_file(c):
         return True
     return _glob_reaches_agents(c)
 

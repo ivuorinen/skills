@@ -122,7 +122,19 @@ _NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
 # (commit-types.md, the rule that decides the release version, was absent while
 # its near-namesake commit-gate-integrity.md was listed).
 _CONVENTIONS_HEADING = "## Conventions"
-_BACKTICKED_MD = re.compile(r"`([a-z0-9-]+\.md)`")
+# Line-anchored, and stopping at the next exact level-two heading: a plain
+# substring search also matches `### Conventions`, the heading quoted in prose,
+# or one inside a fenced example, so the check could read the wrong block and
+# miss drift in the real section.
+_CONVENTIONS_SECTION = re.compile(
+    rf"^{re.escape(_CONVENTIONS_HEADING)}\s*$(.*?)(?=^## |\Z)", re.M | re.S
+)
+# Any filename _iter_rules() can return, not just kebab-case: it yields every
+# `.md` under the tree, so a narrower grammar here (`[a-z0-9-]+`) cannot capture
+# `README.md`, `_security.md` or `rule_v2.md` from the list and would report a
+# listed rule as missing. `validate()` enforces the kebab-case naming rule
+# separately — this regex only has to read what the list actually says.
+_BACKTICKED_MD = re.compile(r"`([^`\n/]+\.md)`")
 
 
 def check_rules_index(repo_root: Path, errors: list[str]) -> None:
@@ -136,12 +148,23 @@ def check_rules_index(repo_root: Path, errors: list[str]) -> None:
     except (OSError, UnicodeDecodeError) as e:
         errors.append(f"  ERROR  CLAUDE.md: cannot read file: {e}")
         return
-    if _CONVENTIONS_HEADING not in text:
+    m = _CONVENTIONS_SECTION.search(text)
+    if m is None:
         errors.append(f"  ERROR  CLAUDE.md: no '{_CONVENTIONS_HEADING}' section to index the rules")
         return
-    section = text.split(_CONVENTIONS_HEADING, 1)[1].split("\n## ", 1)[0]
-    listed = set(_BACKTICKED_MD.findall(section))
-    on_disk = {p.name for p in _anatomy._iter_rules(rules_dir)}
+    listed = set(_BACKTICKED_MD.findall(m.group(1)))
+    # _iter_rules records unreadable directories in `errors` and skips them, so
+    # omitting the argument yields a silently partial scan — and a rule hidden
+    # under an unreadable subtree would then pass as "not on disk".
+    scan_errors: list[Path] = []
+    on_disk = {p.name for p in _anatomy._iter_rules(rules_dir, errors=scan_errors)}
+    if scan_errors:
+        for bad in sorted(scan_errors):
+            errors.append(
+                f"  ERROR  .claude/rules/: cannot scan {bad} — rule discovery is "
+                "incomplete, so the CLAUDE.md index cannot be verified"
+            )
+        return
     for name in sorted(on_disk - listed):
         errors.append(
             f"  ERROR  CLAUDE.md: .claude/rules/{name} is not listed under "
