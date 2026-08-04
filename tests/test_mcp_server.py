@@ -485,3 +485,53 @@ def test_mutate_round_trip_and_stdout_clean(tmp_path):
     assert json.loads(_unfence(after)) == []
     ledger = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), "status": "fixed"})
     assert any(r["id"] == fid for r in json.loads(_unfence(ledger)))
+
+
+def test_allowed_root_rejects_a_relative_env_value(tmp_path, monkeypatch):
+    """`${CLAUDE_PROJECT_DIR:-.}` in both shipped manifests expands to `.` when the
+    harness never set the variable. A relative value cannot have come from a
+    harness that knows the project location, so it must fall through to the
+    repo-root lookup — which refuses outside a repo rather than writing where
+    nothing can be reviewed or reverted."""
+    mod = _load()
+    monkeypatch.chdir(tmp_path)  # tmp_path is not a git repo
+
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", ".")
+    with pytest.raises(ValueError, match="no project root"):
+        mod._allowed_root()
+
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")  # unexpanded literal
+    with pytest.raises(ValueError, match="no project root"):
+        mod._allowed_root()
+
+    # an absolute, existing path is the one form that is trusted
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert mod._allowed_root() == tmp_path.resolve()
+
+
+def test_tool_errors_never_echo_the_absolute_project_root(tmp_path, monkeypatch):
+    """Information disclosure: the caller is the least-trusted input here, and
+    findings.py errors interpolate absolute store paths."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    result = _call(mod, "np_show_finding", {"id": "audit-99999999"})
+    text = result["content"][0]["text"]
+    assert result["isError"] is True
+    assert str(tmp_path) not in text  # no absolute path, no username
+    assert "<project>" in text
+    assert "audit-99999999" in text  # still diagnosable
+
+
+def test_list_findings_rejects_out_of_vocab_severity(tmp_path, monkeypatch):
+    """inputSchema enums are advisory — the handler is what binds, matching the
+    CLI's argparse choices. An empty result must not be reachable by typo."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    result = _call(mod, "np_list_findings", {"severity": "hgih"})
+    assert result["isError"] is True
+    assert "severity must be one of" in result["content"][0]["text"]
+
+    ok = _call(mod, "np_list_findings", {"severity": "high"})
+    assert ok["isError"] is False

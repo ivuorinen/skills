@@ -730,7 +730,10 @@ class TestOutOfThreadNotes:
         assert rb[0]["commit_id"] == "abcdef123456"  # truncated to 12
         assert rb[0]["body"] == "Outside diff range note"
 
-    def test_summary_comments_bot_only_and_nonempty(self):
+    def test_summary_comments_keep_nonempty_any_author(self):
+        # Any author, like review bodies above. A bot-only filter dropped a
+        # maintainer's plain PR comment entirely, so `cr` could neither act on it
+        # nor record a verdict — the silent miss this fetch exists to prevent.
         comments = [
             {
                 "user": {"login": "coderabbitai[bot]"},
@@ -738,20 +741,21 @@ class TestOutOfThreadNotes:
                 "updated_at": "t1",
                 "body": "Review limit reached",
             },
-            {"user": {"login": "human"}, "created_at": "t", "body": "chatter"},  # human → dropped
+            {"user": {"login": "human"}, "created_at": "t", "body": "chatter"},
             {"user": {"login": "copilot[bot]"}, "created_at": "t", "body": "  "},  # empty → dropped
         ]
         _, sc = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list([], comments))
-        assert [c["author"] for c in sc] == ["coderabbitai[bot]"]
+        assert [c["author"] for c in sc] == ["coderabbitai[bot]", "human"]
         assert sc[0]["body"] == "Review limit reached"
         assert sc[0]["updated_at"] == "t1"  # loop measures rate-limit wait from last edit
+        assert sc[1]["body"] == "chatter"  # human note survives; author distinguishes it
 
     def test_null_user_does_not_crash(self):
         reviews = [{"user": None, "body": "note"}]
-        comments = [{"user": None, "body": "x"}]  # login "" is not a bot → dropped
+        comments = [{"user": None, "body": "x"}]
         rb, sc = _fetch_out_of_thread_notes("o", "r", 1, self._rest_list(reviews, comments))
         assert rb[0]["author"] == "unknown"
-        assert sc == []
+        assert [c["author"] for c in sc] == ["unknown"]  # unattributable, still actionable
 
     def test_partial_failure_keeps_the_other_half(self, capsys):
         # A failure fetching one section must not discard the other — review bodies
