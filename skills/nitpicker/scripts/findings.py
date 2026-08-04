@@ -546,13 +546,18 @@ def _record_from_finding(
         "status": status,
         "found": fm.get("found", ""),
         "resolved": resolved,
-        # Redacted here, not only in new_finding: this is the funnel for every
-        # path that COPIES an existing body into the ledger — resolve_finding,
-        # migrate_v1's resolved branch, migrate_resolved. Those bodies were never
-        # written by new_finding (a hand-edited open file, a v1 document), so they
-        # never passed its redaction. The ledger is append-only and resolve deletes
-        # the open file, so an unredacted copy landing here is permanent and the
+        # Redacted here, not only in new_finding: this is the funnel for
+        # resolve_finding and migrate_resolved, which COPY an existing body into
+        # the ledger. Those bodies were never written by new_finding (a
+        # hand-edited open file, a legacy resolved/*.md), so they never passed
+        # its redaction. The ledger is append-only and resolve deletes the open
+        # file, so an unredacted copy landing here is permanent and the
         # redactable original is gone.
+        #
+        # NOT the only such funnel: _build_v1 builds both its open and resolved
+        # records directly and migrate_v1 appends them as-is, so it redacts at
+        # its own two call sites. Any new path that writes a ledger record
+        # without going through here must do the same.
         "title": redact(title),
         "body": redact(body),
     }
@@ -1283,8 +1288,12 @@ def _build_v1(
         "status": status,
         "found": generated or "1970-01-01",
         "resolved": resolved,
-        "title": entry["title"],
-        "body": body,
+        # Redacted here, not by _record_from_finding: this branch builds its
+        # ledger record directly and migrate_v1 appends it as-is. `body` carries
+        # the v1 document's `Notes:` field and `title` its heading, both
+        # untrusted text this tool did not author.
+        "title": redact(entry["title"]),
+        "body": redact(body),
     }
     return ("resolved", fid, rec)
 
