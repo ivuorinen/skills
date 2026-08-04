@@ -8,6 +8,7 @@ must be silent no-ops. These hooks had no coverage before.
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -431,6 +432,117 @@ def test_deny_agents_absolute_glob_does_not_crash(command):
     # outside the repo, so they resolve to "allow".
     mod = _load("deny-agents-path-hook")
     assert mod._references_agents(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Locates the file by NAME, never spelling the directory: no `.claude`,
+        # no `agents` token, no glob metacharacter — invisible to all three of
+        # the path-shaped mechanisms, and it really resolves to the definition.
+        "find . -name release-readiness-reviewer.md -exec cat {} +",
+        "find . -name skill-consistency-enforcer.md -exec sed -i s/x/y/ {} +",
+        "cp skill-consistency-enforcer.md /tmp/x",
+    ],
+)
+def test_deny_agents_blocks_content_addressed_reach(command, monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": command}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make check",
+        "uv run --extra dev pytest tests/",
+        "git commit -m 'fix: review comments'",
+        "grep -rn review skills/nitpicker/commands/",
+        "cat skills/nitpicker/commands/review.md",
+        "gh pr review 42 --approve",
+    ],
+)
+def test_deny_agents_filename_match_does_not_false_positive(command, monkeypatch):
+    """The filename match is on the full `<name>.md`, not a stem fragment.
+
+    Matching a fragment like 'review' would block routine work — it is a
+    nitpicker command name and appears in ordinary commands constantly.
+    """
+    mod = _load("deny-agents-path-hook")
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+
+
+def test_deny_agents_content_search_remains_a_known_gap():
+    """Pins the documented boundary rather than pretending the surface is closed.
+
+    A command that finds the file by CONTENT carries neither the path nor the
+    filename, and its only shared token ('review') cannot be matched without
+    blocking routine work. CODEOWNERS plus branch protection is the binding
+    control; CLAUDE.md's PreToolUse section says so. If this ever starts
+    returning True the docs claim must be revisited too.
+    """
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents("git ls-files | grep review | xargs cat") is False
+
+
+ROOT = Path(__file__).parent.parent
+
+
+def _pyproject_pin(package: str) -> str:
+    """The version pyproject.toml's dev extra pins for `package`."""
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(rf'"{package}==([\d.]+)"', text)
+    assert m, f"pyproject.toml no longer pins {package}"
+    return m.group(1)
+
+
+def test_every_ruff_call_site_names_the_same_version():
+    """Five places invoke ruff and two of them WRITE (`make format`, the hook).
+
+    A version that drifts between them means the tree gets formatted one way and
+    judged another — reformat churn whose cause appears nowhere in the diff. This
+    already happened: pyproject moved to 0.16.0 while the Makefile, CI, and the
+    pre-commit rev stayed on 0.15.21.
+    """
+    want = _pyproject_pin("ruff")
+    sites = {
+        "scripts/hooks/ruff-hook.py": rf'"ruff=={re.escape(want)}"',
+        "Makefile": rf"ruff=={re.escape(want)}\b",
+        ".github/workflows/validate-skills.yml": rf"ruff=={re.escape(want)}\b",
+        # SHA-pinned per github-actions-security.md, so the version lives in the
+        # trailing comment; that is what has to match.
+        ".pre-commit-config.yaml": rf"#\s*v{re.escape(want)}\b",
+    }
+    for rel, pattern in sites.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert re.search(pattern, text), f"{rel} does not name ruff {want}"
+
+    # Both writing call sites, not just one of them.
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert len(re.findall(rf"ruff=={re.escape(want)}\b", makefile)) == 2, (
+        "Makefile must pin ruff in both `format` and `format-check`"
+    )
+
+
+def test_bandit_pin_matches_the_pre_commit_rev_comment():
+    """Same discipline as ruff: `make security`, CI, and the pre-commit hook all
+    read [tool.bandit] from pyproject.toml, so the version must not drift."""
+    want = _pyproject_pin("bandit")
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert re.search(rf"#\s*{re.escape(want)}\b", config), (
+        f".pre-commit-config.yaml does not name bandit {want}"
+    )
+
+
+def test_bandit_scope_is_identical_in_the_makefile_and_ci():
+    """A gate that scans a different tree locally than in CI is not a gate."""
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    invocation = "bandit -c pyproject.toml -q -r skills/ scripts/"
+    assert invocation in makefile, "Makefile `security` target changed shape"
+    assert invocation in workflow, "CI Security step must scan the same paths as `make security`"
 
 
 def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):

@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync audit-consistency index-check pre-commit lint format format-check list test typecheck help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,7 +6,7 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + index-check + lint + format-check + test + pre-commit (default)"
+	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
@@ -16,13 +16,14 @@ help:
 	@echo "  lint         — ruff check on scripts/, tests/, skills/"
 	@echo "  format       — ruff format on scripts/, tests/, skills/"
 	@echo "  format-check — ruff format --check (CI-safe, no writes)"
+	@echo "  security     — bandit static security scan of shipped tools and internal scripts"
 	@echo "  list         — list all skills with descriptions"
 	@echo "  test         — run pytest unit tests"
 	@echo "  bump-patch   — bump patch version"
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync audit-consistency index-check lint format-check typecheck test pre-commit
+check: validate validate-rules version-sync audit-consistency index-check lint format-check security typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -59,11 +60,20 @@ typecheck:
 lint:
 	uv run --extra dev ruff check scripts/ tests/ skills/
 
+# Scope matches [tool.bandit] in pyproject.toml: shipped tools plus internal
+# tooling, tests excluded there. Mirrors the Security step in
+# .github/workflows/validate-skills.yml — change both together.
+security:
+	uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
+
+# ruff pinned to the same version pyproject.toml and .pre-commit-config.yaml
+# name. These two targets WRITE, so a stale pin here reformats the tree one way
+# while the gate judges it another.
 format:
-	uv run --with ruff==0.15.21 ruff format scripts/ tests/ skills/
+	uv run --with ruff==0.16.0 ruff format scripts/ tests/ skills/
 
 format-check:
-	uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/
+	uv run --with ruff==0.16.0 ruff format --check scripts/ tests/ skills/
 
 bump-patch:
 	$(UV) scripts/bump-version.py patch

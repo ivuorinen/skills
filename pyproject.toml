@@ -8,9 +8,16 @@ license-files = ["LICENSE"]
 [project.optional-dependencies]
 # ruff is a test dependency, not just a linter: tests/test_hooks.py exercises
 # ruff-hook.py, which shells out to the real `ruff` binary.
-# ruff is pinned to the .pre-commit-config.yaml rev so `make lint` and the
-# pre-commit hook cannot disagree about what passes.
-dev = ["pytest>=9.1,<10", "pytest-cov>=7.1,<8", "ruff==0.16.0"]
+# ruff is pinned to the same version the .pre-commit-config.yaml rev names, and
+# the Makefile and scripts/hooks/ruff-hook.py pin it too, so none of the four
+# call sites can disagree about what passes. test_hooks.py enforces the match.
+# bandit is pinned to its .pre-commit-config.yaml rev for the same reason.
+dev = [
+  "pytest>=9.1,<10",
+  "pytest-cov>=7.1,<8",
+  "ruff==0.16.0",
+  "bandit==1.9.4",
+]
 
 [tool.coverage.run]
 include = [
@@ -47,6 +54,30 @@ known-first-party = ["scripts"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.bandit]
+# Scope: the code that ships to consumers (skills/*/scripts/) and the internal
+# tooling that executes on a developer's machine (scripts/). tests/ is excluded
+# because 815 of its 816 hits are B101 (assert_used) — asserts are the test
+# mechanism, not a defect. Excluding the directory rather than skipping B101
+# globally keeps B101 live for shipped code, which uses no bare asserts today.
+exclude_dirs = ["tests", ".venv", "graphify-out", "_extra"]
+
+# Three checks are skipped as structurally inapplicable, not as noise to bury:
+#
+#   B404 (subprocess import)  — informational; every hook and the PR fetcher
+#                               must shell out to a validator or to `gh`.
+#   B603 (subprocess without  — fires on every subprocess.run([...]) call. That
+#         shell=True)           IS the safe form. No `shell=True` exists anywhere
+#                               in the repo, and every argv is a fixed list, so
+#                               there is no shell for an argument to escape into.
+#   B607 (partial exec path)  — dev tooling resolves `git`, `uv`, `ruff`, `gh`,
+#                               and `python3` through PATH by design; absolute
+#                               paths would not survive a different machine.
+#
+# Everything else stays on, including B105/B310, which are handled at the call
+# site with a `# nosec` naming the specific check and the reason.
+skips = ["B404", "B603", "B607"]
 
 [tool.pyright]
 # Use the same virtualenv uv manages (`uv sync --extra dev`), so pyright sees

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --quiet
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["ruff"]
+# dependencies = ["ruff==0.16.0"]  # keep in sync with the pyproject.toml dev pin
 # ///
 """PostToolUse hook — run ruff check --fix and ruff format on edited Python files."""
 

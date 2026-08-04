@@ -116,8 +116,46 @@ _UV_SHEBANG = "#!/usr/bin/env -S uv run --quiet"
 # Import-only modules, never executed directly — a shebang would be a lie.
 _NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
 
+# CLAUDE.md's `## Conventions` section presents itself as the index of
+# .claude/rules/, and Claude Code loads CLAUDE.md — so a rule missing from the
+# list is a rule an agent never learns exists. It was hand-kept and had drifted
+# (commit-types.md, the rule that decides the release version, was absent while
+# its near-namesake commit-gate-integrity.md was listed).
+_CONVENTIONS_HEADING = "## Conventions"
+_BACKTICKED_MD = re.compile(r"`([a-z0-9-]+\.md)`")
+
+
+def check_rules_index(repo_root: Path, errors: list[str]) -> None:
+    """Every .claude/rules/*.md is listed in CLAUDE.md's `## Conventions`, and vice versa."""
+    claude_md = repo_root / "CLAUDE.md"
+    rules_dir = repo_root / ".claude" / "rules"
+    if not claude_md.exists() or not rules_dir.exists():
+        return
+    try:
+        text = claude_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        errors.append(f"  ERROR  CLAUDE.md: cannot read file: {e}")
+        return
+    if _CONVENTIONS_HEADING not in text:
+        errors.append(f"  ERROR  CLAUDE.md: no '{_CONVENTIONS_HEADING}' section to index the rules")
+        return
+    section = text.split(_CONVENTIONS_HEADING, 1)[1].split("\n## ", 1)[0]
+    listed = set(_BACKTICKED_MD.findall(section))
+    on_disk = {p.name for p in _anatomy._iter_rules(rules_dir)}
+    for name in sorted(on_disk - listed):
+        errors.append(
+            f"  ERROR  CLAUDE.md: .claude/rules/{name} is not listed under "
+            f"'{_CONVENTIONS_HEADING}' — an unlisted rule is one the agent never reads"
+        )
+    for name in sorted(listed - on_disk):
+        errors.append(
+            f"  ERROR  CLAUDE.md: '{_CONVENTIONS_HEADING}' lists {name}, "
+            "which does not exist in .claude/rules/"
+        )
+
 
 def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
+    check_rules_index(repo_root, errors)
     for path in sorted(repo_root.glob("skills/**/*.md")):
         try:
             text = path.read_text(encoding="utf-8")

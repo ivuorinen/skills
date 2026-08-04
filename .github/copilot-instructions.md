@@ -101,7 +101,7 @@ Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migra
 ## Validation — Run Before Every Commit
 
 ```bash
-make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + typecheck + pytest + pre-commit
+make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + bandit security scan + typecheck + pytest + pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```

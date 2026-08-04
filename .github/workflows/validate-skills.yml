@@ -70,6 +70,51 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      - name: Reject breaking markers on CI-only commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # `!` and a BREAKING CHANGE footer both make release-please cut a MAJOR
+        # release. .claude/rules/commit-types.md: "A workflow-only or CI-only
+        # dependency bump is never breaking: it touches no published surface, so
+        # it carries no `!`." The conventional-commit check above accepts `!` as
+        # valid syntax, so nothing caught it — two Renovate commits carrying `!`
+        # on a one-line CI bump would have published a spurious major version.
+        # Deliberately narrow: only commits whose ENTIRE diff is CI config are
+        # rejected, so a genuinely breaking change anywhere else still passes.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          CI_ONLY = lambda p: p.startswith(".github/") or p == ".pre-commit-config.yaml"
+
+          def git(*args):
+              return subprocess.run(
+                  ["git", *args], check=True, capture_output=True, text=True
+              ).stdout
+
+          rng = f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"
+          bad = []
+          for sha in git("log", "--format=%H", rng).split():
+              subject = git("log", "-1", "--format=%s", sha).strip()
+              body = git("log", "-1", "--format=%b", sha)
+              marked = bool(re.match(r"^[a-z]+(\([^)]*\))?!:", subject)) or re.search(
+                  r"^BREAKING CHANGE:", body, re.M
+              )
+              if not marked:
+                  continue
+              files = [f for f in git("show", "--name-only", "--format=", sha).split("\n") if f]
+              if files and all(CI_ONLY(f) for f in files):
+                  bad.append((sha[:8], subject))
+
+          for sha, subject in bad:
+              print(
+                  f"::error::{sha} marks a breaking change but its diff is CI-only "
+                  f"(see .claude/rules/commit-types.md): {subject}"
+              )
+          sys.exit(1 if bad else 0)
+          PY
+
   validate:
     name: Validate
     runs-on: ubuntu-latest
@@ -117,7 +162,18 @@ jobs:
             | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
 
       - name: Check script formatting
-        run: uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/
+        # ruff pinned to the version pyproject.toml, the Makefile, the
+        # .pre-commit-config.yaml rev, and scripts/hooks/ruff-hook.py all name.
+        # test_hooks.py asserts the hook matches pyproject; keep the rest in step.
+        run: uv run --with ruff==0.16.0 ruff format --check scripts/ tests/ skills/
+
+      - name: Security scan
+        # bandit over the shipped skill tools and the internal tooling. Scope,
+        # skips, and the per-call `# nosec` justifications live in [tool.bandit]
+        # in pyproject.toml, so this step, `make security`, and the pre-commit
+        # hook cannot disagree. Mirrors the `security` target in the Makefile —
+        # change both together.
+        run: uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
 
       - name: Run pre-commit suite
         run: uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure

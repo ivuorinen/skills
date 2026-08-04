@@ -45,7 +45,7 @@ repos:
         args: [--strict, -c=.yamllint.yaml]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 01a675ea018f2fb714478a5ffb83fcea8374bb06 # v0.15.21
+    rev: cb8c523fd4835aba42af70f4cad5568db4df0b6c # v0.16.0
     hooks:
       # Run the linter with auto-fix
       - id: ruff-check
@@ -54,6 +54,20 @@ repos:
       # Run the formatter
       - id: ruff-format
         types: [python]
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 92ae8b82fb422a639f0ed8d99e96cea769594e08 # 1.9.4
+    hooks:
+      # Static security scan of the shipped skill tools and the internal
+      # tooling. Config (scope, skips, per-call `# nosec`) lives in
+      # [tool.bandit] in pyproject.toml so this hook, `make security`, and the
+      # CI step cannot disagree about what passes.
+      - id: bandit
+        args: [-c, pyproject.toml]
+        # tests/ is excluded via [tool.bandit] exclude_dirs, but pre-commit
+        # passes changed files explicitly, which bypasses exclude_dirs — so
+        # exclude it here too or every test edit fails on B101 (assert_used).
+        exclude: ^tests/
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 6b63472e72e1a91ed8a2f6d483790dfb644fa1d3 # 0.37.4
