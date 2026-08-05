@@ -131,52 +131,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-      - name: Validate all SKILL.md files
-        run: |
-          uv run --quiet scripts/validate-skill.py
-          uv run --quiet scripts/validate-skill.py .claude/skills/*/SKILL.md
-
-      - name: Validate rules files
-        run: uv run --quiet scripts/validate-rules.py
-
-      - name: Check version sync
-        run: uv run --quiet scripts/check-version-sync.py
-
-      - name: Validate findings store
-        run: python3 skills/nitpicker/scripts/findings.py validate
-
-      - name: Check findings index is current
-        run: |
-          python3 skills/nitpicker/scripts/findings.py index
-          git diff --exit-code docs/audit/findings/INDEX.md
-
-      - name: Run tests
-        run: uv run --extra dev pytest tests/
-
-      - name: Lint scripts
-        run: uv run --extra dev ruff check scripts/ tests/ skills/
-
-      - name: Type-check
-        # Zero floor: any pyright error fails the gate. A count threshold could
-        # mask a new error by fixing an old one, so the tolerated set stays empty.
-        # Mirrors the `typecheck` target in the Makefile — change both together.
-        run: |
-          uv run --with pyright==1.1.411 pyright --outputjson \
-            | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
-
-      - name: Check script formatting
-        # ruff pinned to the version pyproject.toml, the Makefile, the
-        # .pre-commit-config.yaml rev, and scripts/hooks/ruff-hook.py all name.
-        # test_hooks.py asserts the hook matches pyproject; keep the rest in step.
-        run: uv run --with ruff==0.16.0 ruff format --check scripts/ tests/ skills/
-
-      - name: Security scan
-        # bandit over the shipped skill tools and the internal tooling. Scope,
-        # skips, and the per-call `# nosec` justifications live in [tool.bandit]
-        # in pyproject.toml, so this step, `make security`, and the pre-commit
-        # hook cannot disagree. Mirrors the `security` target in the Makefile —
-        # change both together.
-        run: uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
-
-      - name: Run pre-commit suite
-        run: uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
+      - name: Run the repository gate
+        # ONE invocation, deliberately: the Makefile is the single definition of
+        # what "checked" means. Listing the targets as separate steps here bought
+        # per-gate visibility in the Actions UI, but at the cost of a second copy
+        # that drifts — a target added to `make check` was silently absent from
+        # CI until someone noticed, and each duplicated tool pin was one more
+        # place to keep in step.
+        #
+        # `make check` = validate + validate-rules + version-sync +
+        # audit-consistency + index-check + lint + format-check + security +
+        # typecheck + test + pre-commit. Each target names the failing gate in
+        # its own output, so a failure is still identifiable from the log.
+        #
+        # tests/test_hooks.py asserts this job runs `make check` rather than
+        # restating the targets, so the collapse cannot quietly be undone.
+        run: make check

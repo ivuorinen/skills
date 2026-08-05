@@ -531,18 +531,21 @@ def _pyproject_pin(package: str) -> str:
 
 
 def test_every_ruff_call_site_names_the_same_version():
-    """Five places invoke ruff and two of them WRITE (`make format`, the hook).
+    """Four places invoke ruff and two of them WRITE (`make format`, the hook).
 
     A version that drifts between them means the tree gets formatted one way and
     judged another — reformat churn whose cause appears nowhere in the diff. This
     already happened: pyproject moved to 0.16.0 while the Makefile, CI, and the
     pre-commit rev stayed on 0.15.21.
+
+    CI is no longer a site: the Validate job runs `make check`, so it inherits
+    the Makefile's pin instead of carrying a fifth copy. That is the point of
+    the collapse — fewer places to keep in step, not merely fewer lines.
     """
     want = _pyproject_pin("ruff")
     sites = {
         "scripts/hooks/ruff-hook.py": rf'"ruff=={re.escape(want)}"',
         "Makefile": rf"ruff=={re.escape(want)}\b",
-        ".github/workflows/validate-skills.yml": rf"ruff=={re.escape(want)}\b",
         # SHA-pinned per github-actions-security.md, so the version lives in the
         # trailing comment; that is what has to match.
         ".pre-commit-config.yaml": rf"#\s*v{re.escape(want)}\b",
@@ -555,6 +558,12 @@ def test_every_ruff_call_site_names_the_same_version():
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert len(re.findall(rf"ruff=={re.escape(want)}\b", makefile)) == 2, (
         "Makefile must pin ruff in both `format` and `format-check`"
+    )
+
+    # And CI must not quietly reacquire its own pin.
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    assert "ruff==" not in workflow, (
+        "the Validate job runs `make check`; a ruff pin here is a reintroduced second copy"
     )
 
 
@@ -596,13 +605,59 @@ def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
     assert "tests" in block, "tests/ must stay excluded (B101 is the test mechanism)"
 
 
-def test_bandit_scope_is_identical_in_the_makefile_and_ci():
-    """A gate that scans a different tree locally than in CI is not a gate."""
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+def test_ci_runs_the_repository_gate_through_make_check():
+    """The Validate job must invoke `make check`, not restate its targets.
+
+    Replaces the old per-target assertions. Those pinned CI and the Makefile to
+    the same shape, but a *new* target added to `make check` was still absent
+    from CI until someone noticed — the assertion could only catch drift in
+    steps that already existed. Running the Makefile removes the second copy
+    instead of guarding it.
+    """
     workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    invocation = "bandit -c pyproject.toml -q -r skills/ scripts/"
-    assert invocation in makefile, "Makefile `security` target changed shape"
-    assert invocation in workflow, "CI Security step must scan the same paths as `make security`"
+    validate_job = workflow.split("  validate:", 1)[1]
+    assert re.search(r"^\s*run:\s*make check\s*$", validate_job, re.M), (
+        "the Validate job must run `make check`"
+    )
+
+    # Exactly one `run:` step, so a gate cannot be re-added alongside it.
+    #
+    # Matching each `make check` target name against the `run:` lines was the
+    # obvious check and is useless: a reintroduced security step runs
+    # `bandit ...`, which contains no "security". Counting the steps is the
+    # property that actually holds — the job's whole job is to call the Makefile.
+    runs = re.findall(r"^\s*run:", validate_job, re.M)
+    assert len(runs) == 1, (
+        f"the Validate job has {len(runs)} run steps; it should have exactly one "
+        "(`make check`) — an extra step is a second copy of a gate"
+    )
+
+
+def test_make_check_still_covers_every_gate():
+    """The collapse is only safe while `check` actually runs everything.
+
+    Pins the target list, so dropping one from `make check` — which would now
+    silently drop it from CI too — fails here instead of quietly narrowing the
+    gate.
+    """
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    check_rule = re.search(r"^check:(.*)$", makefile, re.M)
+    assert check_rule, "Makefile has no `check:` rule"
+    targets = set(check_rule.group(1).split())
+    required = {
+        "validate",
+        "validate-rules",
+        "version-sync",
+        "audit-consistency",
+        "index-check",
+        "lint",
+        "format-check",
+        "security",
+        "typecheck",
+        "test",
+        "pre-commit",
+    }
+    assert required <= targets, f"`make check` no longer runs: {sorted(required - targets)}"
 
 
 def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):
