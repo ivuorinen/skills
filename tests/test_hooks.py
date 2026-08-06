@@ -575,6 +575,23 @@ def test_every_ruff_call_site_names_the_same_version():
 # character, which `=` and `!` are not.
 _JS_NAMED_GROUP = re.compile(r"\(\?<(?=[A-Za-z_])")
 
+# Renovate runs custom-manager regexes through RE2 (node-re2), whose docs state
+# it "does not support backreferences and lookahead assertions" — lookbehind
+# likewise. Python's `re` accepts all of them, so a matchString can compile
+# perfectly here and be rejected by Renovate at config-load time, which leaves
+# the manager inert and the pins unmanaged: the original bug, silently restored.
+#
+# A conservative syntactic check, not an RE2 parser: it catches the two
+# constructs the docs name, which is what a matchString would plausibly reach
+# for (`(?<=ruff==)` is the obvious way to anchor one).
+_RE2_UNSUPPORTED = re.compile(
+    r"""\(\?[=!]      # lookahead  (?=…) (?!…)
+      | \(\?<[=!]     # lookbehind (?<=…) (?<!…)
+      | \\[1-9]       # backreference
+    """,
+    re.VERBOSE,
+)
+
 
 def _js_regex_to_python(pattern: str) -> str:
     """Renovate matchStrings are JS regexes; Python needs `(?P<name>)`.
@@ -625,7 +642,16 @@ def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
     seen: dict[str, set[str]] = {}
     for mgr in cfg["customManagers"]:
         glob_pat = mgr["managerFilePatterns"][0]
-        rx = re.compile(_js_regex_to_python(mgr["matchStrings"][0]))
+        match_string = mgr["matchStrings"][0]
+        # Python's `re` is strictly more permissive than what Renovate runs, so
+        # checking only that a pattern compiles here would pass a config
+        # Renovate rejects at load time — leaving the manager inert and the
+        # pins unmanaged again, the exact failure this file exists to prevent.
+        assert not _RE2_UNSUPPORTED.search(match_string), (
+            f"{glob_pat}: matchString uses a construct RE2 rejects "
+            f"(lookaround or backreference): {match_string}"
+        )
+        rx = re.compile(_js_regex_to_python(match_string))
         found = {
             m.group("depName")
             for f in sorted(ROOT.glob(glob_pat))
