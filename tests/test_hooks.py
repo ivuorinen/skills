@@ -567,6 +567,68 @@ def test_every_ruff_call_site_names_the_same_version():
     )
 
 
+def _js_regex_to_python(pattern: str) -> str:
+    """Renovate matchStrings are JS regexes; Python needs `(?P<name>)`.
+
+    The only difference that matters for these patterns is the named-group
+    spelling, so a targeted swap is enough — and it is what makes this test able
+    to run the real config rather than a restatement of it.
+    """
+    return pattern.replace("(?<", "(?P<")
+
+
+def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
+    """The sync tests above are only satisfiable if Renovate can reach every site.
+
+    They could not be: a ruff bump updated pyproject.toml alone and left the
+    Makefile, the PEP 723 hook block and the pre-commit rev behind, because no
+    enabled manager reads those. The gate then failed the bot's own PR with no
+    way for it to comply. Assert the customManagers actually match the pins.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    assert "custom.regex" in cfg["enabledManagers"], (
+        "customManagers do nothing unless custom.regex is an enabled manager"
+    )
+
+    expected = {"Makefile": {"pre-commit", "pyright", "ruff"}, "scripts/hooks/*.py": {"ruff"}}
+    seen: dict[str, set[str]] = {}
+    for mgr in cfg["customManagers"]:
+        glob_pat = mgr["managerFilePatterns"][0]
+        rx = re.compile(_js_regex_to_python(mgr["matchStrings"][0]))
+        found = {
+            m.group("depName")
+            for f in sorted(ROOT.glob(glob_pat))
+            for m in rx.finditer(f.read_text(encoding="utf-8"))
+        }
+        seen[glob_pat] = found
+
+    for glob_pat, want in expected.items():
+        assert glob_pat in seen, f"no customManager covers {glob_pat}"
+        missing = want - seen[glob_pat]
+        assert not missing, f"{glob_pat}: customManager matches nothing for {sorted(missing)}"
+
+
+def test_renovate_groups_each_tool_across_its_managers():
+    """One PR per tool, or every PR is a partial bump.
+
+    ruff on PyPI and astral-sh/ruff-pre-commit are separate packages to
+    Renovate. Ungrouped they arrive as two PRs, and each one on its own fails
+    test_every_ruff_call_site_names_the_same_version.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    groups = {
+        r["groupName"]: set(r["matchPackageNames"])
+        for r in cfg.get("packageRules", [])
+        if "groupName" in r and "matchPackageNames" in r
+    }
+    assert {"ruff", "astral-sh/ruff-pre-commit"} <= groups.get("ruff", set()), (
+        "ruff and its pre-commit repo must share a groupName"
+    )
+    assert {"bandit", "PyCQA/bandit"} <= groups.get("bandit", set()), (
+        "bandit and its pre-commit repo must share a groupName"
+    )
+
+
 def test_bandit_pin_matches_the_pre_commit_rev_comment():
     """Same discipline as ruff: `make security`, CI, and the pre-commit hook all
     read [tool.bandit] from pyproject.toml, so the version must not drift."""
