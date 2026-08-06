@@ -1,12 +1,14 @@
 """Tests for scripts/validate-skill.py — validate()."""
 
 import importlib.util
+import runpy
+import sys
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location(
-    "validate_skill",
-    Path(__file__).parent.parent / "scripts" / "validate-skill.py",
-)
+import pytest
+
+_TOOL = Path(__file__).parent.parent / "scripts" / "validate-skill.py"
+_spec = importlib.util.spec_from_file_location("validate_skill", _TOOL)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 validate = _mod.validate
@@ -314,3 +316,116 @@ class TestCommandValidation:
         bad = "# /my-skill alpha — Title\n\nPurpose.\n\n## When to use\n\nT.\n\n#### Deep\n\nX.\n"
         errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
         assert _has(errors, "header level jumps")
+
+    def test_unterminated_fence_in_command(self, tmp_path):
+        bad = _cmd("alpha") + "\n```python\nnever closed\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "unterminated code fence")
+
+    def test_second_h1_in_command(self, tmp_path):
+        bad = _cmd("alpha") + "\n# A second title\n\nX.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "command file has 2 h1 headers")
+
+    def test_unreadable_command_file(self, tmp_path):
+        # A directory named alpha.md: read_text raises IsADirectoryError (an OSError).
+        skill_dir = tmp_path / "my-skill"
+        (skill_dir / "commands" / "alpha.md").mkdir(parents=True)
+        errors = _run_commands(tmp_path, {"beta.md": _cmd("beta")})
+        assert _has(errors, "cannot read file")
+
+    def test_duplicate_table_row(self, tmp_path):
+        skill_dir = tmp_path / "my-skill"
+        (skill_dir / "commands").mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            COMMANDS_SKILL + "| `alpha` | — | Listed twice |\n", encoding="utf-8"
+        )
+        for name in ("alpha", "beta"):
+            (skill_dir / "commands" / f"{name}.md").write_text(_cmd(name), encoding="utf-8")
+        errors: list[str] = []
+        validate(skill_dir / "SKILL.md", errors, [])
+        assert _has(errors, "appears in more than one Commands-table row")
+
+    def test_commands_table_without_a_commands_directory(self, tmp_path):
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(COMMANDS_SKILL, encoding="utf-8")
+        errors: list[str] = []
+        validate(skill_dir / "SKILL.md", errors, [])
+        assert _has(errors, "commands/ does not exist")
+
+
+def test_unreadable_skill_file(tmp_path):
+    # A directory named SKILL.md: read_text raises IsADirectoryError (an OSError).
+    path = tmp_path / "my-skill" / "SKILL.md"
+    path.mkdir(parents=True)
+    errors: list[str] = []
+    validate(path, errors, [])
+    assert _has(errors, "cannot read file")
+
+
+# ── main(): the exit-code contract CI and pre-commit observe (tests-781e4953) ──
+
+
+def _main_on(monkeypatch, tmp_path, argv: list[str]):
+    monkeypatch.setattr(_mod.sys, "argv", ["validate-skill.py", *argv])
+    monkeypatch.setattr(_mod, "__file__", str(tmp_path / "scripts" / "validate-skill.py"))
+    return _mod.main()
+
+
+def test_main_exits_zero_and_prints_ok_for_a_valid_skill(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "my-skill" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(VALID, encoding="utf-8")
+    assert _main_on(monkeypatch, tmp_path, [str(path)]) is None
+    assert "OK  1 skill(s) validated." in capsys.readouterr().out
+
+
+def test_main_exits_one_and_prints_every_error(tmp_path, monkeypatch, capsys):
+    """The non-zero exit is the only signal pre-commit and CI act on."""
+    path = tmp_path / "my-skill" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("no frontmatter at all\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _main_on(monkeypatch, tmp_path, [str(path)])
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "error(s). Fix before committing." in out
+
+
+def test_main_prints_warnings_without_failing(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "my-skill" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(VALID + "\nWrite results to codereview.md.\n", encoding="utf-8")
+    assert _main_on(monkeypatch, tmp_path, [str(path)]) is None
+    out = capsys.readouterr().out
+    assert "WARN" in out
+    assert "OK  1 skill(s) validated." in out
+
+
+def test_main_skips_vendored_skills_and_exits_zero(tmp_path, monkeypatch, capsys):
+    vendored = next(iter(_mod.VENDORED_SKILLS))
+    path = tmp_path / vendored / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("whatever, never validated\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _main_on(monkeypatch, tmp_path, [str(path)])
+    assert exc.value.code == 0
+    assert f"SKIP   {vendored}" in capsys.readouterr().out
+
+
+def test_main_reports_an_empty_tree_rather_than_passing_silently(tmp_path, monkeypatch, capsys):
+    with pytest.raises(SystemExit) as exc:
+        _main_on(monkeypatch, tmp_path, [])
+    assert exc.value.code == 0
+    assert "No SKILL.md files found." in capsys.readouterr().out
+
+
+def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr(sys, "argv", ["validate-skill.py", str(tmp_path / "nothing")])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 1
+    assert "cannot read file" in capsys.readouterr().out

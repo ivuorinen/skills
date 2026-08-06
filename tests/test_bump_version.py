@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -148,3 +149,16 @@ class TestMain:
             json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))["version"]
             == "1.0.0"
         )
+
+
+def test_module_runs_as_a_script(monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main().
+
+    An unrecognised part exits before any manifest is read or written, so this
+    never touches the real repo's version files.
+    """
+    monkeypatch.setattr(sys, "argv", ["bump-version.py", "bogus"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(SCRIPTS_DIR / "bump-version.py"), run_name="__main__")
+    assert exc.value.code == 1
+    assert "Usage:" in capsys.readouterr().out

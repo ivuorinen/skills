@@ -1,7 +1,10 @@
 """Tests for scripts/check-version-sync.py — main() cross-manifest version check."""
 
 import importlib.util
+import runpy
 from pathlib import Path
+
+import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
@@ -120,3 +123,31 @@ def test_empty_plugins_array_reports_error_not_crash(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "marketplace.json" in out
     assert "no version entries" in out
+
+
+# ── unreadable-input paths (tests-b4fcf9ec) ──────────────────────────────────
+
+
+def test_pyproject_without_a_project_version_raises_keyerror(tmp_path):
+    _make_repo(tmp_path, pyproject="[tool.ruff]\nline-length = 100\n")
+    mod = _load_mod()
+    mod.__dict__["REPO_ROOT"] = tmp_path
+    with pytest.raises(KeyError, match="version field not found"):
+        mod.read_toml_version("pyproject.toml")
+
+
+def test_missing_package_json_reports_an_error_and_returns_one(tmp_path, capsys):
+    """package.json is the reference version — without it there is nothing to
+    compare against, so the run must fail loudly rather than pass vacuously."""
+    _make_repo(tmp_path)
+    (tmp_path / "package.json").unlink()
+    assert _run(tmp_path) == 1
+    assert "cannot read version" in capsys.readouterr().out
+
+
+def test_module_runs_as_a_script(capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(SCRIPTS_DIR / "check-version-sync.py"), run_name="__main__")
+    assert exc.value.code == 0
+    assert "All versions in sync." in capsys.readouterr().out

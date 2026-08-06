@@ -3,14 +3,14 @@
 import importlib.util
 import json
 import re
+import runpy
+import sys
 from pathlib import Path
 
 import pytest
 
-_spec = importlib.util.spec_from_file_location(
-    "findings",
-    Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
-)
+_TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
+_spec = importlib.util.spec_from_file_location("findings", _TOOL)
 findings = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(findings)  # type: ignore[union-attr]
 
@@ -1235,3 +1235,580 @@ def test_list_severity_rejects_out_of_vocab(tmp_path, capsys):
     assert "hgih" in capsys.readouterr().err
     # the correct spelling still works
     assert findings.main(["list", "--root", str(tmp_path), "--severity", "high"]) == 0
+
+
+# --- validate_file / validate_ledger_record reject branches (tests-ecd0ec10) ---
+#
+# These are the integrity gate `make check` and CI run. Every reject branch gets
+# a case that fails if the branch is deleted — the suite previously exercised
+# only four of them.
+
+GOOD_FM = {
+    "id": "security-aabbccdd",
+    "auditor": "security",
+    "severity": "high",
+    "category": "security",
+    "area": "src/auth.py",
+    "status": "open",
+    "found": "2026-07-08",
+}
+
+
+def _render(fm: dict, title: str = "T", body: str = BODY) -> str:
+    front = "\n".join(f"{k}: {v}" for k, v in fm.items())
+    heading = f"# {title}\n\n" if title else ""
+    return f"---\n{front}\n---\n\n{heading}{body}"
+
+
+def _write_finding(root: Path, fm: dict, *, state: str = "open", title: str = "T") -> Path:
+    path = root / fm.get("auditor", "security") / state / f"{fm.get('id', 'security-aabbccdd')}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render(fm, title), encoding="utf-8")
+    return path
+
+
+def _drop(*keys: str) -> dict:
+    return {k: v for k, v in GOOD_FM.items() if k not in keys}
+
+
+def test_validate_file_accepts_the_baseline_fixture(tmp_path):
+    """Guards the table below: every mutation must be the only reason it fails."""
+    assert findings.validate_file(_write_finding(tmp_path, dict(GOOD_FM))) == []
+
+
+@pytest.mark.parametrize(
+    ("fm", "state", "title", "expected"),
+    [
+        (_drop("id"), "open", "T", "missing id"),
+        ({**GOOD_FM, "id": "notahash"}, "open", "T", "malformed id"),
+        (_drop("auditor"), "open", "T", "missing auditor"),
+        (_drop("status"), "open", "T", "missing status"),
+        (_drop("found"), "open", "T", "missing found"),
+        ({**GOOD_FM, "status": "opne"}, "open", "T", "invalid status 'opne'"),
+        ({**GOOD_FM, "category": "banana"}, "open", "T", "invalid category 'banana'"),
+        ({**GOOD_FM, "status": "fixed"}, "open", "T", "file in open/ but status is 'fixed'"),
+        ({**GOOD_FM, "status": "open"}, "resolved", "T", "file in resolved/ but status is 'open'"),
+        (dict(GOOD_FM), "archive", "T", "file not under open/ or resolved/"),
+        (_drop("severity"), "open", "T", "missing severity"),
+        (_drop("category"), "open", "T", "missing category"),
+        (_drop("area"), "open", "T", "missing area"),
+        (
+            {**_drop("severity", "category", "area"), "status": "fixed"},
+            "resolved",
+            "T",
+            "resolved finding missing resolved date",
+        ),
+        (
+            {**_drop("severity", "category", "area"), "status": "fixed", "resolved": "07/09/2026"},
+            "resolved",
+            "T",
+            "invalid resolved date",
+        ),
+        (dict(GOOD_FM), "open", "", "missing '# <title>' heading"),
+    ],
+)
+def test_validate_file_rejects_each_malformed_field(tmp_path, fm, state, title, expected):
+    path = _write_finding(tmp_path, fm, state=state, title=title)
+    assert any(expected in e for e in findings.validate_file(path)), findings.validate_file(path)
+
+
+def test_validate_file_rejects_auditor_directory_mismatch(tmp_path):
+    # The file lives under security/, but claims auditor: tests.
+    path = tmp_path / "security" / "open" / "security-aabbccdd.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(_render({**GOOD_FM, "auditor": "tests"}), encoding="utf-8")
+    assert any("does not match directory" in e for e in findings.validate_file(path))
+
+
+def test_validate_file_reports_unreadable_path(tmp_path):
+    # A directory named like a finding: read_text raises IsADirectoryError (an OSError).
+    d = tmp_path / "security" / "open" / "security-aabbccdd.md"
+    d.mkdir(parents=True)
+    errors = findings.validate_file(d)
+    assert len(errors) == 1
+    assert "cannot read" in errors[0]
+
+
+def test_validate_file_reports_missing_frontmatter(tmp_path):
+    path = tmp_path / "security" / "open" / "security-aabbccdd.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# T\n\nno frontmatter here\n", encoding="utf-8")
+    assert findings.validate_file(path) == [f"{path}: missing frontmatter"]
+
+
+GOOD_REC = {
+    "id": "security-aabbccdd",
+    "auditor": "security",
+    "status": "fixed",
+    "found": "2026-07-08",
+    "resolved": "2026-07-09",
+    "title": "T",
+    "severity": "high",
+    "category": "security",
+}
+
+
+def test_validate_ledger_record_accepts_the_baseline_fixture():
+    assert findings.validate_ledger_record(dict(GOOD_REC), Path("resolved.jsonl"), 1) == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ({"id": ""}, "missing id"),
+        ({"id": "notahash"}, "malformed id"),
+        ({"status": "open"}, "resolved status must be fixed|invalid"),
+        ({"auditor": ""}, "missing auditor"),
+        ({"found": ""}, "missing found"),
+        ({"resolved": ""}, "missing resolved"),
+        ({"title": ""}, "missing title"),
+        ({"found": "08-07-2026"}, "invalid found date"),
+        ({"resolved": "yesterday"}, "invalid resolved date"),
+        ({"severity": "enormous"}, "invalid severity"),
+        ({"category": "banana"}, "invalid category"),
+        ({"auditor": "Not An Auditor"}, "invalid auditor"),
+    ],
+)
+def test_validate_ledger_record_rejects_each_malformed_field(mutation, expected):
+    rec = {**GOOD_REC, **mutation}
+    errors = findings.validate_ledger_record(rec, Path("resolved.jsonl"), 7)
+    assert any(expected in e for e in errors), errors
+    assert all(e.startswith("resolved.jsonl:7: ") for e in errors)
+
+
+# --- store hygiene helpers and ledger-read guards (tests-47aa18b9) ---
+
+
+def test_render_finding_rejects_a_quoted_frontmatter_value():
+    """A pre-quoted value would not round-trip through parse_frontmatter, so the
+    stored area would differ from the one that produced the content-hashed id."""
+    with pytest.raises(findings.FindingError, match="must not be wrapped in quotes"):
+        findings.render_finding({**GOOD_FM, "area": '"src/auth.py"'}, "T", BODY)
+
+
+def test_read_ledger_reports_an_unreadable_ledger(tmp_path):
+    findings.ledger_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    findings.ledger_path(tmp_path).mkdir()  # a directory where the file belongs
+    errors: list[str] = []
+    assert findings.read_ledger(tmp_path, errors) == []
+    assert any("cannot read" in e for e in errors)
+
+
+def test_read_ledger_skips_blanks_and_flags_non_object_lines(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text(f"\n  \n{json.dumps(GOOD_REC)}\n[1, 2]\n", encoding="utf-8")
+    errors: list[str] = []
+    recs = findings.read_ledger(tmp_path, errors)
+    assert [r["id"] for r in recs] == [GOOD_REC["id"]]
+    assert any("not a JSON object" in e for e in errors)
+
+
+def test_resolved_records_tolerates_blank_bad_and_scalar_lines(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text(f"\nnot json\n42\n{json.dumps(GOOD_REC)}\n", encoding="utf-8")
+    assert list(findings.resolved_records(tmp_path)) == [GOOD_REC["id"]]
+
+
+def test_resolved_records_returns_empty_on_an_unreadable_ledger(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.mkdir()
+    assert findings.resolved_records(tmp_path) == {}
+
+
+def test_ledger_summary_skips_junk_lines(tmp_path):
+    """INDEX.md is generated from this streaming read; a junk line must be skipped,
+    not crash the regeneration `make check` depends on."""
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text(f"\nnot json\n[1]\n{json.dumps(GOOD_REC)}\n", encoding="utf-8")
+    assert findings._ledger_summary(tmp_path) == {GOOD_REC["id"]: ("security", "fixed")}
+
+
+def test_ledger_summary_returns_empty_on_an_unreadable_ledger(tmp_path, capsys):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.mkdir()
+    assert findings._ledger_summary(tmp_path) == {}
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_pattern_covers_ignores_a_wildcard_only_pattern():
+    # `**` collapses to an empty base — treating that as a match would report every
+    # store as gitignored.
+    assert findings._pattern_covers("**", "docs/audit/findings") is False
+    assert findings._pattern_covers("docs/audit", "docs/audit/findings") is True
+    assert findings._pattern_covers("docs/audit/findings/x.md", "docs/audit/findings") is False
+
+
+def test_store_rel_falls_back_to_the_canonical_path_without_a_repo(tmp_path, monkeypatch):
+    monkeypatch.setattr(findings, "find_repo_root", lambda _p: None)
+    assert findings._store_rel(tmp_path) == "docs/audit/findings"
+
+
+def test_store_rel_falls_back_when_the_store_is_outside_the_repo(tmp_path, monkeypatch):
+    monkeypatch.setattr(findings, "find_repo_root", lambda _p: tmp_path / "elsewhere")
+    assert findings._store_rel(tmp_path) == "docs/audit/findings"
+
+
+def test_gitignore_scan_skips_comments_and_negations_and_survives_oserror(tmp_path):
+    repo = tmp_path
+    (repo / ".git").mkdir()
+    store = repo / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    (repo / ".gitignore").write_text(
+        "# a comment\n\n!docs/audit/findings\nunrelated/\n", encoding="utf-8"
+    )
+    assert findings.is_store_gitignored(store) is False
+
+    (repo / ".gitignore").unlink()
+    (repo / ".gitignore").mkdir()  # read_text now raises IsADirectoryError
+    assert findings.is_store_gitignored(store) is False
+
+
+def test_gitattributes_probe_and_writer_survive_an_unreadable_path(tmp_path):
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    (store / ".gitattributes").mkdir()
+    assert findings.store_gitattributes_present(store) is False
+
+    (store / ".gitignore").mkdir()  # read_text raises inside ensure_store_gitattributes
+    findings.ensure_store_gitattributes(store)  # must swallow the OSError, not crash
+
+
+def test_new_finding_reports_a_collision_when_the_existing_file_is_unreadable(tmp_path):
+    fid = findings.finding_id("security", "src/auth.py", "Token compared with ==")
+    path = tmp_path / "security" / "open" / f"{fid}.md"
+    path.mkdir(parents=True)  # a directory: exists() passes, read_text raises
+    with pytest.raises(findings.FindingError, match="id collision"):
+        _new(tmp_path)
+
+
+def test_resolve_infers_the_auditor_from_the_directory(tmp_path):
+    """A hand-written finding with no `auditor:` still resolves — the directory is
+    the fallback, and the resulting ledger record must carry it."""
+    path = tmp_path / "security" / "open" / "security-aabbccdd.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(_render(_drop("auditor")), encoding="utf-8")
+    findings.resolve_finding(tmp_path, "security-aabbccdd", "fixed", "done", date="2026-07-09")
+    assert findings.resolved_records(tmp_path)["security-aabbccdd"]["auditor"] == "security"
+
+
+def test_force_resolve_rewrites_the_ledger_when_the_id_is_open_and_recorded(tmp_path):
+    """The both-halves state validate_store flags: force must rewrite the record in
+    place rather than appending a second one."""
+    path = _write_finding(tmp_path, dict(GOOD_FM))
+    findings.append_ledger(tmp_path, {**GOOD_REC, "title": "stale"})
+    findings.resolve_finding(
+        tmp_path, GOOD_FM["id"], "invalid", "wrong call", date="2026-07-10", force=True
+    )
+    recs = [
+        json.loads(ln)
+        for ln in findings.ledger_path(tmp_path).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert [r["id"] for r in recs] == [GOOD_FM["id"]]  # rewritten, not duplicated
+    assert recs[0]["status"] == "invalid"
+    assert not path.exists()
+
+
+def test_show_falls_through_to_the_ledger_when_the_open_file_vanishes(tmp_path, monkeypatch):
+    """A concurrent resolve can unlink the open file between the glob and the read."""
+    open_file = _write_finding(tmp_path, dict(GOOD_FM))
+    findings.append_ledger(tmp_path, GOOD_REC)
+    real_read_text = Path.read_text
+
+    def _vanished(self, *a, **k):
+        if self == open_file:
+            raise FileNotFoundError("resolved concurrently")
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", _vanished)
+    shown = findings.show_finding(tmp_path, GOOD_FM["id"])
+    assert "status: fixed" in shown
+
+
+def test_validate_store_flags_a_legacy_resolved_tree_and_duplicate_ids(tmp_path):
+    legacy = tmp_path / "audit" / "resolved" / "N-003.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(_render({**GOOD_FM, "id": "N-003"}), encoding="utf-8")
+    _write_finding(tmp_path, dict(GOOD_FM))
+    _write_finding(tmp_path, {**GOOD_FM, "auditor": "tests"})
+    errors = findings.validate_store(tmp_path)
+    assert any("legacy resolved file outside the ledger" in e for e in errors)
+    assert any("duplicate id" in e for e in errors)
+
+
+def test_validate_store_reports_an_unreadable_ledger(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.mkdir()
+    assert any("cannot read" in e for e in findings.validate_store(tmp_path))
+
+
+def test_validate_store_skips_blank_ledger_lines_and_flags_scalars(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text(f'\n{json.dumps(GOOD_REC)}\n"a string"\n', encoding="utf-8")
+    errors = findings.validate_store(tmp_path)
+    assert any("not a JSON object" in e for e in errors)
+
+
+def _legacy_resolved(root: Path, auditor: str, fid: str, **fm) -> Path:
+    path = root / auditor / "resolved" / f"{fid}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    front = {"id": fid, "status": "fixed", "found": "2026-07-08", "resolved": "2026-07-09", **fm}
+    path.write_text(_render(front, title="T", body="## Resolution\nDone.\n"), encoding="utf-8")
+    return path
+
+
+def test_migrate_resolved_dry_run_reports_without_writing(tmp_path, capsys):
+    path = _legacy_resolved(tmp_path, "audit", "N-001")
+    appended, total = findings.migrate_resolved(tmp_path, dry_run=True)
+    assert (appended, total) == (1, 1)
+    out = capsys.readouterr().out
+    assert "WOULD APPEND N-001" in out
+    assert f"WOULD DELETE {path}" in out
+    assert path.exists()
+    assert not findings.ledger_path(tmp_path).exists()
+
+
+def test_migrate_resolved_deletes_an_already_recorded_duplicate(tmp_path):
+    _legacy_resolved(tmp_path, "audit", "N-001")
+    findings.migrate_resolved(tmp_path)
+    again = _legacy_resolved(tmp_path, "audit", "N-001")
+    appended, total = findings.migrate_resolved(tmp_path)
+    assert (appended, total) == (0, 1)  # nothing appended, the file still removed
+    assert not again.exists()
+
+
+def test_migrate_resolved_synthesises_a_date_when_none_is_recorded(tmp_path):
+    path = tmp_path / "audit" / "resolved" / "N-002.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        _render({"id": "N-002", "auditor": "audit", "status": "fixed"}, body="## Resolution\nx\n"),
+        encoding="utf-8",
+    )
+    findings.migrate_resolved(tmp_path)
+    rec = findings.resolved_records(tmp_path)["N-002"]
+    assert rec["resolved"] == "1970-01-01"
+    assert rec["date_synthesised"] is True
+
+
+def test_migrate_resolved_infers_the_auditor_and_rejects_a_bad_status(tmp_path):
+    path = tmp_path / "audit" / "resolved" / "N-004.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        _render({"id": "N-004", "status": "fixed", "resolved": "2026-07-09"}, body="## R\nx\n"),
+        encoding="utf-8",
+    )
+    findings.migrate_resolved(tmp_path)
+    assert findings.resolved_records(tmp_path)["N-004"]["auditor"] == "audit"
+
+    bad = tmp_path / "audit" / "resolved" / "N-005.md"
+    bad.parent.mkdir(parents=True, exist_ok=True)  # migrate_resolved removed the tree
+    bad.write_text(
+        _render({"id": "N-005", "auditor": "audit", "status": "open"}, body="## R\nx\n"),
+        encoding="utf-8",
+    )
+    with pytest.raises(findings.FindingError, match="unrecognised status"):
+        findings.migrate_resolved(tmp_path)
+
+
+def test_migrate_resolved_reports_an_unreadable_legacy_file(tmp_path):
+    (tmp_path / "audit" / "resolved" / "N-006.md").mkdir(parents=True)
+    with pytest.raises(findings.FindingError, match="cannot read"):
+        findings.migrate_resolved(tmp_path)
+
+
+def test_migrate_v1_dry_run_reports_without_writing(tmp_path, capsys):
+    src = tmp_path / "nitpicker-findings.md"
+    src.write_text(V1_DOC, encoding="utf-8")
+    root = tmp_path / "findings"
+    assert findings.migrate_v1(src, root, dry_run=True) == 3
+    out = capsys.readouterr().out
+    assert "WOULD WRITE" in out
+    assert "WOULD APPEND" in out
+    assert not root.exists() or list(root.glob("*/open/*.md")) == []
+
+
+def test_migrate_v1_refuses_when_an_open_id_is_already_in_the_ledger(tmp_path):
+    src = tmp_path / "nitpicker-findings.md"
+    src.write_text(V1_DOC, encoding="utf-8")
+    root = tmp_path / "findings"
+    findings.migrate_v1(src, root)
+    # Re-resolve the migrated open finding, then re-migrate: the id is now in the
+    # ledger while the source still lists it as open.
+    findings.resolve_finding(root, "N-090", "fixed", "done", date="2026-07-09")
+    with pytest.raises(findings.FindingError, match="duplicate id N-090"):
+        findings.migrate_v1(src, root)
+
+
+def test_migrate_v1_refuses_when_a_resolved_id_is_open_on_disk(tmp_path):
+    src = tmp_path / "nitpicker-findings.md"
+    src.write_text(V1_DOC, encoding="utf-8")
+    root = tmp_path / "findings"
+    findings.migrate_v1(src, root)
+    findings.ledger_path(root).unlink()  # drop the ledger, keep N-102 open on disk
+    (root / "audit" / "open" / "N-102.md").write_text(
+        _render(
+            {
+                "id": "N-102",
+                "auditor": "audit",
+                "status": "open",
+                "severity": "low",
+                "category": "security",
+                "area": "x",
+                "found": "2026-07-08",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(findings.FindingError, match="duplicate id N-102"):
+        findings.migrate_v1(src, root)
+
+
+def test_list_filters_resolved_records_by_status(tmp_path):
+    findings.append_ledger(tmp_path, GOOD_REC)
+    findings.append_ledger(tmp_path, {**GOOD_REC, "id": "security-11223344", "status": "invalid"})
+    fixed = findings.gather_findings(tmp_path, status="fixed")
+    assert [r["id"] for r in fixed] == [GOOD_REC["id"]]
+
+
+# --- CLI: the only findings-store interface in Copilot, pi and CI ---
+
+
+def test_cli_new_reports_a_duplicate_and_exits_one(tmp_path, capsys):
+    _new(tmp_path)
+    code = findings.main(
+        [
+            "new",
+            "--root",
+            str(tmp_path),
+            "--auditor",
+            "security",
+            "--severity",
+            "high",
+            "--category",
+            "security",
+            "--area",
+            "src/auth.py",
+            "--body",
+            BODY,
+            "Token compared with ==",
+        ]
+    )
+    assert code == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_cli_resolve_reports_an_unknown_id_and_exits_one(tmp_path, capsys):
+    code = findings.main(
+        [
+            "resolve",
+            "--root",
+            str(tmp_path),
+            "security-deadbeef",
+            "--status",
+            "fixed",
+            "--notes",
+            "n",
+        ]
+    )
+    assert code == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_cli_show_prints_a_finding_and_reports_an_unknown_id(tmp_path, capsys):
+    path = _new(tmp_path)
+    assert findings.main(["show", "--root", str(tmp_path), path.stem]) == 0
+    assert "# Token compared with ==" in capsys.readouterr().out
+
+    assert findings.main(["show", "--root", str(tmp_path), "security-deadbeef"]) == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_cli_validate_on_explicit_paths(tmp_path, capsys):
+    good = _write_finding(tmp_path, dict(GOOD_FM))
+    assert findings.main(["validate", "--root", str(tmp_path), str(good)]) == 0
+    assert "OK  findings store consistent." in capsys.readouterr().out
+
+    bad = _write_finding(tmp_path, {**GOOD_FM, "status": "opne"})
+    assert findings.main(["validate", "--root", str(tmp_path), str(bad)]) == 1
+    out = capsys.readouterr().out
+    assert "ERROR" in out
+    assert "error(s) in findings store." in out
+
+
+def test_cli_validate_on_a_missing_root_is_not_a_failure(tmp_path, capsys):
+    missing = tmp_path / "nope"
+    assert findings.main(["validate", "--root", str(missing)]) == 0
+    assert "nothing to check" in capsys.readouterr().out
+
+
+def test_cli_validate_warns_about_review_hygiene(tmp_path, capsys):
+    _write_finding(tmp_path, dict(GOOD_FM))
+    assert findings.main(["validate", "--root", str(tmp_path)]) == 0
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_cli_baseline_clear(tmp_path, capsys):
+    assert findings.main(["baseline", "--root", str(tmp_path), "--clear"]) == 0
+    assert "no baseline to clear" in capsys.readouterr().out
+
+    _new(tmp_path)
+    findings.main(["baseline", "--root", str(tmp_path)])
+    capsys.readouterr()
+    assert findings.main(["baseline", "--root", str(tmp_path), "--clear"]) == 0
+    assert "baseline cleared" in capsys.readouterr().out
+
+
+def test_cli_migrate_dry_run_then_real(tmp_path, capsys):
+    src = tmp_path / "nitpicker-findings.md"
+    src.write_text(V1_DOC, encoding="utf-8")
+    root = tmp_path / "findings"
+
+    assert findings.main(["migrate", "--root", str(root), "--dry-run", str(src)]) == 0
+    out = capsys.readouterr().out
+    assert "would migrate 3 finding(s)" in out
+    assert "dry run: would migrate 3 finding(s) in total" in out
+
+    assert findings.main(["migrate", "--root", str(root), str(src)]) == 0
+    assert "total: 3" in capsys.readouterr().out
+    assert (root / "INDEX.md").exists()
+
+
+def test_cli_migrate_reports_a_bad_source_and_exits_one(tmp_path, capsys):
+    root = tmp_path / "findings"
+    assert findings.main(["migrate", "--root", str(root), str(tmp_path / "gone.md")]) == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_cli_migrate_resolved_dry_run_then_real(tmp_path, capsys):
+    _legacy_resolved(tmp_path, "audit", "N-001")
+
+    assert findings.main(["migrate-resolved", "--root", str(tmp_path), "--dry-run"]) == 0
+    assert "would migrate 1 finding(s), remove 1 file(s)" in capsys.readouterr().out
+
+    assert findings.main(["migrate-resolved", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "migrated 1 resolved finding(s)" in out
+    assert "(1 file(s) removed)" in out
+    assert findings.resolved_records(tmp_path)["N-001"]["status"] == "fixed"
+
+
+def test_cli_migrate_resolved_reports_a_conflict_and_exits_one(tmp_path, capsys):
+    (tmp_path / "audit" / "resolved" / "N-006.md").mkdir(parents=True)
+    assert findings.main(["migrate-resolved", "--root", str(tmp_path)]) == 1
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_module_runs_as_a_script(monkeypatch, capsys, tmp_path):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr(sys, "argv", ["findings.py", "validate", "--root", str(tmp_path / "nope")])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 0
+    assert "nothing to check" in capsys.readouterr().out

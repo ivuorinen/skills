@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import re
+import runpy
 import shutil
 import sys
 from pathlib import Path
@@ -360,8 +361,11 @@ def test_deny_agents_blocks_double_slash(monkeypatch):
 
 def test_deny_agents_allows_unrelated_command(monkeypatch):
     mod = _load("deny-agents-path-hook")
-    event = json.dumps({"tool_input": {"command": "ls .claude/rules/"}})
-    _run(mod, event, monkeypatch)  # no SystemExit
+    command = "ls .claude/rules/"
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+    # Pin the verdict, not just the absence of SystemExit: a hook that stopped
+    # evaluating the command entirely would also raise nothing.
+    assert mod._references_agents(command) is False
 
 
 def test_deny_agents_blocks_dot_segment(monkeypatch):
@@ -414,8 +418,9 @@ def test_deny_agents_allows_agents_word_without_path(monkeypatch):
     # `.claude` present and the word "agents" present, but not as a path into the
     # agents dir (grepping rules for the word) — must not false-positive.
     mod = _load("deny-agents-path-hook")
-    event = json.dumps({"tool_input": {"command": "grep agents .claude/rules/foo.md"}})
-    _run(mod, event, monkeypatch)  # no SystemExit
+    command = "grep agents .claude/rules/foo.md"
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+    assert mod._references_agents(command) is False
 
 
 @pytest.mark.parametrize(
@@ -472,6 +477,7 @@ def test_deny_agents_filename_match_does_not_false_positive(command, monkeypatch
     """
     mod = _load("deny-agents-path-hook")
     _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+    assert mod._references_agents(command) is False
 
 
 @pytest.mark.parametrize(
@@ -488,6 +494,7 @@ def test_deny_agents_filename_match_does_not_false_positive(command, monkeypatch
 def test_deny_agents_filename_match_is_token_bounded(command, monkeypatch):
     mod = _load("deny-agents-path-hook")
     _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+    assert mod._references_agents(command) is False
 
 
 @pytest.mark.parametrize(
@@ -858,3 +865,208 @@ def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):
         mod.main()
     assert exc.value.code == 2
     assert "skills/nitpicker/commands/newcmd.md" in capsys.readouterr().err
+
+
+# ── fail-open guards and module entry points (tests-33e74157) ─────────────────
+
+ALL_HOOKS = [
+    "validate-json-hook",
+    "validate-skill-hook",
+    "check-version-sync-hook",
+    "ruff-hook",
+    "validate-rules-hook",
+    "validate-audit-findings-hook",
+    "deny-agents-path-hook",
+    "stop-reminder",
+]
+
+
+@pytest.mark.parametrize("name", ALL_HOOKS)
+def test_hook_runs_as_a_script(name, monkeypatch, capsys):
+    """Covers each `if __name__ == '__main__'` body — the only wiring to main().
+
+    Empty stdin means load_event() returns None, so every hook takes its silent
+    no-op path; what this proves is that the script is runnable at all.
+    """
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    runpy.run_path(str(HOOKS_DIR / f"{name}.py"), run_name="__main__")
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+PATH_GUARD_HOOKS = ["validate-json-hook", "validate-skill-hook", "check-version-sync-hook"]
+
+
+@pytest.mark.parametrize("name", PATH_GUARD_HOOKS)
+def test_path_outside_the_repo_is_a_silent_noop(name, monkeypatch, tmp_path, capsys):
+    """Containment: an edit resolving outside REPO_ROOT must not be validated."""
+    mod = _load(name)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path / "repo")
+    outside = tmp_path / "elsewhere" / "config.json"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("{,}", encoding="utf-8")  # invalid on purpose
+    _run(mod, json.dumps({"tool_input": {"file_path": str(outside)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+VALIDATOR_HOOKS = [
+    ("validate-skill-hook", "skills/foo/SKILL.md"),
+    ("check-version-sync-hook", "package.json"),
+    ("validate-rules-hook", ".claude/rules/a-rule.md"),
+]
+
+
+@pytest.mark.parametrize(("name", "rel"), VALIDATOR_HOOKS)
+def test_missing_validator_script_is_a_silent_noop(name, rel, monkeypatch, tmp_path, capsys):
+    """A checkout without the validator must not traceback — the hook returns."""
+    mod = _load(name)
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("whatever\n", encoding="utf-8")
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_validate_json_non_existent_path_is_a_silent_noop(monkeypatch, tmp_path, capsys):
+    mod = _load("validate-json-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    payload = {"tool_input": {"file_path": str(tmp_path / "gone.json")}}
+    _run(mod, json.dumps(payload), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_version_sync_surfaces_checker_output_when_it_fails_without_problems(
+    monkeypatch, tmp_path, capsys
+):
+    """The checker exiting non-zero with no parsed problem lines must still reach
+    the agent — silence here would report a desync as clean."""
+    mod = _load("check-version-sync-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check-version-sync.py").write_text("", encoding="utf-8")
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+
+    class _R:
+        returncode = 1
+        stdout = "checker blew up"
+        stderr = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    payload = {"tool_input": {"file_path": str(tmp_path / "package.json")}}
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps(payload), monkeypatch)
+    assert exc.value.code == 2
+    assert "checker blew up" in capsys.readouterr().err
+
+
+def test_stop_reminder_silent_when_git_fails(monkeypatch, capsys):
+    """A git call that fails (detached worktree, broken index) must not be read as
+    'nothing pending' *and* must not crash the stop."""
+    mod = _load("stop-reminder")
+
+    class _R:
+        returncode = 128
+        stdout = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    mod.main()
+    assert capsys.readouterr().err == ""
+
+
+def test_deny_agents_unparseable_event_is_a_silent_noop(monkeypatch, capsys):
+    """PreToolUse payload that is not a JSON object: the guard returns rather than
+    blocking every Bash call or crashing the session."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, "not json at all", monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_deny_agents_survives_a_glob_that_raises(monkeypatch):
+    """Path.glob raises on patterns the stdlib will not expand (absolute, bad '**').
+    Both the cd-base expansion and the token expansion must swallow it — a crash
+    here fails the guard open."""
+    mod = _load("deny-agents-path-hook")
+
+    def _raises(*_a, **_k):
+        raise OSError("unsupported pattern")
+
+    monkeypatch.setattr(Path, "glob", _raises)
+    assert mod._references_agents("cd d*/ && cat a*/x.md") is False
+
+
+# ── validate-audit-findings-hook: the store's own gate ────────────────────────
+
+
+def _findings_repo(tmp_path: Path) -> Path:
+    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
+    shipped.mkdir(parents=True)
+    shutil.copy(
+        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
+        shipped / "findings.py",
+    )
+    return tmp_path
+
+
+def test_audit_findings_ignores_a_path_outside_the_store(monkeypatch, tmp_path, capsys):
+    mod = _load("validate-audit-findings-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "run", _never_run("no subprocess for an out-of-store path"))
+    other = tmp_path / "README.md"
+    other.write_text("hi\n", encoding="utf-8")
+    _run(mod, json.dumps({"tool_input": {"file_path": str(other)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def _never_run(msg: str):
+    def _boom(*_a, **_k):
+        raise AssertionError(msg)
+
+    return _boom
+
+
+def test_audit_findings_ledger_failure_exits_2(monkeypatch, tmp_path, capsys):
+    """A corrupt resolved.jsonl must reach the agent — the ledger is append-only,
+    so a bad record silently accepted is permanent."""
+    mod = _load("validate-audit-findings-hook")
+    repo = _findings_repo(tmp_path)
+    monkeypatch.setattr(mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(mod, "FINDINGS", repo / "skills" / "nitpicker" / "scripts" / "findings.py")
+    ledger = repo / "docs" / "audit" / "findings" / "resolved.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("{not json}\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"file_path": str(ledger)}}), monkeypatch)
+    assert exc.value.code == 2
+    assert "resolved.jsonl failed store validation" in capsys.readouterr().err
+
+
+def test_audit_findings_index_failure_exits_2(monkeypatch, tmp_path, capsys):
+    """INDEX.md drift fails `make check`; a silent regeneration failure would hand
+    the agent a red build with no cause."""
+    mod = _load("validate-audit-findings-hook")
+    repo = _findings_repo(tmp_path)
+    monkeypatch.setattr(mod, "REPO_ROOT", repo)
+    index = repo / "docs" / "audit" / "findings" / "INDEX.md"
+    index.parent.mkdir(parents=True)
+    index.write_text("stale\n", encoding="utf-8")
+
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = "index blew up"
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"file_path": str(index)}}), monkeypatch)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "INDEX.md regeneration failed" in err
+    assert "index blew up" in err

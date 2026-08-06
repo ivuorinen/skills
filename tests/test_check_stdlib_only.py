@@ -2,7 +2,10 @@
 
 import ast
 import importlib.util
+import runpy
 from pathlib import Path
+
+import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "check-stdlib-only.py"
 _spec = importlib.util.spec_from_file_location("check_stdlib_only", _TOOL)
@@ -189,6 +192,76 @@ def test_main_checks_internal_scripts_when_no_shipped_tools(
     out = capsys.readouterr().out
     assert "uv run" in out
     assert "glob is stale" in out
+
+
+def test_main_reports_ok_and_exits_zero_on_a_clean_tree(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n")
+    monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
+    assert _mod.main() == 0
+    assert "stdlib-only, runner contract intact" in capsys.readouterr().out
+
+
+def test_main_exits_non_zero_and_names_the_non_stdlib_import(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # The exit code is the only thing pre-commit and the CI Validate job observe.
+    _tool(tmp_path, "bad.py", "#!/usr/bin/env python3\nimport requests\n")
+    monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
+    assert _mod.main() == 1
+    out = capsys.readouterr().out
+    assert "Non-stdlib imports in shipped skill tools:" in out
+    assert "requests" in out
+    assert "1 violation(s)." in out
+
+
+def test_main_exits_non_zero_on_a_runner_contract_breach(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _tool(tmp_path, "bad.py", "#!/usr/bin/env -S uv run --quiet\nimport json\n")
+    monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
+    assert _mod.main() == 1
+    out = capsys.readouterr().out
+    assert "Script-runner contract violations" in out
+    assert "violation(s)." in out
+
+
+def test_dynamic_import_with_a_computed_name_is_unresolvable(tmp_path: Path) -> None:
+    # Documented limitation: only literal module names can be resolved statically.
+    _tool(
+        tmp_path,
+        "dyn.py",
+        "#!/usr/bin/env python3\nimport importlib\nname = 'requests'\n"
+        "importlib.import_module(name)\n",
+    )
+    assert [p for p in find_violations(tmp_path) if "non-stdlib" in p] == []
+
+
+def test_unparseable_shipped_tool_is_reported_not_skipped(tmp_path: Path) -> None:
+    _tool(tmp_path, "broken.py", "#!/usr/bin/env python3\ndef (\n")
+    assert any("cannot parse" in p for p in find_violations(tmp_path))
+
+
+def test_unreadable_shipped_tool_is_reported_by_both_checks(tmp_path: Path) -> None:
+    # A directory named like a module: read_text raises IsADirectoryError (an OSError).
+    (tmp_path / "skills" / "nitpicker" / "scripts" / "wat.py").mkdir(parents=True)
+    assert any("cannot parse" in p for p in find_violations(tmp_path))
+    assert any("cannot read" in p for p in find_runner_violations(tmp_path))
+
+
+def test_unreadable_internal_script_is_reported(tmp_path: Path) -> None:
+    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n")
+    (tmp_path / "scripts" / "wat.py").mkdir(parents=True)
+    assert any("cannot read" in p for p in find_runner_violations(tmp_path))
+
+
+def test_module_runs_as_a_script(monkeypatch) -> None:
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr(_mod, "REPO_ROOT", REPO_ROOT)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 0
 
 
 def test_actual_tree_runner_contract_intact() -> None:

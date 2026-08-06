@@ -1,6 +1,7 @@
 """Tests for skills/nitpicker/scripts/check-rules-anatomy.py."""
 
 import importlib.util
+import runpy
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -516,3 +517,28 @@ def test_unreadable_rules_dir_fails_the_gate(monkeypatch, tmp_path, capsys):
         _mod.main()
     assert exc.value.code == 1
     assert "cannot scan" in capsys.readouterr().err
+
+
+def test_paths_glob_that_the_stdlib_rejects_is_reported_not_crashed(tmp_path, monkeypatch):
+    """Path.glob raises ValueError on some '**' spellings (CPython <3.13). The run
+    must report it as a bad pattern rather than aborting the whole scan."""
+    f = tmp_path / "rule.md"
+    f.write_text("---\npaths:\n  - 'src/**bad/*.py'\n---\n\nBody.\n", encoding="utf-8")
+
+    def _raises(*_a, **_k):
+        raise ValueError("Invalid pattern")
+
+    monkeypatch.setattr(Path, "glob", _raises)
+    findings = _check_file(f, tmp_path)
+    assert _has(findings, "invalid_glob")
+    assert not _has(findings, "stale_glob")  # the `continue` skipped the staleness check
+
+
+def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    (tmp_path / ".claude" / "rules").mkdir(parents=True)
+    monkeypatch.setattr(sys, "argv", ["check-rules-anatomy.py", str(tmp_path)])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 0
+    assert '"rules_dir"' in capsys.readouterr().out

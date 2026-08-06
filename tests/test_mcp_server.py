@@ -4,17 +4,17 @@ import contextlib
 import importlib.util
 import io
 import json
+import runpy
 import tempfile
 from pathlib import Path
 
 import pytest
 
+_SERVER = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "mcp_server.py"
+
 
 def _load():
-    spec = importlib.util.spec_from_file_location(
-        "mcp_server",
-        Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "mcp_server.py",
-    )
+    spec = importlib.util.spec_from_file_location("mcp_server", _SERVER)
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
@@ -579,3 +579,107 @@ def test_list_findings_rejects_out_of_vocab_severity(tmp_path, monkeypatch):
 
     ok = _call(mod, "np_list_findings", {"severity": "high"})
     assert ok["isError"] is False
+
+
+# ── JSON-RPC dispatch, scrubbing and entry point (tests-77df7db0) ─────────────
+
+
+def test_new_finding_rejects_out_of_vocab_category(tmp_path, monkeypatch):
+    """Same contract as severity: the handler binds, not the advisory schema enum.
+    A bad category would otherwise write a file `validate_store` later rejects."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    result = _call(
+        mod,
+        "np_new_finding",
+        {
+            "auditor": "tests",
+            "severity": "high",
+            "category": "bogus",
+            "area": "x.py",
+            "title": "T",
+        },
+    )
+    assert result["isError"] is True
+    assert "category must be one of" in result["content"][0]["text"]
+    assert list((tmp_path / "docs" / "audit" / "findings").glob("*/open/*.md")) == []
+
+
+def test_unknown_method_gets_a_method_not_found_error(tmp_path, monkeypatch):
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": 9, "method": "tools/explode"})
+    assert resp["id"] == 9
+    assert resp["error"]["code"] == -32601
+    assert "unknown method: tools/explode" in resp["error"]["message"]
+    assert "result" not in resp
+
+
+def test_handler_crash_becomes_an_internal_error_response(tmp_path, monkeypatch):
+    """A handler exception escaping _handle must still produce a well-formed
+    JSON-RPC error carrying the request id — not kill the server loop."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(mod, "_handle", _boom)
+
+    (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": "abc", "method": "ping"})
+    assert resp["id"] == "abc"
+    assert resp["error"]["code"] == -32603
+    assert "RuntimeError: kaboom" in resp["error"]["message"]
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError("kaboom")
+
+
+def test_blank_lines_between_frames_are_skipped(tmp_path, monkeypatch):
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    inp = io.StringIO(
+        "\n   \n" + json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}) + "\n\n"
+    )
+    out = io.StringIO()
+    mod.serve(inp, out)
+    responses = [json.loads(line) for line in out.getvalue().splitlines() if line]
+    assert responses == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
+
+
+def test_scrub_degrades_to_the_raw_message_when_the_root_is_unresolvable(monkeypatch):
+    """_allowed_root raising is exactly the case _scrub exists to survive: it must
+    not mask the original error with a second one."""
+    mod = _load()
+    monkeypatch.setattr(mod, "_allowed_root", _boom)
+    assert mod._scrub(ValueError("/home/someone/secret failed")) == "/home/someone/secret failed"
+
+
+def test_read_skill_and_list_commands_return_catalog_data(tmp_path, monkeypatch):
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    skill = _call(mod, "np_read_skill", {"name": "nitpicker"})
+    assert skill["isError"] is False
+    assert "# Nitpicker" in skill["content"][0]["text"]
+
+    commands = _call(mod, "np_list_commands", {})
+    assert commands["isError"] is False
+    names = {c["name"] for c in json.loads(commands["content"][0]["text"])}
+    assert {"audit", "tests", "review"} <= names
+
+
+def test_main_serves_stdin_and_returns_zero(monkeypatch, capsys):
+    mod = _load()
+    monkeypatch.setattr(
+        mod.sys, "stdin", io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}))
+    )
+    assert mod.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"jsonrpc": "2.0", "id": 1, "result": {}}
+
+
+def test_module_runs_as_a_script(monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_SERVER), run_name="__main__")
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""

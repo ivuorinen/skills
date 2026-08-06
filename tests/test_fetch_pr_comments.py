@@ -1,9 +1,12 @@
 """Tests for skills/nitpicker/scripts/fetch-pr-comments.py."""
 
+import email.message
 import importlib.util
 import json
+import runpy
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
@@ -819,3 +822,124 @@ def test_main_hard_fails_on_graphql_shape_bug_without_rest_downgrade(monkeypatch
     with pytest.raises(TypeError):
         _mod.main()
     assert called["rest"] is False  # did not silently fall back to resolved-blind REST
+
+
+# ── _TokenSafeRedirectHandler: the off-host token strip (tests-cb05831d) ───────
+#
+# urllib follows 3xx transparently and keeps Authorization across hosts. This
+# handler is the only thing stopping $GITHUB_TOKEN from reaching a redirect
+# target that is not api.github.com.
+
+
+def _redirect(newurl: str, header: str = "Authorization") -> urllib.request.Request:
+    req = urllib.request.Request(
+        "https://api.github.com/repos/o/r/pulls/1/comments",
+        headers={header: "token ghp_secret"},
+    )
+    handler = _mod._TokenSafeRedirectHandler()
+    return handler.redirect_request(req, None, 302, "Found", email.message.Message(), newurl)
+
+
+def _auth_headers(req: urllib.request.Request) -> list[str]:
+    return [k for k in {**req.headers, **req.unredirected_hdrs} if k.lower() == "authorization"]
+
+
+def test_redirect_off_host_strips_authorization():
+    new = _redirect("https://evil.example/steal")
+    assert new is not None
+    assert _auth_headers(new) == []
+    assert "ghp_secret" not in str({**new.headers, **new.unredirected_hdrs})
+
+
+def test_redirect_same_host_keeps_authorization():
+    new = _redirect("https://api.github.com/repositories/1/pulls/1/comments?page=2")
+    assert _auth_headers(new) == ["Authorization"]
+
+
+def test_redirect_off_host_strip_is_case_insensitive():
+    # Request.add_header capitalizes keys, so the stored spelling is not the
+    # caller's — the strip must match on lower(), not on an exact key.
+    new = _redirect("http://127.0.0.1:8080/x", header="AUTHORIZATION")
+    assert _auth_headers(new) == []
+
+
+def test_redirect_passes_through_when_super_declines(monkeypatch):
+    """The `new is not None` guard: a base handler that declines must not crash."""
+    monkeypatch.setattr(
+        urllib.request.HTTPRedirectHandler,
+        "redirect_request",
+        lambda *a, **k: None,
+    )
+    assert _redirect("https://evil.example/steal") is None
+
+
+# ── remaining error paths (tests-b4fcf9ec) ────────────────────────────────────
+
+
+def test_all_thread_comments_raises_on_errors_in_a_later_page():
+    node = {
+        "id": "T1",
+        "comments": {
+            "nodes": [{"id": "C1", "body": "a", "createdAt": "2026-07-08T00:00:00Z"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+        },
+    }
+    with (
+        patch.object(_mod, "_gh_graphql", return_value={"errors": [{"message": "boom"}]}),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        _mod._all_thread_comments(node)
+
+
+def test_all_thread_comments_stops_when_thread_vanishes_mid_pagination():
+    node = {
+        "id": "T1",
+        "comments": {
+            "nodes": [{"id": "C1", "body": "a", "createdAt": "2026-07-08T00:00:00Z"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+        },
+    }
+    with patch.object(_mod, "_gh_graphql", return_value={"data": {"node": None}}):
+        assert len(_mod._all_thread_comments(node)) == 1
+
+
+def test_out_of_thread_notes_warns_but_survives_review_body_failure(capsys):
+    with (
+        patch.object(_mod, "_fetch_review_bodies", side_effect=RuntimeError("rate limited")),
+        patch.object(_mod, "_fetch_summary_comments", return_value=[{"body": "s"}]),
+    ):
+        bodies, summaries = _mod._fetch_out_of_thread_notes("o", "r", 1, lambda p: [])
+    assert bodies == []
+    assert summaries == [{"body": "s"}]
+    assert "could not fetch review bodies (rate limited)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["secondary rate limit exceeded", "HTTP 502 Bad Gateway", "503 unavailable", "504 timeout"],
+)
+def test_main_refuses_resolved_blind_rest_on_transient_graphql_failure(
+    monkeypatch, capsys, message
+):
+    """Falling back to REST here would re-surface already-resolved threads as
+    unresolved — GraphQL is the only source of isResolved."""
+    monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py", "owner", "repo", "1"])
+    monkeypatch.setattr(_mod, "_gh_available", lambda: True)
+    monkeypatch.setattr(_mod, "fetch_graphql", MagicMock(side_effect=RuntimeError(message)))
+    rest = MagicMock(return_value=[])
+    monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
+
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 1
+    assert "retry rather than fall back to resolved-blind REST" in capsys.readouterr().err
+    rest.assert_not_called()
+
+
+def test_module_runs_as_a_script(monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 2
+    assert "Usage: fetch-pr-comments.py" in capsys.readouterr().err
