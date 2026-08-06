@@ -567,14 +567,45 @@ def test_every_ruff_call_site_names_the_same_version():
     )
 
 
+# Only a NAMED GROUP opener, never a lookbehind. `(?<` also begins `(?<=` and
+# `(?<!`, which JS and Python spell identically — rewriting those to `(?P<=` /
+# `(?P<!` produces a pattern Python refuses to compile, so a matchString using
+# lookbehind (`(?<=ruff==)` is a natural way to anchor one) would crash this
+# test instead of checking the config. The lookahead requires an identifier
+# character, which `=` and `!` are not.
+_JS_NAMED_GROUP = re.compile(r"\(\?<(?=[A-Za-z_])")
+
+
 def _js_regex_to_python(pattern: str) -> str:
     """Renovate matchStrings are JS regexes; Python needs `(?P<name>)`.
 
-    The only difference that matters for these patterns is the named-group
-    spelling, so a targeted swap is enough — and it is what makes this test able
-    to run the real config rather than a restatement of it.
+    The named-group spelling is the only difference that matters for these
+    patterns, and rewriting just that is what lets the test run the real config
+    rather than a restatement of it.
     """
-    return pattern.replace("(?<", "(?P<")
+    return _JS_NAMED_GROUP.sub("(?P<", pattern)
+
+
+@pytest.mark.parametrize(
+    ("js", "expected"),
+    [
+        # named groups are rewritten
+        (r"(?<depName>a)==(?<currentValue>b)", r"(?P<depName>a)==(?P<currentValue>b)"),
+        # lookbehind is left alone — both spellings are already valid Python
+        (r"(?<=ruff==)(?<currentValue>[0-9.]+)", r"(?<=ruff==)(?P<currentValue>[0-9.]+)"),
+        (r"(?<!no)(?<depName>z)", r"(?<!no)(?P<depName>z)"),
+    ],
+)
+def test_js_regex_translation_leaves_lookbehind_intact(js, expected):
+    """A blanket `(?<` -> `(?P<` swap corrupts `(?<=` and `(?<!`.
+
+    The result does not compile, so the helper would crash the config test with
+    a regex error rather than reporting what the config does — and the failure
+    would read as a bad matchString rather than a bad test helper.
+    """
+    translated = _js_regex_to_python(js)
+    assert translated == expected
+    re.compile(translated)  # must be valid Python, not merely different
 
 
 def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
