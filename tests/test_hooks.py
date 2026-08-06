@@ -567,6 +567,150 @@ def test_every_ruff_call_site_names_the_same_version():
     )
 
 
+# Only a NAMED GROUP opener, never a lookbehind. `(?<` also begins `(?<=` and
+# `(?<!`, which JS and Python spell identically — rewriting those to `(?P<=` /
+# `(?P<!` produces a pattern Python refuses to compile, so a matchString using
+# lookbehind (`(?<=ruff==)` is a natural way to anchor one) would crash this
+# test instead of checking the config. The lookahead requires an identifier
+# character, which `=` and `!` are not.
+_JS_NAMED_GROUP = re.compile(r"\(\?<(?=[A-Za-z_])")
+
+# Renovate runs custom-manager regexes through RE2 (node-re2), whose docs state
+# it "does not support backreferences and lookahead assertions" — lookbehind
+# likewise. Python's `re` accepts all of them, so a matchString can compile
+# perfectly here and be rejected by Renovate at config-load time, which leaves
+# the manager inert and the pins unmanaged: the original bug, silently restored.
+#
+# A conservative syntactic check, not an RE2 parser: it catches the two
+# constructs the docs name, which is what a matchString would plausibly reach
+# for (`(?<=ruff==)` is the obvious way to anchor one).
+_RE2_UNSUPPORTED = re.compile(
+    r"""\(\?[=!]      # lookahead  (?=…) (?!…)
+      | \(\?<[=!]     # lookbehind (?<=…) (?<!…)
+      | \\[1-9]       # numeric backreference \1
+      | \\k<[^>]+>    # named backreference \k<name>
+    """,
+    re.VERBOSE,
+)
+
+
+def _js_regex_to_python(pattern: str) -> str:
+    """Renovate matchStrings are JS regexes; Python needs `(?P<name>)`.
+
+    The named-group spelling is the only difference that matters for these
+    patterns, and rewriting just that is what lets the test run the real config
+    rather than a restatement of it.
+    """
+    return _JS_NAMED_GROUP.sub("(?P<", pattern)
+
+
+@pytest.mark.parametrize(
+    ("js", "expected"),
+    [
+        # named groups are rewritten
+        (r"(?<depName>a)==(?<currentValue>b)", r"(?P<depName>a)==(?P<currentValue>b)"),
+        # lookbehind is left alone — both spellings are already valid Python
+        (r"(?<=ruff==)(?<currentValue>[0-9.]+)", r"(?<=ruff==)(?P<currentValue>[0-9.]+)"),
+        (r"(?<!no)(?<depName>z)", r"(?<!no)(?P<depName>z)"),
+    ],
+)
+def test_js_regex_translation_leaves_lookbehind_intact(js, expected):
+    """A blanket `(?<` -> `(?P<` swap corrupts `(?<=` and `(?<!`.
+
+    The result does not compile, so the helper would crash the config test with
+    a regex error rather than reporting what the config does — and the failure
+    would read as a bad matchString rather than a bad test helper.
+    """
+    translated = _js_regex_to_python(js)
+    assert translated == expected
+    re.compile(translated)  # must be valid Python, not merely different
+
+
+@pytest.mark.parametrize(
+    ("pattern", "rejected"),
+    [
+        (r"ruff==(?=(?<currentValue>[0-9.]+))", True),  # lookahead
+        (r"(?<=ruff==)(?<currentValue>[0-9.]+)", True),  # lookbehind
+        (r"(?<!no)(?<depName>z)", True),  # negative lookbehind
+        (r"(?<depName>a)\1", True),  # numeric backreference
+        (r"(?<depName>a)\k<depName>", True),  # named backreference
+        # the two patterns renovate.json actually ships
+        (r"--with\s+(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[0-9][^\s]*)", False),
+        (r"dependencies\s*=\s*\[\"(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[^\"]+)\"\]", False),
+    ],
+)
+def test_re2_guard_rejects_what_renovate_cannot_run(pattern, rejected):
+    """RE2 supports neither lookaround nor backreferences, named or numeric.
+
+    Catching them here keeps the failure in the explicit guard. Left to Python,
+    a named backreference surfaces as `bad escape \\k` from `re.compile` — an
+    error that points at the test helper rather than at the unsupported
+    construct in renovate.json.
+    """
+    assert bool(_RE2_UNSUPPORTED.search(pattern)) is rejected
+
+
+def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
+    """The sync tests above are only satisfiable if Renovate can reach every site.
+
+    They could not be: a ruff bump updated pyproject.toml alone and left the
+    Makefile, the PEP 723 hook block and the pre-commit rev behind, because no
+    enabled manager reads those. The gate then failed the bot's own PR with no
+    way for it to comply. Assert the customManagers actually match the pins.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    assert "custom.regex" in cfg["enabledManagers"], (
+        "customManagers do nothing unless custom.regex is an enabled manager"
+    )
+
+    expected = {"Makefile": {"pre-commit", "pyright", "ruff"}, "scripts/hooks/*.py": {"ruff"}}
+    seen: dict[str, set[str]] = {}
+    for mgr in cfg["customManagers"]:
+        glob_pat = mgr["managerFilePatterns"][0]
+        match_string = mgr["matchStrings"][0]
+        # Python's `re` is strictly more permissive than what Renovate runs, so
+        # checking only that a pattern compiles here would pass a config
+        # Renovate rejects at load time — leaving the manager inert and the
+        # pins unmanaged again, the exact failure this file exists to prevent.
+        assert not _RE2_UNSUPPORTED.search(match_string), (
+            f"{glob_pat}: matchString uses a construct RE2 rejects "
+            f"(lookaround or backreference): {match_string}"
+        )
+        rx = re.compile(_js_regex_to_python(match_string))
+        found = {
+            m.group("depName")
+            for f in sorted(ROOT.glob(glob_pat))
+            for m in rx.finditer(f.read_text(encoding="utf-8"))
+        }
+        seen[glob_pat] = found
+
+    for glob_pat, want in expected.items():
+        assert glob_pat in seen, f"no customManager covers {glob_pat}"
+        missing = want - seen[glob_pat]
+        assert not missing, f"{glob_pat}: customManager matches nothing for {sorted(missing)}"
+
+
+def test_renovate_groups_each_tool_across_its_managers():
+    """One PR per tool, or every PR is a partial bump.
+
+    ruff on PyPI and astral-sh/ruff-pre-commit are separate packages to
+    Renovate. Ungrouped they arrive as two PRs, and each one on its own fails
+    test_every_ruff_call_site_names_the_same_version.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    groups = {
+        r["groupName"]: set(r["matchPackageNames"])
+        for r in cfg.get("packageRules", [])
+        if "groupName" in r and "matchPackageNames" in r
+    }
+    assert {"ruff", "astral-sh/ruff-pre-commit"} <= groups.get("ruff", set()), (
+        "ruff and its pre-commit repo must share a groupName"
+    )
+    assert {"bandit", "PyCQA/bandit"} <= groups.get("bandit", set()), (
+        "bandit and its pre-commit repo must share a groupName"
+    )
+
+
 def test_bandit_pin_matches_the_pre_commit_rev_comment():
     """Same discipline as ruff: `make security`, CI, and the pre-commit hook all
     read [tool.bandit] from pyproject.toml, so the version must not drift."""

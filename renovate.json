@@ -2,9 +2,41 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "The extends preset is pinned to a commit SHA, matching the SHA-pinning discipline .claude/rules/github-actions-security.md imposes on actions: the thing that keeps our action SHAs current is itself pinned, so an edit upstream cannot silently change update policy here. Bump the SHA deliberately.",
-    "enabledManagers and automerge are declared here, not inherited, so the external preset cannot silently drop manifest coverage or turn automerge on."
+    "enabledManagers and automerge are declared here, not inherited, so the external preset cannot silently drop manifest coverage or turn automerge on.",
+    "customManagers cover the tool pins no built-in manager reads: `uv run --with <tool>==<version>` in the Makefile, and the PEP 723 inline block in scripts/hooks/*.py. Without them a ruff bump touched pyproject.toml alone and left the Makefile, the hook and the pre-commit rev behind, which tests/test_hooks.py fails by design.",
+    "The groupName rules put every call site for one tool in a single PR. ruff on PyPI and astral-sh/ruff-pre-commit are different packages to Renovate, so ungrouped they arrive as separate PRs and each one is a partial bump that fails the same test."
   ],
   "extends": ["local>ivuorinen/renovate-config#10a624a19237fa5a3662af0d8f9959c738c01c7f"],
-  "enabledManagers": ["npm", "pep621", "pre-commit", "github-actions"],
-  "automerge": false
+  "enabledManagers": ["npm", "pep621", "pre-commit", "github-actions", "custom.regex"],
+  "automerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions pinned in `uv run --with <tool>==<version>` (Makefile)",
+      "managerFilePatterns": ["Makefile"],
+      "matchStrings": ["--with\\s+(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[0-9][^\\s]*)"],
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "description": "PEP 723 inline script dependencies in the PostToolUse hooks",
+      "managerFilePatterns": ["scripts/hooks/*.py"],
+      "matchStrings": [
+        "dependencies\\s*=\\s*\\[\"(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[^\"]+)\"\\]"
+      ],
+      "datasourceTemplate": "pypi"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "ruff is pinned in four places across three managers; one PR must move them all.",
+      "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
+      "groupName": "ruff"
+    },
+    {
+      "description": "bandit likewise: the pyproject pin and the SHA-pinned pre-commit rev.",
+      "matchPackageNames": ["bandit", "PyCQA/bandit"],
+      "groupName": "bandit"
+    }
+  ]
 }
