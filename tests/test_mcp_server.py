@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -49,11 +50,18 @@ def _call(mod, name, arguments):
 
 @pytest.fixture(autouse=True)
 def _allowed_root_is_tmp(tmp_path, monkeypatch):
-    """Point the server's allowed root at tmp_path.
+    """Point the server's allowed root at tmp_path, as a git repository.
 
     mcp_server confines findings writes to CLAUDE_PROJECT_DIR, so a test passing
     `project_dir=tmp_path` is outside the allowed root unless the env agrees.
+
+    The `.git` marker is load-bearing, not scaffolding: `_allowed_root` requires
+    the project dir to be inside a repository, because the consent-free mutate
+    tools are safe only where their writes are a reviewable, revertible working-
+    tree change. A bare directory here would exercise a configuration the server
+    is designed to refuse.
     """
+    (tmp_path / ".git").mkdir(exist_ok=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
 
@@ -485,3 +493,89 @@ def test_mutate_round_trip_and_stdout_clean(tmp_path):
     assert json.loads(_unfence(after)) == []
     ledger = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), "status": "fixed"})
     assert any(r["id"] == fid for r in json.loads(_unfence(ledger)))
+
+
+def test_allowed_root_rejects_a_relative_env_value(monkeypatch):
+    """`${CLAUDE_PROJECT_DIR:-.}` in both shipped manifests expands to `.` when the
+    harness never set the variable. A relative value cannot have come from a
+    harness that knows the project location, so it must fall through to the
+    repo-root lookup — which refuses outside a repo rather than writing where
+    nothing can be reviewed or reverted."""
+    mod = _load()
+    # Deliberately NOT tmp_path: the autouse fixture makes that a repo, so a
+    # child of it would be inside one and correctly accepted. These cases need a
+    # base with no repository anywhere above it.
+    base = Path(tempfile.mkdtemp())
+    outside = base / "no-repo-here"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", ".")
+    with pytest.raises(ValueError, match="no project root"):
+        mod._allowed_root()
+
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "${CLAUDE_PROJECT_DIR}")  # unexpanded literal
+    with pytest.raises(ValueError, match="no project root"):
+        mod._allowed_root()
+
+    # Absolute and existing is NOT sufficient: a plain directory has no diff and
+    # nothing to revert, which is the condition the mutate tools rely on.
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(outside))
+    with pytest.raises(ValueError, match="no project root"):
+        mod._allowed_root()
+
+    # Absolute, existing, and inside a repo is the one form that is trusted.
+    repo = base / "a-repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    assert mod._allowed_root() == repo.resolve()
+
+
+def test_allowed_root_does_not_widen_to_the_enclosing_repo_root(tmp_path, monkeypatch):
+    """A subdirectory of a repo stays the boundary.
+
+    Resolving `/repo/sub` up to `/repo` would satisfy the is-in-a-repo rule while
+    widening containment beyond what the harness asked for — `project_dir` could
+    then narrow to anything under `/repo`, not just under `/repo/sub`.
+    """
+    mod = _load()
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    sub = repo / "sub"
+    sub.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(sub))
+    assert mod._allowed_root() == sub.resolve()
+
+    # and a sibling outside that subdirectory is still refused
+    other = repo / "other"
+    other.mkdir()
+    with pytest.raises(ValueError, match="outside the allowed project root"):
+        mod._project_root({"project_dir": str(other)})
+
+
+def test_tool_errors_never_echo_the_absolute_project_root(tmp_path, monkeypatch):
+    """Information disclosure: the caller is the least-trusted input here, and
+    findings.py errors interpolate absolute store paths."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    result = _call(mod, "np_show_finding", {"id": "audit-99999999"})
+    text = result["content"][0]["text"]
+    assert result["isError"] is True
+    assert str(tmp_path) not in text  # no absolute path, no username
+    assert "<project>" in text
+    assert "audit-99999999" in text  # still diagnosable
+
+
+def test_list_findings_rejects_out_of_vocab_severity(tmp_path, monkeypatch):
+    """inputSchema enums are advisory — the handler is what binds, matching the
+    CLI's argparse choices. An empty result must not be reachable by typo."""
+    mod = _load()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    result = _call(mod, "np_list_findings", {"severity": "hgih"})
+    assert result["isError"] is True
+    assert "severity must be one of" in result["content"][0]["text"]
+
+    ok = _call(mod, "np_list_findings", {"severity": "high"})
+    assert ok["isError"] is False

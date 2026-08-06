@@ -42,6 +42,21 @@ _AGENTS_INDIRECT_RE = re.compile(r"[=/$]agents?\b|\.claude/a")
 _GLOB_META_RE = re.compile(r"[*?\[]")
 DENIED = ".claude/agents"
 
+# 3. Content-addressed reach — a command can locate a definition by its FILE
+#    NAME without ever spelling the directory (`find . -name reviewer.md -exec
+#    cat {} +`), so it carries no token the two mechanisms above can see: no
+#    `.claude`, no `agents`, and no glob metacharacter. The bare filename is
+#    the one token such a command must carry, so match on it.
+#
+#    Partial by construction: a command that finds the file by CONTENT rather
+#    than name (`git ls-files | grep review | xargs cat`) carries neither the
+#    path nor the filename, and the only token it does carry ('review') is a
+#    nitpicker command name that appears in ordinary commands constantly —
+#    matching it would block routine work. CODEOWNERS plus branch protection
+#    remains the binding control; this hook raises the cost, it does not close
+#    the surface. See CLAUDE.md's PreToolUse section.
+_AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
+
 
 def _canonicalize(command: str) -> str:
     command = command.replace("\\/", "/")  # escaped separators: `.claude\/agents`
@@ -105,11 +120,29 @@ def _glob_reaches_agents(command: str) -> bool:
     return False
 
 
+def _names_agent_file(command: str) -> bool:
+    """True if any shell token's final path segment is exactly a protected agent
+    filename.
+
+    Token-boundary, not substring: `name in command` would also block
+    `cat release-readiness-reviewer.md.bak`, a different file the guard has no
+    business touching. Splitting on shell separators (and `=`/`,`, so
+    `--file=<name>` and comma-joined lists still resolve) and comparing the
+    basename keeps the exact-name match while dropping the false positives.
+    """
+    for token in re.split(r"[\s;&|<>()=,]+", command):
+        if token and PurePosixPath(token).name in _AGENT_FILES:
+            return True
+    return False
+
+
 def _references_agents(command: str) -> bool:
     """True if the command reaches .claude/agents/ by any spelling the shell would
     resolve there — literal, quoted, escaped, variable-built, or glob."""
     c = _canonicalize(command)
     if _DENIED_RE.search(c) or (_CLAUDE_RE.search(c) and _AGENTS_INDIRECT_RE.search(c)):
+        return True
+    if _names_agent_file(c):
         return True
     return _glob_reaches_agents(c)
 

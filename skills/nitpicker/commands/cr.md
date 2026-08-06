@@ -52,7 +52,7 @@ Non-Claude agents resolve the path relative to the nitpicker skill directory. It
 
 - `threads` — the inline review threads (each with `thread_id`, `path`, `diff_hunk`, `is_resolved`, `comments`).
 - `review_bodies` — every non-empty PR **review body** (any author). A reviewer's outside-diff-range comments (CodeRabbit's `⚠️ Outside diff range comments` block) live here, **not** as inline threads.
-- `summary_comments` — non-empty PR issue comments from bot accounts (login ending `[bot]`): CodeRabbit's `summarize by coderabbit` summary, rate-limit notes, Copilot summaries.
+- `summary_comments` — every non-empty PR issue comment, **any author**: CodeRabbit's `summarize by coderabbit` summary, rate-limit notes, Copilot summaries, and a human reviewer's plain PR comment (one left on the conversation tab rather than as a review). Each record carries `author`, so a bot summary and a maintainer's note are distinguishable — treat both as actionable, since a human note left here gets no inline thread and no review body.
 
 **Evaluate all three sections in Step 3, not just `threads`.** Notices in `review_bodies`/`summary_comments` are the ones historically missed. They carry no `path`, `diff_hunk`, or `thread_id`, so the thread lifecycle does not apply to them directly — use this one instead:
 

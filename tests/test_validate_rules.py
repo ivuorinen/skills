@@ -16,6 +16,77 @@ validate = _mod.validate
 _discover_targets = _mod._discover_targets
 
 
+def _index_repo(tmp_path, claude_md: str, rule_names: list[str]) -> Path:
+    """A minimal repo root: CLAUDE.md plus .claude/rules/<name> for each rule."""
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    for name in rule_names:
+        (rules / name).write_text("body\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
+    return tmp_path
+
+
+def test_rules_index_anchors_on_the_real_level_two_heading(tmp_path):
+    """A `### Conventions` in another section, or the heading named in prose, must
+    not become the anchor — the check would then read the wrong block and miss
+    real drift in the actual section."""
+    claude = (
+        "# T\n\n"
+        "## Setup\n\n"
+        "Everything below the `## Conventions` heading indexes the rules.\n\n"
+        "### Conventions\n\n"
+        "- `decoy.md`\n\n"
+        "## Conventions\n\n"
+        "- `real.md`\n\n"
+        "## After\n\n"
+        "- `unrelated.md`\n"
+    )
+    root = _index_repo(tmp_path, claude, ["real.md"])
+    errors: list[str] = []
+    _mod.check_rules_index(root, errors)
+    assert errors == [], errors  # decoy.md/unrelated.md are outside the real section
+
+
+def test_rules_index_captures_non_kebab_filenames(tmp_path):
+    """_iter_rules yields every .md, so the list parser must be able to read every
+    .md — a narrower grammar reports a listed rule as missing."""
+    root = _index_repo(
+        tmp_path,
+        "## Conventions\n\n- `README.md`\n- `_security.md`\n- `rule_v2.md`\n",
+        ["README.md", "_security.md", "rule_v2.md"],
+    )
+    errors: list[str] = []
+    _mod.check_rules_index(root, errors)
+    assert errors == [], errors
+
+
+def test_rules_index_reports_drift_in_both_directions(tmp_path):
+    root = _index_repo(
+        tmp_path, "## Conventions\n\n- `listed.md`\n- `ghost.md`\n", ["listed.md", "orphan.md"]
+    )
+    errors: list[str] = []
+    _mod.check_rules_index(root, errors)
+    joined = "\n".join(errors)
+    assert "orphan.md is not listed" in joined
+    assert "lists ghost.md" in joined
+
+
+def test_rules_index_fails_loudly_when_discovery_is_incomplete(tmp_path, monkeypatch):
+    """An unreadable subtree makes on_disk partial, which would hide an unindexed
+    rule and let the check pass. Report and stop instead."""
+    root = _index_repo(tmp_path, "## Conventions\n\n- `a.md`\n", ["a.md"])
+
+    def _partial(rules_dir, seen=None, errors=None):
+        if errors is not None:
+            errors.append(rules_dir / "unreadable")
+        return []
+
+    monkeypatch.setattr(_mod._anatomy, "_iter_rules", _partial)
+    errors: list[str] = []
+    _mod.check_rules_index(root, errors)
+    assert any("rule discovery is" in e for e in errors), errors
+
+
 def test_main_exits_zero_and_prints_ok_when_clean(monkeypatch, tmp_path, capsys):
     target = tmp_path / "r.md"
     target.write_text("x\n", encoding="utf-8")

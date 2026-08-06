@@ -546,8 +546,20 @@ def _record_from_finding(
         "status": status,
         "found": fm.get("found", ""),
         "resolved": resolved,
-        "title": title,
-        "body": body,
+        # Redacted here, not only in new_finding: this is the funnel for
+        # resolve_finding and migrate_resolved, which COPY an existing body into
+        # the ledger. Those bodies were never written by new_finding (a
+        # hand-edited open file, a legacy resolved/*.md), so they never passed
+        # its redaction. The ledger is append-only and resolve deletes the open
+        # file, so an unredacted copy landing here is permanent and the
+        # redactable original is gone.
+        #
+        # NOT the only such funnel: _build_v1 builds both its open and resolved
+        # records directly and migrate_v1 appends them as-is, so it redacts at
+        # its own two call sites. Any new path that writes a ledger record
+        # without going through here must do the same.
+        "title": redact(title),
+        "body": redact(body),
     }
     if extra:
         rec["extra"] = extra
@@ -1250,7 +1262,9 @@ def _build_v1(
         }
         body = "\n\n".join(f"## {s}\n{fields.get(s, '').strip()}" for s in OPEN_SECTIONS)
         path = root / auditor / "open" / f"{fid}.md"
-        return ("open", fid, path, render_finding(fm, entry["title"], body))
+        # Redacted like new_finding's: a migrated v1 document is untrusted text
+        # this tool did not author, and its Evidence sections quote real code.
+        return ("open", fid, path, render_finding(fm, redact(entry["title"]), redact(body)))
 
     resolved = fields.get("Fixed", "") or entry.get("pass_date", "") or generated or "1970-01-01"
     notes = fields.get("Notes", "").strip()
@@ -1274,8 +1288,12 @@ def _build_v1(
         "status": status,
         "found": generated or "1970-01-01",
         "resolved": resolved,
-        "title": entry["title"],
-        "body": body,
+        # Redacted here, not by _record_from_finding: this branch builds its
+        # ledger record directly and migrate_v1 appends it as-is. `body` carries
+        # the v1 document's `Notes:` field and `title` its heading, both
+        # untrusted text this tool did not author.
+        "title": redact(entry["title"]),
+        "body": redact(body),
     }
     return ("resolved", fid, rec)
 
@@ -1286,8 +1304,9 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:
     generated = ""
     section = ""  # open | fixed | invalid
     severity = ""
-    pass_date = ""
-    pass_n = ""
+    # "pass" here is a v1 audit pass (`### Pass 3 — 2026-01-02`), not a credential.
+    pass_date = ""  # nosec B105
+    pass_n = ""  # nosec B105
     entry: dict[str, str] = {}
     fields: dict[str, str] = {}
     last_field = ""
@@ -1516,7 +1535,12 @@ def main(argv: list[str] | None = None) -> int:
     add_root(p_list)
     p_list.add_argument("--auditor", default=None)
     p_list.add_argument("--status", default=None, choices=STATUSES)
-    p_list.add_argument("--severity", default=None, help="only findings of this severity")
+    # choices, like --status above and `new --severity`: gather_findings filters on
+    # exact equality, so an unconstrained typo matches nothing and exits 0 printing
+    # nothing — indistinguishable from a clean store to a gate that reads the output.
+    p_list.add_argument(
+        "--severity", default=None, choices=SEVERITIES, help="only findings of this severity"
+    )
     p_list.add_argument(
         "--exclude-baseline",
         action="store_true",

@@ -70,6 +70,54 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      - name: Reject breaking markers on CI-only commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # `!` and a BREAKING CHANGE footer both make release-please cut a MAJOR
+        # release. .claude/rules/commit-types.md: "A workflow-only or CI-only
+        # dependency bump is never breaking: it touches no published surface, so
+        # it carries no `!`." The conventional-commit check above accepts `!` as
+        # valid syntax, so nothing caught it — two Renovate commits carrying `!`
+        # on a one-line CI bump would have published a spurious major version.
+        # Deliberately narrow: only commits whose ENTIRE diff is CI config are
+        # rejected, so a genuinely breaking change anywhere else still passes.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          CI_ONLY = lambda p: p.startswith(".github/") or p == ".pre-commit-config.yaml"
+
+          def git(*args):
+              return subprocess.run(
+                  ["git", *args], check=True, capture_output=True, text=True
+              ).stdout
+
+          rng = f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"
+          bad = []
+          for sha in git("log", "--format=%H", rng).split():
+              subject = git("log", "-1", "--format=%s", sha).strip()
+              body = git("log", "-1", "--format=%b", sha)
+              # Conventional Commits treats `BREAKING CHANGE` and `BREAKING-CHANGE`
+              # as synonymous footer tokens and release-please honours both, so
+              # matching only the space form would miss half the spellings.
+              marked = bool(re.match(r"^[a-z]+(\([^)]*\))?!:", subject)) or re.search(
+                  r"^BREAKING[ -]CHANGE:", body, re.M
+              )
+              if not marked:
+                  continue
+              files = [f for f in git("show", "--name-only", "--format=", sha).split("\n") if f]
+              if files and all(CI_ONLY(f) for f in files):
+                  bad.append((sha[:8], subject))
+
+          for sha, subject in bad:
+              print(
+                  f"::error::{sha} marks a breaking change but its diff is CI-only "
+                  f"(see .claude/rules/commit-types.md): {subject}"
+              )
+          sys.exit(1 if bad else 0)
+          PY
+
   validate:
     name: Validate
     runs-on: ubuntu-latest
@@ -83,41 +131,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-      - name: Validate all SKILL.md files
-        run: |
-          uv run --quiet scripts/validate-skill.py
-          uv run --quiet scripts/validate-skill.py .claude/skills/*/SKILL.md
-
-      - name: Validate rules files
-        run: uv run --quiet scripts/validate-rules.py
-
-      - name: Check version sync
-        run: uv run --quiet scripts/check-version-sync.py
-
-      - name: Validate findings store
-        run: python3 skills/nitpicker/scripts/findings.py validate
-
-      - name: Check findings index is current
-        run: |
-          python3 skills/nitpicker/scripts/findings.py index
-          git diff --exit-code docs/audit/findings/INDEX.md
-
-      - name: Run tests
-        run: uv run --extra dev pytest tests/
-
-      - name: Lint scripts
-        run: uv run --extra dev ruff check scripts/ tests/ skills/
-
-      - name: Type-check
-        # Zero floor: any pyright error fails the gate. A count threshold could
-        # mask a new error by fixing an old one, so the tolerated set stays empty.
-        # Mirrors the `typecheck` target in the Makefile — change both together.
-        run: |
-          uv run --with pyright==1.1.411 pyright --outputjson \
-            | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
-
-      - name: Check script formatting
-        run: uv run --with ruff==0.15.21 ruff format --check scripts/ tests/ skills/
-
-      - name: Run pre-commit suite
-        run: uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
+      - name: Run the repository gate
+        # ONE invocation, deliberately: the Makefile is the single definition of
+        # what "checked" means. Listing the targets as separate steps here bought
+        # per-gate visibility in the Actions UI, but at the cost of a second copy
+        # that drifts — a target added to `make check` was silently absent from
+        # CI until someone noticed, and each duplicated tool pin was one more
+        # place to keep in step.
+        #
+        # `make check` = validate + validate-rules + version-sync +
+        # audit-consistency + index-check + lint + format-check + security +
+        # typecheck + test + pre-commit. Each target names the failing gate in
+        # its own output, so a failure is still identifiable from the log.
+        #
+        # tests/test_hooks.py asserts this job runs `make check` rather than
+        # restating the targets, so the collapse cannot quietly be undone.
+        run: make check

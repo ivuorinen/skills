@@ -31,9 +31,11 @@ Outputs a JSON object to stdout:
 historically missed: a reviewer's outside-diff-range comments live in the review
 BODY, and bots (CodeRabbit, Copilot) post summaries as issue comments. Both are
 included so a single fetch surfaces every actionable notice. `review_bodies` holds
-every non-empty PR review body (any author); `summary_comments` holds non-empty
-issue comments from bot accounts (login ending in `[bot]`). Both are best-effort:
-if that fetch fails the run still returns `threads` with the two lists empty.
+every non-empty PR review body (any author); `summary_comments` holds every
+non-empty PR issue comment (also any author — bot summaries and human notes
+alike; each record carries `author`, so the caller distinguishes them). Both are
+best-effort: if that fetch fails the run still returns `threads` with the two
+lists empty.
 
 is_resolved is false when using GraphQL (preferred). null means REST was used and
 resolved state is unknown — the caller must check whether the flagged code still exists.
@@ -171,7 +173,10 @@ def _token_rest_paginate(base_url: str, token: str) -> list[Any]:
                 "User-Agent": "ivuorinen-skills/nitpicker-cr",
             },
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # Scheme and host are both pinned: the first URL is built from a literal
+        # https://api.github.com base, and every paginated URL is checked below
+        # before it is assigned back to `url`.
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
             page = json.loads(resp.read())
             results.extend(page if isinstance(page, list) else [page])
             link = resp.headers.get("Link", "")
@@ -179,8 +184,12 @@ def _token_rest_paginate(base_url: str, token: str) -> list[Any]:
             for part in link.split(","):
                 if 'rel="next"' in part:
                     next_url = part.split(";")[0].strip().strip("<>")
-                    # Never send the token to a host other than the GitHub API.
-                    if urllib.parse.urlsplit(next_url).netloc != "api.github.com":
+                    # Never send the token to another host, and never over
+                    # plaintext: the Link header is server-controlled, so a
+                    # host-only check would still forward the Authorization
+                    # header over http:// to a matching hostname.
+                    split = urllib.parse.urlsplit(next_url)
+                    if split.netloc != "api.github.com" or split.scheme != "https":
                         break
                     url = next_url
                     break
@@ -327,9 +336,18 @@ def _fetch_review_bodies(
 def _fetch_summary_comments(
     owner: str, repo: str, pr_number: int, rest_list: Any
 ) -> list[dict[str, Any]]:
-    """Non-empty PR issue comments from bot accounts (login ending in `[bot]`) — bot
-    summaries. `updated_at` is included so the CodeRabbit loop can measure a
-    rate-limit wait from the summary's last edit, not just its creation."""
+    """Every non-empty PR issue comment, any author — bot summaries AND human notes.
+
+    Deliberately unfiltered by author, matching `_fetch_review_bodies`. Filtering
+    to `[bot]` logins dropped a maintainer's plain PR comment ("also fix this in
+    the sibling module") from the output entirely, so `cr` could neither act on
+    it nor record a verdict — the silent miss the out-of-thread fetch exists to
+    prevent. `author` is on every record, so a caller that wants only bot
+    summaries can still select them.
+
+    `updated_at` is included so the CodeRabbit loop can measure a rate-limit wait
+    from the summary's last edit, not just its creation.
+    """
     comments_raw = rest_list(f"repos/{owner}/{repo}/issues/{pr_number}/comments")
     return [
         {
@@ -339,9 +357,7 @@ def _fetch_summary_comments(
             "body": c.get("body", ""),
         }
         for c in comments_raw
-        if isinstance(c, dict)
-        and (c.get("user") or {}).get("login", "").endswith("[bot]")
-        and (c.get("body") or "").strip()
+        if isinstance(c, dict) and (c.get("body") or "").strip()
     ]
 
 

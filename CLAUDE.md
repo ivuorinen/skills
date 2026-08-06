@@ -9,12 +9,13 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 ## Development Commands
 
 ```bash
-make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + pyright typecheck + pytest + pre-commit suite (run before every commit)
+make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + bandit security scan + pyright typecheck + pytest + pre-commit suite (run before every commit)
 make validate     # SKILL.md + command-file structure (public + internal)
 make test         # run pytest unit tests
 make list         # list the skill and its commands
 make lint         # ruff check on scripts/, tests/, skills/
 make format       # ruff format on scripts/, tests/, skills/
+make security     # bandit scan of skills/ and scripts/ (config in [tool.bandit])
 ```
 
 ## Commands
@@ -66,6 +67,8 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 - `github-actions-security.md`
 - `use-context-mode.md`
 - `commit-gate-integrity.md`
+- `commit-types.md` (author discipline; the CI `commit-lint` job gates only the
+  CI-only-diff-with-a-breaking-marker case)
 - `write-surgical-code.md` (agent discipline; no gate)
 - `vendored-skills.md`
 
@@ -111,9 +114,18 @@ re-runs the whole-tree gates when `git status` shows a governed path dirty.
 Plus three **PreToolUse** hooks, which can *block* a tool call before it runs —
 the most behaviour-changing entries in the file:
 
-- matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command that
-  reaches into `.claude/agents/` (the `permissions.deny` block covers only the
-  Read/Edit/Write tools, not Bash).
+- matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
+  text names `.claude/agents/` **or a full protected agent filename** —
+  literally, quoted, escaped, variable-built, or glob-spelled (the
+  `permissions.deny` block covers only the Read/Edit/Write tools, not Bash). So
+  `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
+  It raises the cost of reaching that tree; it does not close it. The guard
+  matches tokens, so a command that locates the files by **content** rather than
+  by path or name (`git ls-files | grep review | xargs cat`) carries neither
+  token and passes — the one token it does carry, `review`, is a nitpicker
+  command name that appears in ordinary commands constantly, so matching it
+  would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
+  the binding control, not this hook.
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 

@@ -116,8 +116,69 @@ _UV_SHEBANG = "#!/usr/bin/env -S uv run --quiet"
 # Import-only modules, never executed directly — a shebang would be a lie.
 _NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
 
+# CLAUDE.md's `## Conventions` section presents itself as the index of
+# .claude/rules/, and Claude Code loads CLAUDE.md — so a rule missing from the
+# list is a rule an agent never learns exists. It was hand-kept and had drifted
+# (commit-types.md, the rule that decides the release version, was absent while
+# its near-namesake commit-gate-integrity.md was listed).
+_CONVENTIONS_HEADING = "## Conventions"
+# Line-anchored, and stopping at the next exact level-two heading: a plain
+# substring search also matches `### Conventions`, the heading quoted in prose,
+# or one inside a fenced example, so the check could read the wrong block and
+# miss drift in the real section.
+_CONVENTIONS_SECTION = re.compile(
+    rf"^{re.escape(_CONVENTIONS_HEADING)}\s*$(.*?)(?=^## |\Z)", re.M | re.S
+)
+# Any filename _iter_rules() can return, not just kebab-case: it yields every
+# `.md` under the tree, so a narrower grammar here (`[a-z0-9-]+`) cannot capture
+# `README.md`, `_security.md` or `rule_v2.md` from the list and would report a
+# listed rule as missing. `validate()` enforces the kebab-case naming rule
+# separately — this regex only has to read what the list actually says.
+_BACKTICKED_MD = re.compile(r"`([^`\n/]+\.md)`")
+
+
+def check_rules_index(repo_root: Path, errors: list[str]) -> None:
+    """Every .claude/rules/*.md is listed in CLAUDE.md's `## Conventions`, and vice versa."""
+    claude_md = repo_root / "CLAUDE.md"
+    rules_dir = repo_root / ".claude" / "rules"
+    if not claude_md.exists() or not rules_dir.exists():
+        return
+    try:
+        text = claude_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        errors.append(f"  ERROR  CLAUDE.md: cannot read file: {e}")
+        return
+    m = _CONVENTIONS_SECTION.search(text)
+    if m is None:
+        errors.append(f"  ERROR  CLAUDE.md: no '{_CONVENTIONS_HEADING}' section to index the rules")
+        return
+    listed = set(_BACKTICKED_MD.findall(m.group(1)))
+    # _iter_rules records unreadable directories in `errors` and skips them, so
+    # omitting the argument yields a silently partial scan — and a rule hidden
+    # under an unreadable subtree would then pass as "not on disk".
+    scan_errors: list[Path] = []
+    on_disk = {p.name for p in _anatomy._iter_rules(rules_dir, errors=scan_errors)}
+    if scan_errors:
+        for bad in sorted(scan_errors):
+            errors.append(
+                f"  ERROR  .claude/rules/: cannot scan {bad} — rule discovery is "
+                "incomplete, so the CLAUDE.md index cannot be verified"
+            )
+        return
+    for name in sorted(on_disk - listed):
+        errors.append(
+            f"  ERROR  CLAUDE.md: .claude/rules/{name} is not listed under "
+            f"'{_CONVENTIONS_HEADING}' — an unlisted rule is one the agent never reads"
+        )
+    for name in sorted(listed - on_disk):
+        errors.append(
+            f"  ERROR  CLAUDE.md: '{_CONVENTIONS_HEADING}' lists {name}, "
+            "which does not exist in .claude/rules/"
+        )
+
 
 def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
+    check_rules_index(repo_root, errors)
     for path in sorted(repo_root.glob("skills/**/*.md")):
         try:
             text = path.read_text(encoding="utf-8")

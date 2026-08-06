@@ -10,7 +10,7 @@ of it is aspirational.
 make check
 ```
 
-`check` runs ten targets in this order (see `Makefile`):
+`check` runs eleven targets in this order (see `Makefile`):
 
 | Step                | What it does                                                              |
 | ------------------- | ------------------------------------------------------------------------- |
@@ -21,7 +21,8 @@ make check
 | `index-check`       | regenerates `INDEX.md`, fails if it was stale (`git diff --exit-code`)    |
 | `lint`              | `ruff check scripts/ tests/ skills/`                                      |
 | `format-check`      | `ruff format --check` (no writes)                                         |
-| `typecheck`         | `pyright` — fails above a ratcheted baseline of 6 pre-existing errors     |
+| `security`          | `bandit` over `skills/` + `scripts/`; config in `[tool.bandit]`           |
+| `typecheck`         | `pyright` — zero floor: any error fails the gate                          |
 | `test`              | `pytest tests/`                                                           |
 | `pre-commit`        | full pre-commit suite (markdownlint, yamllint, gitleaks, zizmor, …)       |
 

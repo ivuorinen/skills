@@ -8,6 +8,7 @@ must be silent no-ops. These hooks had no coverage before.
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -431,6 +432,232 @@ def test_deny_agents_absolute_glob_does_not_crash(command):
     # outside the repo, so they resolve to "allow".
     mod = _load("deny-agents-path-hook")
     assert mod._references_agents(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Locates the file by NAME, never spelling the directory: no `.claude`,
+        # no `agents` token, no glob metacharacter — invisible to all three of
+        # the path-shaped mechanisms, and it really resolves to the definition.
+        "find . -name release-readiness-reviewer.md -exec cat {} +",
+        "find . -name skill-consistency-enforcer.md -exec sed -i s/x/y/ {} +",
+        "cp skill-consistency-enforcer.md /tmp/x",
+    ],
+)
+def test_deny_agents_blocks_content_addressed_reach(command, monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    event = json.dumps({"tool_input": {"command": command}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make check",
+        "uv run --extra dev pytest tests/",
+        "git commit -m 'fix: review comments'",
+        "grep -rn review skills/nitpicker/commands/",
+        "cat skills/nitpicker/commands/review.md",
+        "gh pr review 42 --approve",
+    ],
+)
+def test_deny_agents_filename_match_does_not_false_positive(command, monkeypatch):
+    """The filename match is on the full `<name>.md`, not a stem fragment.
+
+    Matching a fragment like 'review' would block routine work — it is a
+    nitpicker command name and appears in ordinary commands constantly.
+    """
+    mod = _load("deny-agents-path-hook")
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A longer filename that merely *contains* an agent filename is a
+        # different file. Substring matching blocked these; token-boundary
+        # matching does not.
+        "cat release-readiness-reviewer.md.bak",
+        "cat notes-about-skill-consistency-enforcer.md",
+        "git show HEAD:docs/release-readiness-reviewer.md.orig",
+    ],
+)
+def test_deny_agents_filename_match_is_token_bounded(command, monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp skill-consistency-enforcer.md /tmp/x",
+        "cat --file=release-readiness-reviewer.md",
+        "tar cf a.tar release-readiness-reviewer.md,skill-consistency-enforcer.md",
+    ],
+)
+def test_deny_agents_exact_filename_still_blocks_after_boundary_fix(command, monkeypatch):
+    """The boundary fix must not reopen the class it was added to close."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_deny_agents_content_search_remains_a_known_gap():
+    """Pins the documented boundary rather than pretending the surface is closed.
+
+    A command that finds the file by CONTENT carries neither the path nor the
+    filename, and its only shared token ('review') cannot be matched without
+    blocking routine work. CODEOWNERS plus branch protection is the binding
+    control; CLAUDE.md's PreToolUse section says so. If this ever starts
+    returning True the docs claim must be revisited too.
+    """
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents("git ls-files | grep review | xargs cat") is False
+
+
+ROOT = Path(__file__).parent.parent
+
+
+def _pyproject_pin(package: str) -> str:
+    """The version pyproject.toml's dev extra pins for `package`."""
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(rf'"{package}==([\d.]+)"', text)
+    assert m, f"pyproject.toml no longer pins {package}"
+    return m.group(1)
+
+
+def test_every_ruff_call_site_names_the_same_version():
+    """Four places invoke ruff and two of them WRITE (`make format`, the hook).
+
+    A version that drifts between them means the tree gets formatted one way and
+    judged another — reformat churn whose cause appears nowhere in the diff. This
+    already happened: pyproject moved to 0.16.0 while the Makefile, CI, and the
+    pre-commit rev stayed on 0.15.21.
+
+    CI is no longer a site: the Validate job runs `make check`, so it inherits
+    the Makefile's pin instead of carrying a fifth copy. That is the point of
+    the collapse — fewer places to keep in step, not merely fewer lines.
+    """
+    want = _pyproject_pin("ruff")
+    sites = {
+        "scripts/hooks/ruff-hook.py": rf'"ruff=={re.escape(want)}"',
+        "Makefile": rf"ruff=={re.escape(want)}\b",
+        # SHA-pinned per github-actions-security.md, so the version lives in the
+        # trailing comment; that is what has to match.
+        ".pre-commit-config.yaml": rf"#\s*v{re.escape(want)}\b",
+    }
+    for rel, pattern in sites.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert re.search(pattern, text), f"{rel} does not name ruff {want}"
+
+    # Both writing call sites, not just one of them.
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert len(re.findall(rf"ruff=={re.escape(want)}\b", makefile)) == 2, (
+        "Makefile must pin ruff in both `format` and `format-check`"
+    )
+
+    # And CI must not quietly reacquire its own pin.
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    assert "ruff==" not in workflow, (
+        "the Validate job runs `make check`; a ruff pin here is a reintroduced second copy"
+    )
+
+
+def test_bandit_pin_matches_the_pre_commit_rev_comment():
+    """Same discipline as ruff: `make security`, CI, and the pre-commit hook all
+    read [tool.bandit] from pyproject.toml, so the version must not drift."""
+    want = _pyproject_pin("bandit")
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert re.search(rf"#\s*{re.escape(want)}\b", config), (
+        f".pre-commit-config.yaml does not name bandit {want}"
+    )
+
+
+def test_ci_breaking_marker_gate_matches_both_footer_spellings():
+    """Conventional Commits treats `BREAKING CHANGE` and `BREAKING-CHANGE` as
+    synonymous and release-please honours both, so a gate matching only the space
+    form would wave through half the spellings.
+
+    Reads the regex out of the workflow rather than restating it, so the test
+    cannot pass against a literal the workflow no longer uses.
+    """
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    m = re.search(r'r"(\^BREAKING[^"]*)"', workflow)
+    assert m, "could not find the breaking-footer regex in the workflow"
+    footer = re.compile(m.group(1), re.M)
+    assert footer.search("BREAKING CHANGE: drops the v1 store")
+    assert footer.search("BREAKING-CHANGE: drops the v1 store")
+    assert not footer.search("mentions a breaking change in prose")
+
+
+def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
+    """pre-commit passes changed files explicitly, bypassing both `-r skills/
+    scripts/` and [tool.bandit] exclude_dirs — so the hook must restate them or
+    it gates a different set than `make security` and CI."""
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    block = config.split("- id: bandit", 1)[1].split("- repo:", 1)[0]
+    assert "files:" in block, "bandit hook must bound itself to the scanned roots"
+    assert "skills" in block and "scripts" in block
+    assert "tests" in block, "tests/ must stay excluded (B101 is the test mechanism)"
+
+
+def test_ci_runs_the_repository_gate_through_make_check():
+    """The Validate job must invoke `make check`, not restate its targets.
+
+    Replaces the old per-target assertions. Those pinned CI and the Makefile to
+    the same shape, but a *new* target added to `make check` was still absent
+    from CI until someone noticed — the assertion could only catch drift in
+    steps that already existed. Running the Makefile removes the second copy
+    instead of guarding it.
+    """
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    validate_job = workflow.split("  validate:", 1)[1]
+    assert re.search(r"^\s*run:\s*make check\s*$", validate_job, re.M), (
+        "the Validate job must run `make check`"
+    )
+
+    # Exactly one `run:` step, so a gate cannot be re-added alongside it.
+    #
+    # Matching each `make check` target name against the `run:` lines was the
+    # obvious check and is useless: a reintroduced security step runs
+    # `bandit ...`, which contains no "security". Counting the steps is the
+    # property that actually holds — the job's whole job is to call the Makefile.
+    runs = re.findall(r"^\s*run:", validate_job, re.M)
+    assert len(runs) == 1, (
+        f"the Validate job has {len(runs)} run steps; it should have exactly one "
+        "(`make check`) — an extra step is a second copy of a gate"
+    )
+
+
+def test_make_check_still_covers_every_gate():
+    """The collapse is only safe while `check` actually runs everything.
+
+    Pins the target list, so dropping one from `make check` — which would now
+    silently drop it from CI too — fails here instead of quietly narrowing the
+    gate.
+    """
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    check_rule = re.search(r"^check:(.*)$", makefile, re.M)
+    assert check_rule, "Makefile has no `check:` rule"
+    targets = set(check_rule.group(1).split())
+    required = {
+        "validate",
+        "validate-rules",
+        "version-sync",
+        "audit-consistency",
+        "index-check",
+        "lint",
+        "format-check",
+        "security",
+        "typecheck",
+        "test",
+        "pre-commit",
+    }
+    assert required <= targets, f"`make check` no longer runs: {sorted(required - targets)}"
 
 
 def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):

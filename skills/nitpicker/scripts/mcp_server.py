@@ -144,17 +144,37 @@ def _list_commands(args: dict) -> str:
 def _allowed_root() -> Path:
     """The one project root this server may touch, from the harness, not the caller.
 
-    The env value is trusted only when it is a real, interpolated path: a client
-    that forwards `${CLAUDE_PROJECT_DIR}` unexpanded hands us a truthy literal
-    that resolves to `<cwd>/${CLAUDE_PROJECT_DIR}` — an unconfined root outside
-    any repo. Falling back to the repo root and raising when there is none means
-    a misconfigured server refuses to run rather than writing where nothing can
-    be reviewed or reverted.
+    The env value is trusted only when it is a real, interpolated, ABSOLUTE path.
+    Two ways it is not, and both must fall through:
+
+      * a client that forwards `${CLAUDE_PROJECT_DIR}` unexpanded hands us a
+        truthy literal that resolves to `<cwd>/${CLAUDE_PROJECT_DIR}`;
+      * both shipped registrations set `${CLAUDE_PROJECT_DIR:-.}`, so a client
+        that expands the default hands us `.` when the harness never set the
+        variable — a real, existing directory that silently makes the process
+        cwd the allowed root, which is the unconfined case this guard exists to
+        reject. Only an absolute path can have come from a harness that actually
+        knows the project location.
+
+    Falling back to the repo root and raising when there is none means a
+    misconfigured server refuses to run rather than writing where nothing can be
+    reviewed or reverted.
+
+    The env path must also be inside a git repository. Absolute and existing is
+    not enough: `CLAUDE_PROJECT_DIR=/tmp/scratch` satisfied both and still put
+    the consent-free mutate tools somewhere with no diff and nothing to revert —
+    the exact condition the paragraph above says makes them safe, and the one
+    this function's own error message tells the operator to fix.
+
+    Note it is the env path that becomes the root, NOT its enclosing repo root.
+    Resolving `/repo/sub` up to `/repo` would widen the containment boundary
+    beyond what the harness asked for, letting `project_dir` narrow to anything
+    under `/repo` rather than under `/repo/sub`.
     """
     env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env and "${" not in env:
+    if env and "${" not in env and Path(env).is_absolute():
         root = Path(env).resolve()
-        if root.is_dir():
+        if root.is_dir() and findings.find_repo_root(root) is not None:
             return root
     repo = findings.find_repo_root(Path.cwd())
     if repo is None:
@@ -222,7 +242,7 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
         "properties": {
             **_PROJECT_DIR_PROP,
             "auditor": {"type": "string"},
-            "severity": {"type": "string"},
+            "severity": {"type": "string", "enum": list(findings.SEVERITIES)},
             "status": {"type": "string", "enum": ["open", "fixed", "invalid"]},
             "limit": {"type": "integer"},
         },
@@ -231,6 +251,13 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
     {**_READ_ONLY, "title": "List findings"},
 )
 def _list_findings(args: dict) -> str:
+    # inputSchema enums are advisory (the server does not validate against them),
+    # so enforce the vocab here — parity with the CLI's argparse choices. An
+    # out-of-vocab severity can only match zero rows, and an empty list reads as
+    # "no findings" rather than "you typed it wrong".
+    severity = args.get("severity") or ""
+    if severity and severity not in findings.SEVERITIES:
+        raise ValueError(f"severity must be one of {findings.SEVERITIES}, got {severity!r}")
     # Shared listing primitive with the CLI `list` command — see
     # findings.gather_findings — so the two interfaces cannot drift on filtering.
     rows = findings.gather_findings(
@@ -365,6 +392,20 @@ def _resolve_finding(args: dict) -> str:
     return json.dumps({"id": args["id"], "status": args["status"]})
 
 
+def _scrub(exc: Exception) -> str:
+    """An exception message with the server's absolute root replaced by `<project>`.
+
+    Resolving the root can itself fail (that is exactly what `_allowed_root`
+    raises), so a failure here must degrade to the unmodified message rather than
+    mask the original error with a second one.
+    """
+    msg = str(exc)
+    try:
+        return msg.replace(str(_allowed_root()), "<project>")
+    except Exception:
+        return msg
+
+
 def _negotiate(requested) -> str:
     """The protocol revision this session will speak.
 
@@ -411,7 +452,13 @@ def _handle(method: str, params: dict):
                 try:
                     return _text_result(t["handler"](args))
                 except Exception as e:
-                    return _text_result(f"{type(e).__name__}: {e}", is_error=True)
+                    # Redact at the dispatch boundary, not in each backing
+                    # function: findings.py errors interpolate absolute store
+                    # paths (`no finding with id X under <root>`), and the same
+                    # care _project_root already takes must cover every handler.
+                    # Full detail stays on stderr.
+                    print(f"[nitpicker] {name}: {type(e).__name__}: {e}", file=sys.stderr)
+                    return _text_result(f"{type(e).__name__}: {_scrub(e)}", is_error=True)
         return _text_result(f"unknown tool: {name}", is_error=True)
     raise MethodError(f"unknown method: {method}")
 

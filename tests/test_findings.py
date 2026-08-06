@@ -1109,3 +1109,129 @@ def test_parse_frontmatter_ignores_indented_keys():
     assert fm == {}
     fm, _ = findings.parse_frontmatter("---\nname: v\n---\nbody")
     assert fm == {"name": "v"}
+
+
+def test_resolve_redacts_a_body_new_finding_never_wrote(tmp_path):
+    """redact() must cover copying, not just authoring.
+
+    An open finding file can reach the store without passing new_finding — a
+    hand-written file, a v1 migration. resolve then copies its body into the
+    append-only ledger AND deletes the open file, so an unredacted copy is
+    permanent and the redactable original is gone.
+    """
+    open_dir = tmp_path / "audit" / "open"
+    open_dir.mkdir(parents=True)
+    (open_dir / "audit-deadbeef.md").write_text(
+        "---\nid: audit-deadbeef\nauditor: audit\nseverity: high\ncategory: security\n"
+        "area: src/x.py\nstatus: open\nfound: 2026-07-08\n---\n\n"
+        "# Hardcoded token\n\n## Problem\nInline.\n\n"
+        '## Evidence\n`TOKEN = "AKIAIOSFODNN7EXAMPLE"`, owner <alice@example.com>\n\n'
+        "## Impact\nLeak.\n\n## Fix\nUse env var.\n",
+        encoding="utf-8",
+    )
+    findings.resolve_finding(tmp_path, "audit-deadbeef", "fixed", "moved to env")
+
+    ledger = findings.ledger_path(tmp_path).read_text(encoding="utf-8")
+    assert "AKIAIOSFODNN7EXAMPLE" not in ledger
+    assert "AKIA***MPLE" in ledger
+    assert "alice@example.com" not in ledger
+    assert "<email>" in ledger
+    assert not (open_dir / "audit-deadbeef.md").exists()  # the unredacted copy is gone
+
+
+def test_migrate_v1_redacts_the_open_findings_it_writes(tmp_path):
+    """A v1 document is untrusted text this tool did not author."""
+    src = tmp_path / "security-findings.md"
+    src.write_text(
+        "Generated: 2026-07-08\n\n## Open findings\n\n### High\n\n"
+        "#### [N-001] Hardcoded key\n"
+        "Category: security\n"
+        "Area: src/x.py\n"
+        "Problem: Inline.\n"
+        'Evidence: `KEY = "AKIAIOSFODNN7EXAMPLE"` owned by <bob@example.com>\n'
+        "Impact: Leak.\n"
+        "Fix: Env var.\n",
+        encoding="utf-8",
+    )
+    store = tmp_path / "store"
+    assert findings.migrate_v1(src, store) == 1
+    written = (store / "security" / "open" / "N-001.md").read_text(encoding="utf-8")
+    assert "AKIAIOSFODNN7EXAMPLE" not in written
+    assert "AKIA***MPLE" in written
+    assert "bob@example.com" not in written
+
+
+def test_migrate_v1_redacts_the_resolved_records_it_appends(tmp_path):
+    """_build_v1's resolved branch builds its ledger record directly and
+    migrate_v1 appends it as-is, so it never passes _record_from_finding's
+    redaction. The v1 `Notes:` field is untrusted text, and the ledger is
+    append-only — an unredacted secret landing there is permanent.
+    """
+    src = tmp_path / "security-findings.md"
+    src.write_text(
+        "Generated: 2026-07-08\n\n## Fixed\n\n### Pass 1 — 2026-07-09\n\n"
+        "#### [N-002] Rotated the leaked deploy key\n"
+        "Fixed: 2026-07-09\n"
+        "Notes: old key AKIAIOSFODNN7EXAMPLE revoked; owner <carol@example.com> notified\n",
+        encoding="utf-8",
+    )
+    store = tmp_path / "store"
+    assert findings.migrate_v1(src, store) == 1
+
+    ledger = findings.ledger_path(store).read_text(encoding="utf-8")
+    assert "AKIAIOSFODNN7EXAMPLE" not in ledger
+    assert "AKIA***MPLE" in ledger
+    assert "carol@example.com" not in ledger
+    assert "<email>" in ledger
+
+
+def test_every_store_writer_redacts(tmp_path):
+    """Guards the invariant rather than one call site.
+
+    _record_from_finding is not the only funnel — _build_v1 writes both its open
+    and resolved records directly. A new writer that skips redact() is the exact
+    defect this pins, so assert the property end to end on both migrate paths
+    and on resolve, not the presence of a call.
+    """
+    secret = "AKIAIOSFODNN7EXAMPLE"
+
+    # resolve: body copied from an open file this tool did not author
+    a = tmp_path / "a"
+    (a / "audit" / "open").mkdir(parents=True)
+    (a / "audit" / "open" / "audit-deadbeef.md").write_text(
+        "---\nid: audit-deadbeef\nauditor: audit\nseverity: low\ncategory: security\n"
+        f"area: x\nstatus: open\nfound: 2026-07-08\n---\n\n# T\n\n## Problem\n{secret}\n\n"
+        "## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n",
+        encoding="utf-8",
+    )
+    findings.resolve_finding(a, "audit-deadbeef", "fixed", "n")
+
+    # migrate-resolved: legacy resolved/*.md folded into the ledger
+    b = tmp_path / "b"
+    (b / "audit" / "resolved").mkdir(parents=True)
+    (b / "audit" / "resolved" / "N-003.md").write_text(
+        "---\nid: N-003\nauditor: audit\nstatus: fixed\nfound: 2026-07-08\n"
+        f"resolved: 2026-07-09\n---\n\n# T\n\n## Resolution\n{secret}\n",
+        encoding="utf-8",
+    )
+    findings.migrate_resolved(b)
+
+    for root in (a, b):
+        text = findings.ledger_path(root).read_text(encoding="utf-8")
+        assert secret not in text, f"{root.name}: unredacted secret reached the ledger"
+        assert "AKIA***MPLE" in text
+
+
+def test_list_severity_rejects_out_of_vocab(tmp_path, capsys):
+    """A typo must fail loudly, not filter everything out and exit 0.
+
+    gather_findings filters on exact equality, so an unconstrained bad value can
+    only match zero rows — and an empty list reads as a clean store to any gate
+    that consumes the output.
+    """
+    with pytest.raises(SystemExit) as exc:
+        findings.main(["list", "--root", str(tmp_path), "--severity", "hgih"])
+    assert exc.value.code == 2
+    assert "hgih" in capsys.readouterr().err
+    # the correct spelling still works
+    assert findings.main(["list", "--root", str(tmp_path), "--severity", "high"]) == 0
