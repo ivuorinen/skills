@@ -159,11 +159,22 @@ def _allowed_root() -> Path:
     Falling back to the repo root and raising when there is none means a
     misconfigured server refuses to run rather than writing where nothing can be
     reviewed or reverted.
+
+    The env path must also be inside a git repository. Absolute and existing is
+    not enough: `CLAUDE_PROJECT_DIR=/tmp/scratch` satisfied both and still put
+    the consent-free mutate tools somewhere with no diff and nothing to revert —
+    the exact condition the paragraph above says makes them safe, and the one
+    this function's own error message tells the operator to fix.
+
+    Note it is the env path that becomes the root, NOT its enclosing repo root.
+    Resolving `/repo/sub` up to `/repo` would widen the containment boundary
+    beyond what the harness asked for, letting `project_dir` narrow to anything
+    under `/repo` rather than under `/repo/sub`.
     """
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env and "${" not in env and Path(env).is_absolute():
         root = Path(env).resolve()
-        if root.is_dir():
+        if root.is_dir() and findings.find_repo_root(root) is not None:
             return root
     repo = findings.find_repo_root(Path.cwd())
     if repo is None:
