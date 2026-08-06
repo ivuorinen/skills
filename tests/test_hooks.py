@@ -587,7 +587,8 @@ _JS_NAMED_GROUP = re.compile(r"\(\?<(?=[A-Za-z_])")
 _RE2_UNSUPPORTED = re.compile(
     r"""\(\?[=!]      # lookahead  (?=…) (?!…)
       | \(\?<[=!]     # lookbehind (?<=…) (?<!…)
-      | \\[1-9]       # backreference
+      | \\[1-9]       # numeric backreference \1
+      | \\k<[^>]+>    # named backreference \k<name>
     """,
     re.VERBOSE,
 )
@@ -623,6 +624,30 @@ def test_js_regex_translation_leaves_lookbehind_intact(js, expected):
     translated = _js_regex_to_python(js)
     assert translated == expected
     re.compile(translated)  # must be valid Python, not merely different
+
+
+@pytest.mark.parametrize(
+    ("pattern", "rejected"),
+    [
+        (r"ruff==(?=(?<currentValue>[0-9.]+))", True),  # lookahead
+        (r"(?<=ruff==)(?<currentValue>[0-9.]+)", True),  # lookbehind
+        (r"(?<!no)(?<depName>z)", True),  # negative lookbehind
+        (r"(?<depName>a)\1", True),  # numeric backreference
+        (r"(?<depName>a)\k<depName>", True),  # named backreference
+        # the two patterns renovate.json actually ships
+        (r"--with\s+(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[0-9][^\s]*)", False),
+        (r"dependencies\s*=\s*\[\"(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[^\"]+)\"\]", False),
+    ],
+)
+def test_re2_guard_rejects_what_renovate_cannot_run(pattern, rejected):
+    """RE2 supports neither lookaround nor backreferences, named or numeric.
+
+    Catching them here keeps the failure in the explicit guard. Left to Python,
+    a named backreference surfaces as `bad escape \\k` from `re.compile` — an
+    error that points at the test helper rather than at the unsupported
+    construct in renovate.json.
+    """
+    assert bool(_RE2_UNSUPPORTED.search(pattern)) is rejected
 
 
 def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
