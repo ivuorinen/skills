@@ -612,6 +612,52 @@ def _js_regex_to_python(pattern: str) -> str:
     return _JS_NAMED_GROUP.sub("(?P<", pattern)
 
 
+# Renovate: "If a string is not a regex pattern, it is treated as a glob pattern
+# parsed using the minimatch library" — a regex is one wrapped in slashes, with
+# optional trailing flags (`/pat/i`).
+_SLASH_REGEX = re.compile(r"^/(?P<body>.*)/(?P<flags>[a-z]*)$", re.DOTALL)
+
+
+def _renovate_pattern_selects(pattern: str, filename: str) -> bool:
+    """Does a managerFilePatterns entry select `filename`?
+
+    Approximates Renovate, and the approximation has a stated edge: minimatch is
+    not fnmatch. They agree on the literal filenames and simple `*` globs this
+    repo uses; brace expansion, `!` negation and globstar are not modelled. The
+    point of the helper is to catch a pattern that selects *nothing* — the way
+    the pre-commit manager first shipped — not to reimplement minimatch.
+
+    The flags handling is not decorative: `/pat/i` is a valid Renovate pattern,
+    and an `endswith("/")` test reads it as a glob and reports no match, which
+    would fail this guard on a correct config.
+    """
+    m = _SLASH_REGEX.match(pattern)
+    if m:
+        flags = re.IGNORECASE if "i" in m.group("flags") else 0
+        return bool(re.search(_js_regex_to_python(m.group("body")), filename, flags))
+    return fnmatch.fnmatch(filename, pattern)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "selects"),
+    [
+        (".pre-commit-config.yaml", True),  # literal glob — what this repo uses
+        ("*.yaml", True),
+        ("scripts/hooks/*.py", False),  # a glob for other files
+        ("/^\\.pre-commit-config\\.yaml$/", True),  # slash-wrapped regex
+        ("/^\\.PRE-COMMIT-CONFIG\\.YAML$/i", True),  # ...with a flag
+        ("/^\\.PRE-COMMIT-CONFIG\\.YAML$/", False),  # same regex, no flag: no match
+        ("/nomatch/", False),
+        # The form that shipped in #98: regex syntax without the slashes, so
+        # Renovate reads it as a glob and it selects nothing.
+        ("^\\.pre-commit-config\\.yaml$", False),
+    ],
+)
+def test_renovate_pattern_matcher_follows_renovate_semantics(pattern, selects):
+    """The guard is only as good as this matcher, so the matcher gets its own test."""
+    assert _renovate_pattern_selects(pattern, ".pre-commit-config.yaml") is selects
+
+
 @pytest.mark.parametrize(
     ("js", "expected"),
     [
@@ -801,17 +847,12 @@ def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
     assert len(managers) == 1, "expected exactly one custom manager for the pre-commit config"
 
     # managerFilePatterns must actually SELECT the file, which is a separate
-    # question from whether matchStrings parses it. Renovate treats a pattern as
-    # a regex only when wrapped in slashes; anything else is a minimatch glob. A
-    # bare `^\.pre-commit-config\.yaml$` is therefore a glob matching nothing,
-    # which is how this manager first shipped — valid config, silently inert,
-    # and this test passed anyway because it only ever exercised matchStrings.
+    # question from whether matchStrings parses it. A bare
+    # `^\.pre-commit-config\.yaml$` is a glob matching nothing, which is how this
+    # manager first shipped — valid config, silently inert, and this test passed
+    # anyway because it only ever exercised matchStrings.
     for raw in managers[0]["managerFilePatterns"]:
-        if raw.startswith("/") and raw.endswith("/"):
-            selects = re.search(_js_regex_to_python(raw[1:-1]), ".pre-commit-config.yaml")
-        else:
-            selects = fnmatch.fnmatch(".pre-commit-config.yaml", raw)
-        assert selects, (
+        assert _renovate_pattern_selects(raw, ".pre-commit-config.yaml"), (
             f"managerFilePatterns entry {raw!r} selects no file: as a glob it matches nothing, "
             "and a regex must be wrapped in slashes to be read as one"
         )
