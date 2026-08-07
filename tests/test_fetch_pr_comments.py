@@ -342,7 +342,7 @@ class TestFetchGraphql:
         resp = {"errors": [{"message": "Not found"}]}
         with (
             patch.object(_mod, "_gh_graphql", return_value=resp),
-            pytest.raises(RuntimeError),
+            pytest.raises(RuntimeError, match="Not found"),
         ):
             fetch_graphql("owner", "repo", 1)
 
@@ -819,7 +819,9 @@ def test_main_hard_fails_on_graphql_shape_bug_without_rest_downgrade(monkeypatch
         return []
 
     monkeypatch.setattr(_mod, "fetch_rest_gh", _rest)
-    with pytest.raises(TypeError):
+    # match=: it must be *this* shape bug propagating, not any TypeError raised
+    # somewhere else on the way (which would also leave `rest` uncalled).
+    with pytest.raises(TypeError, match="NoneType"):
         _mod.main()
     assert called["rest"] is False  # did not silently fall back to resolved-blind REST
 

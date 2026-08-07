@@ -358,6 +358,15 @@ def test_frontmatter_without_paths_and_an_empty_body_warns(tmp_path):
     assert _has(warnings, "body is empty after frontmatter")
 
 
+def test_frontmatter_without_paths_but_with_a_body_is_clean(tmp_path):
+    """The other arm: no `paths:` is legal, and a real body must warn about nothing."""
+    path = tmp_path / "a-rule.md"
+    path.write_text("---\ntitle: x\n---\n\nA real rule body.\n", encoding="utf-8")
+    errors, warnings = _validate(tmp_path, path)
+    assert errors == []
+    assert warnings == []
+
+
 def test_paths_glob_traversing_outside_the_repo_is_rejected(tmp_path):
     path = tmp_path / "a-rule.md"
     path.write_text("---\npaths:\n  - ../../etc/*.conf\n---\n\nBody.\n", encoding="utf-8")

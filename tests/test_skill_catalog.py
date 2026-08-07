@@ -36,6 +36,31 @@ def test_list_skills_excludes_the_internal_dot_claude_tier():
     assert all(s["path"].startswith("skills/") for s in sc.list_skills())
 
 
+def test_list_skills_attaches_commands_only_to_nitpicker(tmp_path):
+    """Every other skill must come back without a `commands` key — attaching it
+    everywhere would advertise a command surface those skills do not have."""
+    from pathlib import Path
+
+    for name, desc in (("nitpicker", "Audits."), ("other-skill", "Does not dispatch.")):
+        d = tmp_path / "skills" / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {desc}\n---\n\nBody.\n", encoding="utf-8"
+        )
+    cmds = tmp_path / "skills" / "nitpicker" / "commands"
+    cmds.mkdir()
+    (cmds / "review.md").write_text("# /nitpicker review — R\n\nP.\n", encoding="utf-8")
+    (tmp_path / "skills" / "nitpicker" / "SKILL.md").write_text(
+        "---\nname: nitpicker\ndescription: Audits.\n---\n\n## Commands\n\n"
+        "| Command | Purpose |\n| --- | --- |\n| `review` | Hostile review |\n",
+        encoding="utf-8",
+    )
+
+    by_name = {s["name"]: s for s in sc.list_skills(root=Path(tmp_path))}
+    assert "commands" in by_name["nitpicker"]
+    assert "commands" not in by_name["other-skill"]
+
+
 def test_read_skill_returns_frontmatter_text():
     text = sc.read_skill("nitpicker")
     assert "name: nitpicker" in text
@@ -44,7 +69,7 @@ def test_read_skill_returns_frontmatter_text():
 def test_read_skill_unknown_raises():
     import pytest
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="does-not-exist"):
         sc.read_skill("does-not-exist")
 
 
@@ -56,11 +81,34 @@ def test_list_commands_parses_name_alias_purpose():
     assert by_name["review"]["purpose"]
 
 
-def test_read_command_known_and_traversal_rejected():
+def test_read_command_known_and_traversal_rejected(monkeypatch):
+    """The rejection must happen *before* any read.
+
+    A bare `pytest.raises(KeyError)` cannot tell an allowlist rejection from an
+    ordinary unknown-name lookup, and would still pass if the implementation
+    became read-then-validate — by which point the traversal has already read the
+    file. Failing the test on any read of the rejected path pins the ordering.
+    """
+    import re
+    from pathlib import Path
+
     import pytest
 
     assert "# /nitpicker review" in sc.read_command("review")
-    with pytest.raises(KeyError):
-        sc.read_command("../../../../etc/passwd")
-    with pytest.raises(KeyError):
-        sc.read_command("_conventions")  # underscore files are not public commands
+
+    real_read_text = Path.read_text
+    reads: list[str] = []
+
+    def _recording_read_text(self, *a, **k):
+        reads.append(str(self))
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", _recording_read_text)
+
+    for rejected in ("../../../../etc/passwd", "_conventions"):
+        reads.clear()
+        with pytest.raises(KeyError, match=re.escape(rejected)):
+            sc.read_command(rejected)
+        assert not any("passwd" in r or r.endswith("_conventions.md") for r in reads), (
+            f"read_command({rejected!r}) touched the file before rejecting it"
+        )

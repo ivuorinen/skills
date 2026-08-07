@@ -20,24 +20,43 @@ dev = [
 ]
 
 [tool.coverage.run]
-include = [
-  "skills/nitpicker/scripts/findings.py",
-  "skills/nitpicker/scripts/fetch-pr-comments.py",
-  "skills/nitpicker/scripts/check-rules-anatomy.py",
-  "skills/nitpicker/scripts/process-sarif.py",
-  "skills/nitpicker/scripts/mcp_server.py",
-  "skills/nitpicker/scripts/skill_catalog.py",
-  "scripts/*.py",
-  "scripts/hooks/*.py",
+# `source`, not `include`. With `include` coverage reports only files it actually
+# traced, so a module no test imports is absent from the report rather than shown
+# at 0% — post-bash-revalidate.py, a live PostToolUse hook, sat outside a
+# "100.00%" report that way. `source` scans the trees, so an untested module is
+# reported and fails the gate below.
+# Each directory is listed separately: coverage's source scan only recurses into
+# subdirectories that are packages, and none of these carry an __init__.py, so
+# "scripts" alone silently omits scripts/hooks/ — which is exactly how the hook
+# above stayed hidden. A new script directory needs a new entry here.
+source = [
+  "scripts",
+  "scripts/hooks",
+  "skills/nitpicker/scripts",
 ]
+# Decisions, not just statements: without this a half-taken `if` counts as
+# covered, and 24 branches were passing that way — three of them with a mutation
+# the whole suite survived.
+branch = true
 
 [tool.coverage.report]
-# Ratcheted to 100 once every branch in the scoped files had a failing-capable
-# test. At this setting a new uncovered line is a build failure, so a change and
-# the test that exercises it land together. Lowering this is a decision to accept
-# untested code, not a fix for a red build — cover the line or scope it out of
-# [tool.coverage.run] deliberately.
-fail_under = 100
+# Statements AND branches, over every module in `source` including the ones no
+# test imports. A new uncovered line or an untaken branch is a build failure, so
+# a change and the test that exercises it land together. Lowering this is a
+# decision to accept untested code, not a fix for a red build — cover it, or
+# scope it out of [tool.coverage.run] deliberately.
+#
+# 99.97, not 100, for exactly one branch: fetch-pr-comments.py:490
+# `if notes_rest is not None:` — every path reaching it either assigns a
+# transport or exits, so the false arm is unreachable and no test can take it.
+# That is dead defensive code, tracked as a routed finding for /nitpicker review;
+# delete the guard there and this goes back to 100.
+#
+# The value is the current measurement, not a round number: 3933/3934 = 99.97%.
+# One further miss drops it to 99.95 and fails. Do not raise the slack to make a
+# red build green — that turns the ratchet back into a rubber stamp.
+precision = 2
+fail_under = 99.97
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

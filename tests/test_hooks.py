@@ -881,17 +881,98 @@ ALL_HOOKS = [
 ]
 
 
-@pytest.mark.parametrize("name", ALL_HOOKS)
-def test_hook_runs_as_a_script(name, monkeypatch, capsys):
-    """Covers each `if __name__ == '__main__'` body — the only wiring to main().
+def _script_repo(tmp_path: Path) -> Path:
+    """A minimal REPO_ROOT the hooks will accept.
 
-    Empty stdin means load_event() returns None, so every hook takes its silent
-    no-op path; what this proves is that the script is runnable at all.
+    `_hooklib.repo_root()` only honours $REPO_ROOT when the directory really
+    contains scripts/hooks/_hooklib.py, so a bare tmp dir is silently ignored.
+    Callers must also drop $CLAUDE_PROJECT_DIR: it is checked first and points at
+    the real checkout inside a Claude Code session, which silently wins.
     """
-    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
-    runpy.run_path(str(HOOKS_DIR / f"{name}.py"), run_name="__main__")
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    hooks = tmp_path / "scripts" / "hooks"
+    hooks.mkdir(parents=True)
+    shutil.copy(HOOKS_DIR / "_hooklib.py", hooks / "_hooklib.py")
+    for rel in (
+        "scripts/validate-skill.py",
+        "scripts/validate-rules.py",
+        "scripts/check-version-sync.py",
+        "skills/nitpicker/scripts/check-rules-anatomy.py",
+        "skills/nitpicker/scripts/findings.py",
+    ):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("", encoding="utf-8")
+    return tmp_path
+
+
+# (hook, event payload builder, expected stderr marker). Each payload drives the
+# hook to an outcome only main() can produce — a bare import cannot exit 2.
+SCRIPT_ENTRY_CASES = [
+    ("validate-json-hook", "bad.json", "INVALID JSON"),
+    ("validate-skill-hook", "skills/foo/SKILL.md", ""),
+    ("check-version-sync-hook", "package.json", "Run ./scripts/bump-version.py"),
+    ("ruff-hook", "lint_me.py", "RUFF SAID NO"),
+    ("validate-rules-hook", ".claude/rules/a-rule.md", "RULE VIOLATION"),
+    ("validate-audit-findings-hook", "docs/audit/findings/a/open/a-11111111.md", "not a valid"),
+]
+
+
+@pytest.mark.parametrize(("name", "rel", "marker"), SCRIPT_ENTRY_CASES)
+def test_hook_runs_as_a_script(name, rel, marker, monkeypatch, tmp_path, capsys):
+    """Covers each `if __name__ == '__main__'` body, and proves it is wired.
+
+    Deleting `main()` from the guard makes these fail: the module still imports
+    cleanly under runpy, but nothing exits 2 and nothing reaches stderr.
+    """
+    import subprocess as _subprocess
+
+    repo = _script_repo(tmp_path)
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('{"a": 1,}' if rel.endswith(".json") else "x = 1\n", encoding="utf-8")
+
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)  # checked first; would win
+    monkeypatch.setenv("REPO_ROOT", str(repo))
+    monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/ruff")
+    monkeypatch.setattr(
+        _subprocess, "run", lambda *a, **k: _Result(returncode=1, stdout=marker or "FAILED")
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"tool_input": {"file_path": rel}})))
+
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / f"{name}.py"), run_name="__main__")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert err.strip(), f"{name}: exited 2 with nothing on stderr"
+    if marker:
+        assert marker in err
+
+
+def test_deny_agents_hook_runs_as_a_script(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"tool_input": {"command": "cat .claude/agents/x.md"}})),
+    )
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-agents-path-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+def test_stop_reminder_runs_as_a_script(monkeypatch, capsys):
+    import subprocess as _subprocess
+
+    def _fake_git(cmd, *a, **k):
+        staged = "--cached" in cmd
+        return _Result(stdout="skills/nitpicker/commands/audit.md\0" if staged else "")
+
+    monkeypatch.setattr(_subprocess, "run", _fake_git)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "stop-reminder.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "skills/nitpicker/commands/audit.md" in capsys.readouterr().err
 
 
 PATH_GUARD_HOOKS = ["validate-json-hook", "validate-skill-hook", "check-version-sync-hook"]
@@ -1070,3 +1151,244 @@ def test_audit_findings_index_failure_exits_2(monkeypatch, tmp_path, capsys):
     err = capsys.readouterr().err
     assert "INDEX.md regeneration failed" in err
     assert "index blew up" in err
+
+
+# ── the success arms: a passing validator must exit silently ──────────────────
+#
+# Every subprocess-driven hook had only its failure path tested, so the
+# "validator returned 0, stay quiet" branch was never taken. A hook that started
+# exiting 2 on success would block every edit in the session.
+
+
+def test_ruff_hook_silent_when_ruff_is_clean(monkeypatch, tmp_path, capsys):
+    mod = _load("ruff-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    f = tmp_path / "clean.py"
+    f.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/ruff")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result())
+    _run(mod, json.dumps({"tool_input": {"file_path": str(f)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_version_sync_hook_silent_when_versions_agree(monkeypatch, tmp_path, capsys):
+    mod = _load("check-version-sync-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check-version-sync.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="  OK  all\n"))
+    payload = {"tool_input": {"file_path": str(tmp_path / "package.json")}}
+    _run(mod, json.dumps(payload), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_validate_skill_hook_silent_when_the_skill_is_valid(monkeypatch, tmp_path, capsys):
+    mod = _load("validate-skill-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-skill.py").write_text("", encoding="utf-8")
+    skill = tmp_path / "skills" / "foo" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: foo\n---\n", encoding="utf-8")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="OK\n"))
+    _run(mod, json.dumps({"tool_input": {"file_path": str(skill)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_validate_rules_hook_silent_when_both_validators_pass(monkeypatch, tmp_path, capsys):
+    """Also covers the loop's continue arm: the first validator returning 0 must
+    not short-circuit the second."""
+    mod = _load("validate-rules-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-rules.py").write_text("", encoding="utf-8")
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
+    anatomy.mkdir(parents=True)
+    (anatomy / "check-rules-anatomy.py").write_text("", encoding="utf-8")
+    rule = tmp_path / ".claude" / "rules" / "a-rule.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("body\n", encoding="utf-8")
+
+    calls = []
+
+    def _ok(cmd, *a, **k):
+        calls.append(cmd)
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _ok)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(rule)}}), monkeypatch)
+    assert len(calls) == 2  # both validators ran; the first did not short-circuit
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+# ── post-bash-revalidate: the Bash-edit half of the enforcement surface ────────
+#
+# The five Write|Edit validators never see a `sed -i`/redirection/`git mv` edit;
+# this hook is what re-runs the whole-tree gates for those. It takes no stdin —
+# it asks git what is dirty — so every test drives it through a fake
+# subprocess.run that dispatches on argv.
+
+
+class _Result:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _revalidate(monkeypatch, tmp_path, *, status, gate=None, gates_on_disk=True):
+    """Load the hook against a tmp REPO_ROOT with subprocess.run faked.
+
+    `status` is the _Result for `git status`; `gate` is called with each gate's
+    argv and returns that gate's _Result (default: success).
+    """
+    mod = _load("post-bash-revalidate")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    if gates_on_disk:
+        for script, _cmd in mod.GATES:
+            p = tmp_path / script
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, *a, **k):
+        calls.append(list(cmd))
+        if cmd[:2] == ["git", "status"]:
+            return status
+        return gate(cmd) if gate else _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+    return mod, calls
+
+
+def _gate_calls(calls: list[list[str]]) -> list[list[str]]:
+    return [c for c in calls if c[:2] != ["git", "status"]]
+
+
+def test_revalidate_returns_when_not_a_git_tree(monkeypatch, tmp_path, capsys):
+    """A non-zero `git status` means there is nothing to scope against — the hook
+    must return, not run every gate against an unknown tree."""
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(returncode=128))
+    mod.main()
+    assert _gate_calls(calls) == []
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_revalidate_ignores_a_dirty_path_outside_the_governed_set(monkeypatch, tmp_path, capsys):
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=" M README.md\n"))
+    mod.main()
+    assert _gate_calls(calls) == []
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "porcelain",
+    [
+        " M skills/nitpicker/SKILL.md\n",
+        " M .claude/rules/skill-style.md\n",
+        "?? docs/audit/findings/tests/open/tests-abcd1234.md\n",
+        " M package.json\n",
+        " M pyproject.toml\n",
+        " M .claude-plugin/plugin.json\n",
+        " M .claude-plugin/marketplace.json\n",
+        " M .release-please-manifest.json\n",
+    ],
+)
+def test_revalidate_runs_every_gate_for_each_governed_marker(
+    monkeypatch, tmp_path, capsys, porcelain
+):
+    """Every entry in GOVERNED must actually trigger the gates — a marker that
+    stopped matching would silently stop validating that whole tree."""
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=porcelain))
+    mod.main()  # all gates pass -> no SystemExit
+    assert len(_gate_calls(calls)) == len(mod.GATES)
+    assert capsys.readouterr().err == ""
+
+
+def test_revalidate_asks_git_for_ignored_paths_too(monkeypatch, tmp_path):
+    """The findings store supports being gitignored; plain --porcelain omits
+    ignored paths, so a Bash edit there would skip the findings gates."""
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=""))
+    mod.main()
+    assert calls[0] == ["git", "status", "--porcelain", "--ignored"]
+
+
+def test_revalidate_reports_a_missing_gate_script_instead_of_skipping_silently(
+    monkeypatch, tmp_path, capsys
+):
+    """A silently skipped gate is indistinguishable from a passing one."""
+    mod, calls = _revalidate(
+        monkeypatch, tmp_path, status=_Result(stdout=" M skills/x/SKILL.md\n"), gates_on_disk=False
+    )
+    mod.main()
+    assert _gate_calls(calls) == []
+    err = capsys.readouterr().err
+    assert "gate skipped" in err
+    assert "scripts/validate-skill.py not found" in err
+
+
+def test_revalidate_exits_2_with_the_failing_gate_output(monkeypatch, tmp_path, capsys):
+    def _gate(cmd):
+        if "validate-skill.py" in " ".join(cmd):
+            return _Result(returncode=1, stdout="  ERROR  SKILL.md: missing frontmatter")
+        return _Result()
+
+    mod, _ = _revalidate(
+        monkeypatch, tmp_path, status=_Result(stdout=" M skills/x/SKILL.md\n"), gate=_gate
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert "missing frontmatter" in capsys.readouterr().err
+
+
+def test_revalidate_names_a_silent_failing_gate(monkeypatch, tmp_path, capsys):
+    """A gate exiting non-zero with no output would otherwise block the call with
+    an empty message — the fallback must name the command and the exit code."""
+
+    def _gate(cmd):
+        if "check-version-sync.py" in " ".join(cmd):
+            return _Result(returncode=3, stdout="   ", stderr="")
+        return _Result()
+
+    mod, _ = _revalidate(
+        monkeypatch, tmp_path, status=_Result(stdout=" M package.json\n"), gate=_gate
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "check-version-sync.py" in err
+    assert "exit 3" in err
+
+
+def test_revalidate_runs_as_a_script(monkeypatch, tmp_path, capsys):
+    """The `__main__` body, proven by an outcome only main() can produce: a
+    governed dirty path plus a failing gate must exit 2 with that gate's output.
+
+    runpy re-executes the module, so the fake is installed on the shared
+    `subprocess` module rather than on a module attribute.
+    """
+    import subprocess as _subprocess
+
+    for script, _cmd in _load("post-bash-revalidate").GATES:
+        p = tmp_path / script
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("", encoding="utf-8")
+
+    def _fake_run(cmd, *a, **k):
+        if cmd[:2] == ["git", "status"]:
+            return _Result(stdout=" M skills/nitpicker/SKILL.md\n")
+        return _Result(returncode=1, stdout="GATE SAID NO")
+
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(_subprocess, "run", _fake_run)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "post-bash-revalidate.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "GATE SAID NO" in capsys.readouterr().err

@@ -69,14 +69,19 @@ def test_main_lists_public_private_and_command_sections(tmp_path, monkeypatch, c
     public = _skill(tmp_path, "skills", "nitpicker", "Audits things.")
     _skill(tmp_path, ".claude/skills", "internal-tool", "Dev only.")
     _command(public, "tests.md", "# /nitpicker tests — Audit\n\nAudits tests.\n")
+    # A second public skill with no commands/ dir: main() must skip its command
+    # section rather than printing an empty one.
+    _skill(tmp_path, "skills", "plain", "No commands here.")
     monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
 
     assert _mod.main() == 0
     out = capsys.readouterr().out
     assert "Public  (skills/)" in out
     assert "Commands (/nitpicker <command>)" in out
+    assert "Commands (/plain <command>)" not in out
     assert "Private (.claude/skills/)" in out
     assert "Audits things." in out
+    assert "No commands here." in out
     assert "Dev only." in out
 
 

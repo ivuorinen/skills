@@ -256,6 +256,65 @@ def test_unreadable_internal_script_is_reported(tmp_path: Path) -> None:
     assert any("cannot read" in p for p in find_runner_violations(tmp_path))
 
 
+def test_alias_tracking_ignores_non_name_assignment_targets(tmp_path: Path) -> None:
+    """`d["k"] = import_module` binds no local name, so nothing is aliased and the
+    later call is not treated as a dynamic import."""
+    _tool(
+        tmp_path,
+        "sub.py",
+        "#!/usr/bin/env python3\nimport importlib\nd = {}\n"
+        'd["k"] = importlib.import_module\nd["k"]("requests")\n',
+    )
+    assert [p for p in find_violations(tmp_path) if "non-stdlib" in p] == []
+
+
+def test_alias_tracking_ignores_unrelated_importlib_names(tmp_path: Path) -> None:
+    """`from importlib import util` imports a name that is not an import function."""
+    _tool(
+        tmp_path,
+        "u.py",
+        "#!/usr/bin/env python3\nfrom importlib import util\nutil.find_spec('requests')\n",
+    )
+    assert [p for p in find_violations(tmp_path) if "non-stdlib" in p] == []
+
+
+def test_call_expression_that_is_not_a_two_arg_getattr_is_not_an_import(tmp_path: Path) -> None:
+    """Only `getattr(x, "import_module")(...)` counts; a one-arg getattr must not
+    index args[1], and an unrelated call expression must not be treated as one."""
+    _tool(
+        tmp_path,
+        "g.py",
+        # Chained calls, so the call's *func* is itself an ast.Call — the branch
+        # that indexes args[1] and must not do so when the arity is wrong.
+        "#!/usr/bin/env python3\nimport importlib\n"
+        "getattr(importlib)('requests')\n"
+        "other(importlib, 'import_module')('requests')\n",
+    )
+    assert [p for p in find_violations(tmp_path) if "non-stdlib" in p] == []
+
+
+def test_keyword_only_dynamic_import_without_a_name_kwarg(tmp_path: Path) -> None:
+    """`import_module(package="x")` carries no module name — the keyword scan must
+    exhaust without resolving one, rather than mis-reading the first keyword."""
+    _tool(
+        tmp_path,
+        "kw.py",
+        "#!/usr/bin/env python3\nimport importlib\nimportlib.import_module(package='.rel')\n",
+    )
+    assert [p for p in find_violations(tmp_path) if "non-stdlib" in p] == []
+
+
+def test_name_kwarg_found_after_another_keyword(tmp_path: Path) -> None:
+    """The scan must keep looking past a non-`name` keyword, not stop at the first."""
+    _tool(
+        tmp_path,
+        "kw2.py",
+        "#!/usr/bin/env python3\nimport importlib\n"
+        "importlib.import_module(package='p', name='requests')\n",
+    )
+    assert any("non-stdlib import 'requests'" in p for p in find_violations(tmp_path))
+
+
 def test_module_runs_as_a_script(monkeypatch) -> None:
     """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
     monkeypatch.setattr(_mod, "REPO_ROOT", REPO_ROOT)

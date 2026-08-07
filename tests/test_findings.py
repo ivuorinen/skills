@@ -85,7 +85,7 @@ def test_resolve_appends_ledger_and_deletes_open_file(tmp_path):
 
 
 def test_resolve_unknown_id_raises(tmp_path):
-    with pytest.raises(findings.FindingError):
+    with pytest.raises(findings.FindingError, match="no open finding with id security-deadbeef"):
         findings.resolve_finding(tmp_path, "security-deadbeef", "fixed", "n/a")
 
 
@@ -1021,7 +1021,9 @@ def test_resolve_leaves_no_orphan_when_ledger_append_refuses(tmp_path):
     ledger = findings.ledger_path(tmp_path)
     ledger.parent.mkdir(parents=True, exist_ok=True)
     ledger.write_text('{"id": "x"}', encoding="utf-8")
-    with pytest.raises(findings.FindingError):
+    # match=: the append must be refused for the truncated last line, not for some
+    # other FindingError that would leave the same open file in place.
+    with pytest.raises(findings.FindingError, match="last line"):
         findings.resolve_finding(tmp_path, fid, "fixed", "done")
     assert path.exists(), "open finding deleted despite the ledger append failing"
 
@@ -1425,6 +1427,87 @@ def test_ledger_summary_skips_junk_lines(tmp_path):
     lp.parent.mkdir(parents=True, exist_ok=True)
     lp.write_text(f"\nnot json\n[1]\n{json.dumps(GOOD_REC)}\n", encoding="utf-8")
     assert findings._ledger_summary(tmp_path) == {GOOD_REC["id"]: ("security", "fixed")}
+
+
+def test_ledger_reads_skip_records_with_no_id(tmp_path):
+    """An id-less record cannot be keyed; both readers must drop it rather than
+    index it under None and shadow a real finding."""
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    idless = {k: v for k, v in GOOD_REC.items() if k != "id"}
+    lp.write_text(f"{json.dumps(idless)}\n{json.dumps(GOOD_REC)}\n", encoding="utf-8")
+    assert list(findings.resolved_records(tmp_path)) == [GOOD_REC["id"]]
+    assert list(findings._ledger_summary(tmp_path)) == [GOOD_REC["id"]]
+
+
+def test_validate_store_does_not_track_id_less_ledger_records_as_duplicates(tmp_path):
+    lp = findings.ledger_path(tmp_path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    idless = {k: v for k, v in GOOD_REC.items() if k != "id"}
+    lp.write_text(f"{json.dumps(idless)}\n{json.dumps(idless)}\n", encoding="utf-8")
+    errors = findings.validate_store(tmp_path)
+    assert any("missing id" in e for e in errors)
+    assert not any("duplicate ledger id" in e for e in errors)
+
+
+@pytest.mark.parametrize("notes", ["", "   \n  "])
+def test_resolve_with_blank_notes_appends_no_resolution_section(tmp_path, notes):
+    """The ledger is append-only, so a blank `## Resolution` heading written by a
+    regression here is permanent."""
+    _new(tmp_path)
+    fid = findings.finding_id("security", "src/auth.py", "Token compared with ==")
+    findings.resolve_finding(tmp_path, fid, "fixed", notes, date="2026-07-09")
+    body = findings.resolved_records(tmp_path)[fid]["body"]
+    assert "## Resolution" not in body
+    assert "## Problem" in body  # the original body survived intact
+
+
+def test_force_reresolve_with_blank_notes_leaves_the_recorded_body_alone(tmp_path):
+    _new(tmp_path)
+    fid = findings.finding_id("security", "src/auth.py", "Token compared with ==")
+    findings.resolve_finding(tmp_path, fid, "fixed", "first pass", date="2026-07-09")
+    findings.resolve_finding(tmp_path, fid, "invalid", "", date="2026-07-10", force=True)
+    rec = findings.resolved_records(tmp_path)[fid]
+    assert rec["status"] == "invalid"
+    assert rec["body"].count("## Resolution") == 1  # the original note, not a second empty one
+    assert "first pass" in rec["body"]
+
+
+def test_validate_accepts_a_resolved_file_with_a_well_formed_date(tmp_path):
+    """The valid-date arm: previously only the missing and malformed dates were
+    exercised, so a regression accepting nothing would still have passed."""
+    fm = {**_drop("severity", "category", "area"), "status": "fixed", "resolved": "2026-07-09"}
+    path = _write_finding(tmp_path, fm, state="resolved")
+    assert findings.validate_file(path) == []
+
+
+def test_migrate_v1_keeps_a_fenced_block_that_precedes_any_field(tmp_path):
+    """A fence opening before the first `Field:` line has no open field to append
+    to — the parser must not crash or mis-attribute it."""
+    src = tmp_path / "nitpicker-findings.md"
+    src.write_text(
+        "# Nitpicker Findings\n"
+        "Generated: 2026-04-24\n\n"
+        "```text\n"
+        "preamble fence, no finding is open yet\n"
+        "```\n\n"
+        "## Open Findings\n\n"
+        "### Advisory\n\n"
+        "#### [N-500] A finding\n"
+        "Prose before any field line.\n"
+        "Category: security\n"
+        "Area: src/x.py\n"
+        "Problem: p\n"
+        "Evidence: e\n"
+        "Impact: i\n"
+        "Fix: f\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "findings"
+    assert findings.migrate_v1(src, root) == 1
+    text = (root / "audit" / "open" / "N-500.md").read_text(encoding="utf-8")
+    assert "preamble fence" not in text  # not attributed to the finding
+    assert findings.validate_store(root) == []
 
 
 def test_ledger_summary_returns_empty_on_an_unreadable_ledger(tmp_path, capsys):
