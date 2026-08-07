@@ -1079,6 +1079,14 @@ def test_deny_agents_unparseable_event_is_a_silent_noop(monkeypatch, capsys):
         "cp x.md .cl**de/agents/brand-new-agent.md",  # a write, not just a read
         "cd .cl**de && cat agents/*.md",  # via the cd-base expansion
         "printf x > .clau**/agents/new.md",  # via the parent probe
+        # Runs longer than two: `str.replace("**", "*")` consumes stars pairwise,
+        # so `.cl***de` collapsed to `.cl**de` — still raising, still a bypass.
+        # Only a whole-run collapse closes these.
+        "cat .cl***de/agents/*.md",
+        "cat .cl****de/agents/*.md",
+        "cp x.md .cl***de/agents/new.md",
+        "cd .cl***de && cat agents/*.md",
+        "printf x > .clau***/agents/new.md",
     ],
 )
 def test_deny_agents_blocks_globstar_spelled_paths(command, monkeypatch):
@@ -1103,6 +1111,7 @@ def test_deny_agents_blocks_globstar_spelled_paths(command, monkeypatch):
         # gates every Bash call, so that trade is not available.
         'python -c "print(2**8)"',
         "grep a**b file.txt",
+        "grep a***b file.txt",
         "awk '{print 2**3}' data.txt",
         "make check",
     ],
@@ -1133,8 +1142,13 @@ def test_deny_agents_blocks_globstar_paths_on_a_stdlib_that_rejects_them(monkeyp
     monkeypatch.setattr(Path, "glob", _pre_313)
     assert mod._references_agents("cat .cl**de/agents/*.md") is True
     assert mod._references_agents("cp x.md .cl**de/agents/brand-new-agent.md") is True
+    # Longer runs must collapse in one step, not pairwise — `.cl***de` -> `.cl*de`,
+    # never `.cl**de` (which would raise again and slip through).
+    assert mod._references_agents("cat .cl***de/agents/*.md") is True
+    assert mod._references_agents("cp x.md .cl****de/agents/new.md") is True
     # and the non-path tokens that share the raising class stay allowed
     assert mod._references_agents('python -c "print(2**8)"') is False
+    assert mod._references_agents("grep a***b file.txt") is False
 
 
 def test_shell_glob_returns_empty_when_every_spelling_fails(monkeypatch, tmp_path):

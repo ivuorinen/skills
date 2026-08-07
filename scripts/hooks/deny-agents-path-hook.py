@@ -74,14 +74,18 @@ def _shell_glob(base: Path, pattern: str) -> list[Path]:
     token as harmless, so on 3.11/3.12 `cat .cl**de/agents/*.md` — which the
     shell DOES expand into the protected tree — passed the guard unexamined.
 
-    The retry collapses `**` to `*`, which is how the shell reads it without
-    `globstar`. Normalising only on failure keeps real recursive globs recursive
-    wherever Python supports them. A blanket fail-closed on the exception was the
-    other option and is wrong here: this hook gates every Bash call and
+    The retry collapses every run of two or more stars to one, which is how the
+    shell reads them without `globstar`. It must be a regex, not
+    `str.replace("**", "*")`: that consumes stars pairwise, so `.cl***de` becomes
+    `.cl**de` — still raising, still matching nothing, still a bypass — and a bare
+    `***` would collapse to `**`, turning the retry into a recursive full-tree
+    walk on a hook that runs for every Bash call. Normalising only on failure
+    keeps real recursive globs recursive wherever Python supports them. A blanket
+    fail-closed on the exception was the other option and is wrong here:
     `Path.glob` raises on ordinary tokens, so `python -c "print(2**8)"` would be
     denied.
     """
-    for candidate in (pattern, pattern.replace("**", "*")):
+    for candidate in (pattern, re.sub(r"\*{2,}", "*", pattern)):
         try:
             return list(base.glob(candidate))
         except (OSError, ValueError, NotImplementedError):
