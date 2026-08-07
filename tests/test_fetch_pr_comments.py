@@ -924,10 +924,17 @@ def test_main_refuses_resolved_blind_rest_on_transient_graphql_failure(
     monkeypatch, capsys, message
 ):
     """Falling back to REST here would re-surface already-resolved threads as
-    unresolved — GraphQL is the only source of isResolved."""
+    unresolved — GraphQL is the only source of isResolved.
+
+    GhTransportError, not a bare RuntimeError: only gh's own stderr can be
+    transient. A plain RuntimeError carrying the same text is a permanent error
+    whose message merely contains the marker, and it must reach REST instead.
+    """
     monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py", "owner", "repo", "1"])
     monkeypatch.setattr(_mod, "_gh_available", lambda: True)
-    monkeypatch.setattr(_mod, "fetch_graphql", MagicMock(side_effect=RuntimeError(message)))
+    monkeypatch.setattr(
+        _mod, "fetch_graphql", MagicMock(side_effect=_mod.GhTransportError(message))
+    )
     rest = MagicMock(return_value=[])
     monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
 
@@ -936,6 +943,94 @@ def test_main_refuses_resolved_blind_rest_on_transient_graphql_failure(
     assert exc.value.code == 1
     assert "retry rather than fall back to resolved-blind REST" in capsys.readouterr().err
     rest.assert_not_called()
+
+
+# ── transient vs permanent classification (review-1a6a54b6) ───────────────────
+#
+# The marker scan runs on gh's own stderr only. Permanent errors interpolate the
+# PR number and owner/repo, so an unguarded substring test read "PR #502 not
+# found" as a 502 and told the caller to retry a condition that never clears.
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "PR #502 not found in acme/webapp",
+        "PR #1502 not found in acme/webapp",
+        "PR #2504 not found in acme/webapp",
+        "PR #7 not found in acme/secondary-index",
+        "PR #7 not found in acme/service-503",
+        '[{"message": "Could not resolve to a Repository with the name \'acme/api-502\'."}]',
+    ],
+)
+def test_permanent_error_carrying_a_transient_marker_falls_back_to_rest(
+    monkeypatch, capsys, message
+):
+    """A permanent RuntimeError must reach the REST fallback even when its text
+    happens to contain 502/503/504/secondary."""
+    monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py", "acme", "webapp", "502"])
+    monkeypatch.setattr(_mod, "_gh_available", lambda: True)
+    monkeypatch.setattr(_mod, "fetch_graphql", MagicMock(side_effect=RuntimeError(message)))
+    rest = MagicMock(return_value=[])
+    monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
+    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *a: ([], []))
+
+    _mod.main()  # no SystemExit
+    rest.assert_called_once()
+    err = capsys.readouterr().err
+    assert "falling back to REST" in err
+    assert "transiently unavailable" not in err
+
+
+def test_gh_transport_error_without_a_transient_marker_falls_back(monkeypatch, capsys):
+    """A gh failure that is not rate-limit/5xx is permanent — REST, not exit."""
+    monkeypatch.setattr(sys, "argv", ["fetch-pr-comments.py", "acme", "webapp", "1"])
+    monkeypatch.setattr(_mod, "_gh_available", lambda: True)
+    monkeypatch.setattr(
+        _mod, "fetch_graphql", MagicMock(side_effect=_mod.GhTransportError("HTTP 404 Not Found"))
+    )
+    rest = MagicMock(return_value=[])
+    monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
+    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *a: ([], []))
+
+    _mod.main()
+    rest.assert_called_once()
+
+
+def test_gh_helpers_raise_the_transport_subclass():
+    """Both gh call sites must raise GhTransportError, or the guard above sees a
+    plain RuntimeError and a genuine outage stops hard-failing."""
+    for fn, args in ((_mod._gh_graphql, ("q", {})), (_mod._gh_rest_paginate, ("some/path",))):
+        with (
+            patch("subprocess.run", return_value=_proc(returncode=1, stderr=b"HTTP 502")),
+            pytest.raises(_mod.GhTransportError, match="502"),
+        ):
+            fn(*args)
+
+
+def test_rate_limited_graphql_payload_is_typed_transient():
+    """GitHub types rate-limit errors; match the field, not the rendered text."""
+    resp = {"errors": [{"type": "RATE_LIMITED", "message": "API rate limit exceeded"}]}
+    with (
+        patch.object(_mod, "_gh_graphql", return_value=resp),
+        pytest.raises(_mod.GhTransportError, match="RATE_LIMITED"),
+    ):
+        fetch_graphql("acme", "webapp", 1)
+
+
+def test_non_rate_limited_graphql_payload_stays_permanent():
+    resp = {"errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository"}]}
+    with patch.object(_mod, "_gh_graphql", return_value=resp), pytest.raises(RuntimeError) as exc:
+        fetch_graphql("acme", "webapp", 1)
+    assert not isinstance(exc.value, _mod.GhTransportError)
+
+
+def test_malformed_errors_payload_does_not_crash_the_type_check():
+    """`errors` is server-controlled; a non-list or non-dict entry must not raise
+    an AttributeError inside the classifier."""
+    for payload in ({"errors": "boom"}, {"errors": ["boom"]}, {"errors": [None]}):
+        with patch.object(_mod, "_gh_graphql", return_value=payload), pytest.raises(RuntimeError):
+            fetch_graphql("acme", "webapp", 1)
 
 
 def test_module_runs_as_a_script(monkeypatch, capsys):

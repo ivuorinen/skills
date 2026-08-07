@@ -108,6 +108,18 @@ query($id: ID!, $cursor: String) {
 """
 
 
+class GhTransportError(RuntimeError):
+    """gh itself failed — the only GraphQL failure class that can be transient.
+
+    main() decides whether to retry or fall back to REST by looking for rate-limit
+    and 5xx markers in the error text. Those markers also occur inside permanent
+    messages, which interpolate the PR number and owner/repo ("PR #502 not found
+    in acme/webapp"), so the scan must be confined to errors that carry gh's own
+    stderr. Subclasses RuntimeError so existing `except RuntimeError` handlers
+    keep catching it.
+    """
+
+
 def _gh_available() -> bool:
     try:
         subprocess.run(["gh", "--version"], capture_output=True, check=True, timeout=5)
@@ -125,7 +137,7 @@ def _gh_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
         timeout=30,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode().strip())
+        raise GhTransportError(result.stderr.decode().strip())
     return json.loads(result.stdout)
 
 
@@ -136,7 +148,7 @@ def _gh_rest_paginate(path: str) -> list[Any]:
         timeout=60,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode().strip())
+        raise GhTransportError(result.stderr.decode().strip())
     pages: list[list[Any]] = json.loads(result.stdout)
     return [item for page in pages for item in page]
 
@@ -257,6 +269,12 @@ def fetch_graphql(owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]
             {"owner": owner, "repo": repo, "pr": pr_number, "cursor": cursor},
         )
         if "errors" in resp:
+            # GitHub types its rate-limit errors, so match the field rather than
+            # the rendered text — the payload echoes the repository name, and a
+            # repo called `api-502` would otherwise read as a 502.
+            errs = resp["errors"] if isinstance(resp["errors"], list) else []
+            if any(isinstance(e, dict) and e.get("type") == "RATE_LIMITED" for e in errs):
+                raise GhTransportError(json.dumps(resp["errors"]))
             raise RuntimeError(json.dumps(resp["errors"]))
 
         pr = resp["data"]["repository"]["pullRequest"]
@@ -431,8 +449,13 @@ def main() -> None:
             # (secondary rate limit, 5xx) must therefore NOT silently downgrade to
             # REST — that re-surfaces already-resolved threads as unresolved. Hard-
             # fail so the caller retries; only a permanent error falls back to REST.
+            # The marker scan runs ONLY on GhTransportError, which carries gh's own
+            # stderr. The permanent raises in fetch_graphql interpolate the PR
+            # number and owner/repo ("PR #502 not found in acme/secondary-index"),
+            # so an unguarded substring test reports those as transient and sends
+            # the caller into a retry loop for a condition that never clears.
             msg = str(graphql_err).lower()
-            if any(
+            if isinstance(graphql_err, GhTransportError) and any(
                 s in msg
                 for s in (
                     "rate limit",
@@ -487,17 +510,19 @@ def main() -> None:
     # failure here must not lose the threads that are the primary result.
     review_bodies: list[dict[str, Any]] = []
     summary_comments: list[dict[str, Any]] = []
-    if notes_rest is not None:
-        try:
-            review_bodies, summary_comments = _fetch_out_of_thread_notes(
-                owner, repo, pr_number, notes_rest
-            )
-        except Exception as notes_err:
-            print(
-                f"[warn] could not fetch out-of-thread notes ({notes_err}); "
-                "returning inline threads only",
-                file=sys.stderr,
-            )
+    # No `if notes_rest is not None` guard: every path above either assigns a
+    # transport or exits, so the check was always true. The initialiser stays —
+    # it is what makes the name defined on every path for the type checker.
+    try:
+        review_bodies, summary_comments = _fetch_out_of_thread_notes(
+            owner, repo, pr_number, notes_rest
+        )
+    except Exception as notes_err:
+        print(
+            f"[warn] could not fetch out-of-thread notes ({notes_err}); "
+            "returning inline threads only",
+            file=sys.stderr,
+        )
 
     print(
         json.dumps(
