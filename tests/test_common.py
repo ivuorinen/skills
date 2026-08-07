@@ -6,7 +6,7 @@ import inspect
 import textwrap
 from pathlib import Path
 
-from common import parse_frontmatter  # type: ignore[import-not-found]
+from common import collect_skills, parse_frontmatter  # type: ignore[import-not-found]
 
 
 def _fm(text: str) -> dict:
@@ -103,3 +103,30 @@ class TestParseFrontmatter:
         text = "---\n\n---\nbody\n"
         assert _fm(text) == {}
         assert _body(text) == "body\n"
+
+
+# ── collect_skills: shared by list-skills.py and its callers (tests-f3ebae78) ──
+
+
+def _skill(base: Path, name: str, frontmatter: str) -> None:
+    d = base / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(f"---\n{frontmatter}---\n\nBody.\n", encoding="utf-8")
+
+
+class TestCollectSkills:
+    def test_reads_name_and_description_sorted(self, tmp_path):
+        _skill(tmp_path, "zeta", "name: zeta\ndescription: Last one.\n")
+        _skill(tmp_path, "alpha", "name: alpha\ndescription: First one.\n")
+        assert collect_skills(tmp_path) == [("alpha", "First one."), ("zeta", "Last one.")]
+
+    def test_falls_back_to_the_directory_name_and_a_placeholder(self, tmp_path):
+        _skill(tmp_path, "my-skill", "other: value\n")
+        assert collect_skills(tmp_path) == [("my-skill", "(no description)")]
+
+    def test_whitespace_only_fields_use_the_same_fallbacks(self, tmp_path):
+        _skill(tmp_path, "my-skill", "name:    \ndescription:    \n")
+        assert collect_skills(tmp_path) == [("my-skill", "(no description)")]
+
+    def test_empty_base_directory_yields_nothing(self, tmp_path):
+        assert collect_skills(tmp_path) == []

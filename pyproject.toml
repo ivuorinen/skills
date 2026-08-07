@@ -20,21 +20,33 @@ dev = [
 ]
 
 [tool.coverage.run]
-include = [
-  "skills/nitpicker/scripts/findings.py",
-  "skills/nitpicker/scripts/fetch-pr-comments.py",
-  "skills/nitpicker/scripts/check-rules-anatomy.py",
-  "skills/nitpicker/scripts/process-sarif.py",
-  "skills/nitpicker/scripts/mcp_server.py",
-  "skills/nitpicker/scripts/skill_catalog.py",
-  "scripts/*.py",
-  "scripts/hooks/*.py",
+# `source`, not `include`. With `include` coverage reports only files it actually
+# traced, so a module no test imports is absent from the report rather than shown
+# at 0% — post-bash-revalidate.py, a live PostToolUse hook, sat outside a
+# "100.00%" report that way. `source` scans the trees, so an untested module is
+# reported and fails the gate below.
+# Each directory is listed separately: coverage's source scan only recurses into
+# subdirectories that are packages, and none of these carry an __init__.py, so
+# "scripts" alone silently omits scripts/hooks/ — which is exactly how the hook
+# above stayed hidden. A new script directory needs a new entry here.
+source = [
+  "scripts",
+  "scripts/hooks",
+  "skills/nitpicker/scripts",
 ]
+# Decisions, not just statements: without this a half-taken `if` counts as
+# covered, and 24 branches were passing that way — three of them with a mutation
+# the whole suite survived.
+branch = true
 
 [tool.coverage.report]
-# Baseline measured at 88%; set below it so ordinary churn does not go red, but
-# a real drop does. Raise as coverage climbs — the point is a ratchet, not a target.
-fail_under = 85
+# Statements AND branches, over every module in `source` including the ones no
+# test imports. A new uncovered line or an untaken branch is a build failure, so
+# a change and the test that exercises it land together. Lowering this is a
+# decision to accept untested code, not a fix for a red build — cover it, or
+# scope it out of [tool.coverage.run] deliberately.
+precision = 2
+fail_under = 100
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

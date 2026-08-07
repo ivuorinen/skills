@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -740,8 +741,59 @@ def test_unmapped_tool_severity_fails_safe_to_high():
 def test_deeply_nested_sarif_degrades_instead_of_recursionerror(tmp_path):
     p = tmp_path / "deep.sarif"
     p.write_text("[" * 60000 + "]" * 60000, encoding="utf-8")
-    with pytest.raises(SystemExit):  # caught RecursionError -> exit, not an uncaught crash
+    # The exit code matters: a SystemExit(0) here would report a failed parse as a
+    # clean scan, which is exactly the failure this guard exists to prevent.
+    with pytest.raises(SystemExit) as exc:  # caught RecursionError -> exit, not a crash
         _parse_sarif(p)
+    assert exc.value.code == 1
+
+
+def test_non_dict_extension_entry_is_skipped_not_crashed():
+    """A malformed `tool.extensions` entry must not abort rule extraction — the
+    rules from the driver still have to survive."""
+    run = {
+        "tool": {
+            "driver": {"name": "d", "rules": [{"id": "R1", "defaultConfiguration": {}}]},
+            "extensions": ["not a dict", {"rules": [{"id": "R2", "defaultConfiguration": {}}]}],
+        }
+    }
+    rules = _extract_rules(run)
+    assert set(rules) == {"R1", "R2"}
+
+
+def test_non_dict_rule_at_the_recovered_rule_index_degrades():
+    """CodeQL-style results carry ruleIndex instead of ruleId. A malformed entry at
+    that index must leave rule_id empty, not raise on `.get` — the input is a
+    scanner's output, not ours."""
+    run = {
+        "tool": {"driver": {"name": "d", "rules": ["not a dict"]}},
+        "results": [
+            {
+                "ruleIndex": 0,
+                "level": "error",
+                "message": {"text": "m"},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": "a.py"},
+                            "region": {"startLine": 1},
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    out = _extract_findings(run, "s.sarif")
+    assert len(out) == 1
+    assert out[0]["rule_id"] == ""
+
+
+def test_module_runs_as_a_script(tmp_path, monkeypatch):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr(sys, "argv", ["process-sarif.py", str(tmp_path / "none.sarif")])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 1
 
 
 def test_locationless_findings_with_shared_prefix_not_deduped():

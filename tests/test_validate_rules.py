@@ -1,15 +1,14 @@
 """Tests for scripts/validate-rules.py — validate()."""
 
 import importlib.util
+import runpy
 import sys
 from pathlib import Path
 
 import pytest
 
-_spec = importlib.util.spec_from_file_location(
-    "validate_rules",
-    Path(__file__).parent.parent / "scripts" / "validate-rules.py",
-)
+_TOOL = Path(__file__).parent.parent / "scripts" / "validate-rules.py"
+_spec = importlib.util.spec_from_file_location("validate_rules", _TOOL)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 validate = _mod.validate
@@ -331,3 +330,105 @@ def test_non_utf8_file_reports_error_not_traceback(tmp_path):
     errors = _repo_errors(tmp_path)  # must not raise
     assert _has(errors, "cannot read file")
     assert sum("cannot read file" in e for e in errors) == 2
+
+
+# ── validate() error paths and main() (tests-781e4953, tests-b4fcf9ec) ────────
+
+
+def _validate(tmp_path, path) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    validate(path, errors, warnings, tmp_path)
+    return errors, warnings
+
+
+def test_unreadable_rule_file_reports_an_error(tmp_path):
+    # A directory named like a rule: read_text raises IsADirectoryError (an OSError).
+    path = tmp_path / "a-rule.md"
+    path.mkdir()
+    errors, _ = _validate(tmp_path, path)
+    assert _has(errors, "cannot read file")
+
+
+def test_frontmatter_without_paths_and_an_empty_body_warns(tmp_path):
+    path = tmp_path / "a-rule.md"
+    path.write_text("---\ntitle: x\n---\n\n   \n", encoding="utf-8")
+    errors, warnings = _validate(tmp_path, path)
+    assert errors == []
+    assert _has(warnings, "body is empty after frontmatter")
+
+
+def test_frontmatter_without_paths_but_with_a_body_is_clean(tmp_path):
+    """The other arm: no `paths:` is legal, and a real body must warn about nothing."""
+    path = tmp_path / "a-rule.md"
+    path.write_text("---\ntitle: x\n---\n\nA real rule body.\n", encoding="utf-8")
+    errors, warnings = _validate(tmp_path, path)
+    assert errors == []
+    assert warnings == []
+
+
+def test_paths_glob_traversing_outside_the_repo_is_rejected(tmp_path):
+    path = tmp_path / "a-rule.md"
+    path.write_text("---\npaths:\n  - ../../etc/*.conf\n---\n\nBody.\n", encoding="utf-8")
+    errors, _ = _validate(tmp_path, path)
+    assert _has(errors, "must not traverse outside repo root")
+
+
+def test_unreadable_claude_md_reports_an_error(tmp_path):
+    (tmp_path / ".claude" / "rules").mkdir(parents=True)
+    (tmp_path / "CLAUDE.md").mkdir()
+    errors: list[str] = []
+    _mod.check_repo_rules(tmp_path, errors)
+    assert _has(errors, "CLAUDE.md: cannot read file")
+
+
+def test_claude_md_without_a_conventions_section_is_an_error(tmp_path):
+    (tmp_path / ".claude" / "rules").mkdir(parents=True)
+    (tmp_path / "CLAUDE.md").write_text("# Title\n\nNo conventions here.\n", encoding="utf-8")
+    errors: list[str] = []
+    _mod.check_repo_rules(tmp_path, errors)
+    assert _has(errors, "no '## Conventions' section")
+
+
+def _main_on(monkeypatch, tmp_path, argv: list[str]):
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", *argv])
+    monkeypatch.setattr(_mod, "__file__", str(tmp_path / "scripts" / "validate-rules.py"))
+    return _mod.main()
+
+
+def test_main_without_argv_exits_zero_when_there_is_no_rules_dir(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit) as exc:
+        _main_on(monkeypatch, tmp_path, [])
+    assert exc.value.code == 0
+
+
+def test_main_without_argv_discovers_rules_and_prints_warnings(tmp_path, monkeypatch, capsys):
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "a-rule.md").write_text("---\ntitle: x\n---\n\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("## Conventions\n\n- `a-rule.md`\n", encoding="utf-8")
+    assert _main_on(monkeypatch, tmp_path, []) is None
+    out = capsys.readouterr().out
+    assert "WARN" in out
+    assert "OK  1 rule(s) validated." in out
+
+
+def test_main_exits_one_when_a_rule_is_invalid(tmp_path, monkeypatch, capsys):
+    """The non-zero exit is the only signal pre-commit and CI act on."""
+    bad = tmp_path / "Not_Kebab.md"
+    bad.write_text("---\npaths: nope\n---\n\nBody.\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        _main_on(monkeypatch, tmp_path, [str(bad)])
+    assert exc.value.code == 1
+    assert "error(s). Fix before committing." in capsys.readouterr().out
+
+
+def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    bad = tmp_path / "Not_Kebab.md"
+    bad.write_text("---\npaths: nope\n---\n\nBody.\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", str(bad)])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(_TOOL), run_name="__main__")
+    assert exc.value.code == 1
+    assert "kebab-case" in capsys.readouterr().out

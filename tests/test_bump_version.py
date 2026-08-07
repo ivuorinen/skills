@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -32,12 +33,16 @@ class TestBumpVersion:
         assert _load_mod().bump_version("1.2.3", "major") == "2.0.0"
 
     def test_unknown_part_exits(self):
-        with pytest.raises(SystemExit):
+        # Assert the message, not just the type: SystemExit(0) is also a SystemExit,
+        # so a bare `pytest.raises(SystemExit)` accepts a *successful* exit here.
+        with pytest.raises(SystemExit) as exc:
             _load_mod().bump_version("1.2.3", "bogus")
+        assert "unknown part 'bogus'" in str(exc.value)
 
     def test_malformed_version_exits(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             _load_mod().bump_version("1.2", "patch")
+        assert "not in MAJOR.MINOR.PATCH form" in str(exc.value)
 
 
 class TestUpdateToml:
@@ -67,8 +72,9 @@ class TestUpdateToml:
         mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         toml = '[build-system]\nrequires = ["setuptools"]\n'
         (tmp_path / "pyproject.toml").write_text(toml, encoding="utf-8")
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc:
             mod.update_toml("pyproject.toml", "2.0.0")
+        assert exc.value.code == 1
         # File is never written by update_toml (it only returns content), so it stays intact.
         assert (tmp_path / "pyproject.toml").read_text(encoding="utf-8") == toml
 
@@ -141,10 +147,26 @@ class TestMain:
         mod = _load_mod()
         mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         monkeypatch.setattr(sys, "argv", ["bump-version.py", "minor"])
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(json.JSONDecodeError) as exc:
             mod.main()
+        # `doc` is the text that failed to parse — pins the failure to the manifest
+        # this test broke, not to some other malformed file.
+        assert "BROKEN" in exc.value.doc
         # package.json (the first manifest) is untouched: rendering aborted before any write.
         assert (
             json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))["version"]
             == "1.0.0"
         )
+
+
+def test_module_runs_as_a_script(monkeypatch, capsys):
+    """Covers the `if __name__ == '__main__'` body — the only wiring to main().
+
+    An unrecognised part exits before any manifest is read or written, so this
+    never touches the real repo's version files.
+    """
+    monkeypatch.setattr(sys, "argv", ["bump-version.py", "bogus"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(SCRIPTS_DIR / "bump-version.py"), run_name="__main__")
+    assert exc.value.code == 1
+    assert "Usage:" in capsys.readouterr().out
