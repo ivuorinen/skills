@@ -43,7 +43,7 @@ index-check:
 	git diff --exit-code docs/audit/findings/INDEX.md
 
 pre-commit:
-	uv run --with pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
+	uv run --with pre-commit==4.6.1 pre-commit run --all-files --show-diff-on-failure
 
 list:
 	$(UV) scripts/list-skills.py
