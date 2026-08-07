@@ -18,6 +18,7 @@ that is a deny. Fails closed: malformed stdin or an internal error also exits 2,
 because a guard that exits 0 on exception enforces nothing.
 """
 
+import functools
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +44,10 @@ _PUSH_DENIAL = (
 )
 
 
+@functools.cache
 def _current_branch() -> str | None:
+    """HEAD's branch. Cached: a denial resolves it once to decide and again to
+    name the branch in the message, and this hook runs on every Bash call."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

@@ -27,9 +27,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import git_calls, load_event, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    git_calls,
+    load_event,
+    repo_root,
+    shell_stages,
+)
 
 REPO_ROOT = repo_root()
+# A stage that moves the shell breaks the one assumption path matching rests on.
+_CHDIR = frozenset({"cd", "pushd", "popd"})
 
 
 def _decide(decision: str, reason: str) -> None:
@@ -75,28 +82,60 @@ def _covers(target: str, entry: str) -> bool:
     return t in ("", ".") or entry == t or entry.startswith(f"{t}/")
 
 
-def _dirty(targets: list[str]) -> list[str]:
-    """Tracked, uncommitted paths the restore would discard.
+def _changes_directory(command: str) -> bool:
+    """Whether any stage moves the shell before the restore runs.
 
-    `git status` runs with a fixed argv and the pathspec filtering happens here.
-    Handing tokenised operands to git risks a non-zero exit on a token that is not
-    a valid pathspec, which would make the guard ask on every restore — and keeps
-    caller-derived strings out of the subprocess argv entirely.
+    Targets come from the command text and are relative to the shell's working
+    directory; `git status` entries are relative to the repo root. `cd src && git
+    checkout -- a.py` compares `a.py` against `src/a.py`, matches nothing, and the
+    guard stays silent while the restore discards the file. Path matching cannot
+    be trusted here, so the filter is skipped rather than trusted.
+    """
+    return any(Path(tokens[0]).name in _CHDIR for tokens in shell_stages(command))
+
+
+def _tracked_dirty() -> list[str] | None:
+    """Tracked, uncommitted paths in the repo; None if git could not be asked.
+
+    `-z` rather than plain `--porcelain`: the default format quotes paths holding
+    unusual characters and renders a rename as `old -> new`, both of which the
+    naive `line[3:]` slice turned into a path that matches nothing. NUL-separated
+    records need no quoting, and a rename's source arrives as its own record.
+
+    argv is fixed. Handing tokenised operands to git as a pathspec risks a
+    non-zero exit on a token that is not a valid pathspec — which would make the
+    guard ask on every restore — and keeps caller-derived strings out of argv.
     """
     try:
         r = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-z"],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
-        return targets  # cannot prove clean — treat as dirty and ask
+        return None
     if r.returncode != 0:
-        return targets
-    # Tracked modifications only: an untracked file is not destroyed by a restore.
-    entries = [ln[3:] for ln in r.stdout.splitlines() if ln and not ln.startswith("??")]
+        return None
+    entries: list[str] = []
+    records = iter(r.stdout.split("\0"))
+    for record in records:
+        if len(record) < 4 or record.startswith("??"):
+            continue  # untracked files are not destroyed by a restore
+        if record[0] in "RC":
+            next(records, None)  # rename/copy source follows as its own record
+        entries.append(record[3:])
+    return entries
+
+
+def _dirty(targets: list[str], unfiltered: bool) -> list[str]:
+    """Tracked, uncommitted paths the restore would discard."""
+    entries = _tracked_dirty()
+    if entries is None:
+        return targets  # cannot prove clean — treat as dirty and ask
+    if unfiltered:
+        return entries
     return [e for e in entries if any(_covers(t, e) for t in targets)]
 
 
@@ -110,7 +149,7 @@ def main() -> None:
     if targets is None:
         return
 
-    dirty = _dirty(targets)
+    dirty = _dirty(targets, unfiltered=_changes_directory(command))
     if not dirty:
         return  # nothing uncommitted at the target — ordinary use, stay quiet
 

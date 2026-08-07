@@ -1828,6 +1828,34 @@ def test_git_guard_denies_when_the_branch_cannot_be_resolved(monkeypatch, capsys
     assert "unknown" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("command", "denied"),
+    [
+        ("git push origin feature # push to main later", False),  # `main` in a comment
+        ('git commit -m "merge main into feature" # ctx-ok', False),  # ...and in a message
+        ("make check 2>&1 && git push origin main", True),  # still seen past a redirect
+        ("git status # look\ngit push origin main", True),  # still seen on line 2
+        ("git push -qf origin main", True),  # clustered short flags
+        ('git push origin "main"', True),  # quoted refspec is still a refspec
+    ],
+)
+def test_git_guard_ignores_comments_and_quotes_without_going_blind(
+    command, denied, monkeypatch, capsys
+):
+    """CodeRabbit on #97: `git_calls` did not strip comments, so a trailing
+    `# push to main later` put `main` in the operand list and denied a feature
+    push. The fix must not buy that by losing sight of a real push."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash(command), monkeypatch)
+        assert exc.value.code == 2
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
 def test_git_guard_current_branch_reads_git(monkeypatch, tmp_path):
     mod = _load("deny-unsafe-git-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
@@ -1919,6 +1947,31 @@ def test_ctx_ok_guard_ignores_the_marker_as_content(command, monkeypatch, capsys
     assert out.out == "" and out.err == ""
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "fix: handle a|b" # ctx-ok',  # `|` inside the message
+        'git commit -m "a && b" # ctx-ok',
+        "git commit -m 'a; b' # ctx-ok",
+        "make check 2>&1 # ctx-ok",  # the `&` of a redirection is not a separator
+        "make check 1>&2 # ctx-ok",
+        "git status # look\ngit commit -m x # ctx-ok",  # comment on an earlier LINE
+    ],
+)
+def test_ctx_ok_guard_does_not_split_inside_quotes_or_redirections(command, monkeypatch, capsys):
+    """CodeRabbit on #97: operator splitting ignored quoting, so a commit message
+    containing `|` produced a second stage beginning `b"` and the guard denied it.
+
+    Two more the review did not name, found by asserting against the fix: `2>&1`
+    split on the `&` into a stage `1`, and comment stripping without re.MULTILINE
+    left an earlier line's `#` to become a stage verb.
+    """
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
 def test_ctx_ok_guard_fails_closed_on_an_unrecognised_verb(monkeypatch, capsys):
     """An unknown command is exactly what the hatch must not silently cover."""
     mod = _load("guard-ctx-ok-hook")
@@ -2001,7 +2054,8 @@ def test_ctx_ok_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
 def _restore_mod(monkeypatch, tmp_path, dirty: list[str]):
     mod = _load("ask-destructive-restore-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    porcelain = "".join(f" M {p}\n" for p in dirty)
+    # `git status --porcelain -z`: NUL-terminated records, no quoting.
+    porcelain = "".join(f" M {p}\0" for p in dirty)
     monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout=porcelain))
     return mod
 
@@ -2053,7 +2107,7 @@ def test_restore_guard_ignores_untracked_files(monkeypatch, tmp_path, capsys):
     """An untracked file is not destroyed by a restore, so it must not prompt."""
     mod = _load("ask-destructive-restore-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="?? scratch.txt\n"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="?? scratch.txt\0"))
     _run(mod, _bash("git checkout -- ."), monkeypatch)
     assert capsys.readouterr().out == ""
 
@@ -2135,6 +2189,46 @@ def test_restore_guard_matches_files_under_a_directory_target(
     assert "src/a.py" in _ask_payload(capsys)["permissionDecisionReason"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd src && git checkout -- a.py",
+        "cd src; git restore a.py",
+        "pushd src && git checkout -- a.py && popd",
+    ],
+)
+def test_restore_guard_asks_when_a_stage_changes_directory(command, monkeypatch, tmp_path, capsys):
+    """CodeRabbit on #97: targets are shell-relative, `git status` entries are
+    repo-relative. `cd src && git checkout -- a.py` compared `a.py` against
+    `src/a.py`, matched nothing, and the guard stayed SILENT while the restore
+    discarded the file — fail-open in a guard whose only job is to speak up.
+
+    Path matching cannot be trusted once the shell moves, so the filter is
+    skipped rather than trusted.
+    """
+    mod = _restore_mod(monkeypatch, tmp_path, ["src/a.py"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert "src/a.py" in _ask_payload(capsys)["permissionDecisionReason"]
+
+
+def test_restore_guard_reads_renamed_and_quoted_paths(monkeypatch, tmp_path, capsys):
+    """`--porcelain` quotes odd paths and renders a rename as `old -> new`, both of
+    which the `line[3:]` slice turned into a path matching nothing. `-z` emits
+    NUL-terminated records with no quoting, the rename source as its own record."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    # R record: new path in the record, old path follows and must not be read as one.
+    stdout = "R  src/new name.py\0src/old.py\0 M src/tab\there.py\0"
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout=stdout))
+    assert mod._tracked_dirty() == ["src/new name.py", "src/tab\there.py"]
+
+    with pytest.raises(SystemExit):
+        _run(mod, _bash("git checkout -- src"), monkeypatch)
+    assert "src/new name.py" in _ask_payload(capsys)["permissionDecisionReason"]
+
+
 def test_restore_guard_resolves_absolute_targets_against_the_repo(monkeypatch, tmp_path):
     """An absolute target is repo-relative before comparison; one outside the repo
     can never match a `git status` entry."""
@@ -2149,7 +2243,7 @@ def test_restore_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys, tm
 
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     monkeypatch.setenv("REPO_ROOT", str(_script_repo(tmp_path)))
-    monkeypatch.setattr(_subprocess, "run", lambda *a, **k: _Result(stdout=" M tracked.py\n"))
+    monkeypatch.setattr(_subprocess, "run", lambda *a, **k: _Result(stdout=" M tracked.py\0"))
     monkeypatch.setattr(sys, "stdin", io.StringIO(_bash("git checkout -- tracked.py")))
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(HOOKS_DIR / "ask-destructive-restore-hook.py"), run_name="__main__")

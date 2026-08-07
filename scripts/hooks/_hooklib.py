@@ -11,7 +11,17 @@ import re
 import sys
 from pathlib import Path
 
-_STAGE_SPLIT = re.compile(r"\|\||&&|[|;&\n]")
+# `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
+# A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose
+# verb the ctx-ok guard then denied as unrecognised.
+_STAGE_SPLIT = re.compile(r"\|\||&&|[|;\n]|(?<![<>])&(?!>)")
+# A comment runs to end of LINE, not end of string: without re.MULTILINE only the
+# final line's comment is stripped, and an earlier `#` survives to become a stage
+# whose first token is `#`.
+_COMMENT = re.compile(r"#.*$", re.MULTILINE)
+# Single-quoted spans are literal; double-quoted spans honour backslash escapes.
+_QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+_MASK = re.compile("\x00(\\d+)\x00")
 
 # git global options that consume the NEXT token as their value. Without these
 # the token after them is mistaken for the subcommand, or the scan stops early.
@@ -70,16 +80,45 @@ def event_path() -> Path | None:
     return _edited_path(data) if data is not None else None
 
 
+def _mask_quoted(command: str) -> tuple[str, list[str]]:
+    """Replace each quoted span with an opaque placeholder, keeping the originals.
+
+    Splitting on operators and comments before this step reads shell *syntax*
+    inside what is really one argument: `-m "fix: a|b"` became a second stage
+    beginning `b"`, and `grep '# ctx-ok'` looked like a trailing comment.
+    Masking is enough to fix both without a full shell parser — notably it leaves
+    newlines, redirections and subshells splitting exactly as they did.
+    """
+    spans: list[str] = []
+
+    def take(match: re.Match[str]) -> str:
+        spans.append(match.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    return _QUOTED.sub(take, command), spans
+
+
+def _unmask(token: str, spans: list[str]) -> str:
+    """Restore masked spans in one token, dropping the surrounding quote marks."""
+    return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
+
+
 def shell_stages(command: str) -> list[list[str]]:
-    """Tokens for each pipeline/list stage, `VAR=value` prefixes stripped.
+    """Tokens for each pipeline/list stage, comments and `VAR=value` prefixes stripped.
 
     A guard that reads only the first stage misses `echo hi && git push origin
     main`, and one that ignores the environment prefix misses `FOO=1 git ...`.
     Empty stages are dropped, so every returned list has at least one token.
+
+    Quoting is honoured (see _mask_quoted) and comments are removed here rather
+    than by each caller, so `git_calls` and the ctx-ok guard agree on what a
+    command says: a trailing `# push to main later` used to put `main` in the
+    push guard's operand list.
     """
+    masked, spans = _mask_quoted(command)
     stages: list[list[str]] = []
-    for segment in _STAGE_SPLIT.split(command):
-        tokens = segment.split()
+    for segment in _STAGE_SPLIT.split(_COMMENT.sub("", masked)):
+        tokens = [_unmask(t, spans) for t in segment.split()]
         i = 0
         while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
             i += 1

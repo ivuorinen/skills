@@ -146,9 +146,14 @@ _GIT_READS = frozenset(
 
 
 def _verbs(command: str) -> list[str]:
-    """One classification token per pipeline stage: the verb, or `git:<sub>`."""
+    """One classification token per pipeline stage: the verb, or `git:<sub>`.
+
+    Comment stripping lives in shell_stages, not here: the local `re.sub(r"#.*$")`
+    this used to do lacked re.MULTILINE, so in a multi-line command a comment on
+    any but the last line survived and became a stage whose verb was `#`.
+    """
     out: list[str] = []
-    for tokens in shell_stages(re.sub(r"#.*$", "", command)):
+    for tokens in shell_stages(command):
         verb = Path(tokens[0]).name
         if verb != "git":
             out.append(verb)
