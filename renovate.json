@@ -29,8 +29,8 @@
     },
     {
       "customType": "regex",
-      "description": "SHA-pinned pre-commit revs: the digest is the pin, the version lives in the trailing comment",
-      "managerFilePatterns": ["^\\.pre-commit-config\\.yaml$"],
+      "description": "SHA-pinned pre-commit revs: the digest is the pin, the version lives in the trailing comment. managerFilePatterns is a GLOB — Renovate treats a pattern as a regex only when it is wrapped in slashes, so the bare `^...$` form this first shipped as matched no file and the manager was inert.",
+      "managerFilePatterns": [".pre-commit-config.yaml"],
       "matchStrings": [
         "repo:\\s*https://github\\.com/(?<depName>\\S+?)\\s*\\n\\s*rev:\\s*(?<currentDigest>[0-9a-f]{40})\\s*#\\s*(?<currentValue>\\S+)"
       ],
