@@ -66,6 +66,33 @@ def _canonicalize(command: str) -> str:
     return command
 
 
+def _shell_glob(base: Path, pattern: str) -> list[Path]:
+    """Expand `pattern` from `base`, falling back to shell semantics for `**`.
+
+    CPython <3.13 raises ValueError when `**` sits adjacent to other characters
+    in a path component; 3.13+ accepts it. Swallowing that error treated the
+    token as harmless, so on 3.11/3.12 `cat .cl**de/agents/*.md` — which the
+    shell DOES expand into the protected tree — passed the guard unexamined.
+
+    The retry collapses every run of two or more stars to one, which is how the
+    shell reads them without `globstar`. It must be a regex, not
+    `str.replace("**", "*")`: that consumes stars pairwise, so `.cl***de` becomes
+    `.cl**de` — still raising, still matching nothing, still a bypass — and a bare
+    `***` would collapse to `**`, turning the retry into a recursive full-tree
+    walk on a hook that runs for every Bash call. Normalising only on failure
+    keeps real recursive globs recursive wherever Python supports them. A blanket
+    fail-closed on the exception was the other option and is wrong here:
+    `Path.glob` raises on ordinary tokens, so `python -c "print(2**8)"` would be
+    denied.
+    """
+    for candidate in (pattern, re.sub(r"\*{2,}", "*", pattern)):
+        try:
+            return list(base.glob(candidate))
+        except (OSError, ValueError, NotImplementedError):
+            continue
+    return []
+
+
 def _cd_bases(command: str) -> list[Path]:
     """Directories the command `cd`s into, each a base a later relative glob would
     resolve from. The repo root is always included. A glob-spelled `cd` target
@@ -75,10 +102,7 @@ def _cd_bases(command: str) -> list[Path]:
     for match in re.finditer(r"(?:^|[\s;&|(])cd\s+([^\s;&|()<>]+)", command):
         raw = match.group(1)
         if _GLOB_META_RE.search(raw):
-            try:
-                bases.extend(_REPO_ROOT.glob(raw))
-            except (OSError, ValueError, NotImplementedError):
-                continue
+            bases.extend(_shell_glob(_REPO_ROOT, raw))
         else:
             bases.append(_REPO_ROOT / raw)
     return bases
@@ -109,11 +133,7 @@ def _glob_reaches_agents(command: str) -> bool:
                 except ValueError:
                     continue  # absolute but outside the repo — nothing to check
             for base in bases:
-                try:
-                    hits = list(base.glob(rel))
-                except (OSError, ValueError, NotImplementedError):
-                    continue  # unsupported pattern must not crash the guard open
-                for hit in hits:
+                for hit in _shell_glob(base, rel):
                     resolved = hit.resolve()
                     if resolved == agents_dir or agents_dir in resolved.parents:
                         return True

@@ -1068,16 +1068,99 @@ def test_deny_agents_unparseable_event_is_a_silent_noop(monkeypatch, capsys):
     assert out.out == "" and out.err == ""
 
 
-def test_deny_agents_survives_a_glob_that_raises(monkeypatch):
-    """Path.glob raises on patterns the stdlib will not expand (absolute, bad '**').
-    Both the cd-base expansion and the token expansion must swallow it — a crash
-    here fails the guard open."""
+@pytest.mark.parametrize(
+    "command",
+    [
+        # `**` adjacent to other characters in a component: CPython <3.13 raises
+        # ValueError from Path.glob, which the guard used to swallow — while the
+        # shell expands it into the protected tree all the same.
+        "cat .cl**de/agents/*.md",
+        "cat .cl**de/agents/brand-new-agent.md",
+        "cp x.md .cl**de/agents/brand-new-agent.md",  # a write, not just a read
+        "cd .cl**de && cat agents/*.md",  # via the cd-base expansion
+        "printf x > .clau**/agents/new.md",  # via the parent probe
+        # Runs longer than two: `str.replace("**", "*")` consumes stars pairwise,
+        # so `.cl***de` collapsed to `.cl**de` — still raising, still a bypass.
+        # Only a whole-run collapse closes these.
+        "cat .cl***de/agents/*.md",
+        "cat .cl****de/agents/*.md",
+        "cp x.md .cl***de/agents/new.md",
+        "cd .cl***de && cat agents/*.md",
+        "printf x > .clau***/agents/new.md",
+    ],
+)
+def test_deny_agents_blocks_globstar_spelled_paths(command, monkeypatch):
+    """A `**`-adjacent glob must not slip through on 3.11/3.12.
+
+    `Path.glob` raises ValueError there; treating that as "no match" let the
+    token pass unexamined. Caught by CodeRabbit on PR #95.
+    """
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents(command) is True
+    event = json.dumps({"tool_input": {"command": command}})
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, event, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Non-path tokens that ALSO raise in Path.glob on <3.13. A blanket
+        # fail-closed on the exception would deny every one of these — this hook
+        # gates every Bash call, so that trade is not available.
+        'python -c "print(2**8)"',
+        "grep a**b file.txt",
+        "grep a***b file.txt",
+        "awk '{print 2**3}' data.txt",
+        "make check",
+    ],
+)
+def test_deny_agents_allows_non_path_tokens_that_break_glob(command, monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents(command) is False
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)  # no SystemExit
+
+
+def test_deny_agents_blocks_globstar_paths_on_a_stdlib_that_rejects_them(monkeypatch):
+    """The version-independent form of the test above.
+
+    The real bypass only reproduces on CPython 3.11/3.12, where `Path.glob`
+    raises on a `**`-adjacent component; 3.13+ accepts the pattern and blocks it
+    without the fallback. CI pins no Python version, so on a modern interpreter
+    the parametrized test above passes with or without the fix. This one forces
+    the <3.13 behaviour, so a revert of `_shell_glob` fails on every runtime.
+    """
+    mod = _load("deny-agents-path-hook")
+    real_glob = Path.glob
+
+    def _pre_313(self, pattern, *a, **k):
+        if "**" in pattern:
+            raise ValueError("Invalid pattern: '**' can only be an entire path component")
+        return real_glob(self, pattern, *a, **k)
+
+    monkeypatch.setattr(Path, "glob", _pre_313)
+    assert mod._references_agents("cat .cl**de/agents/*.md") is True
+    assert mod._references_agents("cp x.md .cl**de/agents/brand-new-agent.md") is True
+    # Longer runs must collapse in one step, not pairwise — `.cl***de` -> `.cl*de`,
+    # never `.cl**de` (which would raise again and slip through).
+    assert mod._references_agents("cat .cl***de/agents/*.md") is True
+    assert mod._references_agents("cp x.md .cl****de/agents/new.md") is True
+    # and the non-path tokens that share the raising class stay allowed
+    assert mod._references_agents('python -c "print(2**8)"') is False
+    assert mod._references_agents("grep a***b file.txt") is False
+
+
+def test_shell_glob_returns_empty_when_every_spelling_fails(monkeypatch, tmp_path):
+    """The last-resort arm: when both the raw and the normalised pattern raise,
+    the helper yields nothing rather than propagating out of the hook."""
     mod = _load("deny-agents-path-hook")
 
     def _raises(*_a, **_k):
         raise OSError("unsupported pattern")
 
     monkeypatch.setattr(Path, "glob", _raises)
+    assert mod._shell_glob(tmp_path, "a*/x.md") == []
     assert mod._references_agents("cd d*/ && cat a*/x.md") is False
 
 
