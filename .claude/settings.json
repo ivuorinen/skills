@@ -116,6 +116,33 @@
             "command": "command -v graphify >/dev/null || exit 0; exec graphify hook-guard read"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'git --no-verify / push-to-protected-branch guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unsafe-git-hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate the # ctx-ok escape hatch: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-ctx-ok-hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'confirm before discarding uncommitted work: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ask-destructive-restore-hook.py\""
+          }
+        ]
       }
     ]
   }

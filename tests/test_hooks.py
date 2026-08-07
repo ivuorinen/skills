@@ -1625,3 +1625,413 @@ def test_revalidate_runs_as_a_script(monkeypatch, tmp_path, capsys):
         runpy.run_path(str(HOOKS_DIR / "post-bash-revalidate.py"), run_name="__main__")
     assert exc.value.code == 2
     assert "GATE SAID NO" in capsys.readouterr().err
+
+
+# ── deny-unsafe-git-hook: the two git-write mandates (agent-hooks-0c0fbd4c) ────
+
+
+class _Exploding:
+    """A stdin stand-in whose read() raises — drives each hook's fail-closed arm.
+
+    `load_event` catches only JSONDecodeError/EOFError, so this propagates to the
+    module-level `except Exception`, which is the arm under test.
+    """
+
+    def read(self, *_a):
+        raise RuntimeError("stdin exploded")
+
+
+def _bash(command: str) -> str:
+    return json.dumps({"tool_input": {"command": command}})
+
+
+NEW_GUARDS = ["deny-unsafe-git-hook", "guard-ctx-ok-hook", "ask-destructive-restore-hook"]
+
+
+@pytest.mark.parametrize("name", NEW_GUARDS)
+@pytest.mark.parametrize(
+    "payload", ["", "null", "[]", "not json"], ids=["empty", "null", "list", "garbage"]
+)
+def test_new_guards_are_silent_on_an_unparseable_event(name, payload, monkeypatch, capsys):
+    """load_event() returns None for all of these; every guard must no-op rather
+    than crash the tool call or block it."""
+    _run(_load(name), payload, monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "denied"),
+    [
+        ("git --no-pager commit --no-verify -m x", True),  # valueless global flag
+        ("git -c user.name=x commit --no-verify -m y", True),  # value-taking global opt
+        ("git --git-dir .git commit --no-verify -m z", True),
+        ("FOO=1 git commit --no-verify -m w", True),  # env prefix before git
+        ("echo hi && git -C . commit --no-verify -m v", True),  # not the first stage
+        ("git --version", False),  # flags only, no subcommand
+        ("git --no-pager log --oneline", False),  # a read, but not a guarded write
+        ("/usr/bin/git commit --no-verify -m p", True),  # path-qualified git
+    ],
+)
+def test_git_guard_finds_the_subcommand_past_global_options(command, denied, monkeypatch, capsys):
+    """Regression: a `(?:\\s+-\\S+)*` pattern walks past `-C dir` and never reaches
+    `commit`, so `git -C . commit --no-verify` bypassed the guard entirely."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash(command), monkeypatch)
+        assert exc.value.code == 2
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "denied"),
+    [
+        ("git --no-pager log --oneline # ctx-ok", True),  # valueless global flag
+        ("git -C . diff HEAD # ctx-ok", True),  # value-taking global opt
+        ("git log --oneline | head -20 # ctx-ok", True),  # read in a later stage
+        ("git --version # ctx-ok", False),  # flags only — bare `git`, a mutation verb
+        ("git -c user.name=x commit -m y # ctx-ok", False),  # mutation past a global opt
+        ("git status # ctx-ok", False),  # short fixed output, exempt by the rule
+    ],
+)
+def test_ctx_ok_guard_classifies_git_by_subcommand(command, denied, monkeypatch, capsys):
+    """`git` alone is a mutation verb, but `git log` is a read — the hatch must be
+    judged on the subcommand, and on every pipeline stage, not just the first."""
+    mod = _load("guard-ctx-ok-hook")
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash(command), monkeypatch)
+        assert exc.value.code == 2
+        assert "read" in capsys.readouterr().err
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
+def _oserror(*_a, **_k):
+    """subprocess.run stand-in raising the class the guards actually catch.
+
+    `_never_run` raises AssertionError, which those handlers deliberately do NOT
+    swallow — using it here would test the harness, not the guard.
+    """
+    raise OSError("git unavailable")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit --no-verify -m "skip the gates"',
+        "git commit -n -m short",
+        'git -C . commit --no-verify -m "with a global flag"',
+    ],
+)
+def test_git_guard_denies_no_verify(command, monkeypatch, capsys):
+    """--no-verify skips the pre-commit validators guarding skills/, the version
+    manifests and the findings store — commit-gate-integrity.md says nothing
+    enforced this."""
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "--no-verify" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -m "ordinary"',
+        "git commit --amend",
+        "make check",
+        "grep -n 'no-verify' README.md",  # the flag as *content*, not as a flag
+        "",
+    ],
+)
+def test_git_guard_allows_ordinary_commands(command, monkeypatch, capsys):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_git_guard_denies_push_to_protected_refspec(monkeypatch, capsys):
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("git push origin main"), monkeypatch)
+    assert exc.value.code == 2
+    assert "protected branch" in capsys.readouterr().err
+
+
+def test_git_guard_allows_push_to_a_feature_refspec(monkeypatch, capsys):
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash("git push origin feature/x"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(("branch", "denied"), [("main", True), ("master", True), ("wip", False)])
+def test_git_guard_judges_a_bare_push_on_head(branch, denied, monkeypatch, capsys):
+    """`git push` with no refspec follows HEAD's upstream, so HEAD decides."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: branch)
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash("git push"), monkeypatch)
+        assert exc.value.code == 2
+    else:
+        _run(mod, _bash("git push"), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
+def test_git_guard_denies_when_the_branch_cannot_be_resolved(monkeypatch, capsys):
+    """Fail closed: an unresolvable HEAD cannot prove the push is safe."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: None)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("git push"), monkeypatch)
+    assert exc.value.code == 2
+    assert "unknown" in capsys.readouterr().err
+
+
+def test_git_guard_current_branch_reads_git(monkeypatch, tmp_path):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="topic\n"))
+    assert mod._current_branch() == "topic"
+
+
+@pytest.mark.parametrize("mode", ["non-zero-exit", "raises"])
+def test_git_guard_current_branch_returns_none_when_git_fails(mode, monkeypatch, tmp_path):
+    """Both failure arms return None, which the caller treats as fail-closed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    if mode == "raises":
+        monkeypatch.setattr(mod.subprocess, "run", _oserror)
+    else:
+        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(returncode=128))
+    assert mod._current_branch() is None
+
+
+def test_git_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
+    """Both the `__main__` wiring and its fail-closed exception arm."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_bash("git commit --no-verify -m x")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-unsafe-git-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "--no-verify" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-unsafe-git-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
+# ── guard-ctx-ok-hook: validate the escape hatch (agent-hooks-d003dd20) ───────
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -rn TODO src/ # ctx-ok",
+        "cat big.log # ctx-ok",
+        "find . -name '*.py' # ctx-ok",
+        "git log --oneline | head -20 # ctx-ok",  # pipeline head is the verb
+        "curl https://example.com # ctx-ok",
+    ],
+)
+def test_ctx_ok_guard_denies_the_hatch_on_read_commands(command, monkeypatch, capsys):
+    mod = _load("guard-ctx-ok-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "ctx-ok" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m x # ctx-ok",  # state mutation
+        "make check # ctx-ok",  # pass/fail runner
+        "echo hi # ctx-ok",  # fixed output
+        "rm -f stale.tmp # ctx-ok",
+        "FOO=1 git push origin feature # ctx-ok",  # env prefix skipped
+        "/usr/bin/git status # ctx-ok",  # path-qualified verb
+        "grep -rn TODO src/",  # no hatch claimed — the plugin owns this
+    ],
+)
+def test_ctx_ok_guard_allows_must_run_direct_and_unclaimed(command, monkeypatch, capsys):
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_ctx_ok_guard_fails_closed_on_an_unrecognised_verb(monkeypatch, capsys):
+    """An unknown command is exactly what the hatch must not silently cover."""
+    mod = _load("guard-ctx-ok-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("frobnicate --all # ctx-ok"), monkeypatch)
+    assert exc.value.code == 2
+    assert "unrecognised" in capsys.readouterr().err
+
+
+def test_ctx_ok_guard_fails_closed_on_a_hatch_with_no_command(monkeypatch, capsys):
+    """A bare hatch, and an assignment-only line, resolve to no verb at all —
+    reported as empty rather than misdescribed as an unrecognised command."""
+    mod = _load("guard-ctx-ok-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("# ctx-ok"), monkeypatch)
+    assert exc.value.code == 2
+    assert "empty command" in capsys.readouterr().err
+
+
+def test_ctx_ok_guard_allows_an_assignment_prefixed_mutation(monkeypatch, capsys):
+    """Regression: the first version read only the first pipeline stage, so a
+    leading `VAR=value` yielded no verb and the hook denied an ordinary `cp`.
+    It fired on a real command during this session."""
+    mod = _load("guard-ctx-ok-hook")
+    _run(
+        mod, _bash("S=/tmp/x && cp $S/a.py scripts/ && chmod +x scripts/a.py # ctx-ok"), monkeypatch
+    )
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_ctx_ok_guard_ignores_an_empty_command(monkeypatch, capsys):
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(""), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_ctx_ok_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_bash("grep -rn TODO src/ # ctx-ok")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "guard-ctx-ok-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "ctx-ok" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "guard-ctx-ok-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
+# ── ask-destructive-restore-hook: confirm before discard (agent-hooks-855cb93b) ─
+
+
+def _restore_mod(monkeypatch, tmp_path, dirty: list[str]):
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    porcelain = "".join(f" M {p}\n" for p in dirty)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout=porcelain))
+    return mod
+
+
+def _ask_payload(capsys) -> dict:
+    return json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git checkout -- README.md", "git restore README.md", "git checkout -- .", "git restore ."],
+)
+def test_restore_guard_asks_when_the_target_is_dirty(command, monkeypatch, tmp_path, capsys):
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0  # `ask` is a decision, not a block
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
+    assert out["hookEventName"] == "PreToolUse"
+    assert "UNCOMMITTED" in out["permissionDecisionReason"]
+    assert "README.md" in out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -b feature",  # branch creation, not a restore
+        "git checkout feature",  # branch switch, not a restore
+        "git status",
+        "git log --oneline",
+        "",
+    ],
+)
+def test_restore_guard_ignores_non_restore_commands(command, monkeypatch, tmp_path, capsys):
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_restore_guard_silent_when_the_target_is_clean(monkeypatch, tmp_path, capsys):
+    mod = _restore_mod(monkeypatch, tmp_path, [])
+    _run(mod, _bash("git checkout -- README.md"), monkeypatch)
+    assert capsys.readouterr().out == ""
+
+
+def test_restore_guard_ignores_untracked_files(monkeypatch, tmp_path, capsys):
+    """An untracked file is not destroyed by a restore, so it must not prompt."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="?? scratch.txt\n"))
+    _run(mod, _bash("git checkout -- ."), monkeypatch)
+    assert capsys.readouterr().out == ""
+
+
+def test_restore_guard_truncates_a_long_dirty_list(monkeypatch, tmp_path, capsys):
+    mod = _restore_mod(monkeypatch, tmp_path, [f"f{i}.py" for i in range(9)])
+    with pytest.raises(SystemExit):
+        _run(mod, _bash("git checkout -- ."), monkeypatch)
+    assert "(+4 more)" in _ask_payload(capsys)["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("mode", ["non-zero-exit", "raises"])
+def test_restore_guard_asks_when_git_status_cannot_prove_clean(mode, monkeypatch, tmp_path, capsys):
+    """Cannot prove clean => treat as dirty. The alternative is discarding work
+    because a subprocess failed."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    if mode == "raises":
+        monkeypatch.setattr(mod.subprocess, "run", _oserror)
+    else:
+        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(returncode=128))
+    with pytest.raises(SystemExit):
+        _run(mod, _bash("git checkout -- README.md"), monkeypatch)
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+def test_restore_guard_drops_flags_from_the_target_list(monkeypatch, tmp_path):
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    assert mod._targets("git restore --staged --worktree src/a.py src/b.py") == [
+        "src/a.py",
+        "src/b.py",
+    ]
+    assert mod._targets("git checkout -- . && echo done") == ["."]
+
+
+def test_restore_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys, tmp_path):
+    import subprocess as _subprocess
+
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("REPO_ROOT", str(_script_repo(tmp_path)))
+    monkeypatch.setattr(_subprocess, "run", lambda *a, **k: _Result(stdout=" M tracked.py\n"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_bash("git checkout -- tracked.py")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "ask-destructive-restore-hook.py"), run_name="__main__")
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "ask-destructive-restore-hook.py"), run_name="__main__")
+    assert exc.value.code == 0
+    payload = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert payload["permissionDecision"] == "ask"
+    assert "failed internally" in payload["permissionDecisionReason"]
