@@ -42,8 +42,20 @@ _CTX_OK = re.compile(r"(?:^|\s)#\s*ctx-ok\s*$")
 
 # Must-run-direct, from use-context-mode.md: state mutation, pass/fail runners,
 # short fixed output, interactive/stateful commands.
+#
+# Shell builtins that navigate or mutate shell state belong here for the same
+# reason `mkdir` does — the sandbox cannot carry the effect back. `cd` matters
+# most: it prefixes a huge share of real commands, and because classification is
+# per stage, `cd repo && git push` is judged on `cd` as well as on `git push`.
 _ALLOWED = frozenset(
     {
+        "cd",
+        "pushd",
+        "popd",
+        "export",
+        "source",
+        "unset",
+        "set",
         "git",
         "gh",
         "mkdir",

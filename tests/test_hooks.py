@@ -1938,6 +1938,31 @@ def test_ctx_ok_guard_fails_closed_on_a_hatch_with_no_command(monkeypatch, capsy
     assert "empty command" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd /repo && git push origin feature # ctx-ok",
+        "cd scripts && chmod +x a.py # ctx-ok",
+        "pushd /repo && git commit -m x && popd # ctx-ok",
+        "export GIT_AUTHOR_NAME=x # ctx-ok",
+        "source .venv/bin/activate && pip install -e . # ctx-ok",
+    ],
+)
+def test_ctx_ok_guard_allows_navigation_and_shell_state(command, monkeypatch, capsys):
+    """Regression: `cd` was not in the allowlist, so the fail-closed arm denied
+    `cd /repo && git push ...` as an unrecognised command. It fired on a real
+    push during this session — the second allowlist hole to do so, after the
+    `VAR=value` prefix above.
+
+    Classification is per stage, so a `cd` prefix is judged on its own merits and
+    a missing entry rejects the whole command however ordinary the rest of it is.
+    """
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
 def test_ctx_ok_guard_allows_an_assignment_prefixed_mutation(monkeypatch, capsys):
     """Regression: the first version read only the first pipeline stage, so a
     leading `VAR=value` yielded no verb and the hook denied an ordinary `cp`.
