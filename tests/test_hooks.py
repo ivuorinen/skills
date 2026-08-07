@@ -756,6 +756,59 @@ def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
     assert "tests" in block, "tests/ must stay excluded (B101 is the test mechanism)"
 
 
+def test_every_pre_commit_rev_is_sha_pinned_with_a_version_comment():
+    """github-actions-security.md requires it, and nothing enforced it.
+
+    Two things depend on this shape, not just the security clause:
+
+    1. A `rev:` naming a tag is mutable — the tag can be repointed at new code
+       without the pin changing, and these repos execute arbitrary code inside
+       the authoritative Validate job.
+    2. The renovate.json custom manager that keeps these revs current matches
+       `rev: <40-hex> # <version>`. A rev in any other shape is invisible to it,
+       so un-pinning does not merely weaken the pin — it stops updates entirely.
+
+    This was not hypothetical: PRs #69/#70/#71 were Renovate's built-in
+    pre-commit manager proposing to replace a SHA with a tag, and #71 merged,
+    leaving `pre-commit/pre-commit-hooks` tag-pinned until this test existed.
+    """
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    revs = re.findall(r"^\s+rev:\s*(\S+)(.*)$", config, re.MULTILINE)
+    assert revs, "no rev: lines found — has the config moved?"
+    for value, trailer in revs:
+        assert re.fullmatch(r"[0-9a-f]{40}", value), (
+            f"rev {value!r} is not a 40-character commit SHA; a tag is mutable "
+            "and the renovate custom manager cannot read it"
+        )
+        assert re.match(r"\s*#\s*\S+", trailer), (
+            f"rev {value[:8]}… has no trailing version comment; Renovate takes currentValue from it"
+        )
+
+
+def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
+    """The pin shape above and the manager's regex must stay in step.
+
+    Asserting the shape is not enough on its own: the guard that matters is that
+    the *actual* pattern in renovate.json still matches every rev in the file.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    managers = [
+        m
+        for m in cfg.get("customManagers", [])
+        if any(".pre-commit-config" in p for p in m.get("managerFilePatterns", []))
+    ]
+    assert len(managers) == 1, "expected exactly one custom manager for the pre-commit config"
+
+    # Renovate uses JS named groups (?<name>); Python spells them (?P<name>).
+    pattern = re.compile(_js_regex_to_python(managers[0]["matchStrings"][0]))
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    matched = {m.group("depName") for m in pattern.finditer(config)}
+    declared = set(re.findall(r"^\s+- repo:\s*https://github\.com/(\S+)", config, re.MULTILINE))
+    assert matched == declared, (
+        f"custom manager misses {sorted(declared - matched)}; those revs get no updates"
+    )
+
+
 def test_ci_runs_the_repository_gate_through_make_check():
     """The Validate job must invoke `make check`, not restate its targets.
 
