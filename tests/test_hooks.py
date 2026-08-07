@@ -1772,6 +1772,38 @@ def test_git_guard_allows_push_to_a_feature_refspec(monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "branch", "denied"),
+    [
+        ("git push origin feature/x main", "wip", True),  # protected in a LATER refspec
+        ("git push origin feature:feature main:main", "wip", True),  # ...in colon form
+        ("git push origin +main", "wip", True),  # force-push shorthand
+        ("git push origin refs/heads/main", "wip", True),  # fully qualified
+        ("git push --all origin", "wip", True),  # names no refspec, pushes every ref
+        ("git push --mirror origin", "wip", True),
+        ("git push origin HEAD", "main", True),  # HEAD resolves to the protected branch
+        ("git push origin HEAD", "wip", False),  # ...and here it does not
+        ("git push origin feature/x topic", "main", False),  # explicit refs; HEAD is moot
+    ],
+)
+def test_git_guard_checks_every_refspec_not_just_the_first(
+    command, branch, denied, monkeypatch, capsys
+):
+    """Regression: only `operands[1]` was checked, so `git push origin feature main`
+    reached main through a refspec the guard never looked at. `--all`/`--mirror`
+    name no refspec at all and were judged on HEAD, which does not bound them."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: branch)
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash(command), monkeypatch)
+        assert exc.value.code == 2
+        assert "protected branch" in capsys.readouterr().err
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize(("branch", "denied"), [("main", True), ("master", True), ("wip", False)])
 def test_git_guard_judges_a_bare_push_on_head(branch, denied, monkeypatch, capsys):
     """`git push` with no refspec follows HEAD's upstream, so HEAD decides."""
@@ -1864,6 +1896,23 @@ def test_ctx_ok_guard_denies_the_hatch_on_read_commands(command, monkeypatch, ca
     ],
 )
 def test_ctx_ok_guard_allows_must_run_direct_and_unclaimed(command, monkeypatch, capsys):
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep -rn '# ctx-ok' .claude/rules/",  # marker mid-command, as an argument
+        "grep -rn '# ctx-ok'",  # ...and at the end, but quoted
+        'rg "# ctx-ok" scripts/',
+    ],
+)
+def test_ctx_ok_guard_ignores_the_marker_as_content(command, monkeypatch, capsys):
+    """The hatch is a TRAILING comment. A command searching for the literal string
+    carries the marker without claiming it — matching anywhere denied a plain grep."""
     mod = _load("guard-ctx-ok-hook")
     _run(mod, _bash(command), monkeypatch)
     out = capsys.readouterr()
@@ -2014,6 +2063,60 @@ def test_restore_guard_drops_flags_from_the_target_list(monkeypatch, tmp_path):
         "src/b.py",
     ]
     assert mod._targets("git checkout -- . && echo done") == ["."]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C . checkout -- README.md",  # the value-taking global opt that slipped past
+        "git -c core.pager=cat restore README.md",
+        "git --work-tree . checkout -- README.md",
+        "git --namespace ns restore README.md",
+        # Detected by the old regex too, but only by accident: `\\bgit\\b` matched the
+        # `git` inside `.git`, at offset 15. Kept as a spelling that must work, not
+        # as evidence the fix works — the params above carry that.
+        "git --git-dir .git checkout -- README.md",
+        "FOO=1 git checkout -- README.md",
+        "echo hi && git restore README.md",  # not the first stage
+        "/usr/bin/git checkout -- README.md",  # path-qualified git
+    ],
+)
+def test_restore_guard_finds_the_verb_past_global_options(command, monkeypatch, tmp_path, capsys):
+    """Regression: `\\bgit\\b(?:\\s+-\\S+)*` cannot step over `-C .` — the `.` is not
+    `-\\S+`, so the loop stops and the alternation never reaches `checkout`. The
+    guard missed exactly the spellings its sibling guards already tokenise for."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+def test_restore_guard_stays_silent_when_only_another_file_is_dirty(monkeypatch, tmp_path, capsys):
+    """Pathspec filtering moved out of git's argv and into the hook, so this is the
+    case that proves the hook's own matching narrows to the target."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["src/other.py"])
+    _run(mod, _bash("git checkout -- README.md"), monkeypatch)
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("target", ["src", "src/", "./src"])
+def test_restore_guard_matches_files_under_a_directory_target(
+    target, monkeypatch, tmp_path, capsys
+):
+    mod = _restore_mod(monkeypatch, tmp_path, ["src/a.py"])
+    with pytest.raises(SystemExit):
+        _run(mod, _bash(f"git checkout -- {target}"), monkeypatch)
+    assert "src/a.py" in _ask_payload(capsys)["permissionDecisionReason"]
+
+
+def test_restore_guard_resolves_absolute_targets_against_the_repo(monkeypatch, tmp_path):
+    """An absolute target is repo-relative before comparison; one outside the repo
+    can never match a `git status` entry."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    assert mod._covers(str(tmp_path / "src"), "src/a.py")
+    assert not mod._covers("/etc/passwd", "src/a.py")
 
 
 def test_restore_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys, tmp_path):

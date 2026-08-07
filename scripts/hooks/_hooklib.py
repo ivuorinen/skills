@@ -1,4 +1,4 @@
-"""Shared preamble for the PostToolUse / Stop hooks in scripts/hooks/.
+"""Shared preamble for the PreToolUse / PostToolUse / Stop hooks in scripts/hooks/.
 
 Library module — imported by the hook scripts, never run directly, so no
 shebang and no `# /// script` block. Pure stdlib. Mirrors the sibling-import
@@ -7,8 +7,15 @@ precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
+
+_STAGE_SPLIT = re.compile(r"\|\||&&|[|;&\n]")
+
+# git global options that consume the NEXT token as their value. Without these
+# the token after them is mistaken for the subcommand, or the scan stops early.
+_VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
 
 
 def repo_root() -> Path:
@@ -61,3 +68,54 @@ def event_path() -> Path | None:
     """
     data = load_event()
     return _edited_path(data) if data is not None else None
+
+
+def shell_stages(command: str) -> list[list[str]]:
+    """Tokens for each pipeline/list stage, `VAR=value` prefixes stripped.
+
+    A guard that reads only the first stage misses `echo hi && git push origin
+    main`, and one that ignores the environment prefix misses `FOO=1 git ...`.
+    Empty stages are dropped, so every returned list has at least one token.
+    """
+    stages: list[list[str]] = []
+    for segment in _STAGE_SPLIT.split(command):
+        tokens = segment.split()
+        i = 0
+        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
+            i += 1
+        if i < len(tokens):
+            stages.append(tokens[i:])
+    return stages
+
+
+def skip_git_global_opts(tokens: list[str], i: int) -> int:
+    """Index of the first non-option token at or after `i`, value-opts consumed.
+
+    `-C dir` and `-c k=v` take the following token as a value; a scan that does
+    not consume it reads that value as the subcommand.
+    """
+    while i < len(tokens):
+        if tokens[i] in _VALUE_OPTS:
+            i += 2
+        elif tokens[i].startswith("-"):
+            i += 1  # valueless global flag, or --opt=value
+        else:
+            break
+    return i
+
+
+def git_calls(command: str) -> list[tuple[str, list[str]]]:
+    """(subcommand, args) for every git invocation across the command's stages.
+
+    The subcommand is found by tokenising, not by regex: `git -C dir commit
+    --no-verify` and `git -c k=v push` have a value-taking global option between
+    `git` and the subcommand, which a `(?:\\s+-\\S+)*` pattern walks straight past.
+    """
+    calls: list[tuple[str, list[str]]] = []
+    for tokens in shell_stages(command):
+        if Path(tokens[0]).name != "git":
+            continue
+        i = skip_git_global_opts(tokens, 1)
+        if i < len(tokens):
+            calls.append((tokens[i], tokens[i + 1 :]))
+    return calls

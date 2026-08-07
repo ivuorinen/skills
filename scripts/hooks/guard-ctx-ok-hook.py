@@ -28,11 +28,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import load_event  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    load_event,
+    shell_stages,
+    skip_git_global_opts,
+)
 
-_CTX_OK = re.compile(r"#\s*ctx-ok\b")
-_SPLIT = re.compile(r"\|\||&&|[|;&\n]")
-_VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
+# The hatch is a TRAILING comment, per the rule's "append `# ctx-ok`". Anchoring
+# matters both ways: it must follow whitespace (so a quoted `'# ctx-ok'` being
+# searched for as a literal is content, not a claim) and it must end the command
+# (so the marker mid-command is not read as opting the whole line out).
+_CTX_OK = re.compile(r"(?:^|\s)#\s*ctx-ok\s*$")
 
 # Must-run-direct, from use-context-mode.md: state mutation, pass/fail runners,
 # short fixed output, interactive/stateful commands.
@@ -130,27 +136,30 @@ _GIT_READS = frozenset(
 def _verbs(command: str) -> list[str]:
     """One classification token per pipeline stage: the verb, or `git:<sub>`."""
     out: list[str] = []
-    for segment in _SPLIT.split(re.sub(r"#.*$", "", command)):
-        tokens = segment.split()
-        i = 0
-        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
-            i += 1  # VAR=value environment prefix
-        if i >= len(tokens):
-            continue
-        verb = Path(tokens[i]).name
+    for tokens in shell_stages(re.sub(r"#.*$", "", command)):
+        verb = Path(tokens[0]).name
         if verb != "git":
             out.append(verb)
             continue
-        i += 1
-        while i < len(tokens):
-            if tokens[i] in _VALUE_OPTS:
-                i += 2
-            elif tokens[i].startswith("-"):
-                i += 1
-            else:
-                break
+        i = skip_git_global_opts(tokens, 1)
         out.append(f"git:{tokens[i]}" if i < len(tokens) else "git")
     return out
+
+
+def _reject_reason(verb: str) -> str | None:
+    """Why this stage may not wear the hatch, or None if it may."""
+    if verb.startswith("git:"):
+        subcommand = verb.removeprefix("git:")
+        if subcommand in _GIT_READS:
+            return f"'# ctx-ok' on a read command ('git {subcommand}')"
+        return None
+    if verb in _READ_VERBS:
+        return f"'# ctx-ok' on a read/gather command ('{verb}')"
+    if verb not in _ALLOWED:
+        # Unknown verb: fail closed. An unrecognised command is exactly the
+        # case the hatch should not silently cover.
+        return f"'# ctx-ok' on an unrecognised command ('{verb}')"
+    return None
 
 
 def _deny(reason: str) -> None:
@@ -179,16 +188,9 @@ def main() -> None:
         _deny("'# ctx-ok' on an empty command")
 
     for verb in verbs:
-        if verb.startswith("git:"):
-            if verb.removeprefix("git:") in _GIT_READS:
-                _deny(f"'# ctx-ok' on a read command ('{verb.replace(':', ' ')}')")
-            continue
-        if verb in _READ_VERBS:
-            _deny(f"'# ctx-ok' on a read/gather command ('{verb}')")
-        if verb not in _ALLOWED:
-            # Unknown verb: fail closed. An unrecognised command is exactly the
-            # case the hatch should not silently cover.
-            _deny(f"'# ctx-ok' on an unrecognised command ('{verb}')")
+        reason = _reject_reason(verb)
+        if reason is not None:
+            _deny(reason)
 
 
 if __name__ == "__main__":
