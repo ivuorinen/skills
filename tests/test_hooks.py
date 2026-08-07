@@ -1220,7 +1220,12 @@ def test_validate_rules_hook_silent_when_both_validators_pass(monkeypatch, tmp_p
 
     monkeypatch.setattr(mod.subprocess, "run", _ok)
     _run(mod, json.dumps({"tool_input": {"file_path": str(rule)}}), monkeypatch)
-    assert len(calls) == 2  # both validators ran; the first did not short-circuit
+    # Assert WHICH validators ran: a bare `len(calls) == 2` also passes if the
+    # hook ran one of them twice and never invoked the other.
+    commands = [" ".join(cmd) for cmd in calls]
+    assert len(commands) == 2
+    assert any("validate-rules.py" in cmd for cmd in commands)
+    assert any("check-rules-anatomy.py" in cmd for cmd in commands)
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
 
@@ -1306,7 +1311,12 @@ def test_revalidate_runs_every_gate_for_each_governed_marker(
     stopped matching would silently stop validating that whole tree."""
     mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=porcelain))
     mod.main()  # all gates pass -> no SystemExit
-    assert len(_gate_calls(calls)) == len(mod.GATES)
+    # Assert WHICH gates ran, not just how many: a count alone also passes if one
+    # gate ran len(GATES) times and the rest never fired.
+    ran = [" ".join(c) for c in _gate_calls(calls)]
+    assert len(ran) == len(mod.GATES)
+    for _script, cmd in mod.GATES:
+        assert " ".join(cmd) in ran, f"gate never ran: {' '.join(cmd)}"
     assert capsys.readouterr().err == ""
 
 
@@ -1376,8 +1386,12 @@ def test_revalidate_runs_as_a_script(monkeypatch, tmp_path, capsys):
     """
     import subprocess as _subprocess
 
+    # _script_repo, not a bare tmp_path: repo_root() only honours $REPO_ROOT for a
+    # directory that really contains scripts/hooks/_hooklib.py, so a tmp dir
+    # holding just the gate files is rejected and the real checkout wins.
+    repo = _script_repo(tmp_path)
     for script, _cmd in _load("post-bash-revalidate").GATES:
-        p = tmp_path / script
+        p = repo / script
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("", encoding="utf-8")
 
@@ -1386,8 +1400,12 @@ def test_revalidate_runs_as_a_script(monkeypatch, tmp_path, capsys):
             return _Result(stdout=" M skills/nitpicker/SKILL.md\n")
         return _Result(returncode=1, stdout="GATE SAID NO")
 
-    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)  # checked first; would win
+    monkeypatch.setenv("REPO_ROOT", str(repo))
     monkeypatch.setattr(_subprocess, "run", _fake_run)
+    # Pin the root the hook actually resolved, so this cannot silently fall back
+    # to the real checkout again and pass for the wrong reason.
+    assert repo == _load("post-bash-revalidate").REPO_ROOT
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(HOOKS_DIR / "post-bash-revalidate.py"), run_name="__main__")
     assert exc.value.code == 2
