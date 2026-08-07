@@ -744,6 +744,27 @@ def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
         assert not missing, f"{glob_pat}: customManager matches nothing for {sorted(missing)}"
 
 
+def test_the_builtin_pre_commit_manager_stays_disabled():
+    """It cannot version a SHA-pinned rev, and it does not fail quietly.
+
+    Reading a `rev:` it cannot parse, it proposes replacing the pin with a bare
+    tag: #69, #70, #71 and #99 were all that same un-pinning, each one undoing
+    the SHA discipline .claude/rules/github-actions-security.md requires. The
+    SHA-pin test fails such a PR, so nothing merged — but the PR kept coming
+    back, and a gate that has to keep rejecting the same proposal is the wrong
+    place to solve it.
+
+    Re-enabling the manager adds no coverage:
+    test_the_renovate_custom_manager_matches_every_pre_commit_rev asserts the
+    custom.regex manager already reaches every rev in the file.
+    """
+    cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
+    assert "pre-commit" not in cfg["enabledManagers"], (
+        "the built-in pre-commit manager cannot version a 40-character SHA rev and "
+        "repeatedly proposes un-pinning it to a tag; custom.regex covers those revs"
+    )
+
+
 def test_renovate_groups_each_tool_across_its_managers():
     """One PR per tool, or every PR is a partial bump.
 
