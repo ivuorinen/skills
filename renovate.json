@@ -3,7 +3,8 @@
   "description": [
     "The extends preset is pinned to a commit SHA, matching the SHA-pinning discipline .claude/rules/github-actions-security.md imposes on actions: the thing that keeps our action SHAs current is itself pinned, so an edit upstream cannot silently change update policy here. Bump the SHA deliberately.",
     "enabledManagers and automerge are declared here, not inherited, so the external preset cannot silently drop manifest coverage or turn automerge on.",
-    "customManagers cover the tool pins no built-in manager reads: `uv run --with <tool>==<version>` in the Makefile, and the PEP 723 inline block in scripts/hooks/*.py. Without them a ruff bump touched pyproject.toml alone and left the Makefile, the hook and the pre-commit rev behind, which tests/test_hooks.py fails by design.",
+    "customManagers cover the tool pins no built-in manager reads: `uv run --with <tool>==<version>` in the Makefile, the PEP 723 inline block in scripts/hooks/*.py, and the SHA-pinned `rev:` lines in .pre-commit-config.yaml. Without them a ruff bump touched pyproject.toml alone and left the Makefile, the hook and the pre-commit rev behind, which tests/test_hooks.py fails by design.",
+    "The pre-commit rev needs a custom manager even though the built-in `pre-commit` manager is enabled and detects the repo. That manager reads `rev:` verbatim: a tag it can version, a 40-character SHA it cannot, and it has no support for taking the version from a trailing comment — that is a `github-actions` manager feature. github-actions-security.md requires those revs be SHA-pinned, so every one of them was invisible to updates. Observed on PR #94: ruff moved in pyproject.toml, the Makefile, the hook and uv.lock, and the pre-commit rev stayed on 0.16.0.",
     "The groupName rules put every call site for one tool in a single PR. ruff on PyPI and astral-sh/ruff-pre-commit are different packages to Renovate, so ungrouped they arrive as separate PRs and each one is a partial bump that fails the same test."
   ],
   "extends": ["local>ivuorinen/renovate-config#10a624a19237fa5a3662af0d8f9959c738c01c7f"],
@@ -25,6 +26,15 @@
         "dependencies\\s*=\\s*\\[\"(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[^\"]+)\"\\]"
       ],
       "datasourceTemplate": "pypi"
+    },
+    {
+      "customType": "regex",
+      "description": "SHA-pinned pre-commit revs: the digest is the pin, the version lives in the trailing comment",
+      "managerFilePatterns": ["^\\.pre-commit-config\\.yaml$"],
+      "matchStrings": [
+        "repo:\\s*https://github\\.com/(?<depName>\\S+?)\\s*\\n\\s*rev:\\s*(?<currentDigest>[0-9a-f]{40})\\s*#\\s*(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "github-tags"
     }
   ],
   "packageRules": [
