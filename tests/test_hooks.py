@@ -5,6 +5,7 @@ and the gating branches (empty stdin, non-dict payload, irrelevant paths) that
 must be silent no-ops. These hooks had no coverage before.
 """
 
+import fnmatch
 import importlib.util
 import io
 import json
@@ -798,6 +799,22 @@ def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
         if any(".pre-commit-config" in p for p in m.get("managerFilePatterns", []))
     ]
     assert len(managers) == 1, "expected exactly one custom manager for the pre-commit config"
+
+    # managerFilePatterns must actually SELECT the file, which is a separate
+    # question from whether matchStrings parses it. Renovate treats a pattern as
+    # a regex only when wrapped in slashes; anything else is a minimatch glob. A
+    # bare `^\.pre-commit-config\.yaml$` is therefore a glob matching nothing,
+    # which is how this manager first shipped — valid config, silently inert,
+    # and this test passed anyway because it only ever exercised matchStrings.
+    for raw in managers[0]["managerFilePatterns"]:
+        if raw.startswith("/") and raw.endswith("/"):
+            selects = re.search(_js_regex_to_python(raw[1:-1]), ".pre-commit-config.yaml")
+        else:
+            selects = fnmatch.fnmatch(".pre-commit-config.yaml", raw)
+        assert selects, (
+            f"managerFilePatterns entry {raw!r} selects no file: as a glob it matches nothing, "
+            "and a regex must be wrapped in slashes to be read as one"
+        )
 
     # Renovate uses JS named groups (?<name>); Python spells them (?P<name>).
     pattern = re.compile(_js_regex_to_python(managers[0]["matchStrings"][0]))
