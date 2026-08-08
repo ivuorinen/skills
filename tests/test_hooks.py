@@ -1067,7 +1067,7 @@ def test_hook_runs_as_a_script(name, rel, marker, monkeypatch, tmp_path, capsys)
     monkeypatch.setenv("REPO_ROOT", str(repo))
     monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/ruff")
     monkeypatch.setattr(
-        _subprocess, "run", lambda *a, **k: _Result(returncode=1, stdout=marker or "FAILED")
+        _subprocess, "run", lambda *_a, **_k: _Result(returncode=1, stdout=marker or "FAILED")
     )
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"tool_input": {"file_path": rel}})))
 
@@ -1168,7 +1168,7 @@ def test_version_sync_surfaces_checker_output_when_it_fails_without_problems(
         stdout = "checker blew up"
         stderr = ""
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _R())
     payload = {"tool_input": {"file_path": str(tmp_path / "package.json")}}
     with pytest.raises(SystemExit) as exc:
         _run(mod, json.dumps(payload), monkeypatch)
@@ -1185,7 +1185,7 @@ def test_stop_reminder_silent_when_git_fails(monkeypatch, capsys):
         returncode = 128
         stdout = ""
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _R())
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     mod.main()
     assert capsys.readouterr().err == ""
@@ -1359,7 +1359,7 @@ def test_audit_findings_index_failure_exits_2(monkeypatch, tmp_path, capsys):
         stdout = ""
         stderr = "index blew up"
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _R())
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _R())
     with pytest.raises(SystemExit) as exc:
         _run(mod, json.dumps({"tool_input": {"file_path": str(index)}}), monkeypatch)
     assert exc.value.code == 2
@@ -1381,7 +1381,7 @@ def test_ruff_hook_silent_when_ruff_is_clean(monkeypatch, tmp_path, capsys):
     f = tmp_path / "clean.py"
     f.write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/ruff")
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result())
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result())
     _run(mod, json.dumps({"tool_input": {"file_path": str(f)}}), monkeypatch)
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
@@ -1392,7 +1392,7 @@ def test_version_sync_hook_silent_when_versions_agree(monkeypatch, tmp_path, cap
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check-version-sync.py").write_text("", encoding="utf-8")
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="  OK  all\n"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout="  OK  all\n"))
     payload = {"tool_input": {"file_path": str(tmp_path / "package.json")}}
     _run(mod, json.dumps(payload), monkeypatch)
     out = capsys.readouterr()
@@ -1407,7 +1407,7 @@ def test_validate_skill_hook_silent_when_the_skill_is_valid(monkeypatch, tmp_pat
     skill = tmp_path / "skills" / "foo" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: foo\n---\n", encoding="utf-8")
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="OK\n"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout="OK\n"))
     _run(mod, json.dumps({"tool_input": {"file_path": str(skill)}}), monkeypatch)
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
@@ -1889,7 +1889,7 @@ def test_git_guard_sees_past_a_line_continuation(command, denied, monkeypatch, c
 def test_git_guard_current_branch_reads_git(monkeypatch, tmp_path):
     mod = _load("deny-unsafe-git-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="topic\n"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout="topic\n"))
     assert mod._current_branch() == "topic"
 
 
@@ -1901,7 +1901,7 @@ def test_git_guard_current_branch_returns_none_when_git_fails(mode, monkeypatch,
     if mode == "raises":
         monkeypatch.setattr(mod.subprocess, "run", _oserror)
     else:
-        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(returncode=128))
+        monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(returncode=128))
     assert mod._current_branch() is None
 
 
@@ -2104,7 +2104,7 @@ def _restore_mod(monkeypatch, tmp_path, dirty: list[str]):
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     # `git status --porcelain -z`: NUL-terminated records, no quoting.
     porcelain = "".join(f" M {p}\0" for p in dirty)
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout=porcelain))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout=porcelain))
     return mod
 
 
@@ -2155,7 +2155,7 @@ def test_restore_guard_ignores_untracked_files(monkeypatch, tmp_path, capsys):
     """An untracked file is not destroyed by a restore, so it must not prompt."""
     mod = _load("ask-destructive-restore-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout="?? scratch.txt\0"))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout="?? scratch.txt\0"))
     _run(mod, _bash("git checkout -- ."), monkeypatch)
     assert capsys.readouterr().out == ""
 
@@ -2176,7 +2176,7 @@ def test_restore_guard_asks_when_git_status_cannot_prove_clean(mode, monkeypatch
     if mode == "raises":
         monkeypatch.setattr(mod.subprocess, "run", _oserror)
     else:
-        monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(returncode=128))
+        monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(returncode=128))
     with pytest.raises(SystemExit):
         _run(mod, _bash("git checkout -- README.md"), monkeypatch)
     assert _ask_payload(capsys)["permissionDecision"] == "ask"
@@ -2269,7 +2269,7 @@ def test_restore_guard_reads_renamed_and_quoted_paths(monkeypatch, tmp_path, cap
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     # R record: new path in the record, old path follows and must not be read as one.
     stdout = "R  src/new name.py\0src/old.py\0 M src/tab\there.py\0"
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _Result(stdout=stdout))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout=stdout))
     assert mod._tracked_dirty() == ["src/new name.py", "src/tab\there.py"]
 
     with pytest.raises(SystemExit):
@@ -2291,7 +2291,7 @@ def test_restore_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys, tm
 
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     monkeypatch.setenv("REPO_ROOT", str(_script_repo(tmp_path)))
-    monkeypatch.setattr(_subprocess, "run", lambda *a, **k: _Result(stdout=" M tracked.py\0"))
+    monkeypatch.setattr(_subprocess, "run", lambda *_a, **_k: _Result(stdout=" M tracked.py\0"))
     monkeypatch.setattr(sys, "stdin", io.StringIO(_bash("git checkout -- tracked.py")))
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(HOOKS_DIR / "ask-destructive-restore-hook.py"), run_name="__main__")

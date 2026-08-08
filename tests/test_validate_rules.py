@@ -90,7 +90,7 @@ def test_main_exits_zero_and_prints_ok_when_clean(monkeypatch, tmp_path, capsys)
     target = tmp_path / "r.md"
     target.write_text("x\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["validate-rules.py", str(target)])
-    monkeypatch.setattr(_mod, "validate", lambda *a, **k: None)
+    monkeypatch.setattr(_mod, "validate", lambda *_a, **_k: None)
     _mod.main()  # no SystemExit
     assert "OK" in capsys.readouterr().out
 
