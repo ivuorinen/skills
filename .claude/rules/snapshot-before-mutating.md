@@ -5,10 +5,14 @@ the test goes red, restore. The restore step is where the work gets destroyed.
 
 ## Never restore with git
 
-`git checkout -- <path>` and `git restore <path>` revert to **HEAD**, not to the
-state before the mutation. Every uncommitted edit at that path is discarded, and
-nothing reaches the object store first — there is no reflog entry and no stash to
-recover from.
+`git checkout -- <path>` and `git restore <path>` revert to the last commit
+(`HEAD`), not to the state before the mutation. Every uncommitted edit at that
+path is discarded, and nothing reaches the object store first — there is no
+reflog entry and no stash to recover from.
+
+Both commands stay correct where reverting to the last commit is the actual
+intent. A proof's restore step means something narrower: undo one mutation and
+leave everything else alone. `git checkout --` cannot express that.
 
 The fix being proven is uncommitted almost every time, because the proof runs
 *before* the commit. So the restore deletes the fix. Worse than losing it: every
