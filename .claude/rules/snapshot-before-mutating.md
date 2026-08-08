@@ -5,17 +5,27 @@ the test goes red, restore. The restore step is where the work gets destroyed.
 
 ## Never restore with git
 
-`git checkout -- <path>` and `git restore <path>` revert to the last commit
-(`HEAD`), not to the state before the mutation. Every uncommitted edit at that
-path is discarded, and nothing reaches the object store first — there is no
-reflog entry and no stash to recover from.
+`git checkout -- <path>` and `git restore <path>` overwrite the working tree from
+the **index**, not from the state before the mutation. Unstaged changes at that
+path are discarded; staged ones survive, because the index is the source. Neither
+reaches the object store first, so discarded unstaged content has no reflog entry
+and no stash to recover from.
 
-Both commands stay correct where reverting to the last commit is the actual
-intent. A proof's restore step means something narrower: undo one mutation and
-leave everything else alone. `git checkout --` cannot express that.
+```console
+$ printf 'COMMITTED\n' > f && git add f && git commit -qm init
+$ printf 'STAGED\n' > f && git add f     # index
+$ printf 'UNSTAGED\n' > f                # working tree
+$ git restore f && cat f
+STAGED
+```
 
-The fix being proven is uncommitted almost every time, because the proof runs
-*before* the commit. So the restore deletes the fix. Worse than losing it: every
+Reverting to the last commit is a different command — `git restore --source=HEAD
+--staged --worktree <path>`. Both forms stay correct where discarding to their
+own source is the actual intent. A proof's restore step means something narrower:
+undo one mutation and leave everything else alone. Neither can express that.
+
+The fix being proven is unstaged almost every time, because the proof runs
+*before* the `git add`. So the restore deletes the fix. Worse than losing it: every
 measurement after the first restore runs against an unfixed file, the mutation
 still looks caught, and the proof reports green while proving nothing.
 
@@ -32,11 +42,19 @@ Both incidents in this repo were exactly that shape:
 cp scripts/hooks/thing.py /tmp/snap.orig      # before touching anything
 # ...mutate, run the check, observe red...
 cp /tmp/snap.orig scripts/hooks/thing.py      # restore
-cmp -s /tmp/snap.orig scripts/hooks/thing.py || echo "RESTORE FAILED"
+if ! cmp -s /tmp/snap.orig scripts/hooks/thing.py; then
+  echo "RESTORE FAILED" >&2
+  exit 1
+fi
 ```
 
 `cp` restores what was there. `cmp` proves it did — a restore that silently fails
 leaves a mutated file in the tree and the next commit ships it.
+
+The check exits non-zero. `cmp -s … || echo "RESTORE FAILED"` reads like a guard
+and is not one: `echo` succeeds, so the line exits 0 and the proof stays green
+with a mutated file on disk — the failure this section exists to catch, printed
+and then ignored.
 
 ## Assert the baseline before mutating
 

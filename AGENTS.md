@@ -41,8 +41,8 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
   .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and
   .release-please-manifest.json (`make version-sync`).
 - A script that mutates a file to prove a check fails restores it from a `cp`
-  snapshot. `git checkout --` and `git restore` revert to the last commit,
-  which destroys the uncommitted fix the proof exists to validate and
+  snapshot. `git checkout --` and `git restore` overwrite the working tree from
+  the index, which destroys the unstaged fix the proof exists to validate and
   leaves every later measurement running against unfixed code while reporting
   green. Both commands stay correct where reverting to the last commit is the
   actual intent; that is not what the restore step of a proof means. See

@@ -4,11 +4,11 @@
 # ///
 """PreToolUse hook — confirm before discarding uncommitted work.
 
-`git checkout -- <path>` and `git restore <path>` delete uncommitted changes
-irrecoverably: nothing reaches the object store, so there is no reflog or stash
-to recover from. The idiom is standard inside mutation/verification scripts,
-where the intent is "undo my temporary edit" but the effect is "discard
-everything uncommitted at that path".
+`git checkout -- <path>` and `git restore <path>` overwrite the working tree from
+the index, discarding unstaged changes irrecoverably: that content never reached
+the object store, so there is no reflog or stash to recover from. The idiom is
+standard inside mutation/verification scripts, where the intent is "undo my
+temporary edit" but the effect is "discard everything unstaged at that path".
 
 The restore call is found by tokenising (_hooklib.git_calls), not by regex: the
 first version used `\\bgit\\b(?:\\s+-\\S+)*`, which cannot step over a
@@ -159,8 +159,8 @@ def main() -> None:
         "This discards UNCOMMITTED changes irrecoverably — no reflog, no stash.\n"
         f"Uncommitted at the target: {listed}\n"
         "If this is a verification script restoring a mutation, snapshot with `cp` "
-        "first: `git checkout --` reverts to HEAD, which deletes work that was never "
-        "committed rather than just the mutation.",
+        "first: `git checkout --` overwrites the working tree from the index, which "
+        "deletes work that was never staged rather than just the mutation.",
     )
 
 
