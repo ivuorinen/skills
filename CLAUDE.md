@@ -70,6 +70,8 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 - `commit-types.md` (author discipline; the CI `commit-lint` job gates only the
   CI-only-diff-with-a-breaking-marker case)
 - `write-surgical-code.md` (agent discipline; no gate)
+- `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash only,
+  not a `git checkout --` inside a script)
 - `vendored-skills.md`
 
 ## Plugin Metadata
