@@ -1856,6 +1856,36 @@ def test_git_guard_ignores_comments_and_quotes_without_going_blind(
         assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "denied"),
+    [
+        ("git push \\\n  origin main", True),  # the bypass: continuation hid the refspec
+        ("git push \\\n  origin \\\n  main", True),
+        ("git commit \\\n  --no-verify -m x", True),
+        ("git push \\\n  origin feature/x", False),  # a feature push is still fine
+        ("echo a # note \\\ngit push origin main", True),  # `\` inside a comment joins nothing
+    ],
+)
+def test_git_guard_sees_past_a_line_continuation(command, denied, monkeypatch, capsys):
+    """A backslash-newline is a continuation, not a stage boundary.
+
+    Splitting on it parsed `git push \\<newline> origin main` as ('push', ['\\\\']):
+    one operand, so `_push_targets_protected` fell through to the HEAD check, saw
+    a feature branch and ALLOWED a push to main. `git commit \\<newline>
+    --no-verify` slipped through the same way. Both mandates this hook exists to
+    enforce were bypassable by pressing enter mid-command.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    if denied:
+        with pytest.raises(SystemExit) as exc:
+            _run(mod, _bash(command), monkeypatch)
+        assert exc.value.code == 2
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().err == ""
+
+
 def test_git_guard_current_branch_reads_git(monkeypatch, tmp_path):
     mod = _load("deny-unsafe-git-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
@@ -1966,6 +1996,24 @@ def test_ctx_ok_guard_does_not_split_inside_quotes_or_redirections(command, monk
     split on the `&` into a stage `1`, and comment stripping without re.MULTILINE
     left an earlier line's `#` to become a stage verb.
     """
+    mod = _load("guard-ctx-ok-hook")
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'gh pr create --base main \\\n  --title "x" \\\n  --body-file b.md # ctx-ok',
+        "cd /repo \\\n  && git commit -m x # ctx-ok",
+        "git push \\\n  origin feature/x # ctx-ok",
+    ],
+)
+def test_ctx_ok_guard_allows_a_continued_command(command, monkeypatch, capsys):
+    """The same continuation bug seen from the false-positive side: the second
+    physical line became its own stage, so `--title` was classified as the verb
+    and denied as unrecognised. It fired on a real `gh pr create` in session."""
     mod = _load("guard-ctx-ok-hook")
     _run(mod, _bash(command), monkeypatch)
     out = capsys.readouterr()

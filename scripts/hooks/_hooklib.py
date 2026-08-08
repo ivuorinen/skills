@@ -22,6 +22,11 @@ _COMMENT = re.compile(r"#.*$", re.MULTILINE)
 # Single-quoted spans are literal; double-quoted spans honour backslash escapes.
 _QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 _MASK = re.compile("\x00(\\d+)\x00")
+# A backslash-newline is a line continuation, not a stage boundary. Splitting on
+# it made `git push \<newline> origin main` parse as ('push', ['\\']) — no second
+# operand, so the push guard fell through to HEAD and allowed a push to main from
+# a feature branch. Same for `git commit \<newline> --no-verify`.
+_CONTINUATION = re.compile(r"\\\n")
 
 # git global options that consume the NEXT token as their value. Without these
 # the token after them is mistaken for the subcommand, or the scan stops early.
@@ -116,8 +121,11 @@ def shell_stages(command: str) -> list[list[str]]:
     push guard's operand list.
     """
     masked, spans = _mask_quoted(command)
+    # Comments first, then continuations: `foo # bar \` is comment to end of line,
+    # so the trailing backslash continues nothing and must not join the next line.
+    joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
     stages: list[list[str]] = []
-    for segment in _STAGE_SPLIT.split(_COMMENT.sub("", masked)):
+    for segment in _STAGE_SPLIT.split(joined):
         tokens = [_unmask(t, spans) for t in segment.split()]
         i = 0
         while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
