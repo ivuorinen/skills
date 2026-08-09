@@ -27,7 +27,7 @@ repos:
         args: [--fix=auto]
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: 534166213006ec869b773b7ed8c6ebeaad1165d0 # v0.23.0
+    rev: b82a6c8896e491b9cb377a99ff3412131920681b # v0.23.2
     hooks:
       - id: markdownlint-cli2
         # cli2 has no -c short flag (a bare -c is consumed as a file glob,
