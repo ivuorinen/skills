@@ -70,6 +70,13 @@ and `NotebookEdit` in `.claude/settings.json`, so an agent cannot apply it. That
 protection is working as intended: the enforcement surface is owner-owned.
 Applying this needs the repo owner.
 
+The `post-bash-revalidate.py` half is prepared as an anchored patch at
+`docs/audit/apply-open-findings.py` — it adds `GATE_TIMEOUT`, bounds both
+`subprocess.run` calls, and preflights the gate binary with `shutil.which`.
+Its anchors were verified to match the current file exactly once each and the
+patched result parses as valid Python. Run it with `--check` first. The
+remaining nine call sites still need the shared `_hooklib` runner.
+
 ## Impact
 
 A PostToolUse hook that blocks has no user-visible recovery short of interrupting the session, and it fires on every Bash command touching `skills/`, `.claude/rules/`, the version manifests, or the findings store — the hot path of ordinary work in this repo. The `FileNotFoundError` path turns a supportable "gate skipped" message into an unexplained traceback, which is the failure mode line 74-77 was written to avoid for the sibling case.
