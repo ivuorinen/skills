@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## Unreleased
+## Commit-type corrections
+
+Post-hoc corrections to commits that have already landed, newest first. Each
+names its own commit and date, so this section's position relative to the
+generated release sections below carries no meaning — release-please inserts
+each new release directly beneath the header above, and these notes stay here.
+
+> **Correction (2026-08-09):** commits `8f1c411` ("chore(deps)!: update
+> astral-sh/setup-uv action", [#79]) and `b394d25` ("chore(deps)!: update
+> pre-commit hook pre-commit/pre-commit-hooks", [#71]) each change a single line
+> of CI config — `.github/workflows/validate-skills.yml` and
+> `.pre-commit-config.yaml` respectively. `.claude/rules/commit-types.md`:
+> "A workflow-only or CI-only dependency bump is never breaking." Both `!`
+> markers are wrong, and they are the only breaking markers in the range since
+> `ivuorinen-skills-v2.0.0` — so they alone drive release-please to a MAJOR
+> bump. The release they are part of adds nine commands and an MCP server and
+> removes or renames nothing: no command file was deleted or renamed, and
+> `findings.py` lost no CLI flag. Read its "⚠ BREAKING CHANGES" section as
+> naming two dependency upgrades, not a consumer-facing incompatibility.
+> `.github/workflows/validate-skills.yml` now rejects this pattern, but only
+> within an open PR's commit range, so it cannot reach these two on `main`.
 
 > **Correction (2026-07-19):** commit `955fac3` ("feat: add write-surgical-code
 > rule from Karpathy's LLM-coding guidelines", [#61]) touches only
@@ -25,6 +45,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 [#61]: https://github.com/ivuorinen/skills/issues/61
 [#63]: https://github.com/ivuorinen/skills/issues/63
+[#71]: https://github.com/ivuorinen/skills/issues/71
+[#79]: https://github.com/ivuorinen/skills/issues/79
 
 ## [2.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v1.8.0...ivuorinen-skills-v2.0.0) (2026-07-10)
 
