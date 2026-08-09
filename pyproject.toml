@@ -15,7 +15,7 @@ license-files = ["LICENSE"]
 dev = [
   "pytest>=9.1,<10",
   "pytest-cov>=7.1,<8",
-  "ruff==0.16.1",
+  "ruff==0.16.2",
   "bandit==1.9.4",
 ]
 
