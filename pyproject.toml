@@ -100,3 +100,12 @@ pythonVersion = "3.11"
 # Shipped skill tools import sibling modules from their own scripts/ dir
 # (e.g. `from findings import ...`); add those dirs so pyright resolves them.
 extraPaths = ["skills/nitpicker/scripts"]
+# Declared rather than inherited, so an editor's language server and the pinned
+# CLI in `make check` resolve the same rules. Left unset, each side falls back to
+# its own default and the editor can report problems CI never sees, or miss ones
+# it does. The Makefile gates on errorCount alone; that floor only means the same
+# thing on both sides if the mode producing the errors is fixed here.
+typeCheckingMode = "standard"
+pythonPlatform = "All"
+include = ["scripts", "skills", "tests"]
+exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]

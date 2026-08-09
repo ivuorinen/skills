@@ -677,7 +677,7 @@ def test_notes_use_gh_transport_when_graphql_succeeds(monkeypatch):
     rest_list = _capture_notes_transport(
         monkeypatch,
         _gh_available=lambda: True,
-        fetch_graphql=lambda *a: [],
+        fetch_graphql=lambda *_a: [],
     )
     assert rest_list is _mod._gh_rest_paginate
 
@@ -695,7 +695,7 @@ def test_notes_use_token_transport_when_threads_fell_back_to_token(monkeypatch):
         _gh_available=lambda: True,
         fetch_graphql=_raise,
         fetch_rest_gh=_raise,
-        fetch_rest_token=lambda *a: [],
+        fetch_rest_token=lambda *_a: [],
     )
     assert rest_list is not _mod._gh_rest_paginate
     assert callable(rest_list)
@@ -870,7 +870,7 @@ def test_redirect_passes_through_when_super_declines(monkeypatch):
     monkeypatch.setattr(
         urllib.request.HTTPRedirectHandler,
         "redirect_request",
-        lambda *a, **k: None,
+        lambda *_a, **_k: None,
     )
     assert _redirect("https://evil.example/steal") is None
 
@@ -973,7 +973,7 @@ def test_permanent_error_carrying_a_transient_marker_falls_back_to_rest(
     monkeypatch.setattr(_mod, "fetch_graphql", MagicMock(side_effect=RuntimeError(message)))
     rest = MagicMock(return_value=[])
     monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
-    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *a: ([], []))
+    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *_a: ([], []))
 
     _mod.main()  # no SystemExit
     rest.assert_called_once()
@@ -991,7 +991,7 @@ def test_gh_transport_error_without_a_transient_marker_falls_back(monkeypatch, c
     )
     rest = MagicMock(return_value=[])
     monkeypatch.setattr(_mod, "fetch_rest_gh", rest)
-    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *a: ([], []))
+    monkeypatch.setattr(_mod, "_fetch_out_of_thread_notes", lambda *_a: ([], []))
 
     _mod.main()
     rest.assert_called_once()
