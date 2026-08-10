@@ -75,7 +75,8 @@ def main() -> None:
     py = [sys.executable, str(FINDINGS)]
     if is_finding:
         try:
-            result = subprocess.run(
+            # argv is `py` (interpreter + shipped tool path) plus literal words.
+            result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
                 [*py, "validate", str(path)],
                 capture_output=True,
                 text=True,
@@ -94,7 +95,8 @@ def main() -> None:
     elif is_ledger:
         # The resolved ledger has no per-line file, so validate the store as a whole.
         try:
-            result = subprocess.run(
+            # argv is `py` (interpreter + shipped tool path) plus a literal word.
+            result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
                 [*py, "validate"],
                 capture_output=True,
                 text=True,
@@ -113,7 +115,8 @@ def main() -> None:
     # `findings.py index` used by make check and CI. An absolute --root would
     # write absolute paths into INDEX.md and fail index-check.
     try:
-        index = subprocess.run(
+        # argv is `py` (interpreter + shipped tool path) plus a literal word.
+        index = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
             [*py, "index"],
             capture_output=True,
             text=True,

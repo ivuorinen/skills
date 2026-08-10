@@ -50,7 +50,8 @@ def main() -> None:
         ["python3", str(anatomy), "."],
     ):
         try:
-            result = subprocess.run(
+            # argv is one of the two literal command lists in the loop above.
+            result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
                 cmd,
                 cwd=str(REPO_ROOT),
                 capture_output=True,
