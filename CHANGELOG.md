@@ -26,6 +26,30 @@ each new release directly beneath the header above, and these notes stay here.
 > naming two dependency upgrades, not a consumer-facing incompatibility.
 > `.github/workflows/validate-skills.yml` now rejects this pattern, but only
 > within an open PR's commit range, so it cannot reach these two on `main`.
+>
+> **Resolved (2026-08-10):** 3.0.0 is now a deliberate choice, not a derived
+> one. The release carries a `Release-As: 3.0.0` footer, so release-please
+> takes the version from that footer rather than from the two mislabeled `!`
+> markers above. The correction stands as a record of how the number was
+> originally arrived at — and the two markers remain wrong — but the version
+> itself is the maintainer's decision, made in the open, and the CI guard
+> prevents a repeat.
+
+## 3.0.0 — why a major
+
+3.0.0 is a maintainer decision rather than a semver derivation, recorded here
+so the number is not mistaken for a compatibility signal.
+
+**Nothing in this release breaks a 2.x consumer.** No command file was deleted
+or renamed, `findings.py` lost no CLI flag, and the resolved-ledger store
+layout shipped in 2.0.0 and is unchanged. A strict semver reading of the diff
+gives 2.1.0.
+
+The major marks the size of the addition rather than a break in compatibility:
+nine new commands (`cache`, `contributing`, `dead-code`, `execute-plan`,
+`reliability`, `reverify`, `teach`, `triage`, plus the shared `_teach-formats`),
+a bundled stdio MCP server exposing ten `np_`-prefixed tools, and a reworked
+enforcement surface. Upgrading from 2.x requires no changes.
 
 > **Correction (2026-07-19):** commit `955fac3` ("feat: add write-surgical-code
 > rule from Karpathy's LLM-coding guidelines", [#61]) touches only
