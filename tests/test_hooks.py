@@ -1681,18 +1681,27 @@ def test_every_hook_subprocess_call_passes_a_timeout():
         ("validate-rules-hook", {"tool_input": {"file_path": ".claude/rules/x.md"}}),
     ],
 )
-def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsys, tmp_path):
+def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsys):
     """uv absent (FileNotFoundError) or the gate hung (TimeoutExpired): the hook
-    must return, not raise a traceback and not block the edit."""
+    must return, not raise a traceback and not block the edit.
+
+    `ran` is asserted because silence alone does not prove the arm was reached:
+    every one of these hooks returns early and silently for a path it does not
+    own, so a guard tightening upstream would leave this passing while testing
+    nothing.
+    """
     mod = _load(name)
+    ran = []
 
     def _boom(*a, **k):
-        """Simulate uv absent from PATH."""
+        """Record the call, then simulate uv absent from PATH."""
+        ran.append(1)
         raise FileNotFoundError("uv")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
     _run(mod, json.dumps(event), monkeypatch)
     out = capsys.readouterr()
+    assert ran, "the hook returned before shelling out — the except arm was never reached"
     assert out.out == "" and out.err == ""
 
 

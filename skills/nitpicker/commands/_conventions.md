@@ -226,9 +226,10 @@ that "returns None on failure" does not.
 
 **Tone matches the audit voice.** Declarative and specific. State limits
 outright rather than softening them: "flock only, no Windows path" beats a
-hedge. The words `might`, `could`, `potential`, and `consider` are banned in
-this repo's own skill and rule files — hold prose to the same bar. No
-compliments, no filler, no restating the function signature in English.
+hedge. The hedging vocabulary banned in this repo's own skill files is banned
+in documentation prose too; `.claude/rules/skill-style.md` owns that list, so
+it is named there and not restated here. No compliments, no filler, no
+restating the function signature in English.
 
 **Match the file you are editing.** Docstring convention, voice, and comment
 density are set by the surrounding code; a fix that imports a different house
