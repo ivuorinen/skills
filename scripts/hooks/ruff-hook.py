@@ -76,10 +76,16 @@ def main() -> None:
             print(prior.rstrip(), file=sys.stderr, flush=True)
             sys.exit(2)
         return  # nothing had failed yet — CI's ruff steps remain the gate
-    if result.returncode != 0:
-        prefix = "".join(r.stdout + r.stderr for r in (fix, fmt) if r.returncode != 0)
+    # Every completed call counts, not just the last. A fix or format pass that
+    # failed on its own (bad config, a syntax error) is reported even when the
+    # final check comes back clean: its output is the only place that cause
+    # appears, which is why both results are captured at all. Ordering is
+    # fix, fmt, result, so the report reads as it always did.
+    failed = [r for r in (fix, fmt, result) if r.returncode != 0]
+    if failed:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.
-        print((prefix + result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
+        report = "".join(r.stdout + r.stderr for r in failed)
+        print(report.rstrip(), file=sys.stderr, flush=True)
         sys.exit(2)
 
 

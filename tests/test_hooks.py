@@ -1927,6 +1927,31 @@ def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, ca
     assert out.out == "" and out.err == ""
 
 
+def test_ruff_hook_reports_a_failed_fix_when_the_check_passes(monkeypatch, tmp_path, capsys):
+    """`ruff check --fix` failing on its own — bad config, a syntax error — while
+    the final check comes back clean. The fix pass's output is the only place
+    that cause appears, so returning silently loses it entirely."""
+    mod = _load("ruff-hook")
+    target = tmp_path / "x.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ruff")
+    calls = []
+
+    def _run_ruff(cmd, *a, **k):
+        """Fail the --fix pass; pass the format and the final check."""
+        calls.append(cmd)
+        if len(calls) == 1:
+            return _Result(returncode=2, stderr="ruff: bad configuration\n")
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_ruff)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    assert exc.value.code == 2
+    assert "bad configuration" in capsys.readouterr().err
+
+
 def test_validate_rules_hook_keeps_a_completed_failure(monkeypatch, tmp_path, capsys):
     """The rule validator runs first and the anatomy checker second. A failure
     already collected from the first has to survive an error in the second —
