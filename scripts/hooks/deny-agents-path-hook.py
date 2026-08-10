@@ -210,22 +210,36 @@ def _stage_is_mutating(tokens: list[str]) -> bool:
     return False
 
 
+def _redirects_into_protected(c: str) -> bool:
+    """True if any redirection target lands under a protected-write root.
+
+    Checked separately from the verb scan because `> scripts/hooks/x.py` names
+    no command at all — the shell does the writing.
+    """
+    return any(_token_writes_protected(m.group(1), c) for m in _REDIR_RE.finditer(c))
+
+
+def _stage_writes_protected(tokens: list[str], c: str) -> bool:
+    """True if this one mutating stage writes a protected path.
+
+    The git arm runs first: an unscoped worktree rewrite reaches the protected
+    paths without ever naming them, so the operand scan below cannot see it.
+    """
+    if PurePosixPath(tokens[0]).name == "git" and _git_rewrites_worktree(tokens):
+        return True
+    return any(_token_writes_protected(a, c) for a in tokens[1:])
+
+
 def _writes_protected(command: str) -> bool:
     """True if the command writes to scripts/hooks/ or .claude/settings.json."""
     c = _canonicalize(command)
-    for match in _REDIR_RE.finditer(c):
-        if _token_writes_protected(match.group(1), c):
-            return True
+    if _redirects_into_protected(c):
+        return True
     stages = [t for t in shell_stages(c) if _stage_is_mutating(t)]
     if not stages:
         return False
-    for tokens in stages:
-        # An unscoped worktree rewrite reaches the protected paths without ever
-        # naming them, so no operand check below would catch it.
-        if PurePosixPath(tokens[0]).name == "git" and _git_rewrites_worktree(tokens):
-            return True
-        if any(_token_writes_protected(a, c) for a in tokens[1:]):
-            return True
+    if any(_stage_writes_protected(t, c) for t in stages):
+        return True
     # `cd scripts/hooks && sed -i s/a/b/ ruff-hook.py` — the operand carries no
     # directory, so the protected root appears only in the `cd` target.
     return any(_protected_path(base) for base in _cd_bases(c))
