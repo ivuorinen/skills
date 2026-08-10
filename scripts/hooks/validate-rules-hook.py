@@ -14,7 +14,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    HOOK_TIMEOUT,
+    event_path,
+    repo_root,
+)
 
 REPO_ROOT = repo_root()
 
@@ -39,7 +43,16 @@ def main() -> None:
         ["uv", "run", "--quiet", str(validator), str(path)],
         ["python3", str(anatomy), "."],
     ):
-        result = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=HOOK_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return  # uv/python3 absent or the validator hung — CI remains the gate
         if result.returncode != 0:
             failed = True
             output.append((result.stdout + result.stderr).rstrip())

@@ -16,7 +16,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import load_event, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    HOOK_TIMEOUT,
+    load_event,
+    repo_root,
+)
 
 REPO_ROOT = repo_root()
 
@@ -41,12 +45,16 @@ def main() -> None:
         ["git", "diff", "--name-only", "-z"],
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
     ):
-        result = subprocess.run(
-            cmd,
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=HOOK_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return  # git absent or hung — no reminder is better than a frozen stop
         if result.returncode != 0:
             return
         paths += [p for p in result.stdout.split("\0") if p and p not in paths]

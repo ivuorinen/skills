@@ -33,6 +33,15 @@ _CONTINUATION = re.compile(r"\\\n")
 _VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
 
 
+# Seconds, shared by every hook that shells out. An unbounded call is
+# unrecoverable from the user's side: a PostToolUse hook that blocks freezes the
+# session with no output and no signal, and `uv run` resolves an environment
+# from the network on a cold cache. Generous enough for that resolve, short
+# enough that a hung gate surfaces as a failure instead of a frozen session.
+# deny-unsafe-git-hook.py uses 10 for a bare `git rev-parse`.
+HOOK_TIMEOUT = 120
+
+
 def repo_root() -> Path:
     """Repo root: CLAUDE_PROJECT_DIR, else REPO_ROOT, else parents[2] of this dir.
 

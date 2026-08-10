@@ -9,7 +9,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    HOOK_TIMEOUT,
+    event_path,
+    repo_root,
+)
 
 REPO_ROOT = repo_root()
 
@@ -36,12 +40,16 @@ def main() -> None:
     if not validator.exists():
         return
 
-    result = subprocess.run(
-        ["uv", "run", "--quiet", str(validator), str(target)],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["uv", "run", "--quiet", str(validator), str(target)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=HOOK_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return  # uv absent or the validator hung — CI remains the gate
     if result.returncode != 0:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.
         print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)

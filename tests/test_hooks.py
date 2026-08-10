@@ -1534,7 +1534,9 @@ def test_revalidate_records_a_timed_out_gate_as_a_failure(monkeypatch, tmp_path,
         monkeypatch,
         tmp_path,
         status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
-        gate=lambda cmd: subprocess.TimeoutExpired(cmd, 120),
+        # Fixed command string: the hook builds its message from the gate argv it
+        # already holds, never from the exception, so nothing here reads .cmd.
+        gate=lambda _cmd: subprocess.TimeoutExpired("test-gate", 120),
     )
     with pytest.raises(SystemExit) as exc:
         mod.main()
@@ -1566,6 +1568,168 @@ def test_revalidate_returns_when_git_status_cannot_run(monkeypatch, tmp_path, ca
     assert _gate_calls(calls) == []
     out = capsys.readouterr()
     assert out.out == "" and out.err == ""
+
+
+# ── reliability-397b7fec: every hook subprocess call is bounded ───────────────
+
+
+def test_every_hook_subprocess_call_passes_a_timeout():
+    """An unbounded shell-out in a hook freezes the session with no output and no
+    recovery short of interrupting it. This is a source-level assertion rather
+    than a behavioural one so a NEW call site cannot land unbounded."""
+    import ast
+
+    unbounded = []
+    for path in sorted(HOOKS_DIR.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and getattr(node.func.value, "id", "") == "subprocess"
+                and not any(k.arg == "timeout" for k in node.keywords)
+            ):
+                unbounded.append(f"{path.name}:{node.lineno}")
+    assert unbounded == [], f"unbounded subprocess.run call sites: {unbounded}"
+
+
+@pytest.mark.parametrize(
+    "name,event",
+    [
+        ("validate-skill-hook", {"tool_input": {"file_path": "skills/x/SKILL.md"}}),
+        ("check-version-sync-hook", {"tool_input": {"file_path": "package.json"}}),
+        ("validate-rules-hook", {"tool_input": {"file_path": ".claude/rules/x.md"}}),
+    ],
+)
+def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsys, tmp_path):
+    """uv absent (FileNotFoundError) or the gate hung (TimeoutExpired): the hook
+    must return, not raise a traceback and not block the edit."""
+    mod = _load(name)
+
+    def _boom(*a, **k):
+        raise FileNotFoundError("uv")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    _run(mod, json.dumps(event), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_ruff_hook_is_silent_when_ruff_hangs(monkeypatch, tmp_path, capsys):
+    """ruff-hook fires on every .py edit and shells out three times, so it is the
+    likeliest place for an unbounded call to freeze a session."""
+    mod = _load("ruff-hook")
+    target = tmp_path / "x.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/ruff")
+
+    def _hang(*a, **k):
+        raise subprocess.TimeoutExpired(["ruff"], 120)
+
+    monkeypatch.setattr(mod.subprocess, "run", _hang)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_stop_reminder_is_silent_when_git_cannot_run(monkeypatch, tmp_path, capsys):
+    """A Stop hook that raises replaces the reminder with a traceback."""
+    mod = _load("stop-reminder")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+
+    def _boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    _run(mod, json.dumps({}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+# ── agent-loopholes-338dfd70: the protected-write half of the guard ──────────
+
+
+def _guard_blocks(command: str) -> bool:
+    """True if deny-agents-path-hook would block this Bash command."""
+    mod = _load("deny-agents-path-hook")
+    return mod._references_agents(command) or mod._writes_protected(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -i 's/PROTECTED/x/' scripts/hooks/deny-unsafe-git-hook.py",
+        "sed --in-place s/a/b/ scripts/hooks/ruff-hook.py",
+        "echo '{}' > .claude/settings.json",
+        "echo x >> scripts/hooks/ruff-hook.py",
+        "cp /tmp/evil.py scripts/hooks/ruff-hook.py",
+        "mv /tmp/evil.py scripts/hooks/_hooklib.py",
+        "rm scripts/hooks/deny-unsafe-git-hook.py",
+        "truncate -s 0 .claude/settings.json",
+        "cd scripts/hooks && sed -i s/a/b/ ruff-hook.py",
+        "git checkout -- scripts/hooks/ruff-hook.py",
+        "git restore .claude/settings.json",
+        "perl -i -pe s/a/b/ scripts/hooks/stop-reminder.py",
+        "tee scripts/hooks/ruff-hook.py < /tmp/evil.py",
+        "dd of=scripts/hooks/ruff-hook.py if=/tmp/evil.py",
+        "chmod 000 scripts/hooks/deny-agents-path-hook.py",
+        # `./` prefix is stripped before the prefix comparison.
+        "rm ./scripts/hooks/ruff-hook.py",
+    ],
+)
+def test_guard_blocks_a_write_to_the_enforcement_surface(command):
+    """permissions.deny covers Edit/Write on these paths but never Bash, so a
+    one-liner could disable every in-session guard unobserved."""
+    assert _guard_blocks(command), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Read is NOT denied for these paths — blocking reads would contradict
+        # the permission model and break ordinary work.
+        "cat scripts/hooks/ruff-hook.py",
+        "grep -rn timeout scripts/hooks/",
+        "head -20 .claude/settings.json",
+        "python3 -m pytest tests/test_hooks.py",
+        "ruff check scripts/hooks/ruff-hook.py",
+        "sed -n '1,5p' scripts/hooks/ruff-hook.py",
+        # Mutations that land somewhere else entirely.
+        "rm -rf /tmp/scratch",
+        "git commit -m 'fix: something'",
+        "cp README.md /tmp/README.md",
+        "echo hi > /tmp/out.txt",
+        "sed -i s/a/b/ README.md",
+        # A `cd` to an absolute directory outside the repo: relative_to raises,
+        # which must read as "not protected" rather than crashing the guard.
+        "cd /tmp && rm scratch.txt",
+        # `of=` with an empty tail — the split leaves nothing to resolve.
+        "dd of= if=/tmp/x",
+        # A glob that expands, but to nothing under a protected root.
+        "rm scripts/*.py",
+    ],
+)
+def test_guard_allows_reads_and_unrelated_writes(command):
+    assert not _guard_blocks(command), command
+
+
+def test_guard_blocks_a_glob_spelled_write(tmp_path):
+    """A metacharacter that obscures the literal path is expanded through the same
+    machinery the agents half uses, so it resolves rather than reading literally."""
+    assert _guard_blocks("rm scripts/ho*ks/ruff-hook.py")
+
+
+def test_guard_denial_message_names_the_surface(monkeypatch, capsys):
+    mod = _load("deny-agents-path-hook")
+    event = {"tool_input": {"command": "sed -i s/a/b/ scripts/hooks/ruff-hook.py"}}
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps(event), monkeypatch)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "enforcement surface" in err
+    assert "Reading" in err
 
 
 def test_revalidate_returns_when_not_a_git_tree(monkeypatch, tmp_path, capsys):

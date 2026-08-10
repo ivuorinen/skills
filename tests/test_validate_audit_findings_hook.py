@@ -59,6 +59,33 @@ def test_main_ignores_invalid_json(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize(
+    "rel,text",
+    [
+        ("docs/audit/findings/security/open/security-1a2b3c4d.md", "x"),
+        ("docs/audit/findings/resolved.jsonl", "{}\n"),
+        ("docs/audit/findings/INDEX.md", "x"),
+    ],
+)
+def test_main_is_silent_when_findings_py_cannot_run(rel, text, tmp_path, monkeypatch, capsys):
+    """python3/findings.py absent, or the call hung past its timeout: the hook
+    must return rather than raise a traceback or block the edit. Each of the
+    three shell-outs (per-file validate, store validate, index) is covered.
+    `make check` and CI remain the gate."""
+    path = _store_file(tmp_path, rel, text)
+    monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
+
+    def _boom(*a, **k):
+        raise FileNotFoundError("python3")
+
+    monkeypatch.setattr(hook.subprocess, "run", _boom)
+    event = json.dumps({"tool_input": {"file_path": str(path)}})
+    monkeypatch.setattr(sys, "stdin", io.StringIO(event))
+    hook.main()
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
 def test_main_reports_invalid_finding_from_real_payload(monkeypatch, tmp_path, capsys):
     """PostToolUse delivers the path nested under tool_input; failure must be exit 2 + stderr."""
     path = _store_file(

@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    HOOK_TIMEOUT,
+    event_path,
+    repo_root,
+)
 
 REPO_ROOT = repo_root()
 FINDINGS = REPO_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
@@ -54,9 +58,16 @@ def main() -> None:
     # findings.py is a shipped skill tool: stdlib-only, run with plain python
     py = [sys.executable, str(FINDINGS)]
     if is_finding:
-        result = subprocess.run(
-            [*py, "validate", str(path)], capture_output=True, text=True, cwd=REPO_ROOT
-        )
+        try:
+            result = subprocess.run(
+                [*py, "validate", str(path)],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                timeout=HOOK_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return  # findings.py unrunnable — `make check` remains the gate
         if result.returncode != 0:
             # PostToolUse surfaces only exit 2 + stderr back to the agent.
             print(
@@ -66,7 +77,16 @@ def main() -> None:
             sys.exit(2)
     elif is_ledger:
         # The resolved ledger has no per-line file, so validate the store as a whole.
-        result = subprocess.run([*py, "validate"], capture_output=True, text=True, cwd=REPO_ROOT)
+        try:
+            result = subprocess.run(
+                [*py, "validate"],
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                timeout=HOOK_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return  # findings.py unrunnable — `make check` remains the gate
         if result.returncode != 0:
             print("  audit-findings hook: resolved.jsonl failed store validation", file=sys.stderr)
             print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
@@ -76,12 +96,16 @@ def main() -> None:
     # (docs/audit/findings) and emit repo-relative paths, matching the canonical
     # `findings.py index` used by make check and CI. An absolute --root would
     # write absolute paths into INDEX.md and fail index-check.
-    index = subprocess.run(
-        [*py, "index"],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-    )
+    try:
+        index = subprocess.run(
+            [*py, "index"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=HOOK_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return  # findings.py unrunnable — `make check` remains the gate
     if index.returncode != 0:
         print("  audit-findings hook: INDEX.md regeneration failed", file=sys.stderr)
         print((index.stderr or index.stdout).rstrip(), file=sys.stderr, flush=True)

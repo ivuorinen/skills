@@ -2,11 +2,19 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""PreToolUse hook — block Bash commands that reach into .claude/agents/.
+"""PreToolUse hook — block Bash commands that reach the protected trees.
 
-The `permissions.deny` list in .claude/settings.json covers Read/Edit/Write on
-`./.claude/agents/**`, but not Bash — `head`, `sed -i`, or a redirection walks
-straight past it. This hook closes that surface for the Bash tool.
+The `permissions.deny` list in .claude/settings.json covers Read/Edit/Write but
+never Bash — `head`, `sed -i`, or a redirection walks straight past it. This
+hook closes that surface for the Bash tool, in two different shapes because the
+deny list itself has two shapes:
+
+- `.claude/agents/**` denies Read as well as Edit/Write, so ANY reference is
+  blocked (see `_references_agents`).
+- `scripts/hooks/**` and `.claude/settings.json` deny only Edit/Write/
+  NotebookEdit — Read stays allowed — so only a WRITE is blocked (see
+  `_writes_protected`). Denying `cat scripts/hooks/ruff-hook.py` would
+  contradict the permission model and break ordinary work.
 """
 
 import re
@@ -14,7 +22,12 @@ import sys
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import load_event, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    load_event,
+    repo_root,
+    shell_stages,
+    skip_git_global_opts,
+)
 
 _REPO_ROOT = repo_root()
 
@@ -56,6 +69,126 @@ DENIED = ".claude/agents"
 #    remains the binding control; this hook raises the cost, it does not close
 #    the surface. See CLAUDE.md's PreToolUse section.
 _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
+
+
+# ── protected-write paths ─────────────────────────────────────────────────────
+#
+# permissions.deny also covers Edit/Write/NotebookEdit on `scripts/hooks/**` and
+# `.claude/settings.json` — the enforcement surface itself — and Bash walks past
+# those exactly as it does for the agents tree. Unlike `.claude/agents`, Read is
+# NOT denied for them, so this half matches a MUTATION only.
+#
+# Ceiling, stated rather than implied: this matches redirection targets, a fixed
+# set of mutating verbs, in-place stream editors, and the `git` subcommands that
+# write the working tree. A write performed *inside* an interpreter
+# (`python -c "open(p, 'w')"`), by a script that takes the path as data, or
+# through a symlink is not matched. As with the agents half, CODEOWNERS plus
+# branch protection remains the binding control; this raises the cost of the
+# bypass, it does not close it.
+PROTECTED_WRITE = ("scripts/hooks", ".claude/settings.json")
+
+_REDIR_RE = re.compile(r">{1,2}\s*([^\s;&|<>()]+)")
+_WRITE_VERBS = frozenset(
+    {
+        "cp",
+        "mv",
+        "rm",
+        "rmdir",
+        "install",
+        "truncate",
+        "dd",
+        "tee",
+        "patch",
+        "chmod",
+        "chown",
+        "chgrp",
+        "ln",
+        "shred",
+        "touch",
+        "ed",
+        "ex",
+        "sponge",
+    }
+)
+# Only in-place invocations write; a bare `sed`/`perl` reads and prints.
+_STREAM_EDITORS = frozenset({"sed", "perl", "ruby"})
+_INPLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+_GIT_WRITE_SUBCMDS = frozenset(
+    {"checkout", "restore", "apply", "mv", "rm", "clean", "stash", "reset"}
+)
+
+
+def _under_protected(rel: str) -> bool:
+    """True if a repo-relative POSIX path sits at or under a protected-write root."""
+    rel = rel.strip()
+    while rel.startswith("./"):
+        rel = rel[2:]
+    return any(rel == root or rel.startswith(root + "/") for root in PROTECTED_WRITE)
+
+
+def _protected_path(path: Path) -> bool:
+    """True if a filesystem path resolves inside a protected-write root."""
+    try:
+        rel = path.resolve().relative_to(_REPO_ROOT.resolve()).as_posix()
+    except (OSError, ValueError):
+        return False
+    return _under_protected(rel)
+
+
+def _token_writes_protected(token: str, command: str) -> bool:
+    """True if `token`, read as a path, lands under a protected-write root.
+
+    `--file=path` and `dd of=path` carry the path after an `=`, so the tail is
+    taken. Glob tokens are expanded through the same machinery the agents half
+    uses, so `scripts/ho*ks/*.py` resolves rather than being read literally.
+    """
+    token = token.split("=", 1)[-1]
+    if not token:
+        return False
+    pure = PurePosixPath(token)
+    if pure.is_absolute():
+        try:
+            token = str(pure.relative_to(_REPO_ROOT))
+        except ValueError:
+            return False  # absolute but outside the repo — nothing to protect
+    if _under_protected(token):
+        return True
+    if _GLOB_META_RE.search(token):
+        for base in _cd_bases(command):
+            for hit in _shell_glob(base, token):
+                if _protected_path(hit):
+                    return True
+    return False
+
+
+def _stage_is_mutating(tokens: list[str]) -> bool:
+    """True if this pipeline stage's verb writes files."""
+    verb = PurePosixPath(tokens[0]).name
+    if verb in _WRITE_VERBS:
+        return True
+    if verb in _STREAM_EDITORS:
+        return any(_INPLACE_RE.match(a) for a in tokens[1:])
+    if verb == "git":
+        i = skip_git_global_opts(tokens, 1)
+        return i < len(tokens) and tokens[i] in _GIT_WRITE_SUBCMDS
+    return False
+
+
+def _writes_protected(command: str) -> bool:
+    """True if the command writes to scripts/hooks/ or .claude/settings.json."""
+    c = _canonicalize(command)
+    for match in _REDIR_RE.finditer(c):
+        if _token_writes_protected(match.group(1), c):
+            return True
+    stages = [t for t in shell_stages(c) if _stage_is_mutating(t)]
+    if not stages:
+        return False
+    for tokens in stages:
+        if any(_token_writes_protected(a, c) for a in tokens[1:]):
+            return True
+    # `cd scripts/hooks && sed -i s/a/b/ ruff-hook.py` — the operand carries no
+    # directory, so the protected root appears only in the `cd` target.
+    return any(_protected_path(base) for base in _cd_bases(c))
 
 
 def _canonicalize(command: str) -> str:
@@ -176,6 +309,16 @@ def main() -> None:
     if _references_agents(command):
         # PreToolUse: exit 2 blocks the call and surfaces stderr to the agent.
         print(f"  DENIED  Bash command references {DENIED}", file=sys.stderr, flush=True)
+        sys.exit(2)
+    if _writes_protected(command):
+        print(
+            "  DENIED  Bash command writes to the enforcement surface "
+            f"({', '.join(PROTECTED_WRITE)}).\n"
+            "          permissions.deny covers the edit tools, not Bash. Reading\n"
+            "          these paths is allowed; changing them is the owner's call.",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(2)
 
 
