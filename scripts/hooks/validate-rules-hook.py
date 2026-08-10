@@ -24,6 +24,12 @@ REPO_ROOT = repo_root()
 
 
 def main() -> None:
+    """Validate an edited rule file, and the anatomy of the whole rules tree.
+
+    Two checks rather than one: validate-rules.py judges the edited file,
+    while check-rules-anatomy.py judges the tree — catching a rule that is
+    well-formed on its own but stale against the paths it names.
+    """
     path = event_path()
     if path is None:
         return

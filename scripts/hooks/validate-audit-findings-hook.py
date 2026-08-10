@@ -26,10 +26,20 @@ FINDINGS = REPO_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
 
 
 def store_root(repo_root: Path) -> Path:
+    """The findings store directory for a repo root.
+
+    One definition, so this hook and findings.py cannot disagree about where
+    the store lives.
+    """
     return repo_root / "docs" / "audit" / "findings"
 
 
 def should_check(path: Path, repo_root: Path) -> bool:
+    """True if `path` is an open finding file this hook must validate.
+
+    INDEX.md and the resolved ledger are generated rather than hand-authored,
+    so they are excluded here and handled by their own branches in `main`.
+    """
     # `path` is resolved (symlinks followed) by the caller, so resolve the root
     # too — otherwise a symlinked checkout makes is_relative_to falsely fail.
     root = store_root(repo_root).resolve()
@@ -42,6 +52,12 @@ def should_check(path: Path, repo_root: Path) -> bool:
 
 
 def main() -> None:
+    """Validate an edited findings file and regenerate INDEX.md.
+
+    The index is regenerated on every store edit, not only on a finding edit,
+    so it cannot drift from the files it summarises. `make check` fails on a
+    stale INDEX.md, so drift found here is drift not found in CI.
+    """
     path = event_path()
     if path is None:
         return

@@ -192,6 +192,16 @@ def _writes_protected(command: str) -> bool:
 
 
 def _canonicalize(command: str) -> str:
+    """Fold the spellings a shell resolves identically into one comparable form.
+
+    Escaped separators, quotes, backslashes, repeated slashes and `.`
+    segments all reach the same path, so without this the textual pass misses
+    every obfuscated spelling of the same target.
+
+    Glob metacharacters are deliberately left intact: stripping the `?` in
+    `.?laude` collapses it to `.laude` and hides a match the glob-expansion
+    pass would otherwise catch.
+    """
     command = command.replace("\\/", "/")  # escaped separators: `.claude\/agents`
     command = re.sub(r"[\"'\\]", "", command)  # quotes/backslashes: `agent"s"`, `\agents`
     command = re.sub(r"/{2,}", "/", command)  # repeated slashes: `.claude//agents`
@@ -301,6 +311,13 @@ def _references_agents(command: str) -> bool:
 
 
 def main() -> None:
+    """Block a Bash command that reaches one of the protected trees.
+
+    Two denials rather than one, because permissions.deny protects the two
+    surfaces differently: any reference to `.claude/agents/`, but only a
+    write to `scripts/hooks/` or `.claude/settings.json`, where Read stays
+    allowed. Exit 2 is a PreToolUse deny and surfaces stderr to the agent.
+    """
     data = load_event()
     if data is None:
         return

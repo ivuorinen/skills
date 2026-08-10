@@ -122,6 +122,13 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
 
 
 def main() -> None:
+    """Block the git writes the rules declare unenforced.
+
+    Every git invocation in the command is judged, not just the first:
+    `echo hi && git push origin main` reaches a protected branch through its
+    second stage, and a guard reading only stage one would pass it. Exit 2 is
+    a PreToolUse deny.
+    """
     data = load_event()
     if data is None:
         return  # not a parseable event — nothing to judge

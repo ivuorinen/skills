@@ -19,6 +19,12 @@ REPO_ROOT = repo_root()
 
 
 def main() -> None:
+    """Validate a skill or command file after Write or Edit.
+
+    A command-file edit is validated through its parent SKILL.md: the checks
+    that matter most — table/file sync and dispatch format — are properties
+    of the pair, and are invisible when a command file is judged alone.
+    """
     path = event_path()
     if path is None:
         return

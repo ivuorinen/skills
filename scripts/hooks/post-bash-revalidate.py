@@ -68,6 +68,13 @@ GATES = (
 
 
 def main() -> None:
+    """Re-run the whole-tree gates when a Bash call dirtied a governed path.
+
+    A Bash event carries no `file_path`, so this asks git what is dirty
+    instead of reading the event — that is the whole reason the hook exists,
+    since the Write/Edit validators never see a `sed -i` or a redirection.
+    Returns silently on a clean tree; exits 2 with the failing gate's output.
+    """
     # --ignored so a Bash edit to a gitignored findings store still shows up:
     # plain --porcelain omits ignored paths, and the store supports being
     # gitignored, so without this those edits skipped the findings gates.

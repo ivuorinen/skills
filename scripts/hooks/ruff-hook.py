@@ -21,6 +21,13 @@ REPO_ROOT = repo_root()
 
 
 def main() -> None:
+    """Auto-fix and format an edited Python file, then report what remains.
+
+    Fix and format are captured and reported alongside the final check: a
+    fix or format pass that itself fails (bad config, a syntax error) would
+    otherwise leave the check reporting a lint failure whose real cause
+    appears nowhere in the output.
+    """
     path = event_path()
     if path is None:
         return

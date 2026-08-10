@@ -180,6 +180,12 @@ def _reject_reason(verb: str) -> str | None:
 
 
 def _deny(reason: str) -> None:
+    """Block the call and name both the reason and the way out.
+
+    The message states the alternative rather than only the refusal: a denial
+    that does not say what to run instead invites the same command back with
+    a different spelling.
+    """
     print(
         f"  DENIED  {reason}\n"
         "          '# ctx-ok' is for a state mutation or a tiny fixed-output command\n"
@@ -192,6 +198,13 @@ def _deny(reason: str) -> None:
 
 
 def main() -> None:
+    """Validate a claimed `# ctx-ok` escape hatch.
+
+    Only commands that claim the hatch are judged — an unmarked command is
+    the routing guard's business, not this one's. Every verb in the command
+    is checked, not just the first, so appending a mutation to a read does
+    not launder the read past the hatch.
+    """
     data = load_event()
     if data is None:
         return

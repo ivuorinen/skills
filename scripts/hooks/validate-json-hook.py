@@ -15,6 +15,13 @@ REPO_ROOT = repo_root()
 
 
 def main() -> None:
+    """Reject malformed JSON the moment it is written.
+
+    A broken manifest or settings file otherwise surfaces far from the edit
+    that caused it — as a plugin that fails to load, or a hook that silently
+    stops running. An unreadable file is not this hook's failure to report,
+    so `OSError` passes rather than blocking the edit.
+    """
     path = event_path()
     if path is None:
         return

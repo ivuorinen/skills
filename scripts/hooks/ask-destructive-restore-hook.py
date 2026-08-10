@@ -40,6 +40,13 @@ _CHDIR = frozenset({"cd", "pushd", "popd"})
 
 
 def _decide(decision: str, reason: str) -> None:
+    """Emit a PreToolUse permission decision on stdout and exit.
+
+    This hook asks rather than denies, so it speaks the structured
+    `hookSpecificOutput` protocol instead of the exit-2 channel its sibling
+    guards use. Exits 0: a non-zero exit here would be read as a hook failure
+    rather than as the decision it carries.
+    """
     json.dump(
         {
             "hookSpecificOutput": {
@@ -140,6 +147,15 @@ def _dirty(targets: list[str], unfiltered: bool) -> list[str]:
 
 
 def main() -> None:
+    """Ask before a git restore discards uncommitted work.
+
+    Stays silent when the target is clean, so ordinary reverts are not
+    interrupted — the prompt is reserved for the case where the discarded
+    content exists nowhere else: `git checkout --` overwrites the working
+    tree from the index, leaving no reflog entry and no stash to recover
+    from. The listed paths are truncated because the prompt has to stay
+    readable to be read at all.
+    """
     data = load_event()
     if data is None:
         return

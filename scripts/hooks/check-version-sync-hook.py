@@ -31,6 +31,13 @@ VERSION_FILES = {
 
 
 def main() -> None:
+    """Re-run the version-sync checker after an edit to a version manifest.
+
+    The five manifests drift silently — nothing else reads them together, so
+    a hand-edit to one ships a release whose plugin and package versions
+    disagree. Exits 2 with the mismatching lines, the only channel a
+    PostToolUse hook has back to the agent.
+    """
     path = event_path()
     if path is None:
         return

@@ -26,6 +26,14 @@ REPO_ROOT = repo_root()
 
 
 def main() -> None:
+    """Remind about uncommitted skill files before Claude hands back control.
+
+    Reads the index, the working tree and the untracked set: a brand-new
+    SKILL.md or command file appears in neither diff form, yet is the most
+    common pending change. Exit 2 blocks the stop, which is why the
+    `stop_hook_active` guard is needed to keep the reminder from firing again
+    on its own forced continuation.
+    """
     # A Stop hook that exits 2 blocks the stop and re-invokes Claude. Without
     # this guard the reminder fires again on the forced continuation's own stop,
     # looping forever. `stop_hook_active` is true on that second pass — surface

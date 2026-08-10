@@ -106,6 +106,13 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
     spans: list[str] = []
 
     def take(match: re.Match[str]) -> str:
+        """Record one quoted span and return its opaque placeholder.
+
+        The placeholder carries the span's index in `spans`, so `_unmask`
+        restores the exact original text rather than a re-quoted approximation.
+        The NUL delimiters keep it from colliding with anything a real shell
+        command can contain.
+        """
         spans.append(match.group(0))
         return f"\x00{len(spans) - 1}\x00"
 

@@ -17,6 +17,7 @@ spec.loader.exec_module(hook)  # type: ignore[union-attr]
 
 
 def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
+    """Create a file under a tmp repo, making parents as needed."""
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -24,11 +25,13 @@ def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
 
 
 def test_should_check_accepts_finding_file(tmp_path):
+    """An open finding file is the case the hook validates."""
     path = _store_file(tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md")
     assert hook.should_check(path, tmp_path)
 
 
 def test_should_check_rejects_index_and_outsiders(tmp_path):
+    """INDEX.md is generated, and neither an outsider nor a non-markdown file is a finding."""
     index = _store_file(tmp_path, "docs/audit/findings/INDEX.md")
     outside = _store_file(tmp_path, "docs/audit/arch-profile.md")
     non_md = _store_file(tmp_path, "docs/audit/findings/security/open/tool.py")
@@ -38,6 +41,7 @@ def test_should_check_rejects_index_and_outsiders(tmp_path):
 
 
 def test_should_check_rejects_missing_file(tmp_path):
+    """A deleted finding has nothing to validate."""
     missing = tmp_path / "docs/audit/findings/security/open/gone.md"
     assert not hook.should_check(missing, tmp_path)
 
@@ -45,6 +49,9 @@ def test_should_check_rejects_missing_file(tmp_path):
 def test_should_check_matches_under_symlinked_repo_root(tmp_path):
     # Regression (audit fix 2026-07-09): a symlinked checkout must not disable
     # the hook. The caller resolves the edited path, so the root must resolve too.
+    """The caller resolves the edited path, so the root must resolve too — otherwise a symlinked
+    checkout silently disables the hook.
+    """
     real = tmp_path / "real"
     real.mkdir()
     link = tmp_path / "link"
@@ -54,6 +61,7 @@ def test_should_check_matches_under_symlinked_repo_root(tmp_path):
 
 
 def test_main_ignores_invalid_json(monkeypatch, capsys):
+    """An unparseable event is not the hook's to report."""
     monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
     hook.main()
     assert capsys.readouterr().out == ""
@@ -76,6 +84,7 @@ def test_main_is_silent_when_findings_py_cannot_run(rel, text, tmp_path, monkeyp
     monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
 
     def _boom(*a, **k):
+        """Simulate python3 or findings.py absent from PATH."""
         raise FileNotFoundError("python3")
 
     monkeypatch.setattr(hook.subprocess, "run", _boom)
@@ -102,6 +111,7 @@ def test_main_reports_invalid_finding_from_real_payload(monkeypatch, tmp_path, c
 
 
 def test_main_accepts_legacy_toplevel_payload(monkeypatch, tmp_path, capsys):
+    """Older events carry file_path at the top level rather than under tool_input."""
     path = _store_file(
         tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md", "no frontmatter"
     )
@@ -116,12 +126,16 @@ def test_main_accepts_legacy_toplevel_payload(monkeypatch, tmp_path, capsys):
 
 @pytest.mark.parametrize("payload", [{}, {"file_path": ""}])
 def test_main_noop_without_path(monkeypatch, payload, capsys):
+    """No path in the event means nothing to validate."""
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     hook.main()
     assert capsys.readouterr().out == ""
 
 
 def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys):
+    """The index is regenerated on every store edit so it cannot drift from the files it
+    summarises.
+    """
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
     findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
     fspec.loader.exec_module(findings)  # type: ignore[union-attr]
@@ -149,6 +163,7 @@ def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
     # Regression (audit-307527a8): the hook must regenerate INDEX with the same
     # repo-relative paths as canonical `findings.py index` — never absolute paths,
     # which leak the checkout directory and fail make check / CI index-check.
+    """Absolute paths leak the checkout directory and fail make check's index-check."""
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
     findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
     fspec.loader.exec_module(findings)  # type: ignore[union-attr]
@@ -177,6 +192,7 @@ def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
 def test_main_handles_resolved_ledger_edit(monkeypatch, tmp_path, capsys):
     # A resolved.jsonl edit is store-validated and regenerates INDEX (the ledger
     # has no per-line file, so there is nothing to per-file validate).
+    """The ledger has no per-line file, so it is store-validated rather than per-file validated."""
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
     findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
     fspec.loader.exec_module(findings)  # type: ignore[union-attr]
