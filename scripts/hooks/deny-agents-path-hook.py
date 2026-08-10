@@ -117,6 +117,42 @@ _GIT_WRITE_SUBCMDS = frozenset(
     {"checkout", "restore", "apply", "mv", "rm", "clean", "stash", "reset"}
 )
 
+# Git subcommands that rewrite tracked files across the WHOLE worktree while
+# naming no path — so they reach scripts/hooks/ carrying no protected token for
+# `_token_writes_protected` to match. `git reset --hard` is the plain case.
+#
+# Deliberately narrow, because over-blocking git makes the guard something to
+# route around:
+#   * `reset` counts only with a mode flag that touches the worktree; plain
+#     `reset` and `--soft` move refs and leave files alone.
+#   * `checkout`/`restore` count only with a whole-tree pathspec. Switching
+#     branches also rewrites files, but that is ordinary work, and
+#     ask-destructive-restore-hook.py already prompts when it would discard
+#     uncommitted content.
+#   * `apply` counts always: the patch decides what it touches, so it is
+#     unscoped by construction.
+#   * `clean` is absent on purpose — it removes untracked files only, and every
+#     file under scripts/hooks/ is tracked.
+#   * `stash` is absent on purpose — it is recoverable by `stash pop`, unlike
+#     the others here.
+_RESET_WORKTREE_MODES = frozenset({"--hard", "--merge", "--keep"})
+_WHOLE_TREE = frozenset({".", "./", ":/", ":/.", "*"})
+
+
+def _git_rewrites_worktree(tokens: list[str]) -> bool:
+    """True if this git stage rewrites tracked files without naming a path."""
+    i = skip_git_global_opts(tokens, 1)
+    if i >= len(tokens):
+        return False
+    sub, args = tokens[i], tokens[i + 1 :]
+    if sub == "apply":
+        return True
+    if sub == "reset":
+        return any(a in _RESET_WORKTREE_MODES for a in args)
+    if sub in ("checkout", "restore"):
+        return any(a in _WHOLE_TREE for a in args)
+    return False
+
 
 def _under_protected(rel: str) -> bool:
     """True if a repo-relative POSIX path sits at or under a protected-write root."""
@@ -184,6 +220,10 @@ def _writes_protected(command: str) -> bool:
     if not stages:
         return False
     for tokens in stages:
+        # An unscoped worktree rewrite reaches the protected paths without ever
+        # naming them, so no operand check below would catch it.
+        if PurePosixPath(tokens[0]).name == "git" and _git_rewrites_worktree(tokens):
+            return True
         if any(_token_writes_protected(a, c) for a in tokens[1:]):
             return True
     # `cd scripts/hooks && sed -i s/a/b/ ruff-hook.py` — the operand carries no

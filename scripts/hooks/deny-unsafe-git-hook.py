@@ -38,6 +38,25 @@ _NO_VERIFY = frozenset({"--no-verify", "-n"})
 # only the flags would move the hazard to `git add .` instead of removing it.
 # `:/` is git's whole-repo pathspec magic — the same thing spelled differently.
 _ADD_ALL = frozenset({"-A", "--all", "--no-ignore-removal", ".", ":/"})
+
+
+def _norm_pathspec(arg: str) -> str:
+    """Fold the whole-tree pathspec spellings onto one comparable form.
+
+    `git add ./`, `git add .//` and `git add :/.` stage exactly what `git add .`
+    stages, so comparing raw tokens let three spellings through a check the
+    module docstring declares blocked. deny-agents-path-hook.py already strips a
+    leading `./` before comparing paths; this keeps the two guards agreeing on
+    identical input.
+    """
+    if arg.startswith(":/"):
+        return ":/" if not arg[2:].strip("./") else arg
+    s = arg
+    while s.startswith("./"):
+        s = s[2:]
+    return s.rstrip("/") or "."
+
+
 # Push modes that name no refspec and update protected branches regardless of HEAD.
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
@@ -113,7 +132,7 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
     if subcommand == "commit" and any(a in _NO_VERIFY for a in args):
         return _COMMIT_DENIAL
     if subcommand == "add":
-        staged_all = [a for a in args if a in _ADD_ALL]
+        staged_all = [a for a in args if _norm_pathspec(a) in _ADD_ALL]
         if staged_all:
             return _ADD_DENIAL.format(arg=staged_all[0])
     if subcommand == "push" and _push_targets_protected(args):

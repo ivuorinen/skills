@@ -59,7 +59,10 @@ def main() -> None:
                 timeout=HOOK_TIMEOUT,
             )
         except (OSError, subprocess.SubprocessError):
-            return  # uv/python3 absent or the validator hung — CI remains the gate
+            # Stop running validators, but fall through to the report below: a
+            # failure already collected from an earlier one is a real result,
+            # and returning here would discard it.
+            break
         if result.returncode != 0:
             failed = True
             output.append((result.stdout + result.stderr).rstrip())

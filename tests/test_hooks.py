@@ -1829,6 +1829,134 @@ def test_guard_denial_message_names_the_surface(monkeypatch, capsys):
     assert "Reading" in err
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git reset --hard",
+        "git reset --hard HEAD~1",
+        "git reset --merge",
+        "git checkout .",
+        "git checkout -- .",
+        "git restore .",
+        "git restore :/",
+        "git apply /tmp/x.patch",
+        "git -C . apply /tmp/x.patch",
+    ],
+)
+def test_guard_blocks_an_unscoped_worktree_rewrite(command):
+    """These rewrite tracked files under scripts/hooks/ while naming no path, so
+    no operand check sees a protected token and the guard would otherwise pass
+    them. `git reset --hard` is the plain case."""
+    assert _guard_blocks(command), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git reset --soft HEAD~1",
+        "git reset HEAD~1",
+        "git checkout -b feature/x",
+        "git checkout main",
+        "git restore --staged README.md",
+        "git stash",
+        "git clean -fd",
+    ],
+)
+def test_guard_allows_scoped_and_recoverable_git(command):
+    """Over-blocking git makes the guard something to route around. `--soft` and a
+    bare reset move refs only; branch switching is ordinary work already covered
+    by ask-destructive-restore-hook; clean touches untracked files only, and every
+    file under scripts/hooks/ is tracked; stash is recoverable by `stash pop`."""
+    assert not _guard_blocks(command), command
+
+
+def test_git_rewrites_worktree_ignores_a_bare_git():
+    """A `git` with no subcommand names nothing to rewrite."""
+    assert _load("deny-agents-path-hook")._git_rewrites_worktree(["git"]) is False
+
+
+@pytest.mark.parametrize("spelling", ["./", ".//", ":/.", ".", ":/", "././"])
+def test_git_guard_normalises_whole_tree_pathspecs(spelling):
+    """`git add ./` stages exactly what `git add .` stages, so comparing raw
+    tokens let three spellings through a check the docstring declares blocked."""
+    mod = _load("deny-unsafe-git-hook")
+    assert mod._norm_pathspec(spelling) in mod._ADD_ALL, spelling
+
+
+def test_ruff_hook_keeps_a_completed_failure_when_a_later_call_errors(
+    monkeypatch, tmp_path, capsys
+):
+    """A tool error must not erase a finding an earlier validator already
+    produced — that silently drops an enforcement result."""
+    mod = _load("ruff-hook")
+    target = tmp_path / "x.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ruff")
+    calls = []
+
+    def _run_ruff(cmd, *a, **k):
+        """Fail the first ruff call, then time out."""
+        calls.append(cmd)
+        if len(calls) == 1:
+            return _Result(returncode=2, stderr="ruff: bad configuration\n")
+        raise subprocess.TimeoutExpired(["ruff"], 120)
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_ruff)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    assert exc.value.code == 2
+    assert "bad configuration" in capsys.readouterr().err
+
+
+def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, capsys):
+    """With no completed failure to preserve, a tool error stays silent."""
+    mod = _load("ruff-hook")
+    target = tmp_path / "x.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ruff")
+
+    def _boom(*a, **k):
+        """Fail before any validator completes."""
+        raise FileNotFoundError("ruff")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_validate_rules_hook_keeps_a_completed_failure(monkeypatch, tmp_path, capsys):
+    """The rule validator runs first and the anatomy checker second. A failure
+    already collected from the first has to survive an error in the second —
+    the branch is reachable without this test, but nothing pinned the outcome."""
+    mod = _load("validate-rules-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-rules.py").write_text("", encoding="utf-8")
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
+    anatomy.mkdir(parents=True)
+    (anatomy / "check-rules-anatomy.py").write_text("", encoding="utf-8")
+    rule = tmp_path / ".claude" / "rules" / "x.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("# R\n", encoding="utf-8")
+    calls = []
+
+    def _run_validator(cmd, *a, **k):
+        """Fail the rule validator, then make the anatomy checker unrunnable."""
+        calls.append(cmd)
+        if len(calls) == 1:
+            return _Result(returncode=1, stdout="RULE VIOLATION: hedged language\n")
+        raise FileNotFoundError("python3")
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_validator)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps({"tool_input": {"file_path": str(rule)}}), monkeypatch)
+    assert exc.value.code == 2
+    assert "RULE VIOLATION" in capsys.readouterr().err
+
+
 def test_revalidate_returns_when_not_a_git_tree(monkeypatch, tmp_path, capsys):
     """A non-zero `git status` means there is nothing to scope against — the hook
     must return, not run every gate against an unknown tree."""
