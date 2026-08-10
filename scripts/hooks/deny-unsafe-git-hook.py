@@ -10,6 +10,10 @@
    enforces it).
 2. `git push` onto a protected branch
    (skills/nitpicker/commands/cr.md Step 6: never push directly to main/master).
+3. `git add -A` / `--all` / `.` — staging the whole tree is a recurring source
+   of commits carrying files the change never touched: scratch output, local
+   config, editor artifacts. Explicit pathspecs and `git add -u` (tracked files
+   only) stay allowed.
 
 Tokenising lives in _hooklib.git_calls, shared with the sibling guards.
 
@@ -29,6 +33,11 @@ from _hooklib import git_calls, load_event, repo_root  # type: ignore[import-not
 REPO_ROOT = repo_root()
 PROTECTED = frozenset({"main", "master"})
 _NO_VERIFY = frozenset({"--no-verify", "-n"})
+# Arguments that stage every change rather than a named path. `.` is included
+# deliberately: from the repo root it stages the same set `-A` does, so blocking
+# only the flags would move the hazard to `git add .` instead of removing it.
+# `:/` is git's whole-repo pathspec magic — the same thing spelled differently.
+_ADD_ALL = frozenset({"-A", "--all", "--no-ignore-removal", ".", ":/"})
 # Push modes that name no refspec and update protected branches regardless of HEAD.
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
@@ -41,6 +50,12 @@ _COMMIT_DENIAL = (
 _PUSH_DENIAL = (
     "  DENIED  push targets a protected branch (HEAD is '{branch}').\n"
     "          Open a PR from a feature branch instead — see cr.md Step 6."
+)
+_ADD_DENIAL = (
+    "  DENIED  `git add {arg}` stages the whole tree, including files this change\n"
+    "          never touched — scratch output, local config, editor artifacts.\n"
+    "          Stage what you actually changed: git add <path> [<path> ...]\n"
+    "          `git add -u` restages tracked files only, if that is what you meant."
 )
 
 
@@ -97,6 +112,10 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
     if subcommand == "commit" and any(a in _NO_VERIFY for a in args):
         return _COMMIT_DENIAL
+    if subcommand == "add":
+        staged_all = [a for a in args if a in _ADD_ALL]
+        if staged_all:
+            return _ADD_DENIAL.format(arg=staged_all[0])
     if subcommand == "push" and _push_targets_protected(args):
         return _PUSH_DENIAL.format(branch=_current_branch() or "unknown")
     return None

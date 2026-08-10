@@ -1986,6 +1986,52 @@ def test_git_guard_denies_no_verify(command, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "command",
     [
+        "git add -A",
+        "git add --all",
+        "git add .",
+        "git add :/",
+        "git add -A -- .",
+        "git -C . add -A",  # past a value-taking global option
+        "echo staged && git add --all",  # not the first stage
+        "FOO=1 git add .",  # env prefix before git
+    ],
+)
+def test_git_guard_denies_staging_the_whole_tree(command, monkeypatch, capsys):
+    """`git add -A` is a recurring source of commits carrying files the change
+    never touched — scratch output, local config, editor artifacts. Blocking the
+    flag alone would move the hazard to `git add .`, which stages the same set
+    from the repo root, so the whole stage-everything class is denied."""
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "stages the whole tree" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git add README.md",
+        "git add tests/test_hooks.py docs/audit/findings/INDEX.md",
+        "git add -u",  # tracked files only — stages no new file
+        "git add -p",  # interactive, per hunk
+        "git add --update docs/",
+        'git commit -m "git add -A is banned"',  # the token as message content
+        "grep -rn 'git add -A' docs/",  # the token as search content
+    ],
+)
+def test_git_guard_allows_targeted_staging(command, monkeypatch, capsys):
+    """The guard must not push the agent off `git add` entirely: explicit
+    pathspecs and `-u` are the intended replacements, and the token appearing as
+    quoted content is not an invocation."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         'git commit -m "ordinary"',
         "git commit --amend",
         "make check",
