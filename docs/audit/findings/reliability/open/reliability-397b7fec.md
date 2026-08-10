@@ -62,6 +62,29 @@ with `command -v` for exactly this reason.
 
 Line 60's `git status` shares both gaps.
 
+## Status — 2 of 11 call sites fixed
+
+`post-bash-revalidate.py` now carries `GATE_TIMEOUT = 120`, bounds both its
+`subprocess.run` calls, and preflights the gate binary with `shutil.which`, so
+an absent `uv` prints the same "gate skipped" line as an absent script instead
+of raising. Verified: `post-bash-revalidate.py` at 100% branch coverage,
+suite 971 → 976 passing.
+
+The other nine untimed call sites are unchanged and this finding stays open at
+medium for them:
+
+```text
+scripts/hooks/check-version-sync-hook.py:43
+scripts/hooks/ruff-hook.py:34,37,40
+scripts/hooks/stop-reminder.py:44
+scripts/hooks/validate-audit-findings-hook.py:57,69,79
+scripts/hooks/validate-rules-hook.py:42
+scripts/hooks/validate-skill-hook.py:39
+```
+
+`ruff-hook.py` is the sharpest of these: it fires on every `.py` Write/Edit and
+shells out three times in sequence, all unbounded.
+
 ## Not applied — blocked by design
 
 Left open deliberately. Every file the fix touches (`scripts/hooks/_hooklib.py`

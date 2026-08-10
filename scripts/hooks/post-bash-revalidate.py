@@ -15,6 +15,7 @@ cannot distinguish a fresh mutation from a pre-existing dirty file without
 per-file content hashing, so the hook prefers redundant work over missing an edit.
 """
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,14 @@ REPO_ROOT = repo_root()
 # that tree are blocked upstream by deny-agents-path-hook.py instead.
 GOVERNED = (
     "skills/",
+    # The enforcement surface itself. permissions.deny stops Edit/Write on
+    # scripts/hooks/ and .claude/settings.json but never reaches Bash, and no
+    # PreToolUse guard matches them either — deny-agents-path-hook.py covers
+    # .claude/agents/ only. Without these two entries a `sed -i` disabling a
+    # guard, or unregistering every hook at once, ran the gates zero times.
+    # "scripts/" also covers the validators the gates below invoke.
+    "scripts/",
+    ".claude/settings.json",
     ".claude/rules/",
     "docs/audit/findings/",
     "package.json",
@@ -42,6 +51,11 @@ GOVERNED = (
 )
 
 FINDINGS = "skills/nitpicker/scripts/findings.py"
+
+# Seconds. Generous enough for a cold `uv run` that resolves an environment,
+# short enough that a hung gate surfaces as a failure rather than a frozen
+# session. deny-unsafe-git-hook.py uses 10 for a bare `git rev-parse`.
+GATE_TIMEOUT = 120
 # (script it needs on disk, argv) — a missing script is skipped, not a traceback.
 GATES = (
     ("scripts/validate-skill.py", ["uv", "run", "--quiet", "scripts/validate-skill.py"]),
@@ -57,12 +71,18 @@ def main() -> None:
     # --ignored so a Bash edit to a gitignored findings store still shows up:
     # plain --porcelain omits ignored paths, and the store supports being
     # gitignored, so without this those edits skipped the findings gates.
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--ignored"],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--ignored"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # git absent, or a tree slow enough that status timed out. A PostToolUse
+        # hook that blocks has no user-visible recovery, so bound it and skip.
+        return
     if status.returncode != 0:
         return  # not a git tree — nothing to scope against
     if not any(marker in status.stdout for marker in GOVERNED):
@@ -75,7 +95,31 @@ def main() -> None:
             # silently skipped gate is indistinguishable from a passing one.
             print(f"  post-bash-revalidate: gate skipped, {script} not found", file=sys.stderr)
             continue
-        result = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        if shutil.which(cmd[0]) is None:
+            # Same reasoning as the missing-script arm above: that check covered
+            # the gate script but never the interpreter, so an absent `uv` raised
+            # an uncaught FileNotFoundError instead of this message.
+            print(
+                f"  post-bash-revalidate: gate skipped, {cmd[0]} not on PATH",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=GATE_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            # `uv run` resolves and downloads an environment on a cold cache; an
+            # unreachable index made that block forever with no output.
+            failures.append(f"{' '.join(cmd)} timed out after {GATE_TIMEOUT}s")
+            continue
+        except OSError as exc:
+            failures.append(f"{' '.join(cmd)} could not run: {exc}")
+            continue
         if result.returncode != 0:
             detail = (result.stdout + result.stderr).rstrip()
             # A gate that exits non-zero with no output would otherwise block the

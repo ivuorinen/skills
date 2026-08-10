@@ -12,6 +12,7 @@ import json
 import re
 import runpy
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1460,11 +1461,17 @@ class _Result:
         self.stderr = stderr
 
 
-def _revalidate(monkeypatch, tmp_path, *, status, gate=None, gates_on_disk=True):
+def _revalidate(monkeypatch, tmp_path, *, status, gate=None, gates_on_disk=True, missing_bins=()):
     """Load the hook against a tmp REPO_ROOT with subprocess.run faked.
 
     `status` is the _Result for `git status`; `gate` is called with each gate's
-    argv and returns that gate's _Result (default: success).
+    argv and returns that gate's _Result (default: success). Either may be an
+    exception instance instead, which the fake runner raises — that is how the
+    timeout and OSError arms are driven.
+
+    `missing_bins` names binaries `shutil.which` should report absent. The
+    default keeps every other test hermetic: without it the preflight would
+    depend on `uv` actually being installed on the machine running the suite.
     """
     mod = _load("post-bash-revalidate")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
@@ -1478,15 +1485,87 @@ def _revalidate(monkeypatch, tmp_path, *, status, gate=None, gates_on_disk=True)
     def _fake_run(cmd, *a, **k):
         calls.append(list(cmd))
         if cmd[:2] == ["git", "status"]:
+            if isinstance(status, BaseException):
+                raise status
             return status
-        return gate(cmd) if gate else _Result()
+        result = gate(cmd) if gate else _Result()
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        mod.shutil, "which", lambda name: None if name in missing_bins else f"/usr/bin/{name}"
+    )
     return mod, calls
 
 
 def _gate_calls(calls: list[list[str]]) -> list[list[str]]:
     return [c for c in calls if c[:2] != ["git", "status"]]
+
+
+def test_governed_covers_the_enforcement_surface(monkeypatch, tmp_path):
+    """permissions.deny stops Edit/Write on scripts/hooks/ and settings.json but
+    never reaches Bash, and no PreToolUse guard matches them. Without these
+    entries a `sed -i` disabling a guard ran the gates zero times."""
+    governed = _load("post-bash-revalidate").GOVERNED
+    assert "scripts/" in governed
+    assert ".claude/settings.json" in governed
+
+
+def test_revalidate_skips_a_gate_whose_binary_is_absent(monkeypatch, tmp_path, capsys):
+    """The existence check covered the gate script but never the interpreter, so
+    an absent `uv` raised an uncaught FileNotFoundError instead of a skip line."""
+    mod, calls = _revalidate(
+        monkeypatch,
+        tmp_path,
+        status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
+        missing_bins={"uv"},
+    )
+    mod.main()
+    assert [c for c in _gate_calls(calls) if c[0] == "uv"] == []
+    assert "gate skipped, uv not on PATH" in capsys.readouterr().err
+
+
+def test_revalidate_records_a_timed_out_gate_as_a_failure(monkeypatch, tmp_path, capsys):
+    """`uv run` resolves an environment on a cold cache; unbounded, an unreachable
+    index blocked the session forever with no output. Bounded, it must surface."""
+    mod, _ = _revalidate(
+        monkeypatch,
+        tmp_path,
+        status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
+        gate=lambda cmd: subprocess.TimeoutExpired(cmd, 120),
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert "timed out after" in capsys.readouterr().err
+
+
+def test_revalidate_records_a_gate_that_cannot_run_as_a_failure(monkeypatch, tmp_path, capsys):
+    """An OSError from exec (permissions, ENOEXEC) must name the gate, not raise."""
+    mod, _ = _revalidate(
+        monkeypatch,
+        tmp_path,
+        status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
+        gate=lambda cmd: OSError("exec format error"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert "could not run" in capsys.readouterr().err
+
+
+def test_revalidate_returns_when_git_status_cannot_run(monkeypatch, tmp_path, capsys):
+    """git absent or the status call timing out means nothing to scope against —
+    return rather than block or raise."""
+    mod, calls = _revalidate(
+        monkeypatch, tmp_path, status=subprocess.TimeoutExpired(["git", "status"], 120)
+    )
+    mod.main()
+    assert _gate_calls(calls) == []
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
 
 
 def test_revalidate_returns_when_not_a_git_tree(monkeypatch, tmp_path, capsys):

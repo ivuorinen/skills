@@ -71,11 +71,32 @@ open here.
 
 Every in-session control this repo documents — the no-verify guard, the protected-branch push guard, the ctx-ok guard, the destructive-restore confirmation, the agents-path guard, and all six PostToolUse validators — is disableable by one Bash command that no control observes. The paths are protected against the honest mistake (an Edit call) and open to the mechanism the repo already identified as the bypass. CI remains the binding gate, as `commit-gate-integrity.md` says, but the session-level surface is defeated silently and the operator gets no signal.
 
+## Status — change 1 applied, the bypass is still open
+
+Change 1 landed: `GOVERNED` now carries `"scripts/"` and
+`".claude/settings.json"`, so a Bash edit to those paths re-runs the gates
+instead of returning at the marker check.
+
+That is worth less than it first appears, and the finding stays **open at
+high**. `GATES` runs `validate-skill.py`, `validate-rules.py`,
+`check-version-sync.py`, `check-stdlib-only.py`, and `findings.py
+validate|index`. **Not one of them inspects `scripts/hooks/` content** —
+`check-stdlib-only.py` scans `skills/*/scripts/` only. So a `sed -i` that
+neuters a guard still lands, the six gates still run, and every one of them
+still passes. The tamper is now *accompanied* by a gate run rather than
+*detected* by one.
+
+Where change 1 does pay off is `scripts/` proper: editing `validate-skill.py`
+or `validate-rules.py` by Bash now re-runs that validator against the tree,
+which previously did not happen at all.
+
+Change 2 is the half that actually closes the bypass, and it is unwritten.
+
 ## Fix
 
 Two changes, both narrow:
 
-1. Add `"scripts/"` and `".claude/settings.json"` to `GOVERNED` in `scripts/hooks/post-bash-revalidate.py`. The list is matched as substrings against `git status --porcelain --ignored` output, so `"scripts/"` covers both `scripts/` and `scripts/hooks/` and the existing over-validation note already accepts false positives as fail-safe.
+1. ~~Add `"scripts/"` and `".claude/settings.json"` to `GOVERNED` in `scripts/hooks/post-bash-revalidate.py`.~~ **Done.** The list is matched as substrings against `git status --porcelain --ignored` output, so `"scripts/"` covers both `scripts/` and `scripts/hooks/` and the existing over-validation note already accepts false positives as fail-safe.
 2. Extend the PreToolUse deny guard to the enforcement surface: generalise `deny-agents-path-hook.py` from an agents-only matcher to a protected-paths matcher covering `.claude/agents/`, `scripts/hooks/`, and `.claude/settings.json`, keeping the existing literal/quoted/escaped/variable-built/glob token coverage and the fail-closed exit 2.
 
 Both files are under `permissions.deny` for Edit/Write, so these edits need the repo owner. Change 1 is prepared as an anchored patch at `docs/audit/apply-open-findings.py` (verified: anchors match once each, patched result parses). Change 2 is deliberately left unwritten — `deny-agents-path-hook.py`'s token coverage is intricate enough that a blind rewrite would ship an unverified guard. Cover the new denials with cases in `tests/test_hooks.py`, which already has the harness. Note that `.github/CODEOWNERS` plus branch protection stays the binding control either way — this raises the cost of the bypass, it does not close it.
