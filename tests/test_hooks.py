@@ -5,6 +5,7 @@ and the gating branches (empty stdin, non-dict payload, irrelevant paths) that
 must be silent no-ops. These hooks had no coverage before.
 """
 
+import ast
 import fnmatch
 import importlib.util
 import io
@@ -1672,36 +1673,52 @@ def test_revalidate_returns_when_git_status_cannot_run(monkeypatch, tmp_path, ca
 # ── reliability-397b7fec: every hook subprocess call is bounded ───────────────
 
 
+def _aliases(names: list[ast.alias], wanted: str) -> set[str]:
+    """The local names one import statement binds `wanted` to."""
+    return {a.asname or a.name for a in names if a.name == wanted}
+
+
+def _subprocess_run_spellings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """The names one module binds to `subprocess` and to `subprocess.run`.
+
+    Returned as (module aliases, function aliases). Resolving the spelling is
+    what stops a new call site from dodging the timeout guard below by changing
+    only its import line: `import subprocess as sp` and `from subprocess import
+    run` both read as a different name than the literal `subprocess.run`, and a
+    matcher keyed to that literal scanned them clean while they ran unbounded.
+    """
+    modules: set[str] = set()
+    funcs: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= _aliases(node.names, "subprocess")
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            funcs |= _aliases(node.names, "run")
+    return modules, funcs
+
+
+def _calls_subprocess_run(node: ast.Call, modules: set[str], funcs: set[str]) -> bool:
+    """Whether `node` calls subprocess.run under any spelling the module bound."""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr == "run" and getattr(func.value, "id", "") in modules
+    return isinstance(func, ast.Name) and func.id in funcs
+
+
 def test_every_hook_subprocess_call_passes_a_timeout():
     """An unbounded shell-out in a hook freezes the session with no output and no
     recovery short of interrupting it. This is a source-level assertion rather
     than a behavioural one so a NEW call site cannot land unbounded."""
-    import ast
-
     unbounded = []
     for path in sorted(HOOKS_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        # Resolve the local spelling first. Matching the literal `subprocess.run`
-        # alone let a new call site dodge this guard by changing only its import
-        # line — `import subprocess as sp` or `from subprocess import run` reads
-        # as a different name and scanned clean while running unbounded.
-        modules: set[str] = set()
-        funcs: set[str] = set()
+        modules, funcs = _subprocess_run_spellings(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules.update(a.asname or a.name for a in node.names if a.name == "subprocess")
-            elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
-                funcs.update(a.asname or a.name for a in node.names if a.name == "run")
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            is_run = (
-                isinstance(func, ast.Attribute)
-                and func.attr == "run"
-                and getattr(func.value, "id", "") in modules
-            ) or (isinstance(func, ast.Name) and func.id in funcs)
-            if is_run and not any(k.arg == "timeout" for k in node.keywords):
+            if (
+                isinstance(node, ast.Call)
+                and _calls_subprocess_run(node, modules, funcs)
+                and not any(k.arg == "timeout" for k in node.keywords)
+            ):
                 unbounded.append(f"{path.name}:{node.lineno}")
     assert unbounded == [], f"unbounded subprocess.run call sites: {unbounded}"
 
