@@ -51,6 +51,18 @@ nine new commands (`cache`, `contributing`, `dead-code`, `execute-plan`,
 a bundled stdio MCP server exposing ten `np_`-prefixed tools, and a reworked
 enforcement surface. Upgrading from 2.x requires no changes.
 
+**Contributors to this repository** — as distinct from consumers of the
+published skill — do see a behaviour change. The PreToolUse guards in
+`scripts/hooks/` now deny a Bash write to `scripts/hooks/` or
+`.claude/settings.json`, an unscoped worktree rewrite (`git reset --hard`,
+`git checkout .`, `git restore .`, `git apply`), and whole-tree staging
+(`git add -A`, `--all`, `.`, `:/`). Explicit pathspecs, `git add -u`, `git add
+-p`, `git stash` and `git clean` are unaffected. None of this reaches an
+installed consumer: `.claude-plugin/plugin.json` declares no `hooks` key, the
+repository ships no plugin `hooks/` directory, and the installed tree is
+`skills/nitpicker/` only — `scripts/hooks/` and `.claude/settings.json` are
+development configuration for this repo and are not part of the package.
+
 > **Correction (2026-07-19):** commit `955fac3` ("feat: add write-surgical-code
 > rule from Karpathy's LLM-coding guidelines", [#61]) touches only
 > `.claude/rules/write-surgical-code.md`, `.gitignore` and `CLAUDE.md` — no path
