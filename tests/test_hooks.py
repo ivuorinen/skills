@@ -1875,6 +1875,36 @@ def test_git_rewrites_worktree_ignores_a_bare_git():
     assert _load("deny-agents-path-hook")._git_rewrites_worktree(["git"]) is False
 
 
+def test_guard_blocks_an_absolute_path_under_a_symlinked_checkout(monkeypatch, tmp_path):
+    """An absolute token naming the REAL path under a symlinked root must still
+    be protected. Comparing against an unresolved _REPO_ROOT made relative_to
+    raise, which read as "not protected" — and the glob arm cannot recover it,
+    because a plain absolute path carries no metacharacter."""
+    real = tmp_path / "real"
+    (real / "scripts" / "hooks").mkdir(parents=True)
+    target = real / "scripts" / "hooks" / "ruff-hook.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+
+    mod = _load("deny-agents-path-hook")
+    monkeypatch.setattr(mod, "_REPO_ROOT", link)
+
+    via_link = link / "scripts" / "hooks" / "ruff-hook.py"
+    assert mod._writes_protected(f"sed -i s/a/b/ {via_link}")
+    assert mod._writes_protected(f"sed -i s/a/b/ {target}"), (
+        "the real underlying path bypassed the guard under a symlinked checkout"
+    )
+
+
+def test_guard_ignores_an_absolute_path_outside_the_repo(monkeypatch, tmp_path):
+    """Resolving both sides must not start capturing paths outside the root."""
+    mod = _load("deny-agents-path-hook")
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+    outside = tmp_path.parent / "elsewhere" / "scripts" / "hooks" / "x.py"
+    assert not mod._writes_protected(f"sed -i s/a/b/ {outside}")
+
+
 @pytest.mark.parametrize("spelling", ["./", ".//", ":/.", ".", ":/", "././"])
 def test_git_guard_normalises_whole_tree_pathspecs(spelling):
     """`git add ./` stages exactly what `git add .` stages, so comparing raw

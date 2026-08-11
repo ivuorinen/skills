@@ -183,9 +183,14 @@ def _token_writes_protected(token: str, command: str) -> bool:
         return False
     pure = PurePosixPath(token)
     if pure.is_absolute():
+        # Resolved on both sides, matching _protected_path. Comparing against an
+        # unresolved _REPO_ROOT made a symlinked checkout a bypass: an absolute
+        # token naming the real underlying path raised ValueError here and read
+        # as "not protected", and the glob arm below cannot recover it because a
+        # plain absolute path carries no metacharacter.
         try:
-            token = str(pure.relative_to(_REPO_ROOT))
-        except ValueError:
+            token = str(Path(token).resolve().relative_to(_REPO_ROOT.resolve()))
+        except (OSError, ValueError):
             return False  # absolute but outside the repo — nothing to protect
     if _under_protected(token):
         return True
