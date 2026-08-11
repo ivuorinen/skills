@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import repo_root  # type: ignore[import-not-found]
+from _hooklib import HOOK_TIMEOUT, repo_root  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 
@@ -52,10 +52,11 @@ GOVERNED = (
 
 FINDINGS = "skills/nitpicker/scripts/findings.py"
 
-# Seconds. Generous enough for a cold `uv run` that resolves an environment,
-# short enough that a hung gate surfaces as a failure rather than a frozen
-# session. deny-unsafe-git-hook.py uses 10 for a bare `git rev-parse`.
-GATE_TIMEOUT = 120
+# The same bound every other hook uses; HOOK_TIMEOUT in _hooklib.py carries the
+# rationale. Aliased rather than re-stated so a change to the shared constant
+# reaches the hook that shells out most, while the failure messages below still
+# read as a gate timeout.
+GATE_TIMEOUT = HOOK_TIMEOUT
 # (script it needs on disk, argv) — a missing script is skipped, not a traceback.
 GATES = (
     ("scripts/validate-skill.py", ["uv", "run", "--quiet", "scripts/validate-skill.py"]),
@@ -123,8 +124,17 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             # `uv run` resolves and downloads an environment on a cold cache; an
             # unreachable index made that block forever with no output.
-            failures.append(f"{' '.join(cmd)} timed out after {GATE_TIMEOUT}s")
-            continue
+            #
+            # Stop the run rather than continuing to the next gate. GATE_TIMEOUT
+            # bounds each gate on its own, so continuing let six hung gates hold
+            # this PostToolUse hook for 6 * GATE_TIMEOUT — twelve minutes of
+            # silence, the exact failure the per-gate bound exists to prevent.
+            # Whatever wedges one `uv run` wedges the rest, so the remaining
+            # gates buy no coverage and cost a full GATE_TIMEOUT each.
+            failures.append(
+                f"{' '.join(cmd)} timed out after {GATE_TIMEOUT}s; remaining gates skipped"
+            )
+            break
         except OSError as exc:
             failures.append(f"{' '.join(cmd)} could not run: {exc}")
             continue

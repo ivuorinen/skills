@@ -1623,6 +1623,26 @@ def test_revalidate_records_a_timed_out_gate_as_a_failure(monkeypatch, tmp_path,
     assert "timed out after" in capsys.readouterr().err
 
 
+def test_revalidate_stops_at_the_first_hung_gate(monkeypatch, tmp_path, capsys):
+    """GATE_TIMEOUT bounds each gate independently, so recording a timeout and
+    continuing let six hung gates hold this PostToolUse hook for 6 *
+    GATE_TIMEOUT. Whatever wedges one `uv run` wedges the rest, so one timeout
+    ends the run — and the message has to say so, or a truncated run reads as a
+    complete one."""
+    mod, calls = _revalidate(
+        monkeypatch,
+        tmp_path,
+        status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
+        gate=lambda _cmd: subprocess.TimeoutExpired("test-gate", 120),
+    )
+    assert len(mod.GATES) > 1, "a single gate cannot demonstrate the multiplication"
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    assert len(_gate_calls(calls)) == 1, "the run continued past a hung gate"
+    assert "remaining gates skipped" in capsys.readouterr().err
+
+
 def test_revalidate_records_a_gate_that_cannot_run_as_a_failure(monkeypatch, tmp_path, capsys):
     """An OSError from exec (permissions, ENOEXEC) must name the gate, not raise."""
     mod, _ = _revalidate(
@@ -1661,14 +1681,27 @@ def test_every_hook_subprocess_call_passes_a_timeout():
     unbounded = []
     for path in sorted(HOOKS_DIR.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        # Resolve the local spelling first. Matching the literal `subprocess.run`
+        # alone let a new call site dodge this guard by changing only its import
+        # line — `import subprocess as sp` or `from subprocess import run` reads
+        # as a different name and scanned clean while running unbounded.
+        modules: set[str] = set()
+        funcs: set[str] = set()
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run"
-                and getattr(node.func.value, "id", "") == "subprocess"
-                and not any(k.arg == "timeout" for k in node.keywords)
-            ):
+            if isinstance(node, ast.Import):
+                modules.update(a.asname or a.name for a in node.names if a.name == "subprocess")
+            elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+                funcs.update(a.asname or a.name for a in node.names if a.name == "run")
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            is_run = (
+                isinstance(func, ast.Attribute)
+                and func.attr == "run"
+                and getattr(func.value, "id", "") in modules
+            ) or (isinstance(func, ast.Name) and func.id in funcs)
+            if is_run and not any(k.arg == "timeout" for k in node.keywords):
                 unbounded.append(f"{path.name}:{node.lineno}")
     assert unbounded == [], f"unbounded subprocess.run call sites: {unbounded}"
 
@@ -1937,6 +1970,9 @@ def test_ruff_hook_keeps_a_completed_failure_when_a_later_call_errors(
         _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
     assert exc.value.code == 2
     assert "bad configuration" in capsys.readouterr().err
+    # Without this the test also passes when the hook stops at the first failing
+    # pass — the TimeoutExpired arm this test exists for would never be reached.
+    assert len(calls) == 2, "the second ruff call never ran; the timeout arm was not exercised"
 
 
 def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, capsys):
@@ -1947,13 +1983,19 @@ def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, ca
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ruff")
 
+    ran = []
+
     def _boom(*a, **k):
         """Fail before any validator completes."""
+        ran.append(1)
         raise FileNotFoundError("ruff")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
     _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
     out = capsys.readouterr()
+    # Silence alone does not prove the arm was reached: an early return before the
+    # hook ever shells out is just as quiet.
+    assert ran, "the hook returned before shelling out — the except arm was never reached"
     assert out.out == "" and out.err == ""
 
 
@@ -1980,6 +2022,9 @@ def test_ruff_hook_reports_a_failed_fix_when_the_check_passes(monkeypatch, tmp_p
         _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
     assert exc.value.code == 2
     assert "bad configuration" in capsys.readouterr().err
+    # The premise is that the passing format and check passes still ran after the
+    # failing --fix. Asserting only stderr also passes if the hook bailed at call 1.
+    assert len(calls) == 3, "the hook stopped at the failing --fix instead of continuing"
 
 
 def test_validate_rules_hook_keeps_a_completed_failure(monkeypatch, tmp_path, capsys):
@@ -2010,6 +2055,9 @@ def test_validate_rules_hook_keeps_a_completed_failure(monkeypatch, tmp_path, ca
         _run(mod, json.dumps({"tool_input": {"file_path": str(rule)}}), monkeypatch)
     assert exc.value.code == 2
     assert "RULE VIOLATION" in capsys.readouterr().err
+    # Without this the test also passes when the hook stops at the failing rule
+    # validator — the anatomy checker's FileNotFoundError arm is the point here.
+    assert len(calls) == 2, "the anatomy checker never ran; its error arm was not exercised"
 
 
 def test_revalidate_returns_when_not_a_git_tree(monkeypatch, tmp_path, capsys):
