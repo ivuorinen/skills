@@ -10,6 +10,10 @@
    enforces it).
 2. `git push` onto a protected branch
    (skills/nitpicker/commands/cr.md Step 6: never push directly to main/master).
+3. `git add -A` / `--all` / `.` — staging the whole tree is a recurring source
+   of commits carrying files the change never touched: scratch output, local
+   config, editor artifacts. Explicit pathspecs and `git add -u` (tracked files
+   only) stay allowed.
 
 Tokenising lives in _hooklib.git_calls, shared with the sibling guards.
 
@@ -29,6 +33,30 @@ from _hooklib import git_calls, load_event, repo_root  # type: ignore[import-not
 REPO_ROOT = repo_root()
 PROTECTED = frozenset({"main", "master"})
 _NO_VERIFY = frozenset({"--no-verify", "-n"})
+# Arguments that stage every change rather than a named path. `.` is included
+# deliberately: from the repo root it stages the same set `-A` does, so blocking
+# only the flags would move the hazard to `git add .` instead of removing it.
+# `:/` is git's whole-repo pathspec magic — the same thing spelled differently.
+_ADD_ALL = frozenset({"-A", "--all", "--no-ignore-removal", ".", ":/"})
+
+
+def _norm_pathspec(arg: str) -> str:
+    """Fold the whole-tree pathspec spellings onto one comparable form.
+
+    `git add ./`, `git add .//` and `git add :/.` stage exactly what `git add .`
+    stages, so comparing raw tokens let three spellings through a check the
+    module docstring declares blocked. deny-agents-path-hook.py already strips a
+    leading `./` before comparing paths; this keeps the two guards agreeing on
+    identical input.
+    """
+    if arg.startswith(":/"):
+        return ":/" if not arg[2:].strip("./") else arg
+    s = arg
+    while s.startswith("./"):
+        s = s[2:]
+    return s.rstrip("/") or "."
+
+
 # Push modes that name no refspec and update protected branches regardless of HEAD.
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
@@ -41,6 +69,12 @@ _COMMIT_DENIAL = (
 _PUSH_DENIAL = (
     "  DENIED  push targets a protected branch (HEAD is '{branch}').\n"
     "          Open a PR from a feature branch instead — see cr.md Step 6."
+)
+_ADD_DENIAL = (
+    "  DENIED  `git add {arg}` stages the whole tree, including files this change\n"
+    "          never touched — scratch output, local config, editor artifacts.\n"
+    "          Stage what you actually changed: git add <path> [<path> ...]\n"
+    "          `git add -u` restages tracked files only, if that is what you meant."
 )
 
 
@@ -97,12 +131,23 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
     if subcommand == "commit" and any(a in _NO_VERIFY for a in args):
         return _COMMIT_DENIAL
+    if subcommand == "add":
+        staged_all = [a for a in args if _norm_pathspec(a) in _ADD_ALL]
+        if staged_all:
+            return _ADD_DENIAL.format(arg=staged_all[0])
     if subcommand == "push" and _push_targets_protected(args):
         return _PUSH_DENIAL.format(branch=_current_branch() or "unknown")
     return None
 
 
 def main() -> None:
+    """Block the git writes the rules declare unenforced.
+
+    Every git invocation in the command is judged, not just the first:
+    `echo hi && git push origin main` reaches a protected branch through its
+    second stage, and a guard reading only stage one would pass it. Exit 2 is
+    a PreToolUse deny.
+    """
     data = load_event()
     if data is None:
         return  # not a parseable event — nothing to judge

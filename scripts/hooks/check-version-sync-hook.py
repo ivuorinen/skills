@@ -13,7 +13,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import event_path, repo_root  # type: ignore[import-not-found]
+from _hooklib import (  # type: ignore[import-not-found]
+    HOOK_TIMEOUT,
+    event_path,
+    repo_root,
+)
 
 REPO_ROOT = repo_root()
 
@@ -27,6 +31,13 @@ VERSION_FILES = {
 
 
 def main() -> None:
+    """Re-run the version-sync checker after an edit to a version manifest.
+
+    The five manifests drift silently — nothing else reads them together, so
+    a hand-edit to one ships a release whose plugin and package versions
+    disagree. Exits 2 with the mismatching lines, the only channel a
+    PostToolUse hook has back to the agent.
+    """
     path = event_path()
     if path is None:
         return
@@ -40,12 +51,16 @@ def main() -> None:
     if not checker.exists():
         return
 
-    result = subprocess.run(
-        ["uv", "run", "--quiet", str(checker)],
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["uv", "run", "--quiet", str(checker)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=HOOK_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return  # uv absent or the checker hung — CI remains the gate
     problems = [
         line for line in result.stdout.splitlines() if "MISMATCH" in line or "ERROR" in line
     ]
