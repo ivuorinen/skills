@@ -56,6 +56,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          # The same expression the release step uses. checkout persists
+          # `github.token` when `token` is omitted, so the push below would go
+          # out as GITHUB_TOKEN even on a repo that has the PAT configured — and
+          # a GITHUB_TOKEN push does not start the release PR's Validate run.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Credentials are persisted deliberately: this job's whole purpose is
           # to push one commit back to the release branch.
           persist-credentials: true

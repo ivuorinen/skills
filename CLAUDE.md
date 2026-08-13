@@ -83,7 +83,11 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 
 Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
 
-`uv.lock` carries a sixth copy in its root `[[package]]` entry, and neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped with the lockfile still declaring 2.0.0. It is gated separately by `make lock-check` (`uv lock --check`, uv's own staleness test, which also catches dependency drift). `bump-version.py` re-locks after writing the manifests; on CI the `sync-lockfile` job in `release-please.yml` commits the regenerated lockfile onto the release PR, because release-please has no updater for it.
+`uv.lock` carries a sixth copy in its root `[[package]]` entry. Neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped with the lockfile still declaring 2.0.0. `make lock-check` gates it with `uv lock --check`, uv's own staleness test, which also catches dependency drift.
+
+Both bump paths keep it current. `bump-version.py` re-locks after writing the manifests. On CI, the `sync-lockfile` job in `release-please.yml` commits the regenerated lockfile onto the release PR, because release-please has no updater for it.
+
+Re-locking is best-effort, never guaranteed. When `uv` is absent, times out, or fails, `bump-version.py` reports it and continues rather than aborting a bump whose manifests are already written, and names the recovery in its output. Run `uv lock` yourself when that happens — never hand-edit the version in the lockfile.
 
 ## Versioning
 

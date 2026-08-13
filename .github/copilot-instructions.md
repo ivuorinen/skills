@@ -117,8 +117,12 @@ for manual bumps — never edit version fields by hand in individual files.
 
 `uv.lock` holds a sixth copy in its root `[[package]]` entry that neither
 `check-version-sync.py` nor release-please updates. `make lock-check`
-(`uv lock --check`) gates it; `bump-version.py` re-locks automatically. If it
-ever drifts, run `uv lock` — never hand-edit the version in the lockfile.
+(`uv lock --check`) gates it.
+
+`bump-version.py` re-locks on a best-effort basis. When `uv` is absent, times
+out, or fails, it reports that and continues rather than aborting a bump whose
+manifests are already written. Run `uv lock` yourself when that happens — never
+hand-edit the version in the lockfile.
 
 ## Commit Message Convention (Controls Release Automation)
 
