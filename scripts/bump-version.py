@@ -9,10 +9,16 @@ Usage: ./scripts/bump-version.py [major|minor|patch]
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
+
+# Seconds. `uv lock` resolves from the network on a cold cache; bounded so a
+# hung resolve fails the bump rather than hanging it with no output.
+LOCK_TIMEOUT = 120
 
 FILES = [
     ("package.json", lambda o, v: o.__setitem__("version", v)),
@@ -70,6 +76,47 @@ def update_toml(rel_path: str, version: str) -> str:
     return "".join(result)
 
 
+def relock() -> bool:
+    """Rewrite uv.lock's copy of the project version. True if it is now in sync.
+
+    uv.lock records the root package's version in its own `[[package]]` entry,
+    and release-please has no updater for it — 3.0.0 shipped with the lockfile
+    still declaring 2.0.0. `make lock-check` now fails on that drift, so a bump
+    that skipped this step would leave the tree failing its own gate.
+
+    Returns False (never raises) when uv is absent or the lock cannot be
+    regenerated: the manifests are already written by then, so aborting would
+    leave the bump half-applied. The caller reports it as a manual follow-up.
+    """
+    if (uv := shutil.which("uv")) is None:
+        print("  SKIPPED uv.lock: uv not on PATH")
+        return False
+    if not (REPO_ROOT / "uv.lock").exists():
+        print("  SKIPPED uv.lock: no lockfile in this tree")
+        return False
+    try:
+        # argv is a literal plus a resolved absolute path, never user input.
+        result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
+            [uv, "lock"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=LOCK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"  ERROR   uv.lock: `uv lock` timed out after {LOCK_TIMEOUT}s")
+        return False
+    except OSError as exc:
+        print(f"  ERROR   uv.lock: `uv lock` could not run: {exc}")
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr + result.stdout).strip().splitlines()
+        print(f"  ERROR   uv.lock: `uv lock` failed — {detail[-1] if detail else 'no output'}")
+        return False
+    print("  updated uv.lock")
+    return True
+
+
 def main() -> int:
     part = sys.argv[1] if len(sys.argv) > 1 else "patch"
     if part not in {"major", "minor", "patch"}:
@@ -92,8 +139,14 @@ def main() -> int:
         (REPO_ROOT / rel_path).write_text(content, encoding="utf-8")
         print(f"  updated {rel_path}")
 
+    # After pyproject is on disk, so `uv lock` reads the new version.
+    locked = relock()
+
     print()
     print("Next steps:")
+    if not locked:
+        print("  0. Run `uv lock` — uv.lock still names the old version, and")
+        print("     `make lock-check` fails until it does not")
     print(f"  1. Add an entry to CHANGELOG.md for v{new_version}")
     print(f"  2. git add -A && git commit -m 'chore: release v{new_version}'")
     print(f"  3. git tag v{new_version}")

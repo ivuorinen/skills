@@ -83,6 +83,8 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 
 Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
 
+`uv.lock` carries a sixth copy in its root `[[package]]` entry, and neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped with the lockfile still declaring 2.0.0. It is gated separately by `make lock-check` (`uv lock --check`, uv's own staleness test, which also catches dependency drift). `bump-version.py` re-locks after writing the manifests; on CI the `sync-lockfile` job in `release-please.yml` commits the regenerated lockfile onto the release PR, because release-please has no updater for it.
+
 ## Versioning
 
 [Semantic Versioning](https://semver.org/) with [release-please](https://github.com/googleapis/release-please):

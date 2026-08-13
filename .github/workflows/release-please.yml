@@ -20,8 +20,13 @@ jobs:
     permissions:
       contents: write # create release commits, tags, and GitHub releases
       pull-requests: write # open and update the release PR
+    outputs:
+      # Consumed by sync-lockfile below to find the release PR's branch.
+      pr: ${{ steps.release.outputs.pr }}
+      prs_created: ${{ steps.release.outputs.prs_created }}
     steps:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
         with:
           # Prefer a PAT/App token so the release PR triggers CI (GITHUB_TOKEN
           # cannot — GitHub's recursion guard). Falls back to GITHUB_TOKEN when
@@ -29,3 +34,49 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  sync-lockfile:
+    name: Sync uv.lock on the release PR
+    # release-please rewrites the five manifests listed in .release-please-config.json
+    # but has no updater for uv.lock, which keeps its own copy of the project
+    # version in the root `[[package]]` entry. 3.0.0 shipped with the lockfile
+    # still declaring 2.0.0. Teaching release-please directly is not an option:
+    # the root package sits at a sorted index that moves whenever a dependency
+    # is added, and a `generic` annotation comment is stripped the next time
+    # `uv lock` regenerates the file. So regenerate it here instead.
+    #
+    # `make lock-check` fails on that drift, so without this job every release
+    # PR would arrive red.
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit the regenerated lockfile onto the release PR branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          # Credentials are persisted deliberately: this job's whole purpose is
+          # to push one commit back to the release branch.
+          persist-credentials: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Regenerate uv.lock for the bumped version
+        run: uv lock
+
+      - name: Commit the lockfile if it moved
+        # No-op on the common path: uv.lock changes only when the version did.
+        # `chore:` because the commit-lint gate rejects a non-conventional
+        # subject, and because a lockfile touches no published surface.
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already matches the bumped version — nothing to push"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add uv.lock
+          git commit -m 'chore: sync uv.lock to the release version'
+          git push
