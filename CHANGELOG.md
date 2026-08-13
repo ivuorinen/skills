@@ -35,6 +35,59 @@ each new release directly beneath the header above, and these notes stay here.
 > itself is the maintainer's decision, made in the open, and the CI guard
 > prevents a repeat.
 
+## [3.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v2.0.0...ivuorinen-skills-v3.0.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** update astral-sh/setup-uv action (v8.3.2 → v9.0.0) ([#79](https://github.com/ivuorinen/skills/issues/79))
+* **deps:** update pre-commit hook pre-commit/pre-commit-hooks (3e8a8703264a2f4a69428a0aa4dcb512790b2c8c → v6.0.0) ([#71](https://github.com/ivuorinen/skills/issues/71))
+
+### Features
+
+* add /nitpicker cache command ([#77](https://github.com/ivuorinen/skills/issues/77)) ([8d0c237](https://github.com/ivuorinen/skills/commit/8d0c23702070533d3b7f02823058116455bec77a))
+* add /nitpicker contributing command ([#57](https://github.com/ivuorinen/skills/issues/57)) ([4ec92d5](https://github.com/ivuorinen/skills/commit/4ec92d51b11f573ec26503817c0efe26b5581784))
+* add /nitpicker dead-code command ([#76](https://github.com/ivuorinen/skills/issues/76)) ([a392ec6](https://github.com/ivuorinen/skills/commit/a392ec66ccfac4207f2a1cf94f6747d2d8fb96a7))
+* add /nitpicker execute-plan command ([#65](https://github.com/ivuorinen/skills/issues/65)) ([1d718c9](https://github.com/ivuorinen/skills/commit/1d718c927e9e7fd54b188d6e64d30dc8fdeaf932))
+* add /nitpicker reliability command ([#75](https://github.com/ivuorinen/skills/issues/75)) ([8553e0c](https://github.com/ivuorinen/skills/commit/8553e0c5dd01103135c4ff1bd32ea347f04febd7))
+* add /nitpicker reverify command ([#81](https://github.com/ivuorinen/skills/issues/81)) ([6fafcfe](https://github.com/ivuorinen/skills/commit/6fafcfe51bfc5cf67cee70a18e0f312f521e7eb8))
+* add /nitpicker teach command ([#62](https://github.com/ivuorinen/skills/issues/62)) ([0aa2eb3](https://github.com/ivuorinen/skills/commit/0aa2eb34ae6d5d08837cf588676f6a829e40d326))
+* add /nitpicker triage command ([#80](https://github.com/ivuorinen/skills/issues/80)) ([594705d](https://github.com/ivuorinen/skills/commit/594705d97593e65c7868bc599753fce51caee2e8))
+* add CodeRabbit review loop to /nitpicker cr ([#83](https://github.com/ivuorinen/skills/issues/83)) ([30632d9](https://github.com/ivuorinen/skills/commit/30632d9f68e5923891a93e9b454a4cf542780a56))
+* add nitpicker MCP server (skill introspection + findings tools) ([#64](https://github.com/ivuorinen/skills/issues/64)) ([444a84c](https://github.com/ivuorinen/skills/commit/444a84cdac0ee50b0b666239e7fa773f6e5510ff))
+* add write-surgical-code rule from Karpathy's LLM-coding guidelines ([#61](https://github.com/ivuorinen/skills/issues/61)) ([955fac3](https://github.com/ivuorinen/skills/commit/955fac3fc89cbbdc2a88aee245b954c26b584a3e))
+* cr surfaces review bodies + bot summaries and adds an autopilot option ([#88](https://github.com/ivuorinen/skills/issues/88)) ([1022c28](https://github.com/ivuorinen/skills/commit/1022c28d27ba761ba36989440cb83a3df3e8eee4))
+* fold datetime, money, and changelog lenses into existing commands ([#78](https://github.com/ivuorinen/skills/issues/78)) ([20851c6](https://github.com/ivuorinen/skills/commit/20851c6d3b41dcaa1ba6125854f08fe225523cde))
+* fold supply-chain execution surface into deps ([#82](https://github.com/ivuorinen/skills/issues/82)) ([53611f6](https://github.com/ivuorinen/skills/commit/53611f61f2522d49412df18cded83fb8c818043a))
+* graphify integration, vendored-skill validator support, and tool hardening ([#63](https://github.com/ivuorinen/skills/issues/63)) ([a7aa066](https://github.com/ivuorinen/skills/commit/a7aa066a0f4e715f82cfa517b8293da0ceb8df54))
+* harden the audit toolkit and add a bandit security gate ([#90](https://github.com/ivuorinen/skills/issues/90)) ([07513cc](https://github.com/ivuorinen/skills/commit/07513cc090ea5dd15519cfb4826e5ffd9eb74e62))
+* harden the enforcement surface and the findings store ([#66](https://github.com/ivuorinen/skills/issues/66)) ([2dce882](https://github.com/ivuorinen/skills/commit/2dce882c9904f2543fd681ae132407d6bdad4b41))
+* publish MCP tool annotations and negotiate the protocol version ([#89](https://github.com/ivuorinen/skills/issues/89)) ([d80acde](https://github.com/ivuorinen/skills/commit/d80acde4594ab635cfbe879844d71ad688ffbc6d))
+
+
+### Bug Fixes
+
+* **ci:** let Renovate update the SHA-pinned pre-commit revs ([#98](https://github.com/ivuorinen/skills/issues/98)) ([d3b4912](https://github.com/ivuorinen/skills/commit/d3b4912f45ae9291512f8f8e9db72688664e9c97))
+* **ci:** make the pre-commit custom manager actually match its file ([#100](https://github.com/ivuorinen/skills/issues/100)) ([1781baf](https://github.com/ivuorinen/skills/commit/1781baf5200319b96874d1220fa9bf2fe38c3f14))
+* close deny-agents glob bypass, add hooks/settings edit guard, harden sarif/findings/validate-rules edge cases ([#87](https://github.com/ivuorinen/skills/issues/87)) ([157d8b2](https://github.com/ivuorinen/skills/commit/157d8b27df6817d59ce002213672cc3d93362209))
+* close the globstar bypass in the agents-path guard ([#96](https://github.com/ivuorinen/skills/issues/96)) ([16e38ef](https://github.com/ivuorinen/skills/commit/16e38ef2e1db1c718a5f247d6774562417d80d12))
+* **deps:** update dependency ruff (0.15.21 → 0.15.22) ([#73](https://github.com/ivuorinen/skills/issues/73)) ([1309b54](https://github.com/ivuorinen/skills/commit/1309b540f7b57d2395becf5772571723cc6239dd))
+* **deps:** update dependency ruff (0.15.22 → 0.16.0) ([#85](https://github.com/ivuorinen/skills/issues/85)) ([8962495](https://github.com/ivuorinen/skills/commit/8962495319d563836a075cea5024fa90c1e17968))
+* **deps:** update dependency ruff (0.16.0 → 0.16.1) ([#94](https://github.com/ivuorinen/skills/issues/94)) ([9b917a2](https://github.com/ivuorinen/skills/commit/9b917a22fc96ee64560523eb0f6a60d230fcb8dc))
+* **deps:** update ruff ([#109](https://github.com/ivuorinen/skills/issues/109)) ([c4ef015](https://github.com/ivuorinen/skills/commit/c4ef015026d775953785c50d1882fb9ac0f9eb6c))
+* harden audit toolkit — findings-store, shipped tools, and enforcement hooks ([#86](https://github.com/ivuorinen/skills/issues/86)) ([90a1cbf](https://github.com/ivuorinen/skills/commit/90a1cbfdf141f5371e79cec13c1c9dd53c98d4f9))
+* harden shipped audit tools and enforcement surface (nitpicker audit) ([#72](https://github.com/ivuorinen/skills/issues/72)) ([6a6499d](https://github.com/ivuorinen/skills/commit/6a6499dc6f67d033af6aa2b92c6ee6b753659771))
+* make MCP tools the default and shell the last resort in the conventions ([#68](https://github.com/ivuorinen/skills/issues/68)) ([513f52f](https://github.com/ivuorinen/skills/commit/513f52f369a4b52c6534d5c234bd9c6d561e41fa))
+* prepare the 3.0.0 release and close the enforcement-surface bypass ([#111](https://github.com/ivuorinen/skills/issues/111)) ([8b2a651](https://github.com/ivuorinen/skills/commit/8b2a651f434e7104c36c97d6c7ee60e390574446))
+* stop a line continuation hiding a push to a protected branch ([#105](https://github.com/ivuorinen/skills/issues/105)) ([789efa9](https://github.com/ivuorinen/skills/commit/789efa996b7eaa1fdfdc9e19e6f688bc1db82e87))
+* stop reading permanent GraphQL failures as transient outages ([#95](https://github.com/ivuorinen/skills/issues/95)) ([dcd387b](https://github.com/ivuorinen/skills/commit/dcd387b0946f4dad16e23786d62da8764340bc1a))
+
+
+### Miscellaneous Chores
+
+* **deps:** update astral-sh/setup-uv action (v8.3.2 → v9.0.0) ([#79](https://github.com/ivuorinen/skills/issues/79)) ([8f1c411](https://github.com/ivuorinen/skills/commit/8f1c411e67e80bfc4e813facbb2474fcc3c332ee))
+* **deps:** update pre-commit hook pre-commit/pre-commit-hooks (3e8a8703264a2f4a69428a0aa4dcb512790b2c8c → v6.0.0) ([#71](https://github.com/ivuorinen/skills/issues/71)) ([b394d25](https://github.com/ivuorinen/skills/commit/b394d2560d4b52b18abf87fa5743975b461c7792))
+
 ## 3.0.0 — why a major
 
 3.0.0 is a maintainer decision rather than a semver derivation, recorded here
