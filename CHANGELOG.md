@@ -40,7 +40,6 @@ each new release directly beneath the header above, and these notes stay here.
 
 ### ⚠ BREAKING CHANGES
 
-* ` as synonymous and release-please honours
 * **deps:** update astral-sh/setup-uv action (v8.3.2 → v9.0.0) ([#79](https://github.com/ivuorinen/skills/issues/79))
 * **deps:** update pre-commit hook pre-commit/pre-commit-hooks (3e8a8703264a2f4a69428a0aa4dcb512790b2c8c → v6.0.0) ([#71](https://github.com/ivuorinen/skills/issues/71))
 
