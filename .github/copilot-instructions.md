@@ -121,8 +121,11 @@ for manual bumps — never edit version fields by hand in individual files.
 
 `bump-version.py` re-locks on a best-effort basis. When `uv` is absent, times
 out, or fails, it reports that and continues rather than aborting a bump whose
-manifests are already written. Run `uv lock` yourself when that happens — never
-hand-edit the version in the lockfile.
+manifests are already written.
+
+Run `uv lock` to resync — that is the supported way to move the version in the
+lockfile. Hand-edit `uv.lock` only where uv cannot run at all, and treat that as
+a stopgap: the next `uv lock` overwrites the value.
 
 ## Commit Message Convention (Controls Release Automation)
 
