@@ -10,13 +10,14 @@ of it is aspirational.
 make check
 ```
 
-`check` runs eleven targets in this order (see `Makefile`):
+`check` runs twelve targets in this order (see `Makefile`):
 
 | Step                | What it does                                                              |
 | ------------------- | ------------------------------------------------------------------------- |
 | `validate`          | `scripts/validate-skill.py` on the router, command files, internal skills |
 | `validate-rules`    | `scripts/validate-rules.py` — `.claude/rules/` structure + path freshness |
 | `version-sync`      | `scripts/check-version-sync.py` — version equal across five manifests     |
+| `lock-check`        | `uv lock --check` — `uv.lock` not stale against `pyproject.toml`          |
 | `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
 | `index-check`       | regenerates `INDEX.md`, fails if it was stale (`git diff --exit-code`)    |
 | `lint`              | `ruff check scripts/ tests/ skills/`                                      |

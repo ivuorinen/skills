@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,10 +6,11 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
+	@echo "  check        — validate + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
+	@echo "  lock-check   — fail if uv.lock is stale against pyproject.toml"
 	@echo "  audit-consistency — validate the docs/audit/findings/ store (findings.py validate)"
 	@echo "  index-check  — regenerate INDEX.md and fail if it was stale"
 	@echo "  pre-commit   — run the full pre-commit suite (markdownlint, yamllint, gitleaks, …)"
@@ -23,7 +24,7 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync audit-consistency index-check lint format-check security typecheck test pre-commit
+check: validate validate-rules version-sync lock-check audit-consistency index-check lint format-check security typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -34,6 +35,15 @@ validate-rules:
 
 version-sync:
 	$(UV) scripts/check-version-sync.py
+
+# check-version-sync.py covers the five manifests release-please rewrites; it
+# does not cover uv.lock, which carries its own copy of the project version in
+# the root package entry. 3.0.0 shipped with uv.lock still declaring 2.0.0 and
+# nothing caught it, because release-please has no updater for the lockfile.
+# `uv lock --check` is uv's own staleness test — it fails on that version drift
+# and on dependency drift too, so no second parser is needed here.
+lock-check:
+	uv lock --check
 
 audit-consistency:
 	python3 skills/nitpicker/scripts/findings.py validate

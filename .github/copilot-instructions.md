@@ -115,6 +115,18 @@ The canonical version lives in `package.json`. All five must match: `package.jso
 `.release-please-manifest.json`, `pyproject.toml`. Use `scripts/bump-version.py [major|minor|patch]`
 for manual bumps — never edit version fields by hand in individual files.
 
+`uv.lock` holds a sixth copy in its root `[[package]]` entry that neither
+`check-version-sync.py` nor release-please updates. `make lock-check`
+(`uv lock --check`) gates it.
+
+`bump-version.py` re-locks on a best-effort basis. When `uv` is absent, times
+out, or fails, it reports that and continues rather than aborting a bump whose
+manifests are already written.
+
+Run `uv lock` to resync — that is the supported way to move the version in the
+lockfile. Hand-edit `uv.lock` only where uv cannot run at all, and treat that as
+a stopgap: the next `uv lock` overwrites the value.
+
 ## Commit Message Convention (Controls Release Automation)
 
 | Prefix                                | Effect                                    |

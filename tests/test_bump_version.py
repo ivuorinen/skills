@@ -9,6 +9,17 @@ from pathlib import Path
 import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+REPO_ROOT = SCRIPTS_DIR.parent
+
+
+class _Result:
+    """Stand-in for CompletedProcess in the relock tests."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        """Store the three fields relock() reads."""
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def _load_mod():
@@ -89,6 +100,116 @@ class TestUpdateToml:
         assert 'version = "should-not-change"' in result
 
 
+class TestRelock:
+    """relock() must never abort the bump: the manifests are already written by
+    the time it runs, so every failure arm reports and returns False."""
+
+    def _mod(self, tmp_path, *, lockfile=True):
+        mod = _load_mod()
+        mod.__dict__["REPO_ROOT"] = tmp_path
+        if lockfile:
+            (tmp_path / "uv.lock").write_text("# lock\n", encoding="utf-8")
+        return mod
+
+    def test_success_returns_true(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+        monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result())
+        assert mod.relock() is True
+        assert "updated uv.lock" in capsys.readouterr().out
+
+    def test_uv_absent_is_reported_not_raised(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: None)
+        assert mod.relock() is False
+        assert "uv not on PATH" in capsys.readouterr().out
+
+    def test_missing_lockfile_is_reported_not_raised(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path, lockfile=False)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+        assert mod.relock() is False
+        assert "no lockfile" in capsys.readouterr().out
+
+    def test_nonzero_exit_names_the_failure(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+        monkeypatch.setattr(
+            mod.subprocess,
+            "run",
+            lambda *_a, **_k: _Result(returncode=2, stderr="no solution found\n"),
+        )
+        assert mod.relock() is False
+        assert "no solution found" in capsys.readouterr().out
+
+    def test_silent_nonzero_exit_still_reports(self, tmp_path, monkeypatch, capsys):
+        """A failure with no output would otherwise print a bare dash."""
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+        monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(returncode=2))
+        assert mod.relock() is False
+        assert "no output" in capsys.readouterr().out
+
+    def test_timeout_is_reported_not_raised(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+
+        def _hang(*_a, **_k):
+            """A cold-cache resolve against an unreachable index."""
+            raise mod.subprocess.TimeoutExpired(["uv", "lock"], mod.LOCK_TIMEOUT)
+
+        monkeypatch.setattr(mod.subprocess, "run", _hang)
+        assert mod.relock() is False
+        assert "timed out" in capsys.readouterr().out
+
+    def test_oserror_is_reported_not_raised(self, tmp_path, monkeypatch, capsys):
+        mod = self._mod(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/uv")
+
+        def _boom(*_a, **_k):
+            """exec failure — permissions, ENOEXEC."""
+            raise OSError("exec format error")
+
+        monkeypatch.setattr(mod.subprocess, "run", _boom)
+        assert mod.relock() is False
+        assert "could not run" in capsys.readouterr().out
+
+    def test_failed_relock_tells_the_user_to_run_uv_lock(self, tmp_path, monkeypatch, capsys):
+        """Silence here would leave a bumped tree failing `make lock-check` with
+        no hint about which command fixes it."""
+        mod = _load_mod()
+        mod.__dict__["REPO_ROOT"] = tmp_path
+        TestMain()._make_repo(tmp_path)
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: None)
+        monkeypatch.setattr(sys, "argv", ["bump-version.py", "patch"])
+        assert mod.main() == 0
+        assert "Run `uv lock`" in capsys.readouterr().out
+
+
+# ── the gate itself: `make check` must actually run lock-check ────────────────
+
+
+def test_make_check_runs_lock_check():
+    """The Validate job runs `make check` as a single invocation, so the Makefile
+    is the only place CI learns about a gate. A lock-check target that exists but
+    is absent from `check` is dead — the drift it catches reaches the tag anyway,
+    which is exactly how 3.0.0 shipped a 2.0.0 lockfile."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    check_line = next(line for line in makefile.splitlines() if line.startswith("check:"))
+    assert "lock-check" in check_line, f"`check` does not run lock-check: {check_line}"
+    assert "uv lock --check" in makefile, "lock-check must use uv's own staleness test"
+
+
+def test_release_workflow_syncs_the_lockfile():
+    """release-please rewrites pyproject but has no updater for uv.lock, so
+    without this job every release PR arrives failing lock-check."""
+    workflow = (REPO_ROOT / ".github/workflows/release-please.yml").read_text(encoding="utf-8")
+    assert "sync-lockfile:" in workflow
+    assert "uv lock" in workflow
+    # The commit-lint gate rejects a non-conventional subject, which would fail
+    # the release PR in a second, more confusing way.
+    assert "chore: sync uv.lock" in workflow
+
+
 class TestMain:
     def _make_repo(self, tmp_path):
         (tmp_path / ".claude-plugin").mkdir()
@@ -105,6 +226,29 @@ class TestMain:
         (tmp_path / ".release-please-manifest.json").write_text(
             '{".": "1.0.0"}\n', encoding="utf-8"
         )
+
+    def test_main_relocks_after_writing_pyproject(self, tmp_path, monkeypatch):
+        """`uv lock` reads the version out of pyproject, so it has to run after the
+        manifests are on disk — running it first would re-lock the OLD version and
+        leave `make lock-check` failing on a freshly bumped tree."""
+        self._make_repo(tmp_path)
+        (tmp_path / "uv.lock").write_text("# lock\n", encoding="utf-8")
+        mod = _load_mod()
+        mod.__dict__["REPO_ROOT"] = tmp_path
+        monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/uv")
+        seen = {}
+
+        def _fake_lock(cmd, *a, **k):
+            """Record the version pyproject carried at the moment uv lock ran."""
+            seen["cmd"] = cmd
+            seen["pyproject"] = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+            return _Result()
+
+        monkeypatch.setattr(mod.subprocess, "run", _fake_lock)
+        monkeypatch.setattr(sys, "argv", ["bump-version.py", "minor"])
+        assert mod.main() == 0
+        assert seen["cmd"] == ["/usr/bin/uv", "lock"]
+        assert 'version = "1.1.0"' in seen["pyproject"], "uv lock ran before pyproject was written"
 
     def test_main_bumps_all_five_manifests(self, tmp_path, monkeypatch):
         self._make_repo(tmp_path)
