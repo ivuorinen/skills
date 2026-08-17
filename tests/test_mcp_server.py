@@ -200,6 +200,7 @@ def test_read_tools_are_marked_read_only():
         "np_list_skills",
         "np_read_skill",
         "np_read_command",
+        "np_read_reference",
         "np_list_commands",
         "np_list_findings",
         "np_show_finding",
@@ -384,10 +385,37 @@ def test_read_command_tool_and_traversal():
     assert bad["isError"] is True
 
 
+def test_read_reference_tool_and_rejection():
+    """The router's step 1 (`_conventions.md`) is a tool call, not a file read."""
+    mod = _load()
+    ok = _call(mod, "np_read_reference", {"name": "conventions"})
+    assert ok["isError"] is False and "Shared Conventions" in ok["content"][0]["text"]
+    bad = _call(mod, "np_read_reference", {"name": "../../etc/passwd"})
+    assert bad["isError"] is True
+
+
+def test_list_commands_tool_filters_by_category():
+    mod = _load()
+    everything = json.loads(_call(mod, "np_list_commands", {})["content"][0]["text"])
+    planning = _call(mod, "np_list_commands", {"category": "planning"})
+    rows = json.loads(planning["content"][0]["text"])
+    assert {r["name"] for r in rows} == {"plan", "execute-plan"}
+    assert 0 < len(rows) < len(everything)
+    # The error names the known set, so a caller recovers without a second tool.
+    bad = _call(mod, "np_list_commands", {"category": "planing"})
+    assert bad["isError"] is True and "Planning" in bad["content"][0]["text"]
+
+
 def test_skill_meta_tools_registered():
     mod = _load()
     names = {t["name"] for t in _tools(mod)}
-    assert {"np_list_skills", "np_read_skill", "np_read_command", "np_list_commands"} <= names
+    assert {
+        "np_list_skills",
+        "np_read_skill",
+        "np_read_command",
+        "np_read_reference",
+        "np_list_commands",
+    } <= names
 
 
 def _load_findings():

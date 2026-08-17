@@ -49,10 +49,15 @@ Reach for the most specific tool that covers the operation; drop to raw shell or
 a direct `scripts/*.py` call only when nothing higher does. Highest first:
 
 1. **A purpose-built MCP tool, whenever the session exposes it.** The `nitpicker`
-   MCP tools for every findings-store operation (see Findings store below); a
-   GitHub MCP for pull-request, issue, and repository operations; a documentation
-   MCP for library and API references. These need no shell, path resolution,
-   or quoting.
+   MCP tools for every findings-store operation (see Findings store below) and
+   for loading nitpicker's own bundled files — `np_read_command` for a command
+   file, `np_read_reference` for a shared `_`-prefixed file (this one,
+   `_audit-coverage`), `np_read_skill` for the router, `np_list_commands` /
+   `np_list_skills` for the listings (`np_list_commands` tags every row with its
+   SKILL.md category and takes `category` to narrow to one group — "Review and
+   fixing", "Planning", "Security and data", …); a GitHub MCP for pull-request, issue, and repository
+   operations; a documentation MCP for library and API references. These need no
+   shell, path resolution, or quoting.
 2. **context-mode for anything you read rather than act on** — listing files,
    `grep`, `git status`/`log`/`diff`, test and build output, parsing data,
    fetching a URL. The raw bytes stay in the sandbox; only the extract you print
@@ -66,6 +71,15 @@ Availability-conditioned: in Copilot, pi, CI, or any session without a given
 server, fall through to the next tier — the shell is a valid last resort, never
 a first reach. Reading a file you are about to change with Edit is not
 inspection; read it directly so the exact bytes are in hand.
+
+One limit bounds the skill tools: they read *this plugin's* bundled files, never
+the audited repo's. A command whose subject is the target repo's skills, rules,
+or hooks (`agent-loopholes`, `agent-rules`, `agent-hooks`) reads those files
+from the repo under audit; the skill tools are for loading nitpicker's own
+instructions. Within that scope the coverage is complete — every command file
+through `np_read_command`, every shared `_`-prefixed file through
+`np_read_reference` (the leading underscore is optional in the name), the router
+through `np_read_skill`.
 
 ## Findings store
 
@@ -161,7 +175,7 @@ Run protocol:
    migration in the run summary and continue in the v2 store without
    touching the v1 files **and without re-filing their contents into the
    v2 store** — copying v1 findings in by hand is migration and needs the
-   same consent. The user decides _when_ migration happens; the agent
+   same consent. The user decides *when* migration happens; the agent
    never does.
 1. At run start: list this command's open findings (`np_list_findings` with
    `auditor: <command>`, `status: "open"`; else `findings.py list --auditor

@@ -22,7 +22,7 @@ there is no diff and nothing to revert.
 Every tool publishes MCP tool annotations (`readOnlyHint`, `destructiveHint`,
 `idempotentHint`, `openWorldHint`). They are behavioural hints, not access
 control — a client may ignore them — but they are the only machine-readable
-signal distinguishing the eight read tools from the two that mutate the store
+signal distinguishing the nine read tools from the two that mutate the store
 without a consent prompt. See `_READ_ONLY`/`_MUTATES` below.
 
 stdout carries ONLY JSON-RPC frames; backing functions must never print to it
@@ -131,13 +131,35 @@ def _read_command(args: dict) -> str:
 
 
 @tool(
+    "np_read_reference",
+    "Return a shared nitpicker reference file: _conventions or _audit-coverage.",
+    {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": False,
+    },
+    {**_READ_ONLY, "title": "Read a shared nitpicker reference file"},
+)
+def _read_reference(args: dict) -> str:
+    return skill_catalog.read_reference(args["name"])
+
+
+@tool(
     "np_list_commands",
-    "List nitpicker commands with aliases and purpose.",
-    _NO_ARGS,
+    "List nitpicker commands with category, aliases and purpose. Optional "
+    "`category` narrows to one group of the SKILL.md Commands table — e.g. "
+    "'Review and fixing', 'Planning', 'Security and data'; case and hyphens are "
+    "ignored, and an unknown value errors with the known set.",
+    {
+        "type": "object",
+        "properties": {"category": {"type": "string"}},
+        "additionalProperties": False,
+    },
     {**_READ_ONLY, "title": "List nitpicker commands"},
 )
 def _list_commands(args: dict) -> str:
-    return json.dumps(skill_catalog.list_commands(), indent=2)
+    return json.dumps(skill_catalog.list_commands(category=args.get("category") or ""), indent=2)
 
 
 # ── project-root resolution (findings tools) ─────────────────────────────────
