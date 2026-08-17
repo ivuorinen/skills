@@ -400,7 +400,7 @@ def _fetch_out_of_thread_notes(
     return review_bodies, summary_comments
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     args = sys.argv[1:]
 
     try:

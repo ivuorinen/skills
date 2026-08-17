@@ -32,7 +32,7 @@ _HEDGED_RE = re.compile(
 )
 
 
-def _parse_frontmatter(text: str) -> tuple[dict | None, str]:
+def _parse_frontmatter(text: str) -> tuple[dict | None, str]:  # noqa: C901
     """Return (fm_dict, body). ({}, text) if no frontmatter. (None, text) if malformed."""
     text = text.replace("\r\n", "\n")
     if not text.startswith("---\n"):
@@ -86,7 +86,7 @@ def _parse_frontmatter(text: str) -> tuple[dict | None, str]:
     return fm, "".join(lines[body_start:])
 
 
-def _check_file(path: Path, project_root: Path) -> list[dict]:
+def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
     findings: list[dict] = []
 
     def issue(severity: str, code: str, detail: str) -> None:

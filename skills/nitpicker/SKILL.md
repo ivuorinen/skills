@@ -29,9 +29,13 @@ The text following the invocation is parsed as:
 
 Execution order, always:
 
-1. Read [commands/_conventions.md](commands/_conventions.md) — it binds
+1. Load [commands/_conventions.md](commands/_conventions.md) — it binds
    every command (severity levels, findings store protocol, rules).
-2. Read `commands/<command>.md` for the resolved command.
+   `np_read_reference` with `name: "conventions"` when the session exposes the
+   nitpicker MCP tools, else read the file directly.
+2. Load the resolved command: `np_read_command` with `command: <command>`
+   when the session exposes the nitpicker MCP tools, else read
+   `commands/<command>.md` directly.
 3. Execute it with the extra instructions applied.
 
 Never chain commands on your own; run exactly the one resolved command
@@ -43,6 +47,17 @@ Grouped by category. Aliases in the purpose text (mostly the 1.x skill
 names) remain legitimate invocations; the dispatcher resolves them to the
 same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 `commands/agent-loopholes.md`).
+
+Each `###` heading below **is** the category name, and the vocabulary is
+nothing more than those headings: Review and fixing, Planning, Learning,
+Security and data, Runtime behavior, Structure and contracts, Quality
+surfaces, Coding-agent enforcement, Meta — plus Internal commands for the
+table at the end. `np_list_commands` returns every row's category and takes a
+`category` argument to narrow to one group (`category: "Planning"`,
+`"security-and-data"` — case, spaces, and hyphens are interchangeable; an
+unknown value errors with the known set rather than returning nothing). Adding
+a `###` group here makes it filterable in the same commit; no list of
+categories is maintained anywhere else.
 
 ### Review and fixing
 
@@ -131,7 +146,7 @@ same command file (e.g. `test-auditor` → `commands/tests.md`, `loopholes` →
 | `reverify` | Re-verify open findings against current code; resolve the proven-fixed and proven-invalid, keep still-live open, flag the unverifiable; files no new findings, changes no code |
 | `baseline` | Snapshot open findings as accepted; gate fails only on new ones |
 | `release-gate` | Fail if open findings at or above a threshold exist (default: High) |
-| `help` | Print this command listing (alias: `list`) |
+| `help` | Print this command listing, or one named category (alias: `list`) |
 
 ## Internal commands
 
@@ -169,35 +184,43 @@ Installing this plugin registers a stdio MCP server (`nitpicker`) from the
 `mcpServers` block in `.claude-plugin/plugin.json` (plugin scope, resolved via
 `${CLAUDE_PLUGIN_ROOT}`); this repo additionally registers the same server for
 project scope from `.mcp.json`. It is stdlib-only Python 3.11+
-(`scripts/mcp_server.py`), starts automatically, and exposes 10 tools:
+(`scripts/mcp_server.py`), starts automatically, and exposes 11 tools:
 
 Every tool name carries the `np_` prefix, so a nitpicker tool stays
 recognizable wherever a name appears without its server qualifier.
 
 | Scope | Tools |
 | --- | --- |
-| Plugin skills (introspection) | `np_list_skills`, `np_read_skill`, `np_read_command`, `np_list_commands` |
+| Plugin skills (introspection) | `np_list_skills`, `np_read_skill`, `np_read_command`, `np_read_reference`, `np_list_commands` |
 | Findings — read | `np_list_findings`, `np_show_finding`, `np_findings_index`, `np_validate_store` |
 | Findings — mutate | `np_new_finding`, `np_resolve_finding` |
 
-Skill tools read the plugin's own bundled skills. Findings tools act on the
+Skill tools read the plugin's own bundled skills — `np_read_command` resolves a
+public command by name, `np_read_reference` the shared `_`-prefixed files
+(`_conventions`, `_audit-coverage`) that have no command row and are therefore
+outside `np_read_command`'s vocabulary, and `np_list_commands` enumerates the
+command tables with each row's category, filterable to one group (see
+`## Commands` above). Findings tools act on the
 audited project's store — pass `project_dir`, or the server falls back to
 `CLAUDE_PROJECT_DIR` then the working directory's repo root. `project_dir` may
 only narrow that root, never escape it.
 
-Every tool publishes MCP annotations. The eight read tools carry
+Every tool publishes MCP annotations. The nine read tools carry
 `readOnlyHint: true`; `np_new_finding` carries `destructiveHint: false` (it only
 adds); `np_resolve_finding` carries `destructiveHint: true`, because it deletes
 the open finding file and appends to the append-only ledger — neither half is
-reversible through this server. All ten carry `openWorldHint: false`: every
+reversible through this server. All eleven carry `openWorldHint: false`: every
 tool's domain is closed — the local filesystem only, with no network and no
 external service, bounded by the plugin root for skill tools and the allowed
 project root for findings tools. These are hints a client weighs before
 calling, not access control; the root confinement above is the actual boundary.
 
-When these tools are available, commands prefer them over `scripts/findings.py`
-for every operation both cover; `_conventions.md` holds the mapping and the
-CLI-only exceptions. The preference is never a dependency — the server is
+When these tools are available, commands prefer them over reading the bundled
+files themselves — over `scripts/findings.py` for every store operation both
+cover, and over a direct read of any command file, shared reference, or this
+router; `_conventions.md` holds both mappings and the only remaining
+exceptions, the three CLI-only store operations (`baseline`, `migrate`,
+`migrate-resolved`). The preference is never a dependency — the server is
 Claude-native, so in Copilot, pi, or CI the CLI is the only interface and is
 fully sufficient.
 

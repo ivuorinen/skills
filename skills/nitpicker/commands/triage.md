@@ -23,7 +23,14 @@ and preflight any external tool with `command -v` before invoking it.
 ## The three buckets — evidence or it is not recommended
 
 Every public command in the `## Commands` table of `SKILL.md` (the **full
-set**) lands in exactly one bucket, and each bucket demands proof:
+set**) lands in exactly one bucket, and each bucket demands proof. Enumerate
+that set with `np_list_commands` when the session exposes it, else read the
+table from `SKILL.md`; it parses every command table, so drop every row whose
+`category` is `Internal commands` — triage never recommends an internal
+command. Each row's `category` is the grouping to report in. The tool's
+`category` argument narrows the listing, so it never substitutes for the sweep:
+this command places the full set on every run, and a category named in the
+extra instructions orders the output, never shortens it:
 
 - **Recommended** — a trigger condition is present, cited with the concrete
   signal (a file, directory, dependency, config key, or code construct) at
@@ -101,8 +108,10 @@ Print the key values on each line so the order is reproducible, not asserted.
    repo-wide trigger the sweep could not cover to Unprovable, never Not
    applicable.
 2. **Place every command.** Take each command's trigger from its row in the
-   `## Commands` table of `SKILL.md`, dropping to that command's own file and
-   its `## When to use` only to resolve an ambiguous trigger. Put every command
+   `## Commands` table of `SKILL.md` (the `purpose` field of
+   `np_list_commands`), dropping to that command's own file and its
+   `## When to use` only to resolve an ambiguous trigger — `np_read_command`
+   when available, else a direct read. Put every command
    in the full set into Recommended, Not applicable, or Unprovable with its
    cited evidence or exhaustive negative. An unplaced command fails the run.
 3. **Rank** the Recommended bucket by the total-order sort key; annotate each
@@ -133,7 +142,8 @@ Scope: <whole repo | changed-files: N files>
 ```
 
 `<total>` is the number of rows in the `## Commands` table of `SKILL.md`, counted
-this run — never a memorized constant. Recommended + Not applicable + Unprovable
+this run — never a memorized constant. Counted from `np_list_commands` it is the
+number of returned rows whose `category` is not `Internal commands`. Recommended + Not applicable + Unprovable
 must equal it. If they do not, the triage is incomplete — placing every command
 is the deliverable, never a subset. Close with: this command recommends only;
 run the listed commands yourself in the order given.

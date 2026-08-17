@@ -30,18 +30,21 @@ Analyze all of:
 
 ```text
 1. Re-validate open findings per `_conventions.md` (`--auditor audit`).
-2. Read `_audit-coverage.md` and copy every task in it into your
-   task list (in Claude Code: one TaskCreate/TodoWrite entry per task; the
+2. Load `_audit-coverage.md` (`np_read_reference` with
+   `name: "audit-coverage"`, else read the file) and copy every task in it into
+   your task list (in Claude Code: one TaskCreate/TodoWrite entry per task; the
    equivalent task tracker in other agents). This is mandatory — the task
    list is the audit's coverage contract, and no task may be dropped.
 3. If the extra instructions name a focus matching a specialist command,
    order that lens's task first and deep-run its command file
-   (`<command>.md`) — its findings land under its own auditor key.
+   (`np_read_command` with `command: <command>`, else read `<command>.md`)
+   — its findings land under its own auditor key.
    A named focus deepens one lens; it never narrows the checklist — every
    other coverage task still runs.
 4. Work the task list in order. For each task: apply the lens (using its
-   specialist command as the authority; deep-run `<command>.md`
-   when the lens is high-risk), and file findings as they are confirmed —
+   specialist command as the authority; deep-run it via `np_read_command`,
+   else `<command>.md`, when the lens is high-risk), and file findings as
+   they are confirmed —
    under the specialist's auditor key when you deep-run it, under the `audit`
    auditor key when you apply the lens inline. Close each task in
    exactly one of the states `_audit-coverage.md` defines (findings filed,

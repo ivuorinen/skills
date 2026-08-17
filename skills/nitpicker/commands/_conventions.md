@@ -49,10 +49,15 @@ Reach for the most specific tool that covers the operation; drop to raw shell or
 a direct `scripts/*.py` call only when nothing higher does. Highest first:
 
 1. **A purpose-built MCP tool, whenever the session exposes it.** The `nitpicker`
-   MCP tools for every findings-store operation (see Findings store below); a
-   GitHub MCP for pull-request, issue, and repository operations; a documentation
-   MCP for library and API references. These need no shell, path resolution,
-   or quoting.
+   MCP tools for every findings-store operation (see Findings store below) and
+   for loading nitpicker's own bundled files — `np_read_command` for a command
+   file, `np_read_reference` for a shared `_`-prefixed file (this one,
+   `_audit-coverage`), `np_read_skill` for the router, `np_list_commands` /
+   `np_list_skills` for the listings (`np_list_commands` tags every row with its
+   SKILL.md category and takes `category` to narrow to one group — "Review and
+   fixing", "Planning", "Security and data", …); a GitHub MCP for pull-request, issue, and repository
+   operations; a documentation MCP for library and API references. These need no
+   shell, path resolution, or quoting.
 2. **context-mode for anything you read rather than act on** — listing files,
    `grep`, `git status`/`log`/`diff`, test and build output, parsing data,
    fetching a URL. The raw bytes stay in the sandbox; only the extract you print
@@ -66,6 +71,15 @@ Availability-conditioned: in Copilot, pi, CI, or any session without a given
 server, fall through to the next tier — the shell is a valid last resort, never
 a first reach. Reading a file you are about to change with Edit is not
 inspection; read it directly so the exact bytes are in hand.
+
+One limit bounds the skill tools: they read *this plugin's* bundled files, never
+the audited repo's. A command whose subject is the target repo's skills, rules,
+or hooks (`agent-loopholes`, `agent-rules`, `agent-hooks`) reads those files
+from the repo under audit; the skill tools are for loading nitpicker's own
+instructions. Within that scope the coverage is complete — every command file
+through `np_read_command`, every shared `_`-prefixed file through
+`np_read_reference` (the leading underscore is optional in the name), the router
+through `np_read_skill`.
 
 ## Findings store
 
@@ -95,17 +109,21 @@ preference above, the MCP tools are the default and the CLI is the fallback:
 | File a finding | `np_new_finding` | `findings.py new` |
 | Resolve a finding | `np_resolve_finding` | `findings.py resolve` |
 | List findings | `np_list_findings` | `findings.py list` |
+| List, waiving baselined ids | `np_list_findings` with `exclude_baseline: true` | `findings.py list --exclude-baseline` |
 | Show one finding | `np_show_finding` | `findings.py show` |
 | Validate the store | `np_validate_store` | `findings.py validate` |
 | Regenerate `INDEX.md` | `np_findings_index` | `findings.py index` |
 
 Three operations have **no** MCP tool and always use the CLI: `baseline`,
-`migrate`, and `migrate-resolved`. `np_list_findings` also has no
-`exclude_baseline`, so a baseline-aware listing (what `release-gate` needs) is
-CLI-only. The mutate tools omit `--force`, `--found`, and `--date`
-deliberately — re-opening a resolved finding, overwriting an existing one, or
-back-dating a record is a CLI-only escape hatch, not something a tool call
-should reach by accident.
+`migrate`, and `migrate-resolved`. That omission is deliberate, not a gap
+waiting to be filled: `baseline` waives every open finding from the release
+gate, and migration sits behind a per-run consent gate that overrides
+autonomous mode (Run protocol step 0). The MCP mutate tools run with no consent
+prompt, so shipping either as a tool would put a waiver or an unconsented
+migration one call away. The mutate tools omit `--force`, `--found`, and
+`--date` for the same reason — re-opening a resolved finding, overwriting an
+existing one, or back-dating a record is a CLI-only escape hatch, not something
+a tool call should reach by accident.
 
 The CLI is stdlib-only, plain `python3`, no uv required. Resolve its path
 relative to this skill's directory (Claude Code:
@@ -157,7 +175,7 @@ Run protocol:
    migration in the run summary and continue in the v2 store without
    touching the v1 files **and without re-filing their contents into the
    v2 store** — copying v1 findings in by hand is migration and needs the
-   same consent. The user decides _when_ migration happens; the agent
+   same consent. The user decides *when* migration happens; the agent
    never does.
 1. At run start: list this command's open findings (`np_list_findings` with
    `auditor: <command>`, `status: "open"`; else `findings.py list --auditor
@@ -176,6 +194,51 @@ Run protocol:
    interactive user, default to `(n)o` and record the un-applied fixes in the
    run summary.
 6. Ask "Commit findings to git? (y/n)" — never commit silently.
+
+## Committing
+
+Binding on every commit a command creates: the findings commit gate above, a
+fix's code commit, and any commit made while carrying out extra instructions.
+
+**Read the staged set before every commit.** `git diff --cached` *is* the
+commit. `git status` is not (it names files, not hunks), and intent is not
+(you staged what you staged, not what you meant to). Confirm every staged hunk
+belongs to the message about to be written; an unrelated hunk means the stage
+is wrong, not that the message needs widening — unstage it and commit it
+separately. This check is not optional on a "small" commit: the recurring
+failure in this repo is a commit carrying edits that belonged to a different
+one, and every instance came from staging by path (`git add <file>`, worse
+`git add -A` or `git commit -a`) while the file held two unrelated edits. The
+file is the wrong unit. The hunk is the unit.
+
+**Grouping means splitting by hunk.** When the user asks for "smart groups",
+"logical commits", "split this up", "separate commits", "one commit per X", or
+names any grouping, split the working tree into one commit per concern and
+stage each with hunk-level precision. Never bundle two concerns because they
+share a file, and never split one concern across two commits because it spans
+two files. State the planned grouping — one line per commit, with its files —
+before creating the first commit.
+
+Preflight `command -v git-hunk` (per Execution above) and use whichever is
+present:
+
+- **`git-hunk`** — hunks are addressed by content hash, so staging is exact and
+  scriptable: `git hunk list` enumerates them, `git hunk add <hash>` stages one
+  (`<hash>:3-5,8` stages selected lines of it), `git hunk reset` unstages,
+  `git hunk stash` sets aside what belongs to a later commit, `git hunk commit`
+  commits named hunks directly, and `git hunk list --staged` verifies. Add
+  `--file <path>` to scope, `--porcelain` for machine-readable output. Read
+  `git hunk help <command>` for a command's own options — `git hunk --help`
+  opens a man page instead of printing inline help.
+- **plain git** — `git add --patch` to stage hunk by hunk, `git add --edit` for
+  a split `--patch` refuses to make, and `git restore --staged <path>` (index
+  only) to unstage. Never `git restore --worktree` or `git checkout --` to
+  "clean up" the stage: both overwrite the working tree and delete the very
+  edits being sorted into commits.
+
+Both paths end identically: `git diff --cached` is read, then the commit runs
+with a message naming exactly what that diff contains. A commit whose staged
+diff was never read is an unverified commit.
 
 ## Modifiers
 

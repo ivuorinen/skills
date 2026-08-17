@@ -16,7 +16,8 @@ review surface the skill offers.
   listed.
 - Apply each lens using its specialist command as the authority. Deep-run
   that command file when the lens is high-risk or the user named it as the
-  focus; otherwise apply the lens inline.
+  focus — loaded through whichever interface `_conventions.md` puts first
+  (`np_read_command`, else a direct read); otherwise apply the lens inline.
 - File findings as they are confirmed, through whichever store interface
   `_conventions.md` puts first. Findings from a
   deep-run specialist land under that command's auditor key; lenses applied

@@ -180,11 +180,13 @@ every alias next to its command.
 
 Installing the plugin registers a stdlib-only stdio MCP server (`nitpicker`)
 that exposes skill introspection (`np_list_skills`, `np_read_skill`,
-`np_read_command`, `np_list_commands`) and findings management
-(`np_list_findings`, `np_show_finding`, `np_findings_index`,
+`np_read_command`, `np_read_reference`, `np_list_commands` — filterable to one
+category of the command table) and findings
+management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`). Every tool is
-prefixed `np_` and publishes MCP annotations, so a client can tell the eight
-read-only tools from `np_resolve_finding`, the one irreversible call. See the
+prefixed `np_` and publishes MCP annotations, so a client can tell the nine
+read-only tools from `np_new_finding`, which only adds, and
+`np_resolve_finding`, the one irreversible call. See the
 "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
 non-interactive mutate contract.
 

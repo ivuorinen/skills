@@ -200,6 +200,7 @@ def test_read_tools_are_marked_read_only():
         "np_list_skills",
         "np_read_skill",
         "np_read_command",
+        "np_read_reference",
         "np_list_commands",
         "np_list_findings",
         "np_show_finding",
@@ -384,10 +385,37 @@ def test_read_command_tool_and_traversal():
     assert bad["isError"] is True
 
 
+def test_read_reference_tool_and_rejection():
+    """The router's step 1 (`_conventions.md`) is a tool call, not a file read."""
+    mod = _load()
+    ok = _call(mod, "np_read_reference", {"name": "conventions"})
+    assert ok["isError"] is False and "Shared Conventions" in ok["content"][0]["text"]
+    bad = _call(mod, "np_read_reference", {"name": "../../etc/passwd"})
+    assert bad["isError"] is True
+
+
+def test_list_commands_tool_filters_by_category():
+    mod = _load()
+    everything = json.loads(_call(mod, "np_list_commands", {})["content"][0]["text"])
+    planning = _call(mod, "np_list_commands", {"category": "planning"})
+    rows = json.loads(planning["content"][0]["text"])
+    assert {r["name"] for r in rows} == {"plan", "execute-plan"}
+    assert 0 < len(rows) < len(everything)
+    # The error names the known set, so a caller recovers without a second tool.
+    bad = _call(mod, "np_list_commands", {"category": "planing"})
+    assert bad["isError"] is True and "Planning" in bad["content"][0]["text"]
+
+
 def test_skill_meta_tools_registered():
     mod = _load()
     names = {t["name"] for t in _tools(mod)}
-    assert {"np_list_skills", "np_read_skill", "np_read_command", "np_list_commands"} <= names
+    assert {
+        "np_list_skills",
+        "np_read_skill",
+        "np_read_command",
+        "np_read_reference",
+        "np_list_commands",
+    } <= names
 
 
 def _load_findings():
@@ -423,6 +451,71 @@ def test_list_findings_open_and_filter(tmp_path):
     assert len(rows) == 1 and rows[0]["auditor"] == "review"
     empty = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), "auditor": "security"})
     assert json.loads(_unfence(empty)) == []
+
+
+def test_list_findings_can_waive_baselined_ids(tmp_path):
+    """The baseline-aware listing `release-gate` gates on.
+
+    Without `exclude_baseline` the tool could not express the waiver, so that
+    command had to drop to the CLI for its one and only store read.
+    """
+    store = _seed(tmp_path)
+    f = _load_findings()
+    f.write_baseline(
+        store, [r["id"] for r in f.gather_findings(store, status="open")], "2026-01-01"
+    )
+    mod = _load()
+    unwaived = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), "status": "open"})
+    assert len(json.loads(_unfence(unwaived))) == 1
+    waived = _call(
+        mod,
+        "np_list_findings",
+        {"project_dir": str(tmp_path), "status": "open", "exclude_baseline": True},
+    )
+    assert json.loads(_unfence(waived)) == []
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({"severity": "extreme"}, "severity must be one of"),
+        ({"status": "resolved"}, "status must be one of"),
+        ({"exclude_baseline": "false"}, "exclude_baseline must be a boolean"),
+        ({"limit": "5"}, "limit must be an integer"),
+        ({"limit": True}, "limit must be an integer"),
+    ],
+)
+def test_list_findings_rejects_wrongly_typed_filters(tmp_path, args, expected):
+    """Each of these fails silently if coerced instead of checked.
+
+    The inputSchema is advisory — this server does not validate against it — so a
+    wrong value arrives at the handler. `bool("false")` is True, which would waive
+    every baselined finding and let `release-gate` pass on the debt it exists to
+    fail on; `int(True)` is 1, silently capping the listing at one row; and an
+    out-of-vocab severity or status matches zero rows, which reads as "no
+    findings" rather than "you typed it wrong".
+    """
+    _seed(tmp_path)
+    mod = _load()
+    result = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), **args})
+    assert result["isError"] is True
+    assert expected in result["content"][0]["text"]
+
+
+def test_list_findings_accepts_a_boolean_false_without_waiving(tmp_path):
+    """`exclude_baseline: false` is a valid explicit choice, not a rejected value."""
+    store = _seed(tmp_path)
+    f = _load_findings()
+    open_ids = [r["id"] for r in f.gather_findings(store, status="open")]
+    f.write_baseline(store, open_ids, "2026-01-01")
+    mod = _load()
+    result = _call(
+        mod,
+        "np_list_findings",
+        {"project_dir": str(tmp_path), "status": "open", "exclude_baseline": False, "limit": 5},
+    )
+    assert result["isError"] is False
+    assert len(json.loads(_unfence(result))) == 1
 
 
 def test_findings_index_and_validate(tmp_path):

@@ -65,7 +65,7 @@ def _int(v: object) -> int:
         return 0
 
 
-def _normalize_severity(
+def _normalize_severity(  # noqa: C901
     level: str | None,
     security_severity: str | None,
     tool_severity: str | None,
@@ -147,7 +147,7 @@ def _extract_rules(run: dict) -> dict[str, dict]:
     return rules
 
 
-def _extract_findings(run: object, source_file: str) -> list[dict]:
+def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C901
     if not isinstance(run, dict):
         return []  # a `runs` entry from untrusted JSON need not be an object
     driver = (run.get("tool") or {}).get("driver") or {}

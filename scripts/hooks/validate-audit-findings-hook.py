@@ -51,7 +51,7 @@ def should_check(path: Path, repo_root: Path) -> bool:
     )
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     """Validate an edited findings file and regenerate INDEX.md.
 
     The index is regenerated on every store edit, not only on a finding edit,

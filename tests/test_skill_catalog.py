@@ -81,6 +81,48 @@ def test_list_commands_parses_name_alias_purpose():
     assert by_name["review"]["purpose"]
 
 
+def test_list_commands_tags_each_row_with_its_heading():
+    """The `###` group is the category; a table with no group falls back to its `##`.
+
+    That fallback is what keeps the internal table distinguishable — `help` and
+    `triage` both need "public commands only", and before the category existed the
+    only way to get it was to hardcode the internal command's name.
+    """
+    by_name = {c["name"]: c["category"] for c in sc.list_commands()}
+    assert by_name["review"] == "Review and fixing"
+    assert by_name["plan"] == "Planning"
+    assert by_name["x-findings-migrator"] == "Internal commands"
+
+
+def test_list_commands_filters_by_category_in_any_spelling():
+    prose = sc.list_commands(category="Security and data")
+    assert [c["name"] for c in prose] == sc_security_names()
+    assert sc.list_commands(category="security-and-data") == prose
+    assert sc.list_commands(category="SECURITY AND DATA") == prose
+
+
+def sc_security_names():
+    """The Security-and-data rows, read straight from SKILL.md rather than pinned.
+
+    Hardcoding the five names here would make this test fail on any future
+    addition to that category — a maintenance tax that proves nothing about
+    filtering.
+    """
+    body = (sc.plugin_root() / "skills" / "nitpicker" / "SKILL.md").read_text(encoding="utf-8")
+    section = body.split("### Security and data")[1].split("###")[0]
+    return [c["name"] for c in sc.list_commands() if f"`{c['name']}`" in section]
+
+
+def test_list_commands_rejects_an_unknown_category():
+    """An empty list would read as "that category is empty", hiding the typo."""
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown category 'planing'"):
+        sc.list_commands(category="planing")
+    with pytest.raises(ValueError, match="Review and fixing"):
+        sc.list_commands(category="planing")
+
+
 def test_read_command_known_and_traversal_rejected(monkeypatch):
     """The rejection must happen *before* any read.
 
@@ -112,3 +154,43 @@ def test_read_command_known_and_traversal_rejected(monkeypatch):
         assert not any("passwd" in r or r.endswith("_conventions.md") for r in reads), (
             f"read_command({rejected!r}) touched the file before rejecting it"
         )
+
+
+def test_read_reference_serves_the_shared_files_in_both_spellings():
+    """`read_command` refuses these names, so the router needs its own reader.
+
+    The underscore is optional because prose cites the file (`_conventions.md`)
+    and a reader cites the section (`conventions`); a tool that accepted only one
+    spelling would fail half the calls it exists to serve.
+    """
+    underscored = sc.read_reference("_conventions")
+    assert "# Shared Conventions" in underscored
+    assert sc.read_reference("conventions") == underscored
+    assert "## How audit uses this file" in sc.read_reference("audit-coverage")
+
+
+def test_read_reference_rejects_non_reference_names_before_reading(monkeypatch):
+    """Public commands and traversal both miss the enumerated set — no path is built.
+
+    Same ordering guarantee `read_command` carries: rejection precedes any read,
+    so a future read-then-validate rewrite fails here instead of shipping.
+    """
+    import re
+    from pathlib import Path
+
+    import pytest
+
+    real_read_text = Path.read_text
+    reads: list[str] = []
+
+    def _recording_read_text(self, *a, **k):
+        reads.append(str(self))
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", _recording_read_text)
+
+    for rejected in ("review", "../../../../etc/passwd"):
+        reads.clear()
+        with pytest.raises(KeyError, match=re.escape(rejected)):
+            sc.read_reference(rejected)
+        assert not reads, f"read_reference({rejected!r}) read a file before rejecting it"
