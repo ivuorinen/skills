@@ -185,7 +185,8 @@ category of the command table) and findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`). Every tool is
 prefixed `np_` and publishes MCP annotations, so a client can tell the nine
-read-only tools from `np_resolve_finding`, the one irreversible call. See the
+read-only tools from `np_new_finding`, which only adds, and
+`np_resolve_finding`, the one irreversible call. See the
 "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
 non-interactive mutate contract.
 
