@@ -425,6 +425,28 @@ def test_list_findings_open_and_filter(tmp_path):
     assert json.loads(_unfence(empty)) == []
 
 
+def test_list_findings_can_waive_baselined_ids(tmp_path):
+    """The baseline-aware listing `release-gate` gates on.
+
+    Without `exclude_baseline` the tool could not express the waiver, so that
+    command had to drop to the CLI for its one and only store read.
+    """
+    store = _seed(tmp_path)
+    f = _load_findings()
+    f.write_baseline(
+        store, [r["id"] for r in f.gather_findings(store, status="open")], "2026-01-01"
+    )
+    mod = _load()
+    unwaived = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), "status": "open"})
+    assert len(json.loads(_unfence(unwaived))) == 1
+    waived = _call(
+        mod,
+        "np_list_findings",
+        {"project_dir": str(tmp_path), "status": "open", "exclude_baseline": True},
+    )
+    assert json.loads(_unfence(waived)) == []
+
+
 def test_findings_index_and_validate(tmp_path):
     _seed(tmp_path)
     mod = _load()

@@ -49,10 +49,11 @@ agent — that decision rule holds even when the working tree is clean.
      python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" migrate docs/audit/*-findings.md
    (non-Claude agents resolve the path relative to this skill's directory)
 4. Verify nothing was lost:
-     python3 findings.py validate
+     np_validate_store, else python3 findings.py validate
      Compare each v1 file's Summary counts (Total/Open/Fixed/Invalid)
      against the migrated per-file count the tool printed and the store
-     (findings.py list). Any mismatch: report it, do not delete anything.
+     (np_list_findings, else findings.py list). Any mismatch: report it, do
+     not delete anything.
 5. Ask separately: "Remove the migrated v1 files? (y/n)" — deletion is its
    own consent, never bundled with step 2. On yes: git rm the v1 files.
 6. Ask: "Commit the migration to git? (y/n)" — never commit silently.

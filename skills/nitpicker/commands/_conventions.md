@@ -95,17 +95,21 @@ preference above, the MCP tools are the default and the CLI is the fallback:
 | File a finding | `np_new_finding` | `findings.py new` |
 | Resolve a finding | `np_resolve_finding` | `findings.py resolve` |
 | List findings | `np_list_findings` | `findings.py list` |
+| List, waiving baselined ids | `np_list_findings` with `exclude_baseline: true` | `findings.py list --exclude-baseline` |
 | Show one finding | `np_show_finding` | `findings.py show` |
 | Validate the store | `np_validate_store` | `findings.py validate` |
 | Regenerate `INDEX.md` | `np_findings_index` | `findings.py index` |
 
 Three operations have **no** MCP tool and always use the CLI: `baseline`,
-`migrate`, and `migrate-resolved`. `np_list_findings` also has no
-`exclude_baseline`, so a baseline-aware listing (what `release-gate` needs) is
-CLI-only. The mutate tools omit `--force`, `--found`, and `--date`
-deliberately — re-opening a resolved finding, overwriting an existing one, or
-back-dating a record is a CLI-only escape hatch, not something a tool call
-should reach by accident.
+`migrate`, and `migrate-resolved`. That omission is deliberate, not a gap
+waiting to be filled: `baseline` waives every open finding from the release
+gate, and migration sits behind a per-run consent gate that overrides
+autonomous mode (Run protocol step 0). The MCP mutate tools run with no consent
+prompt, so shipping either as a tool would put a waiver or an unconsented
+migration one call away. The mutate tools omit `--force`, `--found`, and
+`--date` for the same reason — re-opening a resolved finding, overwriting an
+existing one, or back-dating a record is a CLI-only escape hatch, not something
+a tool call should reach by accident.
 
 The CLI is stdlib-only, plain `python3`, no uv required. Resolve its path
 relative to this skill's directory (Claude Code:

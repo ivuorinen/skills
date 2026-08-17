@@ -244,6 +244,9 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
             "auditor": {"type": "string"},
             "severity": {"type": "string", "enum": list(findings.SEVERITIES)},
             "status": {"type": "string", "enum": ["open", "fixed", "invalid"]},
+            # The baseline-aware listing `release-gate` runs on. Without it that
+            # gate had no tool that could express its waiver and was CLI-only.
+            "exclude_baseline": {"type": "boolean"},
             "limit": {"type": "integer"},
         },
         "additionalProperties": False,
@@ -265,6 +268,7 @@ def _list_findings(args: dict) -> str:
         auditor=args.get("auditor") or "",
         status=args.get("status") or "",
         severity=args.get("severity") or "",
+        exclude_baseline=bool(args.get("exclude_baseline")),
         limit=args.get("limit"),
     )
     return _fenced(json.dumps(rows, indent=2))

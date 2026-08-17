@@ -31,7 +31,8 @@ waive.
    Writes docs/audit/findings/baseline.json = every currently-open finding id
    plus the date. Commit it: `chore: baseline pre-existing findings`.
 2. Gate on new findings only:
-     python3 findings.py list --status open --exclude-baseline
+     np_list_findings with status: "open", exclude_baseline: true
+     (else python3 findings.py list --status open --exclude-baseline)
    release-gate reads this: any open finding at or above the threshold whose id
    is NOT baselined fails the gate; baselined debt is waived.
 3. Pay down debt: resolve each as `fixed` (`np_resolve_finding`, else
