@@ -12,6 +12,7 @@ enumerated skill/command set, never by building a path from raw input.
 
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -77,6 +78,30 @@ def read_skill(name: str, root: Path | None = None) -> str:
     raise KeyError(name)
 
 
+def _outside_fences(body: str) -> Iterator[str]:
+    """Yield the lines of `body` that sit outside a fenced code block.
+
+    A fence closes only on a marker of the same character and at least the same
+    length, so a ``` inside a ~~~~ block does not end it. The table parsers must
+    skip fenced content: SKILL.md documents the dispatch syntax and example CLI
+    calls in fences, and a line inside one is documentation, never a command row.
+
+    Split from `list_commands` because the fence bookkeeping carried a third of
+    that function's decision count while having nothing to do with parsing rows.
+    """
+    fence = ""
+    for line in body.splitlines():
+        opener = re.match(r"(`{3,}|~{3,})", line.lstrip())
+        if fence:
+            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if opener:
+            fence = opener.group(1)
+            continue
+        yield line
+
+
 def _filter_category(rows: list[dict], category: str) -> list[dict]:
     """The rows in one category, or a ValueError naming every known category.
 
@@ -114,18 +139,9 @@ def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
     root = root or plugin_root()
     body = (_nitpicker_dir(root) / "SKILL.md").read_text(encoding="utf-8")
     out: list[dict] = []
-    fence = ""
     section = ""  # nearest `##`; the category for a table with no `###` group
     group = ""  # nearest `###` under the current `##`
-    for line in body.splitlines():
-        opener = re.match(r"(`{3,}|~{3,})", line.lstrip())
-        if fence:
-            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence):
-                fence = ""
-            continue
-        if opener:
-            fence = opener.group(1)
-            continue
+    for line in _outside_fences(body):
         head = _HEADING.match(line)
         if head:
             if len(head.group(1)) == 2:
