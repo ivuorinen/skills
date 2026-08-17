@@ -77,6 +77,25 @@ def read_skill(name: str, root: Path | None = None) -> str:
     raise KeyError(name)
 
 
+def _filter_category(rows: list[dict], category: str) -> list[dict]:
+    """The rows in one category, or a ValueError naming every known category.
+
+    Split out of `list_commands` so that function stays under the cyclomatic
+    ceiling the repo's static analysis enforces; parsing the tables and selecting
+    from the parsed rows are independent, and the split keeps each readable.
+
+    Raises rather than returning `[]`, because an empty list reads as "this
+    category has no commands" — indistinguishable from a typo, and the caller
+    would carry on with nothing.
+    """
+    want = _slug(category)
+    matched = [c for c in rows if _slug(c["category"]) == want]
+    if matched:
+        return matched
+    known = sorted({c["category"] for c in rows})
+    raise ValueError(f"unknown category {category!r}; known categories: {', '.join(known)}")
+
+
 def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
     """Parse the nitpicker SKILL.md Commands tables → name, category, aliases, purpose.
 
@@ -123,14 +142,7 @@ def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
         out.append(
             {"name": name, "category": group or section, "aliases": aliases, "purpose": purpose}
         )
-    if not category:
-        return out
-    want = _slug(category)
-    rows = [c for c in out if _slug(c["category"]) == want]
-    if not rows:
-        known = sorted({c["category"] for c in out})
-        raise ValueError(f"unknown category {category!r}; known categories: {', '.join(known)}")
-    return rows
+    return _filter_category(out, category) if category else out
 
 
 def read_command(command: str, root: Path | None = None) -> str:
