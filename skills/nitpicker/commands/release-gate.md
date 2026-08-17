@@ -16,6 +16,9 @@ Release readiness checks, CI gates, "can we ship", "run the release gate".
    findings accepted by `/nitpicker baseline` are waived (they stay open). If
    baseline.json exists but does not parse, report "baseline unreadable — no
    findings waived" and gate on the full open set; never silently skip it.
+   With a baseline in effect, list twice — once waived, once unfiltered. The
+   gate reads the waived set; step 4's baselined count is the difference
+   between them, and a single filtered read cannot produce it.
 2. Threshold: High, unless the extra instructions name another severity
    (e.g. "/nitpicker release-gate medium").
 3. Any open finding at or above the threshold → report each (id, severity,
