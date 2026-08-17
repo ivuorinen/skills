@@ -475,6 +475,49 @@ def test_list_findings_can_waive_baselined_ids(tmp_path):
     assert json.loads(_unfence(waived)) == []
 
 
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({"severity": "extreme"}, "severity must be one of"),
+        ({"status": "resolved"}, "status must be one of"),
+        ({"exclude_baseline": "false"}, "exclude_baseline must be a boolean"),
+        ({"limit": "5"}, "limit must be an integer"),
+        ({"limit": True}, "limit must be an integer"),
+    ],
+)
+def test_list_findings_rejects_wrongly_typed_filters(tmp_path, args, expected):
+    """Each of these fails silently if coerced instead of checked.
+
+    The inputSchema is advisory — this server does not validate against it — so a
+    wrong value arrives at the handler. `bool("false")` is True, which would waive
+    every baselined finding and let `release-gate` pass on the debt it exists to
+    fail on; `int(True)` is 1, silently capping the listing at one row; and an
+    out-of-vocab severity or status matches zero rows, which reads as "no
+    findings" rather than "you typed it wrong".
+    """
+    _seed(tmp_path)
+    mod = _load()
+    result = _call(mod, "np_list_findings", {"project_dir": str(tmp_path), **args})
+    assert result["isError"] is True
+    assert expected in result["content"][0]["text"]
+
+
+def test_list_findings_accepts_a_boolean_false_without_waiving(tmp_path):
+    """`exclude_baseline: false` is a valid explicit choice, not a rejected value."""
+    store = _seed(tmp_path)
+    f = _load_findings()
+    open_ids = [r["id"] for r in f.gather_findings(store, status="open")]
+    f.write_baseline(store, open_ids, "2026-01-01")
+    mod = _load()
+    result = _call(
+        mod,
+        "np_list_findings",
+        {"project_dir": str(tmp_path), "status": "open", "exclude_baseline": False, "limit": 5},
+    )
+    assert result["isError"] is False
+    assert len(json.loads(_unfence(result))) == 1
+
+
 def test_findings_index_and_validate(tmp_path):
     _seed(tmp_path)
     mod = _load()

@@ -253,6 +253,9 @@ def _fenced(payload: str) -> str:
 
 
 _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
+# The statuses `np_list_findings` filters on. One definition feeds both the
+# advertised schema enum and the handler's own check, so the two cannot drift.
+_LIST_STATUSES = ("open", "fixed", "invalid")
 
 
 # ── findings read tools (project-scoped) ─────────────────────────────────────
@@ -265,7 +268,7 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
             **_PROJECT_DIR_PROP,
             "auditor": {"type": "string"},
             "severity": {"type": "string", "enum": list(findings.SEVERITIES)},
-            "status": {"type": "string", "enum": ["open", "fixed", "invalid"]},
+            "status": {"type": "string", "enum": list(_LIST_STATUSES)},
             # The baseline-aware listing `release-gate` runs on. Without it that
             # gate had no tool that could express its waiver and was CLI-only.
             "exclude_baseline": {"type": "boolean"},
@@ -276,22 +279,37 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
     {**_READ_ONLY, "title": "List findings"},
 )
 def _list_findings(args: dict) -> str:
-    # inputSchema enums are advisory (the server does not validate against them),
-    # so enforce the vocab here — parity with the CLI's argparse choices. An
-    # out-of-vocab severity can only match zero rows, and an empty list reads as
-    # "no findings" rather than "you typed it wrong".
+    # inputSchema types and enums are advisory (the server does not validate args
+    # against them), so enforce them here — parity with the CLI's argparse
+    # choices. Every field below fails *silently* when it is wrong, which is why
+    # each is checked rather than coerced: an out-of-vocab severity or status can
+    # only match zero rows, and an empty list reads as "no findings" rather than
+    # "you typed it wrong"; `bool("false")` is True, so a client that stringifies
+    # its arguments would waive every baselined finding and let `release-gate`
+    # pass on the debt it exists to fail on; and `int(True)` is 1, so a boolean
+    # limit would silently cap the listing at one row.
     severity = args.get("severity") or ""
     if severity and severity not in findings.SEVERITIES:
         raise ValueError(f"severity must be one of {findings.SEVERITIES}, got {severity!r}")
+    status = args.get("status") or ""
+    if status and status not in _LIST_STATUSES:
+        raise ValueError(f"status must be one of {_LIST_STATUSES}, got {status!r}")
+    exclude_baseline = args.get("exclude_baseline", False)
+    if not isinstance(exclude_baseline, bool):
+        raise ValueError(f"exclude_baseline must be a boolean, got {exclude_baseline!r}")
+    limit = args.get("limit")
+    # `isinstance(True, int)` is True, so bool must be excluded explicitly.
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)):
+        raise ValueError(f"limit must be an integer, got {limit!r}")
     # Shared listing primitive with the CLI `list` command — see
     # findings.gather_findings — so the two interfaces cannot drift on filtering.
     rows = findings.gather_findings(
         _store(args),
         auditor=args.get("auditor") or "",
-        status=args.get("status") or "",
-        severity=args.get("severity") or "",
-        exclude_baseline=bool(args.get("exclude_baseline")),
-        limit=args.get("limit"),
+        status=status,
+        severity=severity,
+        exclude_baseline=exclude_baseline,
+        limit=limit,
     )
     return _fenced(json.dumps(rows, indent=2))
 
