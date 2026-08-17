@@ -257,6 +257,44 @@ _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
 # advertised schema enum and the handler's own check, so the two cannot drift.
 _LIST_STATUSES = ("open", "fixed", "invalid")
 
+# (field, accepts, expected) for every `np_list_findings` filter whose wrong value
+# fails silently. `""` is accepted for the two enums because an empty string is
+# how the handler spells "no filter"; a missing key and an explicit null are
+# unset and skipped before the predicate runs.
+_LIST_FILTERS = (
+    (
+        "severity",
+        lambda v: v in ("", *findings.SEVERITIES),
+        f"one of {findings.SEVERITIES}",
+    ),
+    ("status", lambda v: v in ("", *_LIST_STATUSES), f"one of {_LIST_STATUSES}"),
+    ("exclude_baseline", lambda v: isinstance(v, bool), "a boolean"),
+    # `isinstance(True, int)` is True, so bool is excluded explicitly.
+    ("limit", lambda v: isinstance(v, int) and not isinstance(v, bool), "an integer"),
+)
+
+
+def _check_list_filters(args: dict) -> None:
+    """Reject a wrongly typed or out-of-vocab `np_list_findings` filter.
+
+    The inputSchema is advisory — this server does not validate args against it —
+    so a wrong value reaches the handler, and every filter here fails *silently*
+    when it does. That is why each is checked rather than coerced: an out-of-vocab
+    severity or status matches zero rows, and an empty list reads as "no findings"
+    rather than "you typed it wrong"; `bool("false")` is True, so a client that
+    stringifies its arguments would waive every baselined finding and let
+    `release-gate` pass on the debt it exists to fail on; and `int(True)` is 1, so
+    a boolean limit would cap the listing at one row.
+
+    Kept out of the handler so neither function carries the whole decision count —
+    the branches inline were enough to trip the repo's complexity gate.
+    """
+    for key, accepts, expected in _LIST_FILTERS:
+        value = args.get(key)
+        if value is None or accepts(value):
+            continue
+        raise ValueError(f"{key} must be {expected}, got {value!r}")
+
 
 # ── findings read tools (project-scoped) ─────────────────────────────────────
 @tool(
@@ -279,37 +317,17 @@ _LIST_STATUSES = ("open", "fixed", "invalid")
     {**_READ_ONLY, "title": "List findings"},
 )
 def _list_findings(args: dict) -> str:
-    # inputSchema types and enums are advisory (the server does not validate args
-    # against them), so enforce them here — parity with the CLI's argparse
-    # choices. Every field below fails *silently* when it is wrong, which is why
-    # each is checked rather than coerced: an out-of-vocab severity or status can
-    # only match zero rows, and an empty list reads as "no findings" rather than
-    # "you typed it wrong"; `bool("false")` is True, so a client that stringifies
-    # its arguments would waive every baselined finding and let `release-gate`
-    # pass on the debt it exists to fail on; and `int(True)` is 1, so a boolean
-    # limit would silently cap the listing at one row.
-    severity = args.get("severity") or ""
-    if severity and severity not in findings.SEVERITIES:
-        raise ValueError(f"severity must be one of {findings.SEVERITIES}, got {severity!r}")
-    status = args.get("status") or ""
-    if status and status not in _LIST_STATUSES:
-        raise ValueError(f"status must be one of {_LIST_STATUSES}, got {status!r}")
-    exclude_baseline = args.get("exclude_baseline", False)
-    if not isinstance(exclude_baseline, bool):
-        raise ValueError(f"exclude_baseline must be a boolean, got {exclude_baseline!r}")
-    limit = args.get("limit")
-    # `isinstance(True, int)` is True, so bool must be excluded explicitly.
-    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)):
-        raise ValueError(f"limit must be an integer, got {limit!r}")
+    _check_list_filters(args)
     # Shared listing primitive with the CLI `list` command — see
     # findings.gather_findings — so the two interfaces cannot drift on filtering.
     rows = findings.gather_findings(
         _store(args),
         auditor=args.get("auditor") or "",
-        status=status,
-        severity=severity,
-        exclude_baseline=exclude_baseline,
-        limit=limit,
+        status=args.get("status") or "",
+        severity=args.get("severity") or "",
+        # A real bool by the time it gets here — see _check_list_filters.
+        exclude_baseline=args.get("exclude_baseline", False),
+        limit=args.get("limit"),
     )
     return _fenced(json.dumps(rows, indent=2))
 
