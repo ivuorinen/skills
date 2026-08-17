@@ -28,7 +28,9 @@ parse_rules_frontmatter = _anatomy._parse_frontmatter
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-def validate(path: Path, errors: list[str], warnings: list[str], repo_root: Path) -> None:
+def validate(  # noqa: C901
+    path: Path, errors: list[str], warnings: list[str], repo_root: Path
+) -> None:
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
 

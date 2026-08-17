@@ -106,7 +106,7 @@ def _unterminated_fence(lines: list[str]) -> bool:
     return bool(fence)
 
 
-def validate(path: Path, errors: list[str], warnings: list[str]) -> None:
+def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noqa: C901
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
 
@@ -245,7 +245,7 @@ def _duplicate_table_commands(skill_body: str) -> list[str]:
     return dups
 
 
-def validate_commands(
+def validate_commands(  # noqa: C901
     commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
 ) -> None:
     """Cross-check the SKILL.md Commands table against commands/*.md files."""

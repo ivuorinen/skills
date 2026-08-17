@@ -68,7 +68,7 @@ GATES = (
 )
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901
     """Re-run the whole-tree gates when a Bash call dirtied a governed path.
 
     A Bash event carries no `file_path`, so this asks git what is dirty

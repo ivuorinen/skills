@@ -57,8 +57,20 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "PTH", "RUF"]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH", "RUF", "C901"]
 ignore = ["SIM108"]
+
+[tool.ruff.lint.mccabe]
+# The ceiling for new code. Codacy already fails a PR on a newly complex
+# function, but only after it is pushed and only with a metric that names no
+# location; this fails it in `make check` instead.
+#
+# Functions that predate the gate carry an explicit `# noqa: C901` rather than
+# being exempted by path, so a *new* complex function in an already-complex file
+# is still caught. RUF100 (enabled above) rejects an unnecessary noqa, so a
+# marker cannot outlive the complexity it excuses — the exemption list only
+# shrinks.
+max-complexity = 10
 
 [tool.ruff.lint.isort]
 known-first-party = ["scripts"]

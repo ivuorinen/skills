@@ -919,7 +919,7 @@ def show_finding(root: Path, fid: str) -> str:
 # ── validation ────────────────────────────────────────────────────────────────
 
 
-def validate_file(path: Path) -> list[str]:
+def validate_file(path: Path) -> list[str]:  # noqa: C901
     errors: list[str] = []
 
     def err(msg: str) -> None:
@@ -991,7 +991,7 @@ def validate_file(path: Path) -> list[str]:
     return errors
 
 
-def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:
+def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:  # noqa: C901
     errors: list[str] = []
 
     def err(msg: str) -> None:
@@ -1023,7 +1023,7 @@ def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:
     return errors
 
 
-def validate_store(root: Path) -> list[str]:
+def validate_store(root: Path) -> list[str]:  # noqa: C901
     errors: list[str] = []
     seen: dict[str, Path] = {}
     # A leftover legacy tree is the state an aborted `migrate-resolved` leaves
@@ -1157,7 +1157,7 @@ def write_index(root: Path) -> Path:
 # ── migration ─────────────────────────────────────────────────────────────────
 
 
-def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:
+def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # noqa: C901
     """Convert legacy <auditor>/resolved/*.md files into resolved.jsonl and
     delete the ones that were recorded. Idempotent: a byte-identical record
     already in the ledger is skipped, and its file is still removed.
@@ -1298,7 +1298,7 @@ def _build_v1(
     return ("resolved", fid, rec)
 
 
-def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:
+def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C901
     text = src.read_text(encoding="utf-8")
     auditor = v1_auditor(src.name)
     generated = ""
@@ -1504,7 +1504,7 @@ def gather_findings(
     return rows
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
