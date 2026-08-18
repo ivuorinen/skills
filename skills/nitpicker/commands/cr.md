@@ -168,15 +168,15 @@ What next?
   1. Leave it (no commit, no replies posted)
   2. Commit only (no push, no replies posted)
   3. Commit and push
-  4. Autopilot — commit, push, post replies (resolving threads where the
-     transport supports it), and drive re-review to clean
+  4. Autopilot — commit, push, post replies (resolving threads wherever the
+     platform and transport support it), and drive re-review to clean
 ```
 
 This menu overrides autonomous/goal mode — never commit, push, or post without an explicit choice made here. With no interactive user, default to option 1 (Leave it) — no commit, no push, no replies — and record that in the summary. Option 4 must never be the no-interaction default; it runs only on an explicit choice.
 
 - **Leave it** or **Commit only**: apply the commit if chosen; do not push; do not post replies. Inform the user: "Replies not posted — push the branch first so the reviewer can see the changes."
 - **Commit and push**: stage only the files changed by the review fixes; write the commit message using the convention confirmed in Step 1; never use `--no-verify`; push to the current branch's remote tracking branch (never directly to `main` or `master`). If the push fails, stop, report the error, and do not post any replies — ask the user to resolve the failure and re-run this step. After the push succeeds, ask: **"Post replies to the PR now? (y/n)"**
-- **Autopilot**: the same commit + push as option 3, then **post every drafted reply and resolve each handled thread without the interim `(y/n)` prompt** — the choice of option 4 IS that authorization. Resolution is conditional on the transport: thread resolution is GraphQL-only, so a run whose `transport` is `gh-rest` or `token-rest` posts its replies and reports the threads as unresolved-by-transport rather than claiming a resolve it cannot perform. Same guards hold: stage only review-fix files, never `--no-verify`, never push to `main`/`master`, and if the push fails, stop and post nothing. After the push and replies, if a reviewer will re-review (see the CodeRabbit loop below), that one choice authorizes **every** iteration of it — drive the PR to clean/approved, then report. This is full automation, not a licence to skip verification: each fix still gets its own check cycle (Step 4), and a blocked or failing state stops the loop and reports rather than force-proceeding.
+- **Autopilot**: the same commit + push as option 3, then **post every drafted reply and resolve each handled thread without the interim `(y/n)` prompt** — the choice of option 4 IS that authorization. Resolution depends on the platform, and on GitHub also on the transport: GitLab and Bitbucket both resolve over REST (see the Step 6 table), while **GitHub** thread resolution is GraphQL-only — so a GitHub run whose `transport` is `gh-rest` or `token-rest` posts its replies and reports those threads as unresolved-by-transport rather than claiming a resolve it cannot perform. Never skip a resolve the platform does support. Same guards hold: stage only review-fix files, never `--no-verify`, never push to `main`/`master`, and if the push fails, stop and post nothing. After the push and replies, if a reviewer will re-review (see the CodeRabbit loop below), that one choice authorizes **every** iteration of it — drive the PR to clean/approved, then report. This is full automation, not a licence to skip verification: each fix still gets its own check cycle (Step 4), and a blocked or failing state stops the loop and reports rather than force-proceeding.
 
 **If there are no Implemented verdicts** (only Pushed Back and Skipped — no code changed): ask `Post replies now? (y/n)` and post immediately on confirmation — no push is needed.
 
