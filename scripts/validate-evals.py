@@ -44,6 +44,25 @@ def _load(path: Path, errors: list[str]) -> dict | None:
     return data
 
 
+def _check_files(
+    refs: object, label: str | int, skill_dir: Path, err: Callable[[str], None]
+) -> None:
+    """Validate a case's optional `files` list of input-file paths.
+
+    Shape-checked before iteration: a null, a number, or a non-string element
+    would raise TypeError and replace every remaining diagnostic with a
+    traceback — the failure mode this validator exists to avoid.
+    """
+    if not isinstance(refs, list):
+        err(f"eval {label} 'files' must be a list; got {type(refs).__name__}")
+        return
+    for ref in refs:
+        if not isinstance(ref, str) or not ref.strip():
+            err(f"eval {label} has an input file reference that is not a non-empty string")
+        elif not (skill_dir / ref).exists():
+            err(f"eval {label} references missing input file {ref!r}")
+
+
 def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[str], None]) -> None:
     """Check one evals.json test case (id uniqueness handled by the caller)."""
     for field in ("prompt", "expected_output"):
@@ -58,18 +77,7 @@ def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[st
     elif any(not str(a).strip() for a in assertions):
         err(f"eval {label} has an empty assertion")
 
-    # Shape-check before iterating: a null, a number, or a non-string element
-    # would raise TypeError here and replace every remaining diagnostic with a
-    # traceback — the failure mode this validator exists to avoid.
-    refs = case.get("files", [])
-    if not isinstance(refs, list):
-        err(f"eval {label} 'files' must be a list; got {type(refs).__name__}")
-        return
-    for ref in refs:
-        if not isinstance(ref, str) or not ref.strip():
-            err(f"eval {label} has an input file reference that is not a non-empty string")
-        elif not (skill_dir / ref).exists():
-            err(f"eval {label} references missing input file {ref!r}")
+    _check_files(case.get("files", []), label, skill_dir, err)
 
 
 def _check_id(raw_id: object, index: int, seen: set, err: Callable[[str], None]) -> str | int:
@@ -192,6 +200,26 @@ def _target_dirs(args: list[str]) -> list[Path]:
     return sorted(p.parent for p in repo_root.glob("skills/*/evals"))
 
 
+def _report_missing(missing: list[Path]) -> None:
+    """Fail on supplied paths that yielded no eval set, naming each one.
+
+    An explicitly supplied path with no eval set is a misconfiguration — a typo
+    or a moved directory — not a clean run. Reported per path rather than as a
+    total, so one valid path cannot mask a typo'd sibling. Only the no-argument
+    sweep is allowed to find nothing, because a repo with no eval sets is
+    genuinely clean; that caller never reaches here.
+    """
+    if not missing:
+        return
+    for d in missing:
+        print(
+            f"  ERROR  no eval set under supplied path {str(d)!r} — "
+            "the argument must be a skill directory",
+            file=sys.stderr,
+        )
+    sys.exit(1)
+
+
 def main() -> None:
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(__doc__)
@@ -212,19 +240,8 @@ def main() -> None:
         print(f"\n{len(errors)} error(s). Fix before committing.")
         sys.exit(1)
 
-    # An explicitly supplied path that yielded no eval set is a
-    # misconfiguration — a typo or a moved directory — not a clean run. Only
-    # the no-argument sweep is allowed to find nothing, because a repo with no
-    # eval sets is genuinely clean.
-    missing = [d for d, was_checked in results if not was_checked]
-    if explicit and missing:
-        for d in missing:
-            print(
-                f"  ERROR  no eval set under supplied path {str(d)!r} — "
-                "the argument must be a skill directory",
-                file=sys.stderr,
-            )
-        sys.exit(1)
+    if explicit:
+        _report_missing([d for d, was_checked in results if not was_checked])
 
     print(f"OK  {checked} eval set(s) validated.")
 
