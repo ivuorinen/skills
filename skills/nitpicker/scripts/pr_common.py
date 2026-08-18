@@ -383,6 +383,13 @@ def cli_json(argv: list[str], timeout: int = 60) -> Any:
     into a hard failure on exactly the large merge requests that need paging.
     Consecutive documents are decoded and, when they are arrays, merged into one.
     """
+    # argv is a list and no shell is involved, so there is nothing for an
+    # argument to escape into. Its interpolated parts are validated upstream:
+    # the host against _HOST_RE, the project path against _SEGMENT_RE with the
+    # bare traversal tokens rejected by name.
+    # The marker must sit on the line directly above the call — opengrep ignores
+    # it even one line further up, silently.
+    # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(argv, capture_output=True, timeout=timeout)
     if result.returncode != 0:
         raise TransportError(
@@ -417,6 +424,9 @@ def _decode_concatenated(text: str) -> list[Any]:
 
 def cli_available(name: str) -> bool:
     try:
+        # `name` is a literal tool name from this module ("gh", "glab"), never
+        # caller input, and the argv is a list with no shell.
+        # nosemgrep: dangerous-subprocess-use-audit
         subprocess.run([name, "--version"], capture_output=True, check=True, timeout=5)
         return True
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):

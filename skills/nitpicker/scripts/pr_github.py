@@ -108,6 +108,9 @@ def _gh_graphql(query: str, variables: dict[str, Any], hostname: str = "") -> di
     argv += ["--input", "-"]
 
     payload = json.dumps({"query": query, "variables": variables}).encode()
+    # argv is a list and no shell is involved. Its only interpolated part is the
+    # hostname, validated by _HOST_RE before a Target is constructed.
+    # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(argv, input=payload, capture_output=True, timeout=30)
     if result.returncode != 0:
         raise GhTransportError(result.stderr.decode().strip())
@@ -120,6 +123,10 @@ def _gh_rest_paginate(path: str, hostname: str = "") -> list[Any]:
     if hostname:
         argv += ["--hostname", hostname]
     argv += [path]
+    # argv is a list and no shell is involved. `path` is built from a Target
+    # whose segments passed _check_segments, so it carries no separator or
+    # traversal token.
+    # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(argv, capture_output=True, timeout=60)
     if result.returncode != 0:
         raise GhTransportError(result.stderr.decode().strip())

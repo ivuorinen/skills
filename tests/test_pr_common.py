@@ -754,6 +754,10 @@ def test_every_shipped_cli_publishes_its_interface(script, flag):
     exit-code block — whether a non-zero result means "you called this wrong"
     (retry with different arguments) or "the operation failed" (report it).
     """
+    # A test invoking this interpreter on a repo-local path, list argv, no shell.
+    # Running the real CLI is the point: it is the only way to prove the tool
+    # answers --help on stdout at exit 0, which is the contract under test.
+    # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(
         [sys.executable, str(script), flag], capture_output=True, text=True, timeout=60
     )
