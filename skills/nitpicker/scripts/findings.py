@@ -28,6 +28,11 @@ Subcommands:
     migrate          convert a v1 *-findings.md document into the store
     migrate-resolved (legacy 1.x store layout only) convert legacy
                      <auditor>/resolved/*.md files into the ledger
+
+Exit codes: 0 = success, 1 = runtime or I/O error, 2 = usage error.
+`validate` and `release-gate`-style checks use 1 to report findings, so a
+non-zero 1 means "the operation ran and the answer is no", while 2 means "the
+invocation was wrong" — retry with corrected arguments only on 2.
 """
 
 import argparse
@@ -73,13 +78,44 @@ _KNOWN_FM = ("id", "auditor", "severity", "category", "area", "status", "found",
 # this same writer. Resolution appends to an append-only ledger, so a secret
 # written here is permanent, and the store's linguist-generated mark collapses
 # these files in PR diffs, removing the review that would catch it.
+#
+# One vendor per line, and every vendor this repo tells a user to configure must
+# be here: `cr.md` and both PR fetchers document GITHUB_TOKEN, GITLAB_TOKEN,
+# BITBUCKET_TOKEN and BITBUCKET_APP_PASSWORD, so those shapes are not optional.
+# `tests/test_findings.py::TestRedactVendorCoverage` is the register — add the
+# vendor there and here together, or the gap is silent.
 _SECRET_RE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}"
+    r"|github_pat_[A-Za-z0-9_]{22,}"  # GitHub fine-grained PAT (now the default)
+    r"|glpat-[A-Za-z0-9_-]{20,}"  # GitLab personal access token
+    r"|glrt-[A-Za-z0-9_-]{20,}"  # GitLab runner token (modern)
+    r"|GR1348941[A-Za-z0-9_-]{20,}"  # GitLab runner token (legacy prefix)
+    r"|ATBB[A-Za-z0-9]{24,}"  # Bitbucket app password
     r"|sk-[A-Za-z0-9-]{20,}"
     r"|AKIA[0-9A-Z]{16}"
+    r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
+    r"|npm_[A-Za-z0-9]{36}"  # npm automation token
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
 )
+
+# PEM blocks need their own pattern: `_SECRET_RE` opens with `\b`, which cannot
+# match before a leading `-`, so a private key can never match inside it. The
+# whole block is consumed rather than just the header — masking `-----BEGIN ...`
+# alone would leave the key body in the record and read as redacted.
+_PEM_RE = re.compile(
+    r"-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----"
+    # Truncated evidence: no END marker. The base64 run is consumed too — matching
+    # the header alone replaces it with "[REDACTED ...]" and leaves the key
+    # material on the next line, which reads as redacted and is not.
+    r"|-----BEGIN[A-Z ]*PRIVATE KEY-----(?:\s*[A-Za-z0-9+/=]{16,})*"
+)
+
+# A bare AWS secret access key is 40 base64 characters with no prefix. Matching
+# it by shape alone would redact ordinary hashes, base64 blobs and diff noise in
+# evidence, so it is deliberately absent rather than accepted at that
+# false-positive rate. Cite the file:line for those instead.
+
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b")
 
 
@@ -91,6 +127,7 @@ def _mask(token: str) -> str:
 
 def redact(text: str) -> str:
     """Strip credentials and email addresses from text bound for the store."""
+    text = _PEM_RE.sub("[REDACTED PRIVATE KEY]", text)
     text = _SECRET_RE.sub(lambda m: _mask(m.group()), text)
     return _EMAIL_RE.sub("<email>", text)
 
