@@ -13,8 +13,6 @@ not `exclude_dirs`, and a bare directory name never matches.
 """
 
 import configparser
-import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -77,18 +75,42 @@ def test_bandit_defaults_are_not_lost():
         assert expected in patterns, f"bandit's default exclusion {expected} was dropped"
 
 
-@pytest.mark.parametrize("args", [["--ini", str(BANDIT_INI)], ["-c", str(PYPROJECT)]])
-def test_both_config_paths_agree_on_the_shipped_tools(args):
-    """The property that matters: the two configurations produce the same verdict.
+# Importing bandit's CLI pulls in stevedore, which warns about a no-op argument
+# in its own plugin loader. Upstream, not actionable here, and scoped to the two
+# tests that need the import so it never hides a warning from our own code.
+@pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
+def test_bandits_own_ini_loader_returns_the_skips():
+    """Asserted through the loader `--ini` actually calls, not a string compare.
 
-    Runs the real binary rather than comparing parsed values, so a key bandit
-    accepts but ignores cannot pass this.
+    The silent-ignore trap is INI-side: a key bandit accepts and drops leaves the
+    file looking correct while changing nothing. `_get_options_from_ini` is what
+    `--ini` invokes, so a value that does not reach bandit does not reach this
+    assertion either. The pyproject side needs no equivalent — `-c
+    pyproject.toml` is exercised by `make security` and the pre-commit hook on
+    every run, and a TOML table has no such failure mode.
+
+    Deliberately not a subprocess. An earlier version shelled out to the real
+    binary, which was a stronger check but introduced a `subprocess.run` call
+    that Codacy's bandit then reported as B603 — a new security finding created
+    by a test whose subject is suppressing that very rule.
     """
-    result = subprocess.run(
-        [sys.executable, "-m", "bandit", *args, "-q", "-r", "skills/", "scripts/"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert result.returncode == 0, f"bandit {args[0]} reported issues:\n{result.stdout[-2000:]}"
+    from bandit.cli.main import _get_options_from_ini
+
+    ini = _get_options_from_ini(str(BANDIT_INI), None)
+    assert ini is not None, ".bandit was not readable by bandit's own INI loader"
+    assert [s.strip() for s in ini["skips"].split(",")] == _pyproject_bandit()["skips"]
+
+
+@pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
+def test_bandit_reads_the_ini_exclusions_at_all():
+    """`exclude_dirs` in an INI parses and is dropped; this proves `exclude` survives.
+
+    The assertion is that bandit's INI loader returns the key — a config file it
+    silently ignores is the failure this whole file exists to prevent.
+    """
+    from bandit.cli.main import _get_options_from_ini
+
+    ini = _get_options_from_ini(str(BANDIT_INI), None)
+    assert ini is not None, ".bandit was not readable by bandit's own INI loader"
+    assert "exclude" in ini, "bandit's INI loader returned no exclusions"
+    assert "tests" in ini["exclude"]

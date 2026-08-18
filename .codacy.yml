@@ -60,6 +60,19 @@ engines:
       - "scripts/**"
       - "tests/**"
 
+  # Bandit over tests/ only. This mirrors an exclusion that already exists and
+  # that Codacy is not honouring: pyproject.toml sets
+  # exclude_dirs = ["tests", ...] because 815 of tests/'s 816 bandit hits are
+  # B101 (assert_used) — asserts are the test mechanism, not a defect — and the
+  # remainder are subprocess calls that drive the tools under test.
+  #
+  # Scoped to tests/ deliberately. The shipped tools stay under bandit here, so
+  # this narrows nothing that matters: B101 is still live for skills/ and
+  # scripts/, which use no bare asserts today.
+  bandit:
+    exclude_paths:
+      - "tests/**"
+
 # NOT configured here, deliberately.
 #
 # Bandit reports B603 ("subprocess call without a static string") on the four
