@@ -9,7 +9,7 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 ## Development Commands
 
 ```bash
-make check        # validate skill+commands + validate-evals + validate-rules + version sync + lock check + findings-store validate + findings-index check + ruff lint + ruff format check + bandit security scan + pyright typecheck + pytest + pre-commit suite (run before every commit)
+make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
 make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
 make test         # run pytest unit tests
@@ -25,13 +25,40 @@ The authoritative command listing (categorized, with aliases) is `## Commands` i
 
 ## Agent Skills Spec Compliance
 
-The normative format is the open spec at <https://agentskills.io/specification>, enforced by `scripts/validate-skill.py`: `name` (≤64 chars, lowercase/digits/hyphens, no leading, trailing or consecutive hyphen, matches its directory), `description` (≤1024 chars), and the optional `license`, `compatibility` (≤500 chars), `metadata` (string→string map) and `allowed-tools` (one space-separated string). A top-level key outside that set is an **error** — client-specific properties go under `metadata`, which is what the spec designates it for. No allowlist, no exemption, internal dev skills included. Body size warns past 500 lines or ~5000 tokens (the progressive-disclosure instructions tier).
+The normative format is the open spec at <https://agentskills.io/specification>.
+`scripts/validate-skill.py` enforces it. Required: `name` (≤64 chars,
+lowercase/digits/hyphens, no leading, trailing or consecutive hyphen, matching
+its directory) and `description` (≤1024 chars). Optional: `license`,
+`compatibility` (≤500 chars), `metadata` (a string→string map) and
+`allowed-tools` (one space-separated string).
 
-`disable-model-invocation` therefore lives under `metadata` as `"true"` (quoted — metadata values are strings). Claude Code reads that key from the top level, so under `metadata` it is inert and those skills are model-invocable; that was accepted deliberately in exchange for portability.
+A top-level key outside that set is an **error**. Client-specific properties go
+under `metadata`, which is what the spec designates it for. There is no
+allowlist and no exemption; internal dev skills are held to the same rule. Body
+size warns past 500 lines or ~5000 tokens, the progressive-disclosure
+instructions tier.
+
+`disable-model-invocation` therefore lives under `metadata` as `"true"`, quoted
+because metadata values are strings. Claude Code reads that key from the top
+level only, so under `metadata` it is inert and those skills become
+model-invocable. That trade was accepted deliberately, buying portability.
 
 Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions) and `trigger-queries.json` (description trigger accuracy, fixed train/validation split) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
 
-`make spec-check` cross-checks every skill against the Agent Skills reference validator (network; not part of `make check`, since `validate-skill.py` enforces the same constraints offline). All eight skills pass, internal dev skills included. Install traps: the PyPI package is `skills-ref` but its console script is `agentskills` (the spec page documents a `skills-ref` command that no longer exists and exits 1 silently); the identically-named npm package is unrelated to Anthropic; and failures print to stderr while successes print to stdout, so stderr must be merged before a run is judged clean.
+`make spec-check` cross-checks every skill against the Agent Skills reference
+validator. It needs network access, so it sits outside `make check`;
+`validate-skill.py` enforces the same constraints offline. Every skill passed at
+the time of writing, internal dev skills included — re-run it rather than
+trusting that, since a spec release can change the verdict.
+
+Three install traps, each hit once already:
+
+- The PyPI package is `skills-ref`, but its console script is `agentskills`.
+  The spec page still documents a `skills-ref` command, which no longer exists
+  and exits 1 with no output.
+- The identically-named npm package is unrelated to Anthropic.
+- Failures print to stderr and successes to stdout, so merge stderr before
+  judging a run clean.
 
 ## Command File Format
 
@@ -58,7 +85,14 @@ Two classes (see `.claude/rules/use-uv-runner.md`):
 - **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`, `#!/usr/bin/env python3`. The stdlib-only rule is enforced by `scripts/check-stdlib-only.py` (pre-commit + CI) — a third-party import fails the gate.
 - **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`): `uv run --quiet`, `#!/usr/bin/env -S uv run --quiet` + `# /// script` block.
 
-Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0, prints structured data to stdout and diagnostics to stderr, and uses distinct exit codes (0 success, 1 runtime/IO error, 2 usage error). `--help` is handled before any positional argument resolves as a path — otherwise the flag is read as input and the agent gets a path error in place of usage text. The design rules are in `.claude/rules/use-uv-runner.md`; enforcement is author discipline plus the per-tool `--help` tests.
+Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0.
+Structured data goes to stdout, diagnostics to stderr. Exit codes are distinct
+per failure class: 0 success, 1 runtime or I/O error, 2 usage error.
+
+Handle `--help` before any positional argument resolves as a path. Otherwise the
+flag is read as input and the agent gets a path error in place of usage text.
+The design rules live in `.claude/rules/use-uv-runner.md`; enforcement is author
+discipline plus the per-tool `--help` tests.
 
 ## Adding a New Command
 

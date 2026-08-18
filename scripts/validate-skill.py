@@ -40,8 +40,16 @@ _SPEC_FIELDS: frozenset[str] = frozenset(
     {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 )
 
-# Top-level frontmatter key: unindented `key:` or `key: value`.
-_FM_KEY_RE = re.compile(r"^([A-Za-z0-9_-]+):(.*)$")
+# Top-level frontmatter key: unindented `key:` or `key: value`. YAML permits the
+# key to be quoted, and a bare-word-only pattern silently skipped `"key": value`
+# — the line then attached to the previous key as a nested line, so an
+# unrecognised key escaped the spec-field check entirely.
+_FM_KEY_RE = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_-]+))[ \t]*:(.*)$""")
+
+# A YAML flow collection opens with [ or {. The spec types `allowed-tools` as one
+# space-separated string and `metadata` values as strings, so either marker in
+# those positions is a type violation the reference validator also rejects.
+_FLOW_RE = re.compile(r"^[\[{]")
 
 # One `key: value` pair nested under a mapping field such as `metadata`.
 _FM_NESTED_PAIR_RE = re.compile(r"^[ \t]+([A-Za-z0-9_.-]+):[ \t]*(.*)$")
@@ -150,7 +158,10 @@ def _fm_sections(block: str) -> list[tuple[str, str, list[str]]]:
             continue
         m = _FM_KEY_RE.match(line)
         if m:
-            sections.append((m.group(1), m.group(2).strip(), []))
+            # Groups 1-3 are the quoted and bare spellings of the key; exactly
+            # one matches. Group 4 is the inline value.
+            key = next(g for g in m.group(1, 2, 3) if g is not None)
+            sections.append((key, m.group(4).strip(), []))
         elif sections:
             sections[-1][2].append(line)
     return sections
@@ -205,6 +216,8 @@ def _check_metadata(inline: str, nested: list[str], err: Callable[[str], None]) 
         elif not pair.group(2):
             # A key with no scalar opens a nested map or list; values are strings.
             err(f"'metadata.{pair.group(1)}' must be a string, not a nested structure")
+        elif _FLOW_RE.match(pair.group(2)):
+            err(f"'metadata.{pair.group(1)}' must be a string, not a flow collection")
 
 
 def _check_allowed_tools(inline: str, nested: list[str], err: Callable[[str], None]) -> None:
@@ -213,6 +226,8 @@ def _check_allowed_tools(inline: str, nested: list[str], err: Callable[[str], No
         err("'allowed-tools' must be a single space-separated string, not a list")
     elif not inline:
         err("'allowed-tools' is present but empty; omit it or list the tools")
+    elif _FLOW_RE.match(inline):
+        err("'allowed-tools' must be a single space-separated string, not a flow collection")
 
 
 _FIELD_CHECKS: dict[str, Callable[[str, list[str], Callable[[str], None]], None]] = {
@@ -428,8 +443,13 @@ def validate_commands(  # noqa: C901
     # SKILL.md never names — the exact chain this check exists to reject. The
     # stem (not the filename) is matched because SKILL.md cites these files
     # both ways, as `_conventions.md` and as bare `_conventions`.
+    #
+    # Fenced blocks are stripped first: a name inside an example is not a live
+    # instruction to load the file, so counting it would satisfy the rule while
+    # the only real path to that reference still ran through a command.
+    reference_text = "\n".join(strip_fences(skill_body.splitlines()))
     for ref in sorted(commands_dir.glob("_*.md")):
-        if not re.search(rf"(?<![\w-]){re.escape(ref.stem)}(?![\w-])", skill_body):
+        if not re.search(rf"(?<![\w-]){re.escape(ref.stem)}(?![\w-])", reference_text):
             errors.append(
                 f"  ERROR  {ref}: shared reference is not named in SKILL.md — "
                 "reachable only through a command file, which chains references "

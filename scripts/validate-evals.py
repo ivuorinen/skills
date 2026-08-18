@@ -58,9 +58,40 @@ def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[st
     elif any(not str(a).strip() for a in assertions):
         err(f"eval {label} has an empty assertion")
 
-    for ref in case.get("files", []):
-        if not (skill_dir / ref).exists():
+    # Shape-check before iterating: a null, a number, or a non-string element
+    # would raise TypeError here and replace every remaining diagnostic with a
+    # traceback — the failure mode this validator exists to avoid.
+    refs = case.get("files", [])
+    if not isinstance(refs, list):
+        err(f"eval {label} 'files' must be a list; got {type(refs).__name__}")
+        return
+    for ref in refs:
+        if not isinstance(ref, str) or not ref.strip():
+            err(f"eval {label} has an input file reference that is not a non-empty string")
+        elif not (skill_dir / ref).exists():
             err(f"eval {label} references missing input file {ref!r}")
+
+
+def _check_id(raw_id: object, index: int, seen: set, err: Callable[[str], None]) -> str | int:
+    """Validate one case's `id`, record it, and return the label for diagnostics.
+
+    Split out of validate_evals so the per-case ladder does not push that
+    function past the complexity ceiling. Returns a positional label when the id
+    is missing or unusable, so later diagnostics can still name the case.
+    """
+    if raw_id is None:
+        err(f"evals[{index}] is missing 'id'")
+    elif not isinstance(raw_id, str | int) or isinstance(raw_id, bool):
+        # A list or dict id would raise TypeError on the set membership test,
+        # replacing every remaining diagnostic with a traceback. bool is
+        # excluded explicitly because it subclasses int.
+        err(f"evals[{index}] id must be a string or integer; got {type(raw_id).__name__}")
+    elif raw_id in seen:
+        err(f"duplicate eval id {raw_id!r}")
+    else:
+        seen.add(raw_id)
+        return raw_id
+    return f"index {index}"
 
 
 def validate_evals(path: Path, skill_name: str, errors: list[str]) -> None:
@@ -85,18 +116,7 @@ def validate_evals(path: Path, skill_name: str, errors: list[str]) -> None:
         if not isinstance(case, dict):
             err(f"evals[{i}] must be an object")
             continue
-        raw_id = case.get("id")
-        label = raw_id if raw_id is not None else f"index {i}"
-        if raw_id is None:
-            err(f"evals[{i}] is missing 'id'")
-        elif not isinstance(raw_id, str | int) or isinstance(raw_id, bool):
-            # A list or dict id would raise TypeError on the set membership
-            # test below, replacing every remaining diagnostic with a traceback.
-            err(f"evals[{i}] id must be a string or integer; got {type(raw_id).__name__}")
-        elif raw_id in seen:
-            err(f"duplicate eval id {raw_id!r}")
-        else:
-            seen.add(raw_id)
+        label = _check_id(case.get("id"), i, seen, err)
         _check_case(case, label, path.parent.parent, err)
 
 
@@ -164,20 +184,27 @@ def validate_skill_evals(skill_dir: Path, errors: list[str]) -> bool:
     return checked
 
 
+def _target_dirs(args: list[str]) -> list[Path]:
+    """Skill directories to check: the supplied paths, else every skills/*/evals."""
+    if args:
+        return [Path(a) for a in args]
+    repo_root = Path(__file__).parent.parent
+    return sorted(p.parent for p in repo_root.glob("skills/*/evals"))
+
+
 def main() -> None:
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(__doc__)
         return
 
     explicit = bool(sys.argv[1:])
-    if explicit:
-        skill_dirs = [Path(a) for a in sys.argv[1:]]
-    else:
-        repo_root = Path(__file__).parent.parent
-        skill_dirs = sorted(p.parent for p in repo_root.glob("skills/*/evals"))
+    skill_dirs = _target_dirs(sys.argv[1:])
 
     errors: list[str] = []
-    checked = sum(validate_skill_evals(d, errors) for d in skill_dirs)
+    # Per-path, not a total: summing hides a typo'd path behind a valid one, so
+    # `validate-evals.py good-skill typo-skill` would exit 0 on a non-zero total.
+    results = [(d, validate_skill_evals(d, errors)) for d in skill_dirs]
+    checked = sum(was_checked for _, was_checked in results)
 
     if errors:
         for e in errors:
@@ -189,12 +216,14 @@ def main() -> None:
     # misconfiguration — a typo or a moved directory — not a clean run. Only
     # the no-argument sweep is allowed to find nothing, because a repo with no
     # eval sets is genuinely clean.
-    if explicit and not checked:
-        print(
-            "  ERROR  no evals/ directory under any supplied path — "
-            "the argument must be a skill directory",
-            file=sys.stderr,
-        )
+    missing = [d for d, was_checked in results if not was_checked]
+    if explicit and missing:
+        for d in missing:
+            print(
+                f"  ERROR  no eval set under supplied path {str(d)!r} — "
+                "the argument must be a skill directory",
+                file=sys.stderr,
+            )
         sys.exit(1)
 
     print(f"OK  {checked} eval set(s) validated.")

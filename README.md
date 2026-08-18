@@ -193,7 +193,7 @@ non-interactive mutate contract.
 ## Development
 
 ```bash
-make check     # validate skill + commands, evals, rules, version sync, lockfile, findings store, findings index, lint, format, typecheck, tests, pre-commit
+make check     # validate skill + commands, evals, rules, version sync, lockfile, findings store, findings index, lint, format, security, typecheck, tests, pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```

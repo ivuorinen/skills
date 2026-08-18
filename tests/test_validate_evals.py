@@ -141,6 +141,18 @@ class TestValidateEvals:
         errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
         assert _has(errors, "empty assertion")
 
+    @pytest.mark.parametrize("bad", [None, 3, "notalist", {"a": 1}])
+    def test_non_list_files_reports_a_diagnostic_not_a_traceback(self, tmp_path, bad):
+        case = {**VALID_CASE, "files": bad}
+        errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
+        assert _has(errors, "'files' must be a list")
+
+    @pytest.mark.parametrize("bad", [1, None, "   ", ["nested"]])
+    def test_non_string_file_reference_errors(self, tmp_path, bad):
+        case = {**VALID_CASE, "files": [bad]}
+        errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
+        assert _has(errors, "not a non-empty string")
+
     def test_missing_input_file_errors(self, tmp_path):
         case = {**VALID_CASE, "files": ["evals/files/absent.csv"]}
         errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
@@ -257,6 +269,19 @@ class TestMain:
             _mod.main()
         assert exc.value.code == 1
         assert "must be a skill directory" in capsys.readouterr().err
+
+    def test_one_valid_and_one_missing_path_still_exits_one(self, tmp_path, monkeypatch, capsys):
+        # Summing the per-path results would hide the typo'd path behind the
+        # valid one and exit 0 on a non-zero total.
+        good = _skill(tmp_path, "my-skill")
+        _write(good, "evals.json", {"skill_name": "my-skill", "evals": [VALID_CASE]})
+        (tmp_path / "bare").mkdir()
+        monkeypatch.setattr(sys, "argv", ["prog", str(good), str(tmp_path / "bare")])
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "bare" in err and "must be a skill directory" in err
 
     def test_no_args_with_no_eval_sets_stays_zero(self, monkeypatch, capsys):
         # The no-argument sweep is allowed to find nothing.

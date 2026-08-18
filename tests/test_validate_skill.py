@@ -462,6 +462,12 @@ class TestSharedReferenceDepth:
         errors, _ = self._skill(tmp_path, "\nLoad the `_shared` reference first.\n")
         assert not _has(errors, "not named in SKILL.md")
 
+    def test_reference_named_only_inside_a_fence_still_errors(self, tmp_path):
+        # An example is not a live instruction to load the file, so a fenced
+        # mention must not satisfy the one-level rule.
+        errors, _ = self._skill(tmp_path, "\n```text\nSee `_shared.md` here.\n```\n")
+        assert _has(errors, "not named in SKILL.md")
+
     def test_stem_that_prefixes_a_named_stem_still_errors(self, tmp_path):
         # `_s` occurs inside `_shared`; a substring test would wrongly exempt it.
         skill_dir = tmp_path / "my-skill"
@@ -594,6 +600,24 @@ class TestAgentSkillsSpecFields:
     def test_allowed_tools_as_list_errors(self, tmp_path):
         content = self._with("allowed-tools:\n  - Read\n  - Bash\n")
         assert _has(_errors(tmp_path, content), "space-separated string, not a list")
+
+    def test_quoted_unknown_key_errors(self, tmp_path):
+        # A bare-word-only key pattern skipped the line entirely, so the quoted
+        # spelling escaped the spec-field check.
+        content = self._with('"invented-key": value\n')
+        assert _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_quoted_spec_key_is_recognised(self, tmp_path):
+        content = self._with('"license": MIT\n')
+        assert not _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_allowed_tools_flow_collection_errors(self, tmp_path):
+        content = self._with("allowed-tools: [Read, Bash]\n")
+        assert _has(_errors(tmp_path, content), "not a flow collection")
+
+    def test_metadata_flow_collection_value_errors(self, tmp_path):
+        content = self._with("metadata:\n  tags: [a, b]\n")
+        assert _has(_errors(tmp_path, content), "not a flow collection")
 
     def test_unknown_frontmatter_key_errors(self, tmp_path):
         # Matches the reference validator, which rejects any unrecognised key.
