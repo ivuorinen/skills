@@ -51,8 +51,14 @@ _FM_KEY_RE = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_-]+))[ \t]*:(.*)
 # those positions is a type violation the reference validator also rejects.
 _FLOW_RE = re.compile(r"^[\[{]")
 
-# One `key: value` pair nested under a mapping field such as `metadata`.
-_FM_NESTED_PAIR_RE = re.compile(r"^[ \t]+([A-Za-z0-9_.-]+):[ \t]*(.*)$")
+# One `key: value` pair nested under a mapping field such as `metadata`. The key
+# may be quoted — `"release channel": stable` is valid YAML the reference
+# validator accepts, and a bare-word-only pattern rejected it as "not a
+# 'key: value' pair". The `:` delimiter stays required: dropping it would let an
+# empty value or a flow collection through the checks below.
+_FM_NESTED_PAIR_RE = re.compile(
+    r"""^[ \t]+(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_.-]+))[ \t]*:[ \t]*(.*)$"""
+)
 
 
 def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
@@ -213,11 +219,16 @@ def _check_metadata(inline: str, nested: list[str], err: Callable[[str], None]) 
         pair = _FM_NESTED_PAIR_RE.match(ln)
         if not pair:
             err(f"'metadata' entry is not a 'key: value' pair: {ln.strip()!r}")
-        elif not pair.group(2):
+            continue
+        # Groups 1-3 are the quoted and bare spellings of the key; group 4 is
+        # the value.
+        key = next(g for g in pair.group(1, 2, 3) if g is not None)
+        value = pair.group(4)
+        if not value:
             # A key with no scalar opens a nested map or list; values are strings.
-            err(f"'metadata.{pair.group(1)}' must be a string, not a nested structure")
-        elif _FLOW_RE.match(pair.group(2)):
-            err(f"'metadata.{pair.group(1)}' must be a string, not a flow collection")
+            err(f"'metadata.{key}' must be a string, not a nested structure")
+        elif _FLOW_RE.match(value):
+            err(f"'metadata.{key}' must be a string, not a flow collection")
 
 
 def _check_allowed_tools(inline: str, nested: list[str], err: Callable[[str], None]) -> None:

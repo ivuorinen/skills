@@ -244,7 +244,10 @@ def _run_commands(tmp_path: Path, files: dict[str, str], skill_md: str | None = 
     skill_dir = tmp_path / "my-skill"
     cmd_dir = skill_dir / "commands"
     cmd_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(skill_md or COMMANDS_SKILL, encoding="utf-8")
+    # `is None`, not falsy: an explicitly empty or malformed skill_md must reach
+    # the validator, not be silently replaced by the default fixture.
+    content = COMMANDS_SKILL if skill_md is None else skill_md
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
     for fname, content in files.items():
         (cmd_dir / fname).write_text(content, encoding="utf-8")
     errors: list[str] = []
@@ -618,6 +621,22 @@ class TestAgentSkillsSpecFields:
     def test_metadata_flow_collection_value_errors(self, tmp_path):
         content = self._with("metadata:\n  tags: [a, b]\n")
         assert _has(_errors(tmp_path, content), "not a flow collection")
+
+    @pytest.mark.parametrize("key", ['"release channel"', "'author name'"])
+    def test_quoted_metadata_key_accepted(self, tmp_path, key):
+        # Valid YAML the reference validator accepts; a bare-word-only pattern
+        # rejected it as "not a 'key: value' pair".
+        content = self._with(f"metadata:\n  {key}: stable\n")
+        assert _errors(tmp_path, content) == []
+
+    @pytest.mark.parametrize("value", ["true", "false", "1.0", "42", "null", "~"])
+    def test_scalar_looking_metadata_values_accepted(self, tmp_path, value):
+        # strictyaml — the reference validator's parser — reads every scalar as a
+        # string, so these are strings, not booleans/numbers/null. Rejecting them
+        # would fail skills the normative implementation passes. Pinned so a
+        # future tightening cannot silently over-reject.
+        content = self._with(f"metadata:\n  flag: {value}\n")
+        assert _errors(tmp_path, content) == []
 
     def test_unknown_frontmatter_key_errors(self, tmp_path):
         # Matches the reference validator, which rejects any unrecognised key.
