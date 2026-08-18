@@ -78,6 +78,36 @@ python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|inde
 
 IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
 
+## PR Fetchers
+
+`cr` reads a PR's review surface through two entry points —
+`fetch-pr-comments.py` and `fetch-pr-status.py` — that cover GitHub, GitLab and
+Bitbucket Cloud behind **one** JSON format. Both are thin: they resolve their
+sibling directory and delegate to `pr_common.run_cli`, which parses the argument
+forms, dispatches on platform, and maps exceptions to the 0/1/2 exit contract.
+
+`pr_common.py` owns everything shared — git-remote parsing, platform detection,
+the `Target` (platform + git host + project path, from which the API base is
+derived), the credential-pinned HTTP layer, both pagination styles, and the
+output envelopes. One provider module per platform (`pr_github.py`,
+`pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly `fetch_comments(target, n)`
+and `fetch_status(target, n)`.
+
+Two invariants make the shared format worth having, and both are pinned by
+tests. A field a platform cannot supply is present and empty or null, never
+absent — a caller must never branch on key existence to learn which platform
+answered. And a credential is only ever sent to the host it was declared for:
+the redirect handler is built per-request with that host, every paginated URL is
+re-validated before it is followed (both `Link` headers and body `next` fields
+are server-controlled), and `GH_HOST`/`GITLAB_HOST` gate a token against a
+self-hosted instance. Platform detection refuses an unrecognised host rather
+than guessing, since a wrong guess is a credential handed to a third party.
+
+The MCP tools `np_pr_comments` and `np_pr_status` wrap the same providers. They
+are the only tools on the server carrying `openWorldHint: true`, and the only
+ones whose results are wrapped in an `<untrusted-data source="pull-request">`
+envelope — PR bodies are written by anyone who can comment on the PR.
+
 ## Script Execution
 
 Two classes (see `.claude/rules/use-uv-runner.md`):
