@@ -1,13 +1,18 @@
 # Bandit configuration in the INI form (`bandit --ini .bandit`).
 #
 # WHY THIS FILE EXISTS, given pyproject.toml already has [tool.bandit]:
-# bandit auto-discovers NOTHING. It reads a config only when explicitly pointed
-# at one — `-c pyproject.toml` (what `make security` and the pre-commit hook do)
-# or `--ini .bandit`. A runner that invokes bare `bandit -r` gets bandit's
-# defaults and reports B404/B603/B607 regardless of what pyproject.toml says.
-# Codacy is such a runner: its "use configuration file" setting was already
-# enabled and it still reported all five, because it was not looking at
-# pyproject.toml. This file gives it the canonical filename to find.
+# bandit auto-discovers THIS file, and only this file, and only when its single
+# target is a directory — it looks for `<target>/.bandit`. It never
+# auto-discovers pyproject.toml at all. Measured:
+#
+#   bandit -r .          (.bandit present)  -> config applied
+#   bandit -r src                           -> not applied (looks for src/.bandit)
+#   bandit -r src/a.py                      -> not applied (file target)
+#
+# So `-c pyproject.toml` (what `make security` and the pre-commit hook pass) and
+# a hosted runner invoking `bandit -r .` reach the same policy only because both
+# files exist and agree. Without this one, any runner that does not pass `-c`
+# would silently fall back to bandit's defaults and report B404/B603/B607.
 #
 # pyproject.toml stays the source of truth — it carries the full reasoning for
 # each skip and each excluded directory. This file mirrors the values only, and

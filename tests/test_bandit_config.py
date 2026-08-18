@@ -1,11 +1,11 @@
 """The `.bandit` INI mirrors `[tool.bandit]` in pyproject.toml.
 
 Two files describe one policy, so they can drift. pyproject.toml is the source
-of truth — it carries the reasoning for every skip — while `.bandit` exists
-purely so a runner that cannot be told `-c pyproject.toml` still finds the
-configuration. Codacy is that runner: bandit auto-discovers nothing, so a bare
-`bandit -r` uses defaults and reports B404/B603/B607 no matter what
-pyproject.toml says.
+of truth — it carries the reasoning for every skip — while `.bandit` exists so a
+runner that cannot be told `-c pyproject.toml` still finds the configuration.
+bandit auto-discovers `.bandit` when its single target is a directory, and never
+auto-discovers pyproject.toml, so without this file such a runner falls back to
+bandit's defaults and reports B404/B603/B607.
 
 These pin the values in both places and the shape of the INI keys, which differ
 from pyproject.toml's in a way that fails silently: the INI key is `exclude`,
@@ -145,6 +145,25 @@ def test_bandits_own_ini_loader_returns_the_skips():
     ini = _get_options_from_ini(str(BANDIT_INI), None)
     assert ini is not None, ".bandit was not readable by bandit's own INI loader"
     assert [s.strip() for s in ini["skips"].split(",")] == _pyproject_bandit()["skips"]
+
+
+@pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
+def test_bandit_auto_discovers_the_ini_from_a_directory_target():
+    """The contract that makes this file useful to a runner we do not control.
+
+    bandit looks for `<target>/.bandit` when handed a single directory, and never
+    looks for pyproject.toml. So a hosted runner invoking `bandit -r .` picks this
+    file up with no flags, which is the whole reason it exists alongside
+    `[tool.bandit]`. Pinned because the filename and the directory-target
+    condition are both load-bearing and neither is obvious from the file itself.
+    """
+    from bandit.cli.main import _get_options_from_ini
+
+    assert _get_options_from_ini(None, [str(REPO_ROOT)]) is not None, (
+        ".bandit is no longer discoverable from a directory target"
+    )
+    # A file target does not trigger discovery — the distinction this test names.
+    assert _get_options_from_ini(None, [str(PYPROJECT)]) is None
 
 
 @pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
