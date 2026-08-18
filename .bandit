@@ -1,0 +1,26 @@
+# Bandit configuration in the INI form (`bandit --ini .bandit`).
+#
+# WHY THIS FILE EXISTS, given pyproject.toml already has [tool.bandit]:
+# bandit auto-discovers NOTHING. It reads a config only when explicitly pointed
+# at one — `-c pyproject.toml` (what `make security` and the pre-commit hook do)
+# or `--ini .bandit`. A runner that invokes bare `bandit -r` gets bandit's
+# defaults and reports B404/B603/B607 regardless of what pyproject.toml says.
+# Codacy is such a runner: its "use configuration file" setting was already
+# enabled and it still reported all five, because it was not looking at
+# pyproject.toml. This file gives it the canonical filename to find.
+#
+# pyproject.toml stays the source of truth — it carries the full reasoning for
+# each skip and each excluded directory. This file mirrors the values only, and
+# `tests/test_bandit_config.py` fails if the two ever disagree, so a skip added
+# in one place cannot silently go missing in the other.
+
+# The INI keys mirror bandit's COMMAND-LINE options, not pyproject.toml's keys:
+# it is `exclude` here, where pyproject.toml says `exclude_dirs`. A bare
+# directory name does not match either — bandit compares against the path it
+# walked, so the patterns are globs. Verified: `exclude_dirs = tests` and
+# `exclude = tests` both leave tests/ scanned; `exclude = */tests/*` excludes it.
+# Setting `exclude` replaces bandit's built-in default list, so the usual
+# VCS/cache directories are restated here rather than lost.
+[bandit]
+exclude = */tests/*,*/.venv/*,*/graphify-out/*,*/_extra/*,*/.git/*,*/__pycache__/*,*/.tox/*,*/.eggs/*
+skips = B404,B603,B607

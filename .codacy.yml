@@ -28,30 +28,36 @@ exclude_paths:
   - ".claude/skills/graphify/**"
 
 engines:
-  # Cyclomatic complexity ("metric" is Codacy's name for it).
+  # Lizard reports all three shapes seen on this repository: "cyclomatic
+  # complexity of N", "has N parameters", and "has N non-comment lines of code".
+  # Ruff is switched OFF for this repository in the Codacy UI, so Codacy is not
+  # cross-checking complexity by another route — Lizard is the only source.
   #
-  # This repository already gates complexity: ruff's C901 with
-  # max-complexity = 10, set in pyproject.toml [tool.ruff.lint.mccabe] with its
-  # rationale recorded there, enforced by `make lint` in `make check` and in CI.
-  # That gate passes on every function Codacy flags, so the two tools disagree
-  # on how to count rather than on what the code does. Running both yields two
-  # thresholds and no extra signal, and only one of them can fail the build.
-  # Ruff is the one that does, so ruff governs.
+  # Complexity is already gated here by ruff's C901 at max-complexity = 10, set
+  # in pyproject.toml [tool.ruff.lint.mccabe] with its rationale, enforced by
+  # `make lint` in `make check` and in CI. It passes on every function Lizard
+  # flags, so the two disagree on how to count rather than on what the code
+  # does, and only ruff can fail the build.
   #
   # Re-enable this if ruff's C901 is ever removed — do not leave the repository
   # with no complexity gate at all.
-  metric:
+  #
+  # Test files are excluded for a separate reason: 100% statement AND branch
+  # coverage is required (pyproject.toml [tool.coverage.report] fail_under =
+  # 100), so length in tests/ is that gate working, not a smell.
+  lizard:
     exclude_paths:
       - "skills/**"
       - "scripts/**"
       - "tests/**"
 
-  # Per-function and per-file size metrics.
-  # Test files here are long because the repository requires 100% statement AND
-  # branch coverage (pyproject.toml [tool.coverage.report] fail_under = 100), so
-  # length in tests/ is the coverage gate working, not a smell.
-  lizard:
+  # Kept alongside `lizard` because Codacy's own complexity metric is reported
+  # under this name, and which of the two produced a given finding is not
+  # visible from the check-run output. Harmless if unused.
+  metric:
     exclude_paths:
+      - "skills/**"
+      - "scripts/**"
       - "tests/**"
 
 # NOT configured here, deliberately.
@@ -65,6 +71,11 @@ engines:
 #
 # Excluding those paths from bandit here would waive EVERY bandit rule on the
 # shipped tools, which is strictly worse than the targeted skip list already in
-# pyproject.toml. The correct fix is to enable "use configuration file" for
-# Bandit (and Ruff) in the Codacy UI, so Codacy honours pyproject.toml instead
-# of its own defaults. That setting cannot be expressed in this file.
+# pyproject.toml.
+#
+# "Use configuration file" for Bandit was already enabled in the Codacy UI and
+# the findings persisted, because bandit auto-discovers NOTHING: it honours a
+# config only when explicitly given `-c <file>` or `--ini .bandit`, and it was
+# not being pointed at pyproject.toml. The `.bandit` file added at the repo root
+# gives it the canonical filename to find; tests/test_bandit_config.py keeps the
+# two in step.
