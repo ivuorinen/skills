@@ -234,6 +234,13 @@ def _iter_rules(
 
 
 def main() -> None:
+    # --help is how an agent learns this script's interface
+    # (https://agentskills.io/skill-creation/using-scripts). Checked before the
+    # argument is read as a path, or `--help` resolves as a project root.
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(__doc__)
+        return
+
     explicit = bool(sys.argv[1:])
     project_root = Path(sys.argv[1]).resolve() if explicit else Path.cwd()
     rules_dir = project_root / ".claude" / "rules"

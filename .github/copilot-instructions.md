@@ -51,11 +51,21 @@ implementation.
 
 Enforced by `scripts/validate-skill.py` (run via `make validate`, part of `make check` and CI):
 
+The normative format is the open
+[Agent Skills specification](https://agentskills.io/specification); the rules below are
+that spec plus this repo's stricter conventions.
+
 **Router (`skills/nitpicker/SKILL.md`)** — the only file with YAML frontmatter:
 
-- `name` must match the directory name exactly (kebab-case)
+- `name` must match the directory name exactly (kebab-case), be ≤ 64 characters, contain only
+  lowercase letters, digits and hyphens, and never start, end, or double up on a hyphen
 - `description` must contain `"Use when"`, be ≤ 1024 characters, and be wrapped in single
   quotes when the value contains `": "` (colon + space)
+- optional spec fields: `license`, `compatibility` (≤ 500 chars), `metadata` (a map of string
+  keys to string values), `allowed-tools` (one space-separated string). Any other top-level
+  key is an **error** — client-specific properties go under `metadata`, quoted as strings.
+  This holds for internal dev skills too; there is no allowlist
+- body warns past 500 lines or ~5000 tokens; move reference material into separate files
 
 **Command files (`commands/*.md`)** — no frontmatter. Required shape:
 
@@ -98,10 +108,15 @@ Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migra
 | Shipped skill tools  | `skills/*/scripts/*.py`                | plain `python3`, stdlib-only, `#!/usr/bin/env python3` — consumers cannot be assumed to have uv or any installed package |
 | Internal dev tooling | `scripts/`, `scripts/hooks/`, `tests/` | `uv run --quiet <script>`, shebang `#!/usr/bin/env -S uv run --quiet` + `# /// script` block                             |
 
+Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0, handled before
+any positional argument resolves as a path. Structured data goes to stdout, diagnostics to
+stderr, and exit codes are distinct per failure class: 0 success, 1 runtime/IO error, 2 usage
+error. Bad input fails non-zero — an empty-but-valid result at exit 0 reads as "nothing found".
+
 ## Validation — Run Before Every Commit
 
 ```bash
-make check     # validate skill+commands + rules + version sync + findings store + findings index + lint + format check + bandit security scan + typecheck + pytest + pre-commit
+make check     # validate skill+commands + evals + rules + version sync + lockfile + findings store + findings index + lint + format check + bandit security scan + typecheck + pytest + pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```

@@ -193,10 +193,15 @@ non-interactive mutate contract.
 ## Development
 
 ```bash
-make check     # validate skill + commands, rules, version sync, findings store, findings index, lint, format, typecheck, tests, pre-commit
+make check     # validate skill + commands, evals, rules, version sync, lockfile, findings store, findings index, lint, format, typecheck, tests, pre-commit
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```
+
+Skills in this repo conform to the open
+[Agent Skills specification](https://agentskills.io/specification);
+`scripts/validate-skill.py` enforces it, and `scripts/validate-evals.py` checks
+the eval sets under `skills/*/evals/`.
 
 Repo conventions for agents working on this codebase: [`AGENTS.md`](AGENTS.md)
 (shared), [`CLAUDE.md`](CLAUDE.md) (Claude Code),

@@ -1,7 +1,8 @@
 ---
 name: skill-tester
-description: Use when verifying that a skill actually changes Claude's behaviour — runs TDD pressure scenarios against a skill before and after writing it.
-disable-model-invocation: true
+description: Runs TDD pressure scenarios against a skill before and after it is written, proving the skill actually changes agent behaviour instead of merely reading well. Use when verifying a new or edited skill has real effect, establishing a RED baseline before authoring, or confirming a GREEN result after.
+metadata:
+  disable-model-invocation: "true"
 ---
 
 # Skill Tester

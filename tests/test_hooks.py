@@ -52,6 +52,7 @@ STDIN_HOOKS = [
     "check-version-sync-hook",
     "ruff-hook",
     "validate-rules-hook",
+    "validate-evals-hook",
 ]
 
 
@@ -1078,6 +1079,7 @@ def _script_repo(tmp_path: Path) -> Path:
     for rel in (
         "scripts/validate-skill.py",
         "scripts/validate-rules.py",
+        "scripts/validate-evals.py",
         "scripts/check-version-sync.py",
         "skills/nitpicker/scripts/check-rules-anatomy.py",
         "skills/nitpicker/scripts/findings.py",
@@ -1097,6 +1099,7 @@ SCRIPT_ENTRY_CASES = [
     ("ruff-hook", "lint_me.py", "RUFF SAID NO"),
     ("validate-rules-hook", ".claude/rules/a-rule.md", "RULE VIOLATION"),
     ("validate-audit-findings-hook", "docs/audit/findings/a/open/a-11111111.md", "not a valid"),
+    ("validate-evals-hook", "skills/foo/evals/evals.json", "EVAL SET BROKEN"),
 ]
 
 
@@ -1181,6 +1184,7 @@ VALIDATOR_HOOKS = [
     ("validate-skill-hook", "skills/foo/SKILL.md"),
     ("check-version-sync-hook", "package.json"),
     ("validate-rules-hook", ".claude/rules/a-rule.md"),
+    ("validate-evals-hook", "skills/foo/evals/evals.json"),
 ]
 
 
@@ -1729,6 +1733,7 @@ def test_every_hook_subprocess_call_passes_a_timeout():
         ("validate-skill-hook", {"tool_input": {"file_path": "skills/x/SKILL.md"}}),
         ("check-version-sync-hook", {"tool_input": {"file_path": "package.json"}}),
         ("validate-rules-hook", {"tool_input": {"file_path": ".claude/rules/x.md"}}),
+        ("validate-evals-hook", {"tool_input": {"file_path": "skills/x/evals/evals.json"}}),
     ],
 )
 def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsys):
@@ -2966,3 +2971,91 @@ def test_restore_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys, tm
     payload = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
     assert payload["permissionDecision"] == "ask"
     assert "failed internally" in payload["permissionDecisionReason"]
+
+
+# ── validate-evals-hook: scoping and the two subprocess outcomes ──────────────
+
+
+def _evals_hook_repo(tmp_path: Path) -> Path:
+    """A REPO_ROOT holding the validator, so main() reaches its subprocess call."""
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scripts" / "validate-evals.py").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("rel", "why"),
+    [
+        ("skills/foo/evals/evals.json", "the shape the hook owns"),
+        ("skills/foo/evals/trigger-queries.json", "the other eval file"),
+    ],
+)
+def test_is_eval_file_accepts_an_eval_set(rel, why, tmp_path):
+    mod = _load("validate-evals-hook")
+    assert mod.is_eval_file(tmp_path / rel, tmp_path), why
+
+
+@pytest.mark.parametrize(
+    ("rel", "why"),
+    [
+        ("skills/foo/evals/notes.md", "not .json"),
+        ("skills/foo/SKILL.md", "not under evals/"),
+        ("skills/foo/commands/audit.json", "parent is not evals/"),
+        ("skills/foo/evals/files/fixture.json", "an eval input, one level too deep"),
+        ("docs/audit/findings/a.json", "outside skills/"),
+    ],
+)
+def test_is_eval_file_rejects_everything_else(rel, why, tmp_path):
+    """Scoping is the whole guard: a false positive hands the validator a file it
+    has no opinion on, and reports its complaint as an eval-set defect."""
+    mod = _load("validate-evals-hook")
+    assert not mod.is_eval_file(tmp_path / rel, tmp_path), why
+
+
+def test_validate_evals_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):
+    """Exit 2 + stderr is the only channel a PostToolUse hook has back to the agent."""
+    mod = _load("validate-evals-hook")
+    repo = _evals_hook_repo(tmp_path)
+    monkeypatch.setattr(mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        mod.subprocess, "run", lambda *_a, **_k: _Result(returncode=1, stdout="EVAL SET BROKEN")
+    )
+    target = repo / "skills" / "foo" / "evals" / "evals.json"
+    payload = {"tool_input": {"file_path": str(target)}}
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, json.dumps(payload), monkeypatch)
+    assert exc.value.code == 2
+    assert "EVAL SET BROKEN" in capsys.readouterr().err
+
+
+def test_validate_evals_hook_silent_when_the_validator_passes(monkeypatch, tmp_path, capsys):
+    """A clean eval set produces no output — the hook must not narrate success."""
+    mod = _load("validate-evals-hook")
+    repo = _evals_hook_repo(tmp_path)
+    monkeypatch.setattr(mod, "REPO_ROOT", repo)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(returncode=0, stdout="OK"))
+    target = repo / "skills" / "foo" / "evals" / "evals.json"
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+def test_validate_evals_hook_passes_the_skill_dir_not_the_json(monkeypatch, tmp_path):
+    """validate-evals.py takes a skill directory. Handing it the JSON file would
+    find no evals/ under it and — since the fail-open fix — exit 1 on a clean set,
+    so the hook would report every passing eval file as broken."""
+    mod = _load("validate-evals-hook")
+    repo = _evals_hook_repo(tmp_path)
+    monkeypatch.setattr(mod, "REPO_ROOT", repo)
+    seen = []
+
+    def _capture(argv, *_a, **_k):
+        """Record the argv the hook builds, then report success."""
+        seen.append(argv)
+        return _Result(returncode=0, stdout="")
+
+    monkeypatch.setattr(mod.subprocess, "run", _capture)
+    target = repo / "skills" / "foo" / "evals" / "evals.json"
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    assert seen, "the hook never shelled out"
+    assert seen[0][-1] == str(repo / "skills" / "foo")

@@ -1,0 +1,108 @@
+{
+  "skill_name": "nitpicker",
+  "notes": "Trigger-accuracy eval set for the SKILL.md description, per https://agentskills.io/skill-creation/optimizing-descriptions. The split is fixed: revise the description against `train` only, and score iterations by the `validation` pass rate so improvements are measured on queries the description was never tuned against. Negatives are deliberately near-misses — they share vocabulary with the skill but need something else — because obviously-irrelevant negatives test nothing.",
+  "threshold": 0.5,
+  "runs_per_query": 3,
+  "queries": [
+    {
+      "query": "I've got a PR up at #142 and CodeRabbit left like 15 comments on it, can you work through them?",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "before we cut 3.1.0 I want to know if anything in here is going to bite us in prod",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "theres a race condition somewhere in the worker pool, its dropping jobs under load and I cant reproduce it locally",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "my manager wants me to prove this codebase is maintainable before the acquisition diligence call. where do I even start",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "go through ~/Code/acme/api and tell me every single thing that's wrong with it, don't hold back",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "the README says we support postgres 13 but I'm pretty sure that's a lie now — can you check the docs against what the code actually does",
+      "should_trigger": true,
+      "split": "train"
+    },
+    {
+      "query": "write me a unit test for the parse_frontmatter function in scripts/common.py",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "review my resume, I attached it as resume_final_v3.pdf",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "add a Content-Security-Policy header to the nginx config",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "the CI job on main is red, can you figure out why and fix it",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "summarize what changed in the last 20 commits so I can write the standup update",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "whats the difference between a mutex and a semaphore",
+      "should_trigger": false,
+      "split": "train"
+    },
+    {
+      "query": "we have like 40 env vars in this service and nobody knows which ones are actually required. some of them might have prod defaults that scare me",
+      "should_trigger": true,
+      "split": "validation"
+    },
+    {
+      "query": "check whether any of our dependencies are abandoned or doing sketchy things at install time",
+      "should_trigger": true,
+      "split": "validation"
+    },
+    {
+      "query": "hunt down the code nobody calls anymore in packages/core so I can delete it safely",
+      "should_trigger": true,
+      "split": "validation"
+    },
+    {
+      "query": "I need a plan for moving the auth service off server-side sessions onto JWTs without a big-bang cutover",
+      "should_trigger": true,
+      "split": "validation"
+    },
+    {
+      "query": "run the test suite and tell me whether it passes",
+      "should_trigger": false,
+      "split": "validation"
+    },
+    {
+      "query": "generate a CHANGELOG entry for the 3.1.0 release from these commits",
+      "should_trigger": false,
+      "split": "validation"
+    },
+    {
+      "query": "refactor this function to use a dict comprehension instead of the for loop",
+      "should_trigger": false,
+      "split": "validation"
+    },
+    {
+      "query": "what does this regex do: ^[a-z0-9-]+$",
+      "should_trigger": false,
+      "split": "validation"
+    }
+  ]
+}
