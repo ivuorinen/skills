@@ -73,6 +73,19 @@ engines:
     exclude_paths:
       - "tests/**"
 
+  # Opengrep over tests/ only, matching what opengrep does locally by default:
+  # its own `.semgrepignore` skips test files, so a bare `opengrep scan` here
+  # reports nothing in tests/ while Codacy's copy reports every `subprocess.run`
+  # a test uses to drive the tool under test. Aligning the two is the point —
+  # this is not a waiver of a rule, it is the same scope the tool picks itself.
+  #
+  # The shipped tools stay under opengrep. It is the most precise scanner on
+  # this codebase (0 findings across 202 rules once the audit-rule call sites
+  # are annotated), so narrowing it beyond tests/ would lose real coverage.
+  opengrep:
+    exclude_paths:
+      - "tests/**"
+
 # NOT configured here, deliberately.
 #
 # Bandit reports B603 ("subprocess call without a static string") on the four

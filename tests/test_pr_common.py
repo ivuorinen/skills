@@ -776,6 +776,10 @@ def test_the_cli_sweep_actually_found_the_shipped_tools():
 
 @pytest.mark.parametrize("script", [_COMMENTS_CLI, _STATUS_CLI])
 def test_entry_points_exit_2_on_bad_usage(script):
+    # Same shape as the --help case above: this interpreter, a repo-local path,
+    # list argv, no shell. Marked as well as excluded in .codacy.yml because the
+    # marker is proven and the exclusion is not.
+    # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(
         [sys.executable, str(script), "a", "b", "c", "d"],
         capture_output=True,

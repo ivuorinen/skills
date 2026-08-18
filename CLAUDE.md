@@ -94,9 +94,10 @@ output envelopes. One provider module per platform (`pr_github.py`,
 and `fetch_status(target, n)`.
 
 Two invariants make the shared format worth having, and both are pinned by
-tests. A field a platform cannot supply is present and empty or null, never
-absent — a caller must never branch on key existence to learn which platform
-answered. And a credential is only ever sent to the host it was declared for:
+tests. A field a platform cannot supply is present and empty or null rather than
+absent, so a caller reads every key unconditionally instead of branching on key
+existence to learn which platform answered. And a credential is only ever sent
+to the host it was declared for:
 the redirect handler is built per-request with that host, every paginated URL is
 re-validated before it is followed (both `Link` headers and body `next` fields
 are server-controlled), and `GH_HOST`/`GITLAB_HOST` gate a token against a
@@ -116,8 +117,8 @@ at startup and holds them for the life of the process. **Editing one of those
 files does not change what the running server executes.** Worse, two servers are
 registered: `.mcp.json` starts one from the working tree, and
 `.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
-installed copy under `~/.claude/plugins/cache/`, which never reflects a
-working-tree edit at any age.
+installed copy under `~/.claude/plugins/cache/`, which reflects only the
+installed version, at any age.
 
 So after editing anything under `skills/*/scripts/`, drive the findings store
 through `python3 skills/nitpicker/scripts/findings.py` for the rest of the
@@ -242,7 +243,7 @@ the most behaviour-changing entries in the file:
 - matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
   text names `.claude/agents/` **or a full protected agent filename** —
   literally, quoted, escaped, variable-built, or glob-spelled (the
-  `permissions.deny` block binds file tools, never Bash — it names `Read`,
+  `permissions.deny` block binds file tools only, not Bash — it names `Read`,
   `Edit` **and** `Write` rules explicitly, rather than assuming an `Edit` rule
   also binds Write, which is undocumented client behaviour no in-repo gate can
   observe. `tests/test_settings.py` pins the exact list). So
