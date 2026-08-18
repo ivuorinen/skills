@@ -14,6 +14,12 @@ Usage:
     fetch-pr-status.py <host>/<group>/<project> <pr_number>
     fetch-pr-status.py <owner> <repo> <pr_number>
 
+A leading segment counts as a host only when a platform claims it (`github.*`,
+`gitlab.*`, `bitbucket.org`); anything else is part of the project path, so a
+GitLab group whose name contains a dot is not mistaken for a hostname. Name a
+custom self-hosted host with the PR URL, or omit the repo and let it come from
+the git remote.
+
 Options:
     --platform github|gitlab|bitbucket   Override platform detection. Required
                                          for a self-hosted host whose name does
@@ -65,7 +71,9 @@ degrades the result with a `[warn]` on stderr rather than losing the PR record.
 Auth, per platform:
     GitHub    gh CLI -> GITHUB_TOKEN. A token is sent to a non-github.com host
               only when GH_HOST names that host.
-    GitLab    GITLAB_TOKEN (with GITLAB_HOST for a self-hosted instance) -> glab CLI.
+    GitLab    GITLAB_TOKEN -> glab CLI. The instance comes from the git remote,
+              so self-hosted needs no extra setting. GITLAB_HOST only pins which
+              instance the token belongs to; naming a different host withholds it.
     Bitbucket BITBUCKET_TOKEN, or BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD.
 
 Exit codes: 0 = success, 1 = API/auth error, 2 = usage error.

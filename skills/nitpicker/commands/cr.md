@@ -30,7 +30,7 @@ Bitbucket **Data Center** (self-hosted) serves a different API and is not suppor
 | Platform | Auth, in the order the tools try it |
 | --- | --- |
 | GitHub | `gh` CLI (GraphQL, the only source of resolved state) → `gh` REST → `GITHUB_TOKEN`. A token reaches a non-`github.com` host only when `GH_HOST` names that host. |
-| GitLab | `GITLAB_TOKEN` (plus `GITLAB_HOST` for a self-hosted instance) → `glab` CLI |
+| GitLab | `GITLAB_TOKEN` → `glab` CLI. The instance comes from the git remote, so a self-hosted host needs no extra setting. Set `GITLAB_HOST` only to pin which instance the token belongs to — when it names a different host the token is withheld, not sent. |
 | Bitbucket | `BITBUCKET_TOKEN`, or `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` |
 
 If none is available the fetch exits 1 naming what to set; stop and report that message verbatim rather than paraphrasing it.

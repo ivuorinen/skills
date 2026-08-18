@@ -401,6 +401,18 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
             threads = fetch_graphql(target, pr_number)
             rest_list = _gh_transport(target)
             transport_label = "gh-graphql"
+        except subprocess.TimeoutExpired as timeout_err:
+            # A timeout is the transient case by definition — the ordinary
+            # symptom of the rate limiting and 5xx the marker scan below already
+            # classifies. It needs its own clause because TimeoutExpired
+            # subclasses SubprocessError, not RuntimeError or OSError, so it
+            # matches neither the `except` below nor `_is_transient`, and would
+            # otherwise surface as a bare "timed out after 30 seconds" that tells
+            # the caller nothing about retrying.
+            raise TransportError(
+                f"GraphQL timed out ({timeout_err}); resolved state unknown — "
+                "retry rather than fall back to resolved-blind REST."
+            ) from timeout_err
         except (RuntimeError, OSError) as graphql_err:
             # Only transport/permanent-API failures reach the REST fallback:
             # _gh_graphql raises GhTransportError on transport failure and

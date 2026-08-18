@@ -103,30 +103,53 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
 
     Inline comments carry an `inline` anchor; the rest are PR-level comments.
     Replies point at their parent by id, so a thread is the transitive closure of
-    a root — resolved by walking `parent` up to a root that is already known,
-    rather than assuming a reply's parent is itself a root. Bitbucket allows
-    replies to replies, so the one-level assumption silently splits a deep thread
-    into several.
+    a root — resolved by walking `parent` up to a root, rather than assuming a
+    reply's parent is itself a root. Bitbucket allows replies to replies, so the
+    one-level assumption silently splits a deep thread into several.
+
+    The parent index is built in a **separate first pass** rather than inline.
+    Arrival order is the server's choice — `_transport` asks for `sort=id`, but
+    that is a request, not a guarantee — and a single forward pass drops any reply
+    that precedes its parent into `summary_comments`, where it loses its `path`
+    and `cr` then treats it as an out-of-band notice it must not act on. A
+    reviewer's follow-up must not go silently unactionable because the API
+    reordered a page.
 
     Deleted comments are dropped: Bitbucket keeps the record with a null body, and
     an empty comment in a thread reads as a reviewer saying nothing.
     """
-    roots: dict[Any, Any] = {}  # comment id -> its thread's root id
+    live = [r for r in raw if isinstance(r, dict) and not r.get("deleted")]
+    by_id = {r.get("id"): r for r in live}
+    parent_of = {r.get("id"): (r.get("parent") or {}).get("id") for r in live}
+    anchored = {r.get("id"): (r.get("inline") or {}) for r in live if r.get("inline")}
+
+    def root_of(cid: Any) -> Any:
+        """The id at the top of `cid`'s parent chain, order-independent.
+
+        Stops at a parent that is not in this payload: a reply whose parent was
+        deleted, or paged out, roots at itself and keeps its own anchor rather
+        than chasing an id that resolves to nothing. `seen` guards a cycle — the
+        ids come from the API, and a self- or mutually-referencing `parent` would
+        otherwise spin here forever.
+        """
+        seen = {cid}
+        while True:
+            parent = parent_of.get(cid)
+            if parent is None or parent in seen or parent not in by_id:
+                return cid
+            cid = parent
+            seen.add(cid)
+
     threads: dict[Any, dict[str, Any]] = {}
     summary: list[dict[str, Any]] = []
 
-    # Parents always precede replies in Bitbucket's default (id-ascending) order,
-    # so one pass suffices; a reply whose parent is missing starts its own thread
-    # rather than being dropped.
-    for record in raw:
-        if not isinstance(record, dict) or record.get("deleted"):
-            continue
+    for record in live:
         cid = record.get("id")
-        inline = record.get("inline") or {}
-        parent_id = (record.get("parent") or {}).get("id")
-        root_id = roots.get(parent_id, parent_id if parent_id in threads else cid)
-
-        if not inline and root_id not in threads:
+        root_id = root_of(cid)
+        # A comment belongs to a thread when its chain's root is anchored to a
+        # line — which is what makes a reply inherit its parent's anchor.
+        inline = anchored.get(root_id) or {}
+        if not inline:
             if _body(record).strip():
                 summary.append(
                     {
@@ -138,8 +161,11 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
                 )
             continue
 
-        roots[cid] = root_id
         if root_id not in threads:
+            # Metadata comes from the ROOT record, never from whichever record
+            # happened to arrive first. Reading `resolution` and the permalink off
+            # a reply would report the reply's state as the thread's.
+            root = by_id.get(root_id, record)
             threads[root_id] = pr_common.thread(
                 thread_id=str(root_id),
                 path=inline.get("path", ""),
@@ -149,10 +175,8 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
                 # A non-null `resolution` is Bitbucket's resolved marker. The
                 # field is absent on older payloads, where resolution is genuinely
                 # unknown — null, not False.
-                is_resolved=(record.get("resolution") is not None)
-                if "resolution" in record
-                else None,
-                url=_html_url(record),
+                is_resolved=(root.get("resolution") is not None) if "resolution" in root else None,
+                url=_html_url(root),
             )
         threads[root_id]["comments"].append(
             pr_common.comment(
@@ -168,7 +192,10 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
 
 def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
     list_all, _get_one = _transport(target)
-    raw = list_all(f"{_pr_path(target, pr_number)}/comments")
+    # `sort=id` keeps parents ahead of their replies in the common case.
+    # `_split_comments` does not rely on it — it resolves parent chains in a
+    # separate pass — but asking costs nothing and keeps the data tidy.
+    raw = list_all(f"{_pr_path(target, pr_number)}/comments?sort=id")
     threads, summary_comments = _split_comments(raw)
     return pr_common.comments_envelope(
         target,

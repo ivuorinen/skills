@@ -200,20 +200,51 @@ def git_remote_url(remote: str = "origin", cwd: str | None = None) -> str:
     return result.stdout.decode().strip()
 
 
-def resolve_target(spec: str = "", platform: str = "", cwd: str | None = None) -> Target:
-    """Build a Target from an explicit spec, or from the repo's `origin` remote.
+def make_target(host: str, path: str, platform: str = "") -> Target:
+    """Resolve the platform for `host` and validate `path` against it.
 
-    `spec` accepts a full web URL (`https://gitlab.acme.com/grp/proj`), a
-    host-qualified path (`gitlab.acme.com/grp/proj`), or a bare project path
-    (`owner/repo`) — the last of which carries no host, so the platform must come
-    from `--platform` or default to github.com.
+    The single place a Target is built. Every caller that has a host and a path
+    already — the CLI's URL form, the remote reader, the MCP tools — goes through
+    here rather than re-serialising to `host/path` and re-parsing, which is what
+    exposed a custom self-hosted host to the ambiguity `_looks_like_host` guards.
     """
-    if not spec:
-        host, path = parse_remote_url(git_remote_url(cwd=cwd))
-    elif "://" in spec or spec.startswith("git@"):
+    resolved = platform_for_host(host, platform)
+    _check_segments(resolved, path)
+    return Target(resolved, host, path)
+
+
+def _looks_like_host(segment: str) -> bool:
+    """Whether a leading path segment names a platform host rather than a group.
+
+    "Contains a dot" is not enough. GitLab group names legally contain dots, so
+    `my.group/sub/proj` is a project path, not a host plus a shorter path — and
+    reading it as a host aims the fetch at a hostname the user never typed. Only
+    a segment some platform actually claims is treated as a host; anything else
+    stays part of the project path, which is the safe default. A custom
+    self-hosted host that no pattern claims is named with the URL form or read
+    off the git remote.
+    """
+    try:
+        platform_for_host(segment)
+        return True
+    except UsageError:
+        return False
+
+
+def resolve_target(spec: str, platform: str = "") -> Target:
+    """Build a Target from an explicit spec.
+
+    `spec` accepts a full web URL or SSH remote (`https://gitlab.acme.com/grp/proj`,
+    `git@github.com:o/r.git`), a host-qualified path whose first segment is a
+    recognised platform host (`gitlab.acme.com/grp/proj`), or a bare project path
+    (`owner/repo`, `grp/sub/proj`) — the last of which carries no host, so the
+    platform comes from `--platform` and defaults to github.com.
+
+    Reading the git remote is `resolve_target_from_remote`'s job, not this one.
+    """
+    if "://" in spec or spec.startswith("git@"):
         host, path = parse_remote_url(spec)
-    elif "." in spec.split("/", 1)[0] and spec.count("/") >= 2:
-        # `host/owner/repo` — a dotted first segment is a hostname, not an owner.
+    elif spec.count("/") >= 2 and _looks_like_host(spec.split("/", 1)[0]):
         host, path = spec.split("/", 1)
     else:
         # A bare path. Without a host the platform cannot be inferred, so an
@@ -223,9 +254,7 @@ def resolve_target(spec: str = "", platform: str = "", cwd: str | None = None) -
             resolved
         ]
         path = spec
-    resolved = platform_for_host(host, platform)
-    _check_segments(resolved, path)
-    return Target(resolved, host, path)
+    return make_target(host, path, platform)
 
 
 def parse_pr_number(raw: str) -> int:
@@ -298,33 +327,49 @@ def _next_from_link(link_header: str) -> str:
     return ""
 
 
+# Hop ceiling for both paginators. At 100 records a page that is ~10k records —
+# orders of magnitude past any real PR review surface. The cap exists because the
+# `next` link is chosen by the *server*: a bug, a proxy, or a hostile endpoint
+# that returns a constant next URL would otherwise spin forever, and these tools
+# run in non-interactive shells where an unbounded stall is worse than an error.
+# The per-request timeout bounds one hop, never the loop.
+_MAX_PAGES = 100
+
+
 def paginate_link(url: str, headers: dict[str, str], allowed_netloc: str) -> list[Any]:
     """Follow RFC-5988 `Link: rel="next"` pagination — GitHub and GitLab both use it."""
     results: list[Any] = []
-    while url:
+    for _ in range(_MAX_PAGES):
         body, resp_headers = http_json(url, headers, allowed_netloc)
         if isinstance(body, list):
             results.extend(body)
         elif body is not None:
             results.append(body)
         url = _next_from_link(resp_headers.get("Link", ""))
-        if url:
-            # Server-controlled; validated before the next hop rather than after.
-            _check_url(url, allowed_netloc)
+        if not url:
+            return results
+        # Server-controlled; validated before the next hop rather than after.
+        _check_url(url, allowed_netloc)
+    # Reached only by consuming every allowed hop with a `next` still pending, so
+    # this is always a real truncation — no guard needed, and none that could go
+    # stale into a branch that never runs.
+    warn(f"stopped after {_MAX_PAGES} pages; result may be truncated")
     return results
 
 
 def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -> list[Any]:
     """Follow Bitbucket's `{"values": [...], "next": "<url>"}` pagination."""
     results: list[Any] = []
-    while url:
+    for _ in range(_MAX_PAGES):
         body, _ = http_json(url, headers, allowed_netloc)
         if not isinstance(body, dict):
-            break
+            return results
         results.extend(body.get("values") or [])
         url = body.get("next") or ""
-        if url:
-            _check_url(url, allowed_netloc)
+        if not url:
+            return results
+        _check_url(url, allowed_netloc)
+    warn(f"stopped after {_MAX_PAGES} pages; result may be truncated")
     return results
 
 
@@ -616,9 +661,7 @@ def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
 
     if len(positional) == 1 and _URL_PR_RE.search(positional[0]):
         host, path, number = parse_pr_url(positional[0])
-        resolved = platform_for_host(host, platform)
-        _check_segments(resolved, path)
-        return Target(resolved, host, path), number
+        return make_target(host, path, platform), number
     if len(positional) == 1:
         return resolve_target_from_remote(platform, remote), parse_pr_number(positional[0])
     if len(positional) == 2:
@@ -635,10 +678,9 @@ def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
 
 
 def resolve_target_from_remote(platform: str = "", remote: str = "origin") -> Target:
+    """The only path that reads a git remote. `resolve_target` parses specs."""
     host, path = parse_remote_url(git_remote_url(remote))
-    resolved = platform_for_host(host, platform)
-    _check_segments(resolved, path)
-    return Target(resolved, host, path)
+    return make_target(host, path, platform)
 
 
 def provider_for(target: Target) -> Any:

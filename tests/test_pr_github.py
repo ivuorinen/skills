@@ -8,7 +8,7 @@ re-surfaces resolved threads as unresolved, and a token sent to the wrong host
 still returns a plausible-looking result.
 """
 
-import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -453,6 +453,32 @@ class TestFetchComments:
         ):
             gh.fetch_comments(_TARGET, 1)
 
+    def test_graphql_timeout_is_classified_transient(self, monkeypatch):
+        # TimeoutExpired subclasses SubprocessError, so it matches neither the
+        # `except (RuntimeError, OSError)` clause nor `_is_transient`'s
+        # GhTransportError check. Without its own clause it escapes as a bare
+        # "timed out after 30 seconds", telling the caller nothing about retrying.
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        with (
+            patch.object(gh, "_gh_available", return_value=True),
+            patch.object(gh, "fetch_graphql", side_effect=subprocess.TimeoutExpired("gh", 30)),
+            pytest.raises(c.TransportError, match="retry rather than fall back"),
+        ):
+            gh.fetch_comments(_TARGET, 1)
+
+    def test_graphql_timeout_never_downgrades_to_rest(self, monkeypatch):
+        # The hazard the classification exists to prevent: REST cannot report
+        # resolution, so falling back re-surfaces resolved threads as unresolved.
+        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        with (
+            patch.object(gh, "_gh_available", return_value=True),
+            patch.object(gh, "fetch_graphql", side_effect=subprocess.TimeoutExpired("gh", 30)),
+            patch.object(gh, "fetch_rest") as rest,
+            pytest.raises(c.TransportError),
+        ):
+            gh.fetch_comments(_TARGET, 1)
+        rest.assert_not_called()
+
     def test_permanent_graphql_failure_falls_back_to_rest(self, monkeypatch, capsys):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         with (
@@ -680,7 +706,19 @@ def test_provider_is_reachable_through_the_shared_dispatcher():
     assert c.provider_for(_TARGET) is gh
 
 
-def test_module_emits_nothing_to_stdout_on_import(capsys):
-    # The MCP server imports this transitively and stdout carries only JSON-RPC.
-    json.dumps({"probe": True})
+@pytest.mark.parametrize(
+    "module", ["pr_common.py", "pr_github.py", "pr_gitlab.py", "pr_bitbucket.py"]
+)
+def test_module_emits_nothing_to_stdout_on_import(module, capsys):
+    """mcp_server imports all four transitively and its stdout carries only
+    JSON-RPC frames, so a stray print in any of them corrupts the stream.
+
+    The import happens *inside* the test. Asserting on a module imported at file
+    scope would pass whatever the module did, because that import already ran
+    during collection — the assertion would hold by construction.
+    """
+    spec = importlib.util.spec_from_file_location(f"probe_{module}", _SCRIPTS / module)
+    assert spec is not None
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)  # type: ignore[union-attr]
     assert capsys.readouterr().out == ""

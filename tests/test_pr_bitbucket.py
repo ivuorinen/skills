@@ -144,6 +144,43 @@ class TestSplitComments:
         assert len(threads) == 1
         assert [x["id"] for x in threads[0]["comments"]] == ["1", "2"]
 
+    def test_reply_arriving_before_its_parent_still_joins_the_thread(self):
+        # Arrival order is the server's choice; `sort=id` is a request, not a
+        # guarantee. A single forward pass dropped this reply into
+        # summary_comments, where it loses its `path` and cr's non-thread
+        # lifecycle then refuses to act on it — a reviewer's follow-up going
+        # silently unactionable because a page came back reordered.
+        raw = [
+            _comment(2, body="still not fixed", parent=1),
+            _comment(1, inline={"path": "f.py", "to": 1}),
+        ]
+        threads, summary = bb._split_comments(raw)
+        assert summary == []
+        assert len(threads) == 1
+        assert sorted(x["id"] for x in threads[0]["comments"]) == ["1", "2"]
+        assert threads[0]["path"] == "f.py"
+
+    def test_thread_metadata_comes_from_the_root_not_the_first_arrival(self):
+        # Reading `resolution` off a reply would report the reply's state as the
+        # whole thread's.
+        raw = [
+            _comment(2, body="reply", parent=1, resolution=None),
+            _comment(1, inline={"path": "f.py", "to": 1}, resolution={"type": "resolution"}),
+        ]
+        threads, _summary = bb._split_comments(raw)
+        assert threads[0]["is_resolved"] is True
+        assert threads[0]["thread_id"] == "1"
+
+    def test_a_parent_cycle_does_not_hang(self):
+        # Ids come from the API; a self- or mutually-referencing parent would
+        # otherwise spin the chain walk forever.
+        raw = [
+            _comment(1, inline={"path": "f.py", "to": 1}, parent=2),
+            _comment(2, body="b", parent=1),
+        ]
+        threads, summary = bb._split_comments(raw)
+        assert len(threads) + len(summary) >= 1
+
     def test_reply_to_a_reply_stays_in_the_same_thread(self):
         # Bitbucket allows nested replies; assuming a reply's parent is itself a
         # root silently splits a deep thread into several.
@@ -197,11 +234,13 @@ class TestFetchComments:
         assert out["review_bodies"] == []
         assert out["transport"] == "bitbucket-rest"
 
-    def test_calls_the_comments_endpoint(self):
+    def test_calls_the_comments_endpoint_asking_for_id_order(self):
+        # `sort=id` keeps parents ahead of replies in the common case;
+        # `_split_comments` does not depend on it, but asking costs nothing.
         rest = MagicMock(return_value=[])
         with patch.object(bb, "_transport", return_value=(rest, None)):
             bb.fetch_comments(_TARGET, 3)
-        assert rest.call_args[0][0] == "repositories/ws/repo/pullrequests/3/comments"
+        assert rest.call_args[0][0] == "repositories/ws/repo/pullrequests/3/comments?sort=id"
 
 
 # ── status ────────────────────────────────────────────────────────────────────

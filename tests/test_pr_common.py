@@ -165,13 +165,37 @@ class TestResolveTarget:
     def test_bare_path_with_platform_uses_that_platforms_cloud_host(self):
         assert c.resolve_target("grp/proj", "gitlab").host == "gitlab.com"
 
-    def test_host_qualified_path_is_split_on_the_dotted_first_segment(self):
+    def test_host_qualified_path_is_split_on_a_recognised_platform_host(self):
         target = c.resolve_target("gitlab.acme.com/grp/proj")
         assert (target.platform, target.host, target.path) == (
             "gitlab",
             "gitlab.acme.com",
             "grp/proj",
         )
+
+    @pytest.mark.parametrize("spec", ["my.group/sub/proj", "acme.co/team/app"])
+    def test_dotted_group_name_is_a_path_not_a_host(self, spec):
+        # GitLab group names legally contain dots, so "contains a dot" cannot mean
+        # "is a hostname" — reading it as one aims the fetch at a host the user
+        # never typed and reports a connection error naming it.
+        target = c.resolve_target(spec, "gitlab")
+        assert target.host == "gitlab.com"
+        assert target.path == spec
+
+    def test_only_a_claimed_hostname_counts_as_a_host(self):
+        assert c._looks_like_host("gitlab.acme.com") is True
+        assert c._looks_like_host("github.com") is True
+        assert c._looks_like_host("bitbucket.org") is True
+        # No platform claims these, so they stay part of the project path; a
+        # genuinely custom host is named with the URL form instead.
+        assert c._looks_like_host("my.group") is False
+        assert c._looks_like_host("git.acme.com") is False
+
+    def test_custom_self_hosted_host_still_reachable_through_the_url_form(self):
+        target, number = c.parse_cli_args(
+            ["https://git.acme.com/g/p/-/merge_requests/4", "--platform", "gitlab"]
+        )
+        assert (target.host, target.path, number) == ("git.acme.com", "g/p", 4)
 
     def test_gitlab_accepts_nested_groups(self):
         assert c.resolve_target("a/b/c/d", "gitlab").path == "a/b/c/d"
@@ -221,9 +245,17 @@ class TestGitRemoteUrl:
 
 
 class TestResolveTargetFromTheWorkingTree:
-    def test_empty_spec_reads_the_git_remote(self):
+    def test_resolve_target_from_remote_reads_the_git_remote(self):
+        # The single remote-reading path. `resolve_target` parses specs only.
         with patch.object(c, "git_remote_url", return_value="git@gitlab.com:g/p.git"):
-            assert c.resolve_target() == c.Target("gitlab", "gitlab.com", "g/p")
+            assert c.resolve_target_from_remote() == c.Target("gitlab", "gitlab.com", "g/p")
+
+    def test_resolve_target_no_longer_reads_a_remote(self):
+        # Two entry points to one behaviour let a future caller pick the one that
+        # silently ignores --remote; there is now exactly one.
+        with patch.object(c, "git_remote_url") as remote, pytest.raises(c.UsageError):
+            c.resolve_target("")
+        remote.assert_not_called()
 
     def test_scp_style_spec_is_parsed_as_a_remote_url(self):
         assert c.resolve_target("git@bitbucket.org:ws/repo.git").platform == "bitbucket"
@@ -394,6 +426,22 @@ class TestPaginateLink:
             opener.return_value.open.return_value = _http_resp({"id": 1})
             assert c.paginate_link("https://api.github.com/x", {}, "api.github.com") == [{"id": 1}]
 
+    def test_constant_next_stops_at_the_page_cap(self, capsys):
+        with patch.object(c.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = _http_resp(
+                [1], '<https://api.github.com/x>; rel="next"'
+            )
+            out = c.paginate_link("https://api.github.com/x", {}, "api.github.com")
+        assert len(out) == c._MAX_PAGES
+        assert "may be truncated" in capsys.readouterr().err
+
+    def test_exhausting_pages_without_a_next_does_not_warn(self, capsys):
+        # The warning must mark a genuine truncation, not a normal last page.
+        with patch.object(c.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = _http_resp([1])
+            c.paginate_link("https://api.github.com/x", {}, "api.github.com")
+        assert "may be truncated" not in capsys.readouterr().err
+
     def test_empty_body_contributes_nothing(self):
         resp = MagicMock()
         resp.read.return_value = b""
@@ -423,6 +471,18 @@ class TestPaginateBodyNext:
             )
             with pytest.raises(c.TransportError):
                 c.paginate_body_next("https://api.bitbucket.org/2.0/x", {}, "api.bitbucket.org")
+
+    def test_constant_next_stops_at_the_page_cap(self, capsys):
+        # The `next` URL is server-chosen; a constant one used to spin forever.
+        # These tools run non-interactive, so an unbounded stall is worse than an
+        # error the agent can read.
+        with patch.object(c.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = _http_resp(
+                {"values": [1], "next": "https://api.bitbucket.org/2.0/x"}
+            )
+            out = c.paginate_body_next("https://api.bitbucket.org/2.0/x", {}, "api.bitbucket.org")
+        assert len(out) == c._MAX_PAGES
+        assert "may be truncated" in capsys.readouterr().err
 
     def test_non_dict_body_stops_rather_than_looping(self):
         with patch.object(c.urllib.request, "build_opener") as opener:
@@ -638,17 +698,46 @@ class TestProviderFor:
 # ── the shipped entry points answer --help on stdout at exit 0 ────────────────
 
 
-@pytest.mark.parametrize("script", [_COMMENTS_CLI, _STATUS_CLI])
-@pytest.mark.parametrize("flag", ["--help", "-h"])
-def test_entry_points_publish_their_interface(script, flag):
-    """Every shipped tool answers --help with its interface on stdout, exit 0 —
-    that is how an agent learns the tool exists and what it accepts."""
-    result = subprocess.run(
-        [sys.executable, str(script), flag], capture_output=True, text=True, timeout=30
+def _shipped_clis() -> list[Path]:
+    """Every executable CLI under skills/*/scripts/ — discovered, not listed.
+
+    A hard-coded list is why `findings.py` sat outside this contract: the two PR
+    fetchers were pinned when they were added and nothing swept the rest.
+    Library modules are excluded by the absence of a `__main__` guard, which is
+    the same signal that decides whether a file is runnable at all.
+    """
+    root = Path(__file__).parent.parent / "skills"
+    return sorted(
+        p
+        for p in root.glob("*/scripts/*.py")
+        if '__name__ == "__main__"' in p.read_text(encoding="utf-8")
     )
-    assert result.returncode == 0
-    assert "Usage:" in result.stdout
-    assert "Exit codes:" in result.stdout
+
+
+@pytest.mark.parametrize("script", _shipped_clis(), ids=lambda p: p.name)
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_every_shipped_cli_publishes_its_interface(script, flag):
+    """`.claude/rules/use-uv-runner.md`: every shipped tool answers --help with
+    its interface on stdout at exit 0, and documents its exit codes there.
+
+    That is how an agent learns the tool exists, what it accepts, and — via the
+    exit-code block — whether a non-zero result means "you called this wrong"
+    (retry with different arguments) or "the operation failed" (report it).
+    """
+    result = subprocess.run(
+        [sys.executable, str(script), flag], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, f"{script.name} {flag} exited {result.returncode}"
+    assert result.stdout.strip(), f"{script.name} printed no interface on stdout"
+    assert "Exit codes:" in result.stdout, f"{script.name} does not document its exit codes"
+
+
+def test_the_cli_sweep_actually_found_the_shipped_tools():
+    """A discovery helper that silently matches nothing would make the contract
+    above vacuous — every parametrized case would simply not exist."""
+    names = {p.name for p in _shipped_clis()}
+    assert {"findings.py", "fetch-pr-comments.py", "fetch-pr-status.py"} <= names
+    assert "pr_common.py" not in names  # library, no __main__ guard
 
 
 @pytest.mark.parametrize("script", [_COMMENTS_CLI, _STATUS_CLI])
