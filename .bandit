@@ -1,13 +1,18 @@
 # Bandit configuration in the INI form (`bandit --ini .bandit`).
 #
 # WHY THIS FILE EXISTS, given pyproject.toml already has [tool.bandit]:
-# bandit auto-discovers THIS file, and only this file, and only when its single
-# target is a directory — it looks for `<target>/.bandit`. It never
-# auto-discovers pyproject.toml at all. Measured:
+# bandit auto-discovers THIS file and only this file — it never auto-discovers
+# pyproject.toml at all. Discovery is an `os.walk` of every target it was handed,
+# collecting any file named `.bandit` at any depth beneath them, so it finds this
+# file exactly when a target contains it (`bandit/cli/main.py`,
+# `_get_options_from_ini`). Measured:
 #
 #   bandit -r .          (.bandit present)  -> config applied
-#   bandit -r src                           -> not applied (looks for src/.bandit)
-#   bandit -r src/a.py                      -> not applied (file target)
+#   bandit -r src                           -> not applied (no .bandit under src/)
+#   bandit -r src/a.py                      -> not applied (walking a file finds nothing)
+#
+# Keep this the only `.bandit` in the tree. Discovery collects all of them and
+# two is a hard error — bandit exits 2 rather than choosing one.
 #
 # So `-c pyproject.toml` (what `make security` and the pre-commit hook pass) and
 # a hosted runner invoking `bandit -r .` reach the same policy only because both

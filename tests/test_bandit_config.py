@@ -3,13 +3,14 @@
 Two files describe one policy, so they can drift. pyproject.toml is the source
 of truth — it carries the reasoning for every skip — while `.bandit` exists so a
 runner that cannot be told `-c pyproject.toml` still finds the configuration.
-bandit auto-discovers `.bandit` when its single target is a directory, and never
+bandit discovers `.bandit` by walking the targets it was handed, and never
 auto-discovers pyproject.toml, so without this file such a runner falls back to
 bandit's defaults and reports B404/B603/B607.
 
 These pin the values in both places and the shape of the INI keys, which differ
 from pyproject.toml's in a way that fails silently: the INI key is `exclude`,
-not `exclude_dirs`, and a bare directory name never matches.
+not `exclude_dirs`, and whether a given pattern matches depends on the target
+bandit was invoked with — see `test_every_pyproject_exclusion_is_honoured_by_the_ini`.
 """
 
 import configparser
@@ -148,21 +149,27 @@ def test_bandits_own_ini_loader_returns_the_skips():
 
 
 @pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
-def test_bandit_auto_discovers_the_ini_from_a_directory_target():
+def test_bandit_auto_discovers_the_ini_by_walking_its_targets():
     """The contract that makes this file useful to a runner we do not control.
 
-    bandit looks for `<target>/.bandit` when handed a single directory, and never
-    looks for pyproject.toml. So a hosted runner invoking `bandit -r .` picks this
-    file up with no flags, which is the whole reason it exists alongside
-    `[tool.bandit]`. Pinned because the filename and the directory-target
-    condition are both load-bearing and neither is obvious from the file itself.
+    bandit walks every target it was handed and collects any `.bandit` at any
+    depth below it; it never looks for pyproject.toml. So a hosted runner
+    invoking `bandit -r .` picks this file up with no flags, which is the whole
+    reason it exists alongside `[tool.bandit]`. Pinned because both the filename
+    and the requirement that a target contain it are load-bearing, and neither
+    is obvious from the file itself.
+
+    This also guards the two-file case for free: discovery collects every match
+    and `sys.exit(2)`s on more than one, so a second `.bandit` added anywhere
+    under the root surfaces here as a SystemExit rather than in CI.
     """
     from bandit.cli.main import _get_options_from_ini
 
     assert _get_options_from_ini(None, [str(REPO_ROOT)]) is not None, (
-        ".bandit is no longer discoverable from a directory target"
+        ".bandit is no longer discoverable by walking the repo root"
     )
-    # A file target does not trigger discovery — the distinction this test names.
+    # Walking a file yields no entries, so a file target discovers nothing —
+    # the distinction the original probe of this behaviour missed.
     assert _get_options_from_ini(None, [str(PYPROJECT)]) is None
 
 

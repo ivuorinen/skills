@@ -102,8 +102,8 @@ engines:
 # "Use configuration file" for Bandit was already enabled in the Codacy UI and
 # the findings persisted — but they turned out to be opengrep's, not bandit's,
 # so bandit was never the tool reporting them. The `.bandit` file at the repo
-# root is still worth having: bandit auto-discovers it when its single target is
-# a directory (`bandit -r .`), and never auto-discovers pyproject.toml at all,
-# so without it a runner that does not pass `-c` falls back to bandit defaults.
-# tests/test_bandit_config.py keeps the two files in step and pins that
-# discovery behaviour.
+# root is still worth having: bandit discovers it by walking the targets it was
+# given (`bandit -r .` reaches it), and never auto-discovers pyproject.toml at
+# all, so without it a runner that does not pass `-c` falls back to bandit
+# defaults. tests/test_bandit_config.py keeps the two files in step and pins
+# that discovery behaviour.
