@@ -37,6 +37,7 @@ stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -282,6 +283,13 @@ def _store(args: dict) -> Path:
 
 
 _CLOSING_TAG = "</untrusted-data>"
+# Case-insensitive, and tolerant of whitespace inside the tag. An exact-literal
+# replace defends only against `</untrusted-data>`; a payload writing
+# `</UNTRUSTED-DATA>` or `</untrusted-data >` passed through untouched, and a
+# model reading the envelope treats those as the terminator just the same. The
+# envelope is a prompt-level marker, not input to a strict parser, so the match
+# has to be as lenient as the reader is.
+_CLOSING_TAG_RE = re.compile(r"<\s*/\s*untrusted-data\s*>", re.IGNORECASE)
 
 
 def _neutralize(payload: str) -> str:
@@ -295,7 +303,7 @@ def _neutralize(payload: str) -> str:
     it. `cr.md` states the same rule for its per-comment envelope; this is that
     rule applied at the tool boundary.
     """
-    return payload.replace(_CLOSING_TAG, "<\\/untrusted-data>")
+    return _CLOSING_TAG_RE.sub("<\\\\/untrusted-data>", payload)
 
 
 def _fenced(payload: str) -> str:

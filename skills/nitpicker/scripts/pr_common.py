@@ -374,13 +374,45 @@ def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -
 
 
 def cli_json(argv: list[str], timeout: int = 60) -> Any:
-    """Run a platform CLI (`gh`, `glab`) and parse its JSON stdout."""
+    """Run a platform CLI (`gh`, `glab`) and parse its JSON stdout.
+
+    Handles a paginating CLI that emits one JSON document per page rather than
+    one document overall. `gh` has `--slurp` to wrap pages in an array; `glab`
+    does not, so `glab api --paginate` over a multi-page endpoint concatenates
+    documents and a single `json.loads` raises — turning the GitLab CLI fallback
+    into a hard failure on exactly the large merge requests that need paging.
+    Consecutive documents are decoded and, when they are arrays, merged into one.
+    """
     result = subprocess.run(argv, capture_output=True, timeout=timeout)
     if result.returncode != 0:
         raise TransportError(
             result.stderr.decode().strip() or f"{argv[0]} exited {result.returncode}"
         )
-    return json.loads(result.stdout) if result.stdout.strip() else None
+    text = result.stdout.decode().strip()
+    if not text:
+        return None
+    docs = _decode_concatenated(text)
+    if len(docs) == 1:
+        return docs[0]
+    # Several pages: array pages concatenate into one list; anything else is
+    # returned as the list of documents rather than silently dropping pages.
+    return (
+        [item for doc in docs for item in doc] if all(isinstance(d, list) for d in docs) else docs
+    )
+
+
+def _decode_concatenated(text: str) -> list[Any]:
+    """Every JSON document in `text`, which may hold one or several back to back."""
+    decoder = json.JSONDecoder()
+    docs: list[Any] = []
+    index = 0
+    while index < len(text):
+        doc, end = decoder.raw_decode(text, index)
+        docs.append(doc)
+        index = end
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+    return docs
 
 
 def cli_available(name: str) -> bool:

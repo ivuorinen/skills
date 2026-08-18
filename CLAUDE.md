@@ -103,10 +103,11 @@ are server-controlled), and `GH_HOST`/`GITLAB_HOST` gate a token against a
 self-hosted instance. Platform detection refuses an unrecognised host rather
 than guessing, since a wrong guess is a credential handed to a third party.
 
-The MCP tools `np_pr_comments` and `np_pr_status` wrap the same providers. They
-are the only tools on the server carrying `openWorldHint: true`, and the only
-ones whose results are wrapped in an `<untrusted-data source="pull-request">`
-envelope — PR bodies are written by anyone who can comment on the PR.
+The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
+the same providers. They are the only tools on the server carrying
+`openWorldHint: true`, and the only ones whose results are wrapped in an
+`<untrusted-data source="pull-request">` envelope — PR bodies are written by
+anyone who can comment on the PR.
 
 ## Editing a shipped tool mid-session
 

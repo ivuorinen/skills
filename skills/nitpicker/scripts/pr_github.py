@@ -123,8 +123,22 @@ def _gh_rest_paginate(path: str, hostname: str = "") -> list[Any]:
     result = subprocess.run(argv, capture_output=True, timeout=60)
     if result.returncode != 0:
         raise GhTransportError(result.stderr.decode().strip())
-    pages: list[list[Any]] = json.loads(result.stdout)
-    return [item for page in pages for item in page]
+    pages: list[Any] = json.loads(result.stdout)
+    # `--slurp` yields one entry per page, and the entry's shape follows the
+    # endpoint. An array-valued endpoint (`/comments`, `/reviews`, `/files`)
+    # gives a list per page, which is flattened. An object-valued one
+    # (`/commits/{sha}/check-runs`, `/commits/{sha}/status`) gives a dict — and
+    # flattening a dict iterates its KEYS, so five real check runs arrived as
+    # the strings "total_count" and "check_runs" and `_checks` reported zero CI
+    # checks. Appending the object instead mirrors `paginate_link`, so the gh
+    # and token transports answer identically for the same endpoint.
+    out: list[Any] = []
+    for page in pages:
+        if isinstance(page, list):
+            out.extend(page)
+        else:
+            out.append(page)
+    return out
 
 
 def _token_headers(token: str) -> dict[str, str]:

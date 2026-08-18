@@ -1213,6 +1213,11 @@ class TestRedactVendorCoverage:
         ("gitlab runner modern", "glrt-" + "A" * 20),
         ("gitlab runner legacy", "GR1348941" + "A" * 20),
         ("bitbucket app password", "ATBB" + "A" * 28),
+        # BITBUCKET_TOKEN holds an Atlassian API/scoped token, not an app
+        # password — the ATBB prefix above never covered the variable the docs
+        # actually tell users to set.
+        ("atlassian api token", "ATATT" + "A" * 180),
+        ("atlassian scoped token", "ATCTT" + "A" * 180),
         ("openai", "sk-" + "A" * 40),
         ("aws key id", "AKIA" + "B" * 16),
         ("google api key", "AIza" + "A" * 35),
@@ -1276,6 +1281,26 @@ class TestRedactPrivateKeys:
         assert self._BODY not in out
         assert "BEGIN RSA" not in out and "END RSA" not in out
         assert "[REDACTED PRIVATE KEY]" in out
+
+    def test_truncated_pem_keeps_no_short_trailing_line(self):
+        """A real PEM's last line is a short base64 remainder.
+
+        The first fix required 16+ characters per run, so `CC==` survived and the
+        output read as redacted while still carrying key material. A narrowly
+        wrapped body would have survived in full.
+        """
+        body = "A" * 64 + "\n" + "B" * 64 + "\nCC=="
+        out = findings.redact(self._pem("RSA", body, closed=False))
+        assert "A" * 64 not in out
+        assert "CC==" not in out
+
+    def test_truncated_pem_stops_at_the_first_non_base64_line(self):
+        # The line-shaped match is what keeps ordinary evidence out; without it a
+        # lower length floor would swallow the prose after the key.
+        text = self._pem("RSA", "A" * 64, closed=False) + "\nfound at src/app.py:42"
+        out = findings.redact(text)
+        assert "found at src/app.py:42" in out
+        assert "A" * 64 not in out
 
     def test_truncated_pem_without_an_end_marker_takes_the_body_too(self):
         """Evidence is often clipped, and the clipped case is the dangerous one.

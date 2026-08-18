@@ -279,6 +279,36 @@ class TestCliHelpers:
         with patch.object(subprocess, "run", return_value=proc):
             assert c.cli_json(["gh", "api", "x"]) is None
 
+    def test_cli_json_merges_concatenated_page_documents(self):
+        """`glab api --paginate` emits one JSON document per page.
+
+        Unlike `gh`, glab has no `--slurp` to wrap pages in an array, so a
+        multi-page endpoint concatenates documents and a single `json.loads`
+        raises — breaking the GitLab CLI fallback on exactly the large merge
+        requests that need paging.
+        """
+        stdout = b'[{"id": 1}, {"id": 2}]\n[{"id": 3}]'
+        proc = MagicMock(returncode=0, stdout=stdout, stderr=b"")
+        with patch.object(subprocess, "run", return_value=proc):
+            assert c.cli_json(["glab", "api", "--paginate", "x"]) == [
+                {"id": 1},
+                {"id": 2},
+                {"id": 3},
+            ]
+
+    def test_cli_json_single_document_is_returned_unchanged(self):
+        # The single-page case must not be wrapped in an extra list.
+        proc = MagicMock(returncode=0, stdout=b'{"iid": 7}', stderr=b"")
+        with patch.object(subprocess, "run", return_value=proc):
+            assert c.cli_json(["glab", "api", "x"]) == {"iid": 7}
+
+    def test_cli_json_keeps_non_array_pages_rather_than_dropping_them(self):
+        # Concatenated objects cannot be flattened into one list; returning the
+        # documents preserves every page instead of silently losing pages.
+        proc = MagicMock(returncode=0, stdout=b'{"a": 1}\n{"b": 2}', stderr=b"")
+        with patch.object(subprocess, "run", return_value=proc):
+            assert c.cli_json(["glab", "api", "--paginate", "x"]) == [{"a": 1}, {"b": 2}]
+
     def test_cli_json_nonzero_raises_with_stderr(self):
         proc = MagicMock(returncode=1, stdout=b"", stderr=b"gh: not logged in")
         with (

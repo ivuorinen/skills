@@ -178,8 +178,9 @@ every alias next to its command.
 
 ## MCP server
 
-Installing the plugin registers a stdlib-only stdio MCP server (`nitpicker`)
-that exposes skill introspection (`np_list_skills`, `np_read_skill`,
+Installing the plugin registers a stdlib-only stdio MCP (Model Context Protocol)
+server (`nitpicker`) that exposes skill introspection (`np_list_skills`,
+`np_read_skill`,
 `np_read_command`, `np_read_reference`, `np_list_commands` — filterable to one
 category of the command table), findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
@@ -207,6 +208,13 @@ The platform comes from the git remote host; `--platform` names it for a
 self-hosted instance whose hostname does not. Auth is `gh`/`GITHUB_TOKEN`,
 `GITLAB_TOKEN`/`glab`, or `BITBUCKET_TOKEN` (or username + app password), and a
 token is never sent to a host it was not declared for.
+
+Declare the host with `GH_HOST` or `GITLAB_HOST` when the token belongs to a
+self-hosted instance. GitLab needs it only to _pin_ a token to one instance —
+the target host comes from the git remote — so setting it to a host you are not
+addressing withholds the token rather than sending it. `--platform` selects the
+API to speak, not the host to trust; the two are separate. The full auth table
+is in `skills/nitpicker/commands/cr.md`.
 
 ## Development
 

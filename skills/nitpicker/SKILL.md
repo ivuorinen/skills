@@ -234,9 +234,10 @@ Every tool publishes MCP annotations. All eleven read tools carry
 `readOnlyHint: true`; `np_new_finding` carries `destructiveHint: false` (it only
 adds); `np_resolve_finding` carries `destructiveHint: true`, because it deletes
 the open finding file and appends to the append-only ledger — neither half is
-reversible through this server. `openWorldHint` splits them: the nine skill and
-findings tools carry `false`, their domain being the local filesystem only,
-bounded by the plugin root and the allowed project root; the two PR tools carry
+reversible through this server. `openWorldHint` splits them: the eleven skill and
+findings tools carry `false` — the nine read tools and both mutate tools alike,
+their domain being the local filesystem only, bounded by the plugin root and the
+allowed project root; the two PR tools carry
 `true`, because they call GitHub, GitLab or Bitbucket over the network against a
 repository this server does not control. These are hints a client weighs before
 calling, not access control; the root confinement above is the actual boundary.

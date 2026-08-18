@@ -90,7 +90,11 @@ _SECRET_RE = re.compile(
     r"|glpat-[A-Za-z0-9_-]{20,}"  # GitLab personal access token
     r"|glrt-[A-Za-z0-9_-]{20,}"  # GitLab runner token (modern)
     r"|GR1348941[A-Za-z0-9_-]{20,}"  # GitLab runner token (legacy prefix)
-    r"|ATBB[A-Za-z0-9]{24,}"  # Bitbucket app password
+    r"|ATBB[A-Za-z0-9]{24,}"  # Bitbucket app password (BITBUCKET_APP_PASSWORD)
+    # Atlassian API and scoped tokens — what BITBUCKET_TOKEN actually holds.
+    # ATBB above covers only app passwords, so the variable the docs tell users
+    # to set was the one shape still passing through.
+    r"|AT(?:ATT|CTT)[A-Za-z0-9_=.-]{20,}"
     r"|sk-[A-Za-z0-9-]{20,}"
     r"|AKIA[0-9A-Z]{16}"
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
@@ -105,10 +109,18 @@ _SECRET_RE = re.compile(
 # alone would leave the key body in the record and read as redacted.
 _PEM_RE = re.compile(
     r"-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----"
-    # Truncated evidence: no END marker. The base64 run is consumed too — matching
-    # the header alone replaces it with "[REDACTED ...]" and leaves the key
-    # material on the next line, which reads as redacted and is not.
-    r"|-----BEGIN[A-Z ]*PRIVATE KEY-----(?:\s*[A-Za-z0-9+/=]{16,})*"
+    # Truncated evidence: no END marker. The body is consumed too — matching the
+    # header alone replaces it with "[REDACTED ...]" and leaves the key material
+    # on the next line, which reads as redacted and is not.
+    #
+    # Whole base64 LINES, with no minimum length. A length floor looks safer and
+    # is not: a real PEM's final line is a short remainder (`CC==`), so a floor
+    # of 16 left it behind — and a body wrapped narrowly would survive entirely.
+    # Requiring the whole line to be base64 is what keeps ordinary prose out,
+    # and it stops at the first line that is not. The `(?=\n|$)` is load-bearing:
+    # without it the run matches a PREFIX of the next line, so evidence reading
+    # "found at src/app.py:42" lost its first word to the redaction.
+    r"|-----BEGIN[A-Z ]*PRIVATE KEY-----(?:\n[A-Za-z0-9+/=]+(?=\n|$))*"
 )
 
 # A bare AWS secret access key is 40 base64 characters with no prefix. Matching

@@ -9,6 +9,7 @@ still returns a plausible-looking result.
 """
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -111,6 +112,53 @@ class TestGhTransports:
         with patch.object(subprocess, "run", return_value=_proc(stdout=b"[[]]")) as run:
             gh._gh_rest_paginate("repos/o/r/x", "ghe.acme.com")
         assert "ghe.acme.com" in run.call_args[0][0]
+
+    def test_rest_paginate_keeps_object_pages_whole(self):
+        """`--slurp` page shape follows the endpoint, and flattening a dict
+        iterates its keys.
+
+        /check-runs and /status return objects, not arrays. The old flatten
+        turned a page into the strings "total_count"/"check_runs", so `_checks`
+        found no dicts and reported zero CI checks on every gh-transport fetch.
+        """
+        page = {"total_count": 2, "check_runs": [{"name": "Validate"}, {"name": "Codacy"}]}
+        with patch.object(
+            subprocess, "run", return_value=_proc(stdout=json.dumps([page]).encode())
+        ):
+            out = gh._gh_rest_paginate("repos/o/r/commits/sha/check-runs")
+        assert out == [page]
+        assert all(isinstance(x, dict) for x in out)
+
+    def test_rest_paginate_still_flattens_array_pages(self):
+        # The five array-valued endpoints must keep their old behaviour.
+        pages = [[{"id": 1}, {"id": 2}], [{"id": 3}]]
+        with patch.object(subprocess, "run", return_value=_proc(stdout=json.dumps(pages).encode())):
+            assert gh._gh_rest_paginate("repos/o/r/pulls/1/comments") == [
+                {"id": 1},
+                {"id": 2},
+                {"id": 3},
+            ]
+
+    def test_checks_are_found_through_the_real_gh_transport(self):
+        """End to end over `_gh_rest_paginate`, not a mocked `rest_list`.
+
+        Every existing check test injected `rest_list` directly, which is why a
+        defect in the layer beneath it survived a 100%-covered suite.
+        """
+        runs = {
+            "total_count": 1,
+            "check_runs": [{"name": "Validate", "status": "completed", "conclusion": "success"}],
+        }
+        statuses = {"state": "success", "statuses": []}
+
+        def fake_run(argv, *a, **k):
+            body = runs if "check-runs" in argv[-1] else statuses
+            return _proc(stdout=json.dumps([body]).encode())
+
+        with patch.object(subprocess, "run", side_effect=fake_run):
+            checks = gh._checks(_TARGET, "sha", gh._gh_transport(_TARGET))
+        assert [c["name"] for c in checks] == ["Validate"]
+        assert c.summarize_checks(checks)["success"] == 1
 
     def test_rest_paginate_nonzero_raises(self):
         with (
