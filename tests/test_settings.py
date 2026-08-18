@@ -24,8 +24,58 @@ WRITE_EDIT_HOOKS = [
 ]
 
 
+# The exact deny list, pinned like VENDORED_SKILLS in test_validate_skill.py.
+# Nothing else gated this: the whole `permissions` block could be deleted and the
+# suite stayed green, on the one part of the enforcement surface that blocks a
+# tool call before it runs. Narrowing or removing an entry must be a deliberate
+# edit to this constant, visible in review.
+#
+# `Write(...)` is deliberately absent here because it is absent from the config.
+# Whether an `Edit(...)` rule also binds the Write tool is undocumented, so the
+# protection currently rests on that assumption; adding explicit Write rules is
+# an owner change to .claude/settings.json, which agents must not make.
+EXPECTED_DENY = [
+    "Read(./.claude/agents/**)",
+    "Edit(./.claude/agents/**)",
+    "Edit(./scripts/hooks/**)",
+    "Edit(./.claude/settings.json)",
+]
+
+# Every path the deny list exists to protect, and the tools it names for each.
+PROTECTED_PATHS = {
+    "./.claude/agents/**": {"Read", "Edit"},
+    "./scripts/hooks/**": {"Edit"},
+    "./.claude/settings.json": {"Edit"},
+}
+
+
 def _settings() -> dict:
     return json.loads(SETTINGS.read_text(encoding="utf-8"))
+
+
+def _deny() -> list[str]:
+    return _settings().get("permissions", {}).get("deny", [])
+
+
+def test_deny_list_matches_the_pinned_set():
+    assert _deny() == EXPECTED_DENY
+
+
+def test_every_protected_path_is_denied_for_its_declared_tools():
+    """Asserts the property, not just the literal — a reordering stays green,
+    a silently dropped path does not."""
+    rules = set(_deny())
+    for path, tools in PROTECTED_PATHS.items():
+        for tool in tools:
+            assert f"{tool}({path})" in rules, f"{path} no longer denied for {tool}"
+
+
+def test_the_enforcement_surface_paths_are_all_represented():
+    """The three trees an agent must not rewrite: its own agents, the hook
+    scripts, and the settings file wiring them. A new one added to the config
+    without a line here would pass unnoticed."""
+    denied_paths = {r[r.index("(") + 1 : r.rindex(")")] for r in _deny()}
+    assert denied_paths == set(PROTECTED_PATHS)
 
 
 def _commands(event: str, matcher: str | None = None) -> str:
