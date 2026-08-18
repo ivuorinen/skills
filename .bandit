@@ -15,12 +15,26 @@
 # in one place cannot silently go missing in the other.
 
 # The INI keys mirror bandit's COMMAND-LINE options, not pyproject.toml's keys:
-# it is `exclude` here, where pyproject.toml says `exclude_dirs`. A bare
-# directory name does not match either — bandit compares against the path it
-# walked, so the patterns are globs. Verified: `exclude_dirs = tests` and
-# `exclude = tests` both leave tests/ scanned; `exclude = */tests/*` excludes it.
+# it is `exclude` here, where pyproject.toml says `exclude_dirs`. `exclude_dirs`
+# in an INI parses cleanly and is then ignored.
+#
+# Each directory is listed TWICE, bare and globbed, because which form works
+# depends on how bandit is invoked — measured, not assumed:
+#
+#   exclude=tests      target=.      -> tests/ still scanned
+#   exclude=tests      target=tests  -> tests/ excluded
+#   exclude=*/tests/*  target=.      -> tests/ excluded
+#   exclude=*/tests/*  target=tests  -> tests/ still scanned
+#
+# bandit matches the exclusion against the path it walked, and that path depends
+# on the target it was given. `make security` passes `-r skills/ scripts/`; a
+# hosted runner may pass `.` or the directory itself. Listing both forms is the
+# only spelling that holds for every invocation, and `tests/test_bandit_config.py`
+# asserts the resulting behaviour through bandit's own file discovery rather
+# than the syntax of these patterns.
+#
 # Setting `exclude` replaces bandit's built-in default list, so the usual
 # VCS/cache directories are restated here rather than lost.
 [bandit]
-exclude = */tests/*,*/.venv/*,*/graphify-out/*,*/_extra/*,*/.git/*,*/__pycache__/*,*/.tox/*,*/.eggs/*
+exclude = tests,*/tests/*,.venv,*/.venv/*,graphify-out,*/graphify-out/*,_extra,*/_extra/*,.git,*/.git/*,__pycache__,*/__pycache__/*,.tox,*/.tox/*,.eggs,*/.eggs/*
 skips = B404,B603,B607

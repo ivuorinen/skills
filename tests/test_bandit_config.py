@@ -38,17 +38,56 @@ def test_skips_match_pyproject():
     assert ini_skips == _pyproject_bandit()["skips"]
 
 
-def test_every_excluded_dir_is_represented():
-    """Same directories, allowing for the glob form the INI needs.
+def _discovered(targets: list[str]) -> list[str]:
+    """Files bandit would actually scan under `.bandit`'s exclusions.
 
-    Compared as a set of directory names rather than literal strings: the INI
-    must write `*/tests/*` where pyproject.toml writes `tests`, so a string
-    comparison would fail on correct configuration.
+    Uses bandit's own discovery rather than reasoning about the patterns. The
+    pattern syntax is not the property worth asserting — whether a given path is
+    excluded depends on the target bandit was invoked with, so only running the
+    matcher answers it.
     """
-    ini_globs = [p.strip() for p in _ini()["exclude"].split(",") if p.strip()]
-    ini_dirs = {p.strip("*/") for p in ini_globs}
+    from bandit.core import config as bandit_config
+    from bandit.core import manager
+
+    mgr = manager.BanditManager(bandit_config.BanditConfig(), "file")
+    mgr.discover_files(targets, True, _ini()["exclude"])
+    return mgr.files_list
+
+
+# Both spellings a runner might use: the repo root, or each directory named.
+_TARGET_FORMS = [["."], ["skills/", "scripts/", "tests/"]]
+
+
+@pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
+@pytest.mark.parametrize("targets", _TARGET_FORMS, ids=["root", "explicit-dirs"])
+def test_every_pyproject_exclusion_is_honoured_by_the_ini(targets):
+    """Behaviour, under both invocation forms.
+
+    `exclude = tests` excludes tests/ when bandit is given `tests` as a target
+    and does not when it is given `.`; `*/tests/*` is the exact reverse. A test
+    that asserted pattern *syntax* enforced a rule that is false half the time,
+    which is why this runs the matcher instead.
+    """
+    scanned = _discovered(targets)
     for name in _pyproject_bandit()["exclude_dirs"]:
-        assert name in ini_dirs, f"{name} excluded in pyproject.toml but not in .bandit"
+        offenders = [f for f in scanned if f"/{name}/" in f or f.startswith(f"{name}/")]
+        assert not offenders, f"{name} is excluded in pyproject.toml but scanned: {offenders[:3]}"
+
+
+@pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
+@pytest.mark.parametrize("targets", _TARGET_FORMS, ids=["root", "explicit-dirs"])
+def test_the_shipped_tools_are_still_scanned(targets):
+    """The other direction, and the one that matters for security.
+
+    The sync check above only proves nothing is under-excluded. An exclusion
+    added to `.bandit` and not to pyproject.toml — `*/skills/*`, say — would
+    satisfy it while silently taking the shipped tools out of bandit's reach.
+    """
+    scanned = _discovered(targets)
+    assert any("skills/nitpicker/scripts/" in f for f in scanned), (
+        "no shipped tool is being scanned — an over-broad exclusion in .bandit"
+    )
+    assert any("scripts/hooks/" in f for f in scanned), "the hooks are not being scanned"
 
 
 def test_ini_uses_the_exclude_key_not_exclude_dirs():
@@ -62,10 +101,17 @@ def test_ini_uses_the_exclude_key_not_exclude_dirs():
     assert "exclude_dirs" not in section
 
 
-def test_exclusions_are_globs_not_bare_names():
-    # `exclude = tests` leaves tests/ scanned; only a glob matches the walked path.
-    for pattern in (p.strip() for p in _ini()["exclude"].split(",")):
-        assert "*" in pattern, f"{pattern!r} is a bare name and will not match"
+def test_each_excluded_dir_is_listed_in_both_forms():
+    """Bare and globbed, because neither spelling works for every invocation.
+
+    Not a syntax preference: the behavioural tests above fail if this drifts,
+    and this one names the reason so the next editor does not "tidy" the
+    apparent duplication away.
+    """
+    patterns = {p.strip() for p in _ini()["exclude"].split(",") if p.strip()}
+    for name in _pyproject_bandit()["exclude_dirs"]:
+        assert name in patterns, f"{name} missing its bare form (needed when it is the target)"
+        assert f"*/{name}/*" in patterns, f"{name} missing its glob form (needed when target is .)"
 
 
 def test_bandit_defaults_are_not_lost():
