@@ -30,22 +30,28 @@ WRITE_EDIT_HOOKS = [
 # tool call before it runs. Narrowing or removing an entry must be a deliberate
 # edit to this constant, visible in review.
 #
-# `Write(...)` is deliberately absent here because it is absent from the config.
-# Whether an `Edit(...)` rule also binds the Write tool is undocumented, so the
-# protection currently rests on that assumption; adding explicit Write rules is
-# an owner change to .claude/settings.json, which agents must not make.
+# Write is named explicitly for every protected path rather than assumed to ride
+# along with Edit. Whether an `Edit(...)` rule also binds the Write tool is
+# undocumented, so relying on it would leave the strongest in-session control
+# resting on client behaviour no gate here can see. Naming both is redundant if
+# Edit does cover Write, and load-bearing if it does not.
 EXPECTED_DENY = [
     "Read(./.claude/agents/**)",
     "Edit(./.claude/agents/**)",
+    "Write(./.claude/agents/**)",
     "Edit(./scripts/hooks/**)",
+    "Write(./scripts/hooks/**)",
     "Edit(./.claude/settings.json)",
+    "Write(./.claude/settings.json)",
 ]
 
 # Every path the deny list exists to protect, and the tools it names for each.
+# The agents tree adds Read because its contents are what must not be seen, not
+# merely what must not change.
 PROTECTED_PATHS = {
-    "./.claude/agents/**": {"Read", "Edit"},
-    "./scripts/hooks/**": {"Edit"},
-    "./.claude/settings.json": {"Edit"},
+    "./.claude/agents/**": {"Read", "Edit", "Write"},
+    "./scripts/hooks/**": {"Edit", "Write"},
+    "./.claude/settings.json": {"Edit", "Write"},
 }
 
 

@@ -216,10 +216,10 @@ the most behaviour-changing entries in the file:
 - matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
   text names `.claude/agents/` **or a full protected agent filename** —
   literally, quoted, escaped, variable-built, or glob-spelled (the
-  `permissions.deny` block binds file tools, never Bash — and it names only
-  `Read(...)` and `Edit(...)` rules; whether an `Edit` rule also binds the
-  **Write** tool is undocumented, so treat Write coverage as unverified.
-  `tests/test_settings.py` pins the list as configured). So
+  `permissions.deny` block binds file tools, never Bash — it names `Read`,
+  `Edit` **and** `Write` rules explicitly, rather than assuming an `Edit` rule
+  also binds Write, which is undocumented client behaviour no in-repo gate can
+  observe. `tests/test_settings.py` pins the exact list). So
   `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
   It raises the cost of reaching that tree; it does not close it. The guard
   matches tokens, so a command that locates the files by **content** rather than
