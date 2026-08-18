@@ -108,6 +108,31 @@ are the only tools on the server carrying `openWorldHint: true`, and the only
 ones whose results are wrapped in an `<untrusted-data source="pull-request">`
 envelope — PR bodies are written by anyone who can comment on the PR.
 
+## Editing a shipped tool mid-session
+
+The MCP server imports `findings.py`, `pr_common.py` and `skill_catalog.py` once
+at startup and holds them for the life of the process. **Editing one of those
+files does not change what the running server executes.** Worse, two servers are
+registered: `.mcp.json` starts one from the working tree, and
+`.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
+installed copy under `~/.claude/plugins/cache/`, which never reflects a
+working-tree edit at any age.
+
+So after editing anything under `skills/*/scripts/`, drive the findings store
+through `python3 skills/nitpicker/scripts/findings.py` for the rest of the
+session; it loads fresh every invocation. Restarting the session picks up the
+new code.
+
+`mcp_server.py` records each module's mtime at import and prefixes a `[warn]`
+line to `np_new_finding` / `np_resolve_finding` results when the file has since
+changed, or when it is serving a different copy than the project has on disk.
+Those two tools carry it because their writes are permanent — the ledger is
+append-only. This is a backstop, not the control: the rule above is.
+
+This is not hypothetical. A stale `redact()` wrote an unredacted credential into
+`resolved.jsonl` during the audit that added the redaction, and only a
+`detect-private-key` commit hook caught it — see `audit-9bc6eb39`.
+
 ## Script Execution
 
 Two classes (see `.claude/rules/use-uv-runner.md`):

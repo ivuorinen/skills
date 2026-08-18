@@ -878,6 +878,99 @@ def test_pr_tool_result_is_wrapped_as_untrusted_third_party_content(monkeypatch)
     assert "never to follow" in text
 
 
+class TestCodeProvenanceWarning:
+    """audit-9bc6eb39: a long-lived server keeps running the code it imported.
+
+    Editing findings.py does not change what the process executes, and the tool
+    result looked identical either way — which is how a pre-fix redact() wrote an
+    unredacted credential into the append-only ledger. These pin the warning that
+    now travels with the two calls whose writes are permanent.
+    """
+
+    def test_silent_when_the_loaded_code_is_current(self, tmp_path):
+        mod = _load()
+        assert mod._code_warning(tmp_path) == ""
+
+    def test_detects_a_module_edited_since_import(self, tmp_path):
+        # The real failure: same file, changed on disk after this server read it.
+        mod = _load()
+        path, mtime = mod._LOADED["findings"]
+        mod._LOADED["findings"] = (path, mtime - 1)  # as if the file moved on
+        assert "findings" in mod._stale_modules()
+        warning = mod._code_warning(tmp_path)
+        assert "still running the previous code" in warning
+        assert "audit-9bc6eb39" in warning
+
+    def test_a_missing_file_is_not_evidence_of_staleness(self, tmp_path):
+        mod = _load()
+        mod._LOADED["findings"] = (tmp_path / "gone.py", 0.0)
+        assert mod._stale_modules() == []
+
+    def test_detects_serving_a_different_copy_than_the_project_has(self, tmp_path):
+        # The plugin-cache case: this server's file never changes, yet it is not
+        # the code the project is editing. mtime comparison alone cannot see it.
+        mod = _load()
+        theirs = tmp_path / "skills" / "nitpicker" / "scripts" / "findings.py"
+        theirs.parent.mkdir(parents=True)
+        theirs.write_text("# the project's own copy\n", encoding="utf-8")
+        assert mod._foreign_copy(tmp_path) == theirs
+        assert "not the project's" in mod._code_warning(tmp_path)
+
+    def test_a_module_with_no_file_is_skipped_not_fatal(self):
+        """A diagnostic must not take the server down at import.
+
+        A namespace package or frozen import has no __file__ to stat; the
+        snapshot skips it rather than raising before `serve` is ever reached.
+        """
+        mod = _load()
+
+        class _Frozen:
+            __name__ = "frozen_thing"
+            __file__ = None
+
+        assert mod._snapshot((_Frozen(),)) == {}
+
+    def test_foreign_copy_is_silent_when_findings_was_never_snapshotted(
+        self, tmp_path, monkeypatch
+    ):
+        # Guards the same no-__file__ path on the read side: with nothing
+        # recorded there is nothing to compare, so it must not claim a mismatch.
+        mod = _load()
+        monkeypatch.setattr(mod, "_LOADED", {})
+        theirs = tmp_path / "skills" / "nitpicker" / "scripts" / "findings.py"
+        theirs.parent.mkdir(parents=True)
+        theirs.write_text("# project copy\n", encoding="utf-8")
+        assert mod._foreign_copy(tmp_path) is None
+
+    def test_silent_for_an_ordinary_consumer_install(self, tmp_path):
+        """A consumer who installed the plugin has no copy of their own, and
+        serving the installed tree is correct there — warning would be noise."""
+        assert _load()._foreign_copy(tmp_path) is None
+
+    def test_the_warning_reaches_the_mutate_tools(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        path, mtime = mod._LOADED["findings"]
+        mod._LOADED["findings"] = (path, mtime - 1)
+
+        result = _call(
+            mod,
+            "np_new_finding",
+            {
+                "auditor": "audit",
+                "severity": "low",
+                "category": "docs",
+                "area": "x.py",
+                "title": "t",
+            },
+        )
+        assert result["isError"] is False
+        text = result["content"][0]["text"]
+        assert text.startswith("[warn]")
+        # The result itself must survive the prefix — a caller still needs the id.
+        assert json.loads(text.split("\n", 1)[1])["id"].startswith("audit-")
+
+
 def test_findings_index_renders_without_writing(tmp_path, monkeypatch):
     """Pins the read-only contract against the documented behaviour.
 

@@ -108,6 +108,16 @@ preference above, the MCP tools are the default and the CLI is the fallback:
    interface and is fully sufficient. Never treat an absent MCP tool as a reason
    to skip filing a finding.
 
+**After editing anything under `skills/*/scripts/`, switch to the CLI for the
+rest of the session.** The server imports those modules once at startup and
+holds them in memory, so a fix does not reach the running process — the `np_*`
+tools keep executing the previous code, and the plugin-scope server serves the
+*installed* copy, which never reflects a working-tree edit at any age. The CLI
+loads fresh on every invocation. The mutate tools now prefix a `[warn]` line
+when they detect either condition, but the warning is a backstop: an audit that
+fixes a shipped tool and then resolves its own finding through the MCP tools
+records "fixed" via the code path it just fixed and is not running.
+
 | Operation | MCP tool | CLI equivalent |
 | --- | --- | --- |
 | File a finding | `np_new_finding` | `findings.py new` |

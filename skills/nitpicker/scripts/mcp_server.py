@@ -46,6 +46,37 @@ import findings
 import pr_common
 import skill_catalog
 
+
+# The shipped modules this process imported, with the mtime each file had at
+# import. A long-lived server holds these in memory: editing findings.py in a
+# working tree does NOT change what this process executes, and no tool result
+# would otherwise say so. That silence let a pre-fix `redact()` write an
+# unredacted credential to the append-only ledger — caught only by a commit
+# hook, and only because the shape happened to be one that hook models.
+#
+# Two distinct failures are checked below, because they need different evidence:
+# the file this server loaded has since changed (`_stale_modules`), and this
+# server is serving a *different copy* than the project has on disk
+# (`_foreign_copy`) — the plugin-scope registration resolves to the installed
+# tree under ~/.claude/plugins/cache, which never reflects a working-tree edit
+# at any age.
+def _snapshot(modules: Any) -> dict[str, tuple[Path, float]]:
+    """(path, mtime) per module, skipping any not backed by a file on disk.
+
+    A module loaded from something other than a file — a namespace package, a
+    frozen import — has no mtime to compare against. Skip it rather than let a
+    diagnostic raise at import and take the whole server down with it.
+    """
+    snapshot: dict[str, tuple[Path, float]] = {}
+    for mod in modules:
+        path = Path(getattr(mod, "__file__", None) or "")
+        if path.is_file():
+            snapshot[mod.__name__] = (path, path.stat().st_mtime)
+    return snapshot
+
+
+_LOADED = _snapshot((findings, pr_common, skill_catalog))
+
 # Newest first. Annotations reached the spec in 2025-03-26, so a session pinned
 # to 2024-11-05 carries them as ignorable extra fields — hence advertising a
 # revision that defines them. 2025-03-26 itself is deliberately absent: it
@@ -492,6 +523,58 @@ def _pr_status(args: dict) -> str:
     return _pr_fenced(json.dumps(provider.fetch_status(target, pr_number), indent=2))
 
 
+# ── code-provenance warning (see the _LOADED comment at the top) ─────────────
+def _stale_modules() -> list[str]:
+    """Loaded modules whose file has changed on disk since this server imported it."""
+    stale = []
+    for name, (path, mtime) in sorted(_LOADED.items()):
+        try:
+            if path.stat().st_mtime != mtime:
+                stale.append(name)
+        except OSError:
+            continue  # deleted or unreadable — not evidence of staleness
+    return stale
+
+
+def _foreign_copy(project_dir: Path) -> Path | None:
+    """The project's own `findings.py`, when this server loaded a different one.
+
+    Returns None when the project has no copy (an ordinary consumer install,
+    where serving the installed tree is correct and must not warn) or when the
+    two resolve to the same file.
+    """
+    loaded = _LOADED.get("findings")
+    if loaded is None:
+        return None
+    theirs = project_dir / "skills" / "nitpicker" / "scripts" / "findings.py"
+    if not theirs.is_file():
+        return None
+    return theirs if theirs.resolve() != loaded[0].resolve() else None
+
+
+def _code_warning(project_dir: Path) -> str:
+    """A one-line provenance warning, or "" when this server's code is current.
+
+    Prefixed to the mutate tools' results rather than logged: a write here is
+    permanent — the ledger is append-only — so the caller must see it in the
+    same breath as the result it is about to trust.
+    """
+    notes = []
+    if stale := _stale_modules():
+        notes.append(
+            f"this server loaded {', '.join(stale)} before the file(s) changed on disk "
+            "and is still running the previous code"
+        )
+    if theirs := _foreign_copy(project_dir):
+        notes.append(f"this server runs {_LOADED['findings'][0]}, not the project's {theirs}")
+    if not notes:
+        return ""
+    return (
+        "[warn] " + "; ".join(notes) + ". Restart the MCP server, or use "
+        "scripts/findings.py, before trusting this result (audit-9bc6eb39).\n"
+    )
+
+
 # ── findings mutate tools (project-scoped, non-interactive; git is the net) ───
 def _assemble_body(args: dict) -> str:
     return (
@@ -546,7 +629,7 @@ def _new_finding(args: dict) -> str:
         body=_assemble_body(args),
     )
     findings.write_index(store)
-    return json.dumps({"id": path.stem, "path": str(path)})
+    return _code_warning(_project_root(args)) + json.dumps({"id": path.stem, "path": str(path)})
 
 
 @tool(
@@ -575,7 +658,9 @@ def _resolve_finding(args: dict) -> str:
     store = _store(args)
     findings.resolve_finding(store, args["id"], args["status"], args["notes"])
     findings.write_index(store)
-    return json.dumps({"id": args["id"], "status": args["status"]})
+    return _code_warning(_project_root(args)) + json.dumps(
+        {"id": args["id"], "status": args["status"]}
+    )
 
 
 def _scrub(exc: Exception) -> str:
