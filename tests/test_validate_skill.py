@@ -240,11 +240,14 @@ COMMANDS_SKILL = (
 GOOD_COMMAND = "# /my-skill {name} — Title\n\nPurpose line.\n\n## When to use\n\nTriggers.\n"
 
 
-def _run_commands(tmp_path: Path, files: dict[str, str]) -> list[str]:
+def _run_commands(tmp_path: Path, files: dict[str, str], skill_md: str | None = None) -> list[str]:
     skill_dir = tmp_path / "my-skill"
     cmd_dir = skill_dir / "commands"
     cmd_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(COMMANDS_SKILL, encoding="utf-8")
+    # `is None`, not falsy: an explicitly empty or malformed skill_md must reach
+    # the validator, not be silently replaced by the default fixture.
+    content = COMMANDS_SKILL if skill_md is None else skill_md
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
     for fname, content in files.items():
         (cmd_dir / fname).write_text(content, encoding="utf-8")
     errors: list[str] = []
@@ -263,9 +266,13 @@ class TestCommandValidation:
         assert errors == []
 
     def test_underscore_files_ignored(self, tmp_path):
+        # Exempt from the 1:1 command-table cross-check (they are not dispatchable).
+        # They still have to be named in SKILL.md — see TestSharedReferenceDepth —
+        # so the SKILL.md here names this one.
         errors = _run_commands(
             tmp_path,
             {"alpha.md": _cmd("alpha"), "beta.md": _cmd("beta"), "_conventions.md": "# Shared\n"},
+            skill_md=COMMANDS_SKILL + "\nEvery command is bound by `_conventions.md`.\n",
         )
         assert errors == []
 
@@ -420,6 +427,264 @@ def test_main_reports_an_empty_tree_rather_than_passing_silently(tmp_path, monke
         _main_on(monkeypatch, tmp_path, [])
     assert exc.value.code == 0
     assert "No SKILL.md files found." in capsys.readouterr().out
+
+
+class TestSharedReferenceDepth:
+    """Shared `_`-prefixed files must be named in SKILL.md, not only by a command."""
+
+    def _skill(self, tmp_path: Path, skill_body_extra: str = "") -> tuple[list[str], list[str]]:
+        skill_dir = tmp_path / "my-skill"
+        (skill_dir / "commands").mkdir(parents=True)
+        (skill_dir / "commands" / "audit.md").write_text(
+            "# /my-skill audit — Audit\n\n## When to use\n\nAlways.\n", encoding="utf-8"
+        )
+        (skill_dir / "commands" / "_shared.md").write_text("# Shared\n", encoding="utf-8")
+        content = (
+            "---\nname: my-skill\n"
+            "description: Performs a test action. Use when testing this skill.\n"
+            "---\n\n## Commands\n\n| Command | Purpose |\n| --- | --- |\n"
+            f"| `audit` | Audit it |\n{skill_body_extra}"
+        )
+        path = skill_dir / "SKILL.md"
+        path.write_text(content, encoding="utf-8")
+        errors: list[str] = []
+        warnings: list[str] = []
+        validate(path, errors, warnings)
+        return errors, warnings
+
+    def test_unnamed_shared_reference_errors(self, tmp_path):
+        errors, _ = self._skill(tmp_path)
+        assert _has(errors, "not named in SKILL.md")
+
+    def test_shared_reference_named_in_skill_passes(self, tmp_path):
+        errors, _ = self._skill(tmp_path, "\nSee `_shared.md` for the conventions.\n")
+        assert not _has(errors, "not named in SKILL.md")
+
+    def test_bare_stem_without_extension_counts_as_named(self, tmp_path):
+        # SKILL.md cites these files both as `_shared.md` and as bare `_shared`.
+        errors, _ = self._skill(tmp_path, "\nLoad the `_shared` reference first.\n")
+        assert not _has(errors, "not named in SKILL.md")
+
+    def test_reference_named_only_inside_a_fence_still_errors(self, tmp_path):
+        # An example is not a live instruction to load the file, so a fenced
+        # mention must not satisfy the one-level rule.
+        errors, _ = self._skill(tmp_path, "\n```text\nSee `_shared.md` here.\n```\n")
+        assert _has(errors, "not named in SKILL.md")
+
+    def test_stem_that_prefixes_a_named_stem_still_errors(self, tmp_path):
+        # `_s` occurs inside `_shared`; a substring test would wrongly exempt it.
+        skill_dir = tmp_path / "my-skill"
+        (skill_dir / "commands").mkdir(parents=True)
+        (skill_dir / "commands" / "audit.md").write_text(
+            "# /my-skill audit — Audit\n\n## When to use\n\nAlways.\n", encoding="utf-8"
+        )
+        (skill_dir / "commands" / "_shared.md").write_text("# Shared\n", encoding="utf-8")
+        (skill_dir / "commands" / "_s.md").write_text("# Never named\n", encoding="utf-8")
+        path = skill_dir / "SKILL.md"
+        path.write_text(
+            "---\nname: my-skill\n"
+            "description: Performs a test action. Use when testing this skill.\n"
+            "---\n\n## Commands\n\n| Command | Purpose |\n| --- | --- |\n"
+            "| `audit` | Audit it |\n\nSee `_shared.md`.\n",
+            encoding="utf-8",
+        )
+        errors: list[str] = []
+        validate(path, errors, [])
+        assert _has(errors, "_s.md")
+        assert not _has(errors, "_shared.md")
+
+
+class TestBlockScalarDescription:
+    """A folded/literal description must resolve, not read back as '>' or '|'."""
+
+    def _skill(self, tmp_path: Path, frontmatter: str) -> tuple[list[str], list[str]]:
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        path = skill_dir / "SKILL.md"
+        path.write_text(
+            f"---\nname: my-skill\n{frontmatter}---\n\n## Overview\n\nBody.\n", encoding="utf-8"
+        )
+        errors: list[str] = []
+        warnings: list[str] = []
+        validate(path, errors, warnings)
+        return errors, warnings
+
+    def test_folded_description_is_resolved(self, tmp_path):
+        # The form https://agentskills.io/skill-creation/optimizing-descriptions
+        # recommends for long descriptions.
+        errors, _ = self._skill(
+            tmp_path,
+            "description: >\n  Analyze CSV files. Use when the user has a CSV\n"
+            "  and wants a chart.\n",
+        )
+        assert errors == []
+
+    def test_literal_description_is_resolved(self, tmp_path):
+        errors, _ = self._skill(
+            tmp_path, "description: |\n  Analyze CSV files.\n  Use when the user has a CSV.\n"
+        )
+        assert errors == []
+
+    def test_folded_description_missing_trigger_still_errors(self, tmp_path):
+        errors, _ = self._skill(tmp_path, "description: >\n  Analyze CSV files and make charts.\n")
+        assert _has(errors, "must contain 'Use when'")
+
+    def test_folded_description_over_1024_chars_errors(self, tmp_path):
+        body = "".join(f"  Use when doing the thing described at length {i}.\n" for i in range(40))
+        errors, _ = self._skill(tmp_path, f"description: >\n{body}")
+        assert _has(errors, "must be ≤1024")
+
+    def test_folded_scalar_joins_with_spaces_literal_with_newlines(self):
+        assert _mod.resolve_scalar(">", ["  a", "  b"]) == "a b"
+        assert _mod.resolve_scalar("|", ["  a", "  b"]) == "a\nb"
+
+    def test_plain_value_passes_through(self):
+        assert _mod.resolve_scalar("plain text", []) == "plain text"
+
+    @pytest.mark.parametrize("indicator", [">-", "|-", ">+", "|+"])
+    def test_chomping_indicators_resolve(self, indicator):
+        assert _mod.resolve_scalar(indicator, ["  a", "  b"]) in ("a b", "a\nb")
+
+
+class TestAgentSkillsSpecFields:
+    """Constraints from https://agentskills.io/specification#frontmatter."""
+
+    def _with(self, fields: str, name: str = "my-skill") -> str:
+        return (
+            f"---\nname: {name}\n"
+            "description: Performs a test action. Use when testing this skill.\n"
+            f"{fields}---\n\n## Overview\n\nBody.\n"
+        )
+
+    def test_leading_hyphen_name_errors(self, tmp_path):
+        content = self._with("", name="-my-skill")
+        assert _has(_errors(tmp_path, content, "-my-skill"), "must not start or end with a hyphen")
+
+    def test_trailing_hyphen_name_errors(self, tmp_path):
+        content = self._with("", name="my-skill-")
+        assert _has(_errors(tmp_path, content, "my-skill-"), "must not start or end with a hyphen")
+
+    def test_consecutive_hyphens_name_errors(self, tmp_path):
+        content = self._with("", name="my--skill")
+        assert _has(_errors(tmp_path, content, "my--skill"), "consecutive hyphens")
+
+    def test_plain_hyphenated_name_passes(self, tmp_path):
+        assert _errors(tmp_path, self._with("")) == []
+
+    def test_compatibility_over_500_chars_errors(self, tmp_path):
+        content = self._with(f"compatibility: {'x' * 501}\n")
+        assert _has(_errors(tmp_path, content), "must be ≤500")
+
+    def test_compatibility_at_limit_passes(self, tmp_path):
+        content = self._with(f"compatibility: {'x' * 500}\n")
+        assert _errors(tmp_path, content) == []
+
+    def test_empty_compatibility_errors(self, tmp_path):
+        assert _has(_errors(tmp_path, self._with("compatibility:\n")), "present but empty")
+
+    def test_metadata_string_values_pass(self, tmp_path):
+        content = self._with('metadata:\n  author: example-org\n  version: "1.0"\n')
+        assert _errors(tmp_path, content) == []
+
+    def test_metadata_nested_structure_errors(self, tmp_path):
+        content = self._with("metadata:\n  author:\n    name: example-org\n")
+        assert _has(_errors(tmp_path, content), "must be a string, not a nested structure")
+
+    def test_metadata_inline_value_errors(self, tmp_path):
+        assert _has(_errors(tmp_path, self._with("metadata: nope\n")), "not an inline value")
+
+    def test_metadata_without_entries_errors(self, tmp_path):
+        assert _has(_errors(tmp_path, self._with("metadata:\n")), "no entries")
+
+    def test_allowed_tools_string_passes(self, tmp_path):
+        content = self._with("allowed-tools: Bash(git:*) Read\n")
+        assert _errors(tmp_path, content) == []
+
+    def test_allowed_tools_as_list_errors(self, tmp_path):
+        content = self._with("allowed-tools:\n  - Read\n  - Bash\n")
+        assert _has(_errors(tmp_path, content), "space-separated string, not a list")
+
+    def test_quoted_unknown_key_errors(self, tmp_path):
+        # A bare-word-only key pattern skipped the line entirely, so the quoted
+        # spelling escaped the spec-field check.
+        content = self._with('"invented-key": value\n')
+        assert _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_quoted_spec_key_is_recognised(self, tmp_path):
+        content = self._with('"license": MIT\n')
+        assert not _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_allowed_tools_flow_collection_errors(self, tmp_path):
+        content = self._with("allowed-tools: [Read, Bash]\n")
+        assert _has(_errors(tmp_path, content), "not a flow collection")
+
+    def test_metadata_flow_collection_value_errors(self, tmp_path):
+        content = self._with("metadata:\n  tags: [a, b]\n")
+        assert _has(_errors(tmp_path, content), "not a flow collection")
+
+    @pytest.mark.parametrize("key", ['"release channel"', "'author name'"])
+    def test_quoted_metadata_key_accepted(self, tmp_path, key):
+        # Valid YAML the reference validator accepts; a bare-word-only pattern
+        # rejected it as "not a 'key: value' pair".
+        content = self._with(f"metadata:\n  {key}: stable\n")
+        assert _errors(tmp_path, content) == []
+
+    @pytest.mark.parametrize("value", ["true", "false", "1.0", "42", "null", "~"])
+    def test_scalar_looking_metadata_values_accepted(self, tmp_path, value):
+        # strictyaml — the reference validator's parser — reads every scalar as a
+        # string, so these are strings, not booleans/numbers/null. Rejecting them
+        # would fail skills the normative implementation passes. Pinned so a
+        # future tightening cannot silently over-reject.
+        content = self._with(f"metadata:\n  flag: {value}\n")
+        assert _errors(tmp_path, content) == []
+
+    def test_unknown_frontmatter_key_errors(self, tmp_path):
+        # Matches the reference validator, which rejects any unrecognised key.
+        content = self._with("invented-key: value\n")
+        assert _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_client_key_at_top_level_errors(self, tmp_path):
+        # Claude Code's own keys are no exception — they belong under `metadata`.
+        content = self._with("disable-model-invocation: true\n")
+        assert _has(_errors(tmp_path, content), "not in the Agent Skills spec")
+
+    def test_client_key_under_metadata_passes(self, tmp_path):
+        content = self._with('metadata:\n  disable-model-invocation: "true"\n')
+        assert _errors(tmp_path, content) == []
+
+    def test_spec_fields_do_not_warn(self, tmp_path):
+        content = self._with("license: MIT\ncompatibility: Requires git\n")
+        assert _warnings(tmp_path, content) == []
+
+    def test_body_over_5000_tokens_warns(self, tmp_path):
+        # ~4 chars per token, so >20000 chars of body trips the estimate.
+        content = self._with("") + ("word " * 4200)
+        assert _has(_warnings(tmp_path, content), "progressive disclosure")
+
+    def test_metadata_list_entry_errors(self, tmp_path):
+        content = self._with("metadata:\n  - not-a-pair\n")
+        assert _has(_errors(tmp_path, content), "not a 'key: value' pair")
+
+    def test_empty_allowed_tools_errors(self, tmp_path):
+        assert _has(_errors(tmp_path, self._with("allowed-tools:\n")), "present but empty")
+
+    def test_blank_line_inside_frontmatter_ignored(self, tmp_path):
+        content = self._with("license: MIT\n\ncompatibility: Requires git\n")
+        assert _errors(tmp_path, content) == []
+
+
+class TestFrontmatterBlock:
+    """frontmatter_block() / _fm_sections() — the raw-block parser."""
+
+    def test_no_frontmatter_returns_empty(self):
+        assert _mod.frontmatter_block("# Just a heading\n") == ""
+
+    def test_unterminated_frontmatter_returns_empty(self):
+        assert _mod.frontmatter_block("---\nname: x\n") == ""
+
+    def test_indented_line_before_any_key_is_dropped(self):
+        # No preceding top-level key to attach to, so it belongs to nothing.
+        assert _mod._fm_sections("  orphaned: value\nname: x\n") == [("name", "x", [])]
 
 
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):

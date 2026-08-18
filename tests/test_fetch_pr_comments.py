@@ -518,6 +518,13 @@ class TestMain:
             _mod.main()
         assert exc.value.code == 2
 
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_prints_usage_and_exits_zero(self, flag, capsys, monkeypatch):
+        # --help must print the interface, never be parsed as <owner>.
+        monkeypatch.setattr(sys, "argv", ["prog", flag])
+        _mod.main()
+        assert "Usage:" in capsys.readouterr().out
+
     def test_non_integer_pr_exits_2(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", "owner/repo", "not-a-number"])
         with pytest.raises(SystemExit) as exc:

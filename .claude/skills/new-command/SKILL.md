@@ -1,7 +1,8 @@
 ---
 name: new-command
-description: Use when creating a new hostile audit command for the nitpicker skill in this repository.
-disable-model-invocation: true
+description: Scaffolds a new nitpicker audit command through the full RED → GREEN → REFACTOR → adversarial-review → validate cycle, wiring its command file, dispatch-table row, and docs together. Use when adding a new /nitpicker command to this repository, or when asked to create, scaffold, or add an audit command here.
+metadata:
+  disable-model-invocation: "true"
 ---
 
 # New Command Scaffolder

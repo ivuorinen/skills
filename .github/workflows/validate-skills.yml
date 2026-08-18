@@ -139,10 +139,11 @@ jobs:
         # CI until someone noticed, and each duplicated tool pin was one more
         # place to keep in step.
         #
-        # `make check` = validate + validate-rules + version-sync +
-        # audit-consistency + index-check + lint + format-check + security +
-        # typecheck + test + pre-commit. Each target names the failing gate in
-        # its own output, so a failure is still identifiable from the log.
+        # `make check` = validate + validate-evals + validate-rules +
+        # version-sync + lock-check + audit-consistency + index-check + lint +
+        # format-check + security + typecheck + test + pre-commit. Each target
+        # names the failing gate in its own output, so a failure is still
+        # identifiable from the log.
         #
         # tests/test_hooks.py asserts this job runs `make check` rather than
         # restating the targets, so the collapse cannot quietly be undone.

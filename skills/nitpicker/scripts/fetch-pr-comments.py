@@ -403,6 +403,12 @@ def _fetch_out_of_thread_notes(
 def main() -> None:  # noqa: C901
     args = sys.argv[1:]
 
+    # --help is how an agent learns this script's interface
+    # (https://agentskills.io/skill-creation/using-scripts).
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        return
+
     try:
         if len(args) == 2 and "/" in args[0]:
             owner, repo = args[0].split("/", 1)

@@ -316,6 +316,14 @@ class TestMain:
             _mod.main()
         return exc.value.code
 
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_prints_usage_and_exits_zero(self, flag, capsys, monkeypatch):
+        # Checked before the argument is resolved as a path, or `--help` would
+        # be treated as a project root and error out.
+        monkeypatch.setattr(sys, "argv", ["prog", flag])
+        _mod.main()
+        assert "Usage:" in capsys.readouterr().out
+
     def test_explicit_path_without_rules_dir_exits_1(self, tmp_path, capsys, monkeypatch):
         # The argument is a project root. A supplied path lacking .claude/rules/
         # is a misconfiguration (e.g. passing `.claude/rules/` itself), not a

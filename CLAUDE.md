@@ -9,8 +9,9 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 ## Development Commands
 
 ```bash
-make check        # validate skill+commands + validate-rules + version sync + findings-store validate + findings-index check + ruff lint + ruff format check + bandit security scan + pyright typecheck + pytest + pre-commit suite (run before every commit)
+make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
+make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
 make test         # run pytest unit tests
 make list         # list the skill and its commands
 make lint         # ruff check on scripts/, tests/, skills/
@@ -22,9 +23,46 @@ make security     # bandit scan of skills/ and scripts/ (config in [tool.bandit]
 
 The authoritative command listing (categorized, with aliases) is `## Commands` in `skills/nitpicker/SKILL.md`; `/nitpicker help` prints it. The 1.x standalone skill names (`security-auditor`, `test-auditor`, …) are aliases of the new short names (`security`, `tests`, …).
 
+## Agent Skills Spec Compliance
+
+The normative format is the open spec at <https://agentskills.io/specification>.
+`scripts/validate-skill.py` enforces it. Required: `name` (≤64 chars,
+lowercase/digits/hyphens, no leading, trailing or consecutive hyphen, matching
+its directory) and `description` (≤1024 chars). Optional: `license`,
+`compatibility` (≤500 chars), `metadata` (a string→string map) and
+`allowed-tools` (one space-separated string).
+
+A top-level key outside that set is an **error**. Client-specific properties go
+under `metadata`, which is what the spec designates it for. There is no
+allowlist and no exemption; internal dev skills are held to the same rule. Body
+size warns past 500 lines or ~5000 tokens, the progressive-disclosure
+instructions tier.
+
+`disable-model-invocation` therefore lives under `metadata` as `"true"`, quoted
+because metadata values are strings. Claude Code reads that key from the top
+level only, so under `metadata` it is inert and those skills become
+model-invocable. That trade was accepted deliberately, buying portability.
+
+Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions) and `trigger-queries.json` (description trigger accuracy, fixed train/validation split) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
+
+`make spec-check` cross-checks every skill against the Agent Skills reference
+validator. It needs network access, so it sits outside `make check`;
+`validate-skill.py` enforces the same constraints offline. Every skill passed at
+the time of writing, internal dev skills included — re-run it rather than
+trusting that, since a spec release can change the verdict.
+
+Three install traps, each hit once already:
+
+- The PyPI package is `skills-ref`, but its console script is `agentskills`.
+  The spec page still documents a `skills-ref` command, which no longer exists
+  and exits 1 with no output.
+- The identically-named npm package is unrelated to Anthropic.
+- Failures print to stderr and successes to stdout, so merge stderr before
+  judging a run clean.
+
 ## Command File Format
 
-- Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ").
+- Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ", plus `license` and `compatibility`).
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
 - Every command file in `commands/` whose name does not begin with `_` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`; shared files prefixed `_` (e.g. `_conventions.md`, `_audit-coverage.md`) are exempt from the cross-check.
 - Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
@@ -46,6 +84,15 @@ Two classes (see `.claude/rules/use-uv-runner.md`):
 
 - **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`, `#!/usr/bin/env python3`. The stdlib-only rule is enforced by `scripts/check-stdlib-only.py` (pre-commit + CI) — a third-party import fails the gate.
 - **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`): `uv run --quiet`, `#!/usr/bin/env -S uv run --quiet` + `# /// script` block.
+
+Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0.
+Structured data goes to stdout, diagnostics to stderr. Exit codes are distinct
+per failure class: 0 success, 1 runtime or I/O error, 2 usage error.
+
+Handle `--help` before any positional argument resolves as a path. Otherwise the
+flag is read as input and the agent gets a path error in place of usage text.
+The design rules live in `.claude/rules/use-uv-runner.md`; enforcement is author
+discipline plus the per-tool `--help` tests.
 
 ## Adding a New Command
 
@@ -127,6 +174,7 @@ Merge to `main` → release-please opens a Release PR → merging it creates the
 - `ruff-hook.py` — auto-fixes and lints any edited `.py` file
 - `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
 - `validate-rules-hook.py` — validates any edited `.claude/rules/*.md` file (`validate-rules.py` + `check-rules-anatomy.py`)
+- `validate-evals-hook.py` — validates the eval set of any edited `skills/*/evals/*.json`
 
 Plus a **Bash** PostToolUse hook, `post-bash-revalidate.py`: Write/Edit matchers
 never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so this one

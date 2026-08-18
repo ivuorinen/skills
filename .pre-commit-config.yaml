@@ -123,6 +123,12 @@ repos:
         entry: uv run --quiet scripts/validate-skill.py
         pass_filenames: false
         files: ^(skills/|\.claude/skills/|scripts/validate-skill\.py)
+      - id: validate-evals
+        name: validate skill eval sets
+        language: system
+        entry: uv run --quiet scripts/validate-evals.py
+        pass_filenames: false
+        files: ^(skills/[^/]+/evals/|scripts/validate-evals\.py)
       - id: validate-rules
         name: validate rules files
         language: system

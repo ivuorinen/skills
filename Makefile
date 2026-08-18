@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,8 +6,10 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
+	@echo "  check        — validate + validate-evals + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
 	@echo "  validate     — validate all SKILL.md files"
+	@echo "  validate-evals — validate the evals/ sets bundled with each skill"
+	@echo "  spec-check   — cross-check skills against the Agent Skills reference validator (network)"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
 	@echo "  version-sync — check version consistency across manifests"
 	@echo "  lock-check   — fail if uv.lock is stale against pyproject.toml"
@@ -24,11 +26,39 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-rules version-sync lock-check audit-consistency index-check lint format-check security typecheck test pre-commit
+check: validate validate-evals validate-rules version-sync lock-check audit-consistency index-check lint format-check security typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
 	$(UV) scripts/validate-skill.py .claude/skills/*/SKILL.md
+
+# Eval sets are dev artifacts, never loaded at runtime — but a malformed one is
+# silently skipped by the eval loop, so it is gated like any other surface.
+validate-evals:
+	$(UV) scripts/validate-evals.py
+
+# Cross-check our validator against the Agent Skills reference implementation
+# (https://agentskills.io/specification#validation). Every skill in the repo
+# passes it, internal dev skills included. Out of `make check` only because it
+# needs network access; scripts/validate-skill.py enforces the same constraints
+# offline.
+#
+# The package is PyPI `skills-ref` but the console script it installs is
+# `agentskills`; the spec page still documents the old `skills-ref` command,
+# which no longer exists and exits 1 with no output — indistinguishable from a
+# validation failure. The npm package of the same name is published by an
+# unrelated author; do not substitute it.
+#
+# Failures print to stderr, successes to stdout, so stderr is merged before the
+# result is judged. A silent pass is not evidence: this target fails the build
+# on any non-zero skill rather than swallowing it.
+spec-check:
+	@fail=0; \
+	for d in skills/*/ .claude/skills/*/; do \
+		uvx --quiet --from skills-ref==0.1.1 agentskills validate "$$d" 2>&1 || fail=1; \
+	done; \
+	if [ "$$fail" -ne 0 ]; then echo "spec-check: at least one skill failed"; exit 1; fi; \
+	echo "spec-check: all skills valid against the reference validator"
 
 validate-rules:
 	$(UV) scripts/validate-rules.py

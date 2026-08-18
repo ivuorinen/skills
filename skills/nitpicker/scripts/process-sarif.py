@@ -278,6 +278,12 @@ def _deduplicate(findings: list[dict]) -> tuple[list[dict], int]:
 
 
 def main() -> None:
+    # --help is how an agent learns this script's interface
+    # (https://agentskills.io/skill-creation/using-scripts).
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(__doc__)
+        return
+
     if not sys.argv[1:]:
         print("Usage: process-sarif.py <sarif-file> [<sarif-file>...]", file=sys.stderr)
         sys.exit(2)

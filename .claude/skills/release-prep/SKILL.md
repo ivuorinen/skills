@@ -1,7 +1,8 @@
 ---
 name: release-prep
-description: Use when validating that all changes in the current branch are ready to be included in a release PR managed by release-please automation.
-disable-model-invocation: true
+description: Checks that the current branch is ready for a release-please release PR — conventional commit types, version manifest sync, findings-store state, and CI status. Use when preparing or verifying a release, cutting a release PR, or confirming a branch is safe to merge for release.
+metadata:
+  disable-model-invocation: "true"
 ---
 
 # Release Prep Checklist

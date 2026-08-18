@@ -2,6 +2,7 @@
 name: nitpicker
 description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, plan a change, teach me this codebase, review the PR, fix the CR comments).'
 license: MIT
+compatibility: Requires Python 3.11+ and git. The pr and cr commands additionally need network access and the gh CLI (or a GITHUB_TOKEN). The bundled MCP server is Claude-native; every command works without it through the stdlib-only CLI in scripts/.
 ---
 
 # Nitpicker
@@ -197,8 +198,10 @@ recognizable wherever a name appears without its server qualifier.
 
 Skill tools read the plugin's own bundled skills — `np_read_command` resolves a
 public command by name, `np_read_reference` the shared `_`-prefixed files
-(`_conventions`, `_audit-coverage`) that have no command row and are therefore
-outside `np_read_command`'s vocabulary, and `np_list_commands` enumerates the
+(`_conventions`, `_audit-coverage`, `_teach-formats`) that have no command row
+and are therefore outside `np_read_command`'s vocabulary — naming every one of
+them here keeps each reference one level from this file, never a chain through
+a command — and `np_list_commands` enumerates the
 command tables with each row's category, filterable to one group (see
 `## Commands` above). Findings tools act on the
 audited project's store — pass `project_dir`, or the server falls back to

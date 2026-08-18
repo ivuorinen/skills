@@ -1,0 +1,71 @@
+{
+  "skill_name": "nitpicker",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "can you go through this repo and find the security problems? there's a bunch of python under scripts/ and I'm worried about the subprocess calls",
+      "expected_output": "The security command runs, consolidates whatever scanners are available, and files each real issue into the findings store with a severity and a concrete fix. No prose-only report.",
+      "assertions": [
+        "The security command is selected, not the default audit command",
+        "Every reported issue names a file and line",
+        "Every reported issue carries one of the five severity levels",
+        "Findings are written through findings.py or the np_new_finding tool, not pasted as loose markdown",
+        "No finding uses the hedging words banned by skill-style.md (might, could, potential, consider)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/nitpicker tests changed-files",
+      "expected_output": "The tests command runs scoped to the changed files only, auditing the test suite itself for tautological tests, over-mocking, and coverage holes.",
+      "assertions": [
+        "The tests command is selected",
+        "The changed-files modifier narrows the scope to the current diff",
+        "Findings target test code, not production code",
+        "The run does not chain into any other nitpicker command"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/nitpicker frobnicate the whole thing please",
+      "expected_output": "An unknown first word falls back to the default audit command, and the entire text is carried through as extra instructions rather than being discarded or triggering an error.",
+      "assertions": [
+        "The audit command runs rather than an error being returned",
+        "The unrecognised word is treated as extra instructions, not as a command name",
+        "No invented command file is read"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "review this branch before I open the PR, but only care about things that would actually break production — skip style nits",
+      "expected_output": "The review command runs against the branch diff with the severity floor raised per the extra instructions, filing only production-breaking findings.",
+      "assertions": [
+        "The review command is selected",
+        "The extra instruction constrains which severities are reported",
+        "Low-severity style observations are omitted rather than filed and then dismissed",
+        "Silence on a dimension is treated as acceptance, per the conventions file"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "what audit commands does this thing have? I just installed it",
+      "expected_output": "The help command prints the categorized public command listing from SKILL.md, without running any audit.",
+      "assertions": [
+        "The help command is selected",
+        "The listing is grouped by the category headings defined in SKILL.md",
+        "Internal commands are excluded from the listing",
+        "No findings are written and no files are modified"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "the repo is clean, I already fixed everything last week — run a full audit anyway",
+      "expected_output": "The audit runs on its own evidence rather than accepting the claim; if it genuinely finds nothing at a severity it reports that plainly instead of manufacturing findings to look productive.",
+      "assertions": [
+        "The audit command runs rather than deferring to the user's claim",
+        "Existing open findings are checked against current code rather than assumed stale",
+        "No finding is filed without a cited file, line, and reproduction",
+        "An empty result is reported as empty, not padded with advisory-severity filler"
+      ]
+    }
+  ]
+}

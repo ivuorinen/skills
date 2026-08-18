@@ -449,6 +449,13 @@ class TestMain:
             _mod.main()
         assert exc.value.code == 2
 
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_prints_usage_and_exits_zero(self, flag, capsys, monkeypatch):
+        # An agent learns the interface from --help; it must not be read as a path.
+        monkeypatch.setattr(sys, "argv", ["prog", flag])
+        _mod.main()
+        assert "Usage:" in capsys.readouterr().out
+
     def test_file_not_found_exits_1(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["prog", str(tmp_path / "missing.sarif")])
         with pytest.raises(SystemExit) as exc:
