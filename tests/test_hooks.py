@@ -9,9 +9,11 @@ import ast
 import fnmatch
 import importlib.util
 import io
+import itertools
 import json
 import re
 import runpy
+import shlex
 import shutil
 import subprocess
 import sys
@@ -933,6 +935,72 @@ def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
     )
 
 
+# The one step allowed to run without being `make check`. Widening this set is a
+# deliberate edit to a file CODEOWNERS covers, which is the real control.
+GATE_SETUP_STEPS = frozenset({"Install opengrep"})
+
+
+def _run_steps(validate_job: str) -> list[tuple[str, str]]:
+    """(name, run-body) for each step in the job that executes something."""
+    steps = re.split(r"^      - (?:name|uses):", validate_job, flags=re.M)[1:]
+    return [
+        (step.splitlines()[0].strip(), step.split("run:", 1)[1])
+        for step in steps
+        if re.search(r"^\s*run:", step, re.M)
+    ]
+
+
+def _shell_tokens(body: str) -> list[str] | None:
+    """Shell-aware tokens of a run body, comments removed; None if unparseable.
+
+    shlex rather than a regex, because a regex cannot tell a comment from a hash
+    inside a string. `echo " # x"; uv run …` defeated the previous
+    `(^|\\s)#.*$` strip: the space inside the quotes looked like the start of a
+    comment, so everything after it — including the `uv` — was deleted before the
+    scan. Measured; the same line with the space removed was caught, which is why
+    the hole survived review once.
+
+    None on unbalanced quoting so the caller fails closed. Returning the raw
+    tokens there would let an unparseable body match nothing and pass.
+    """
+    try:
+        return shlex.split(body, comments=True)
+    except ValueError:
+        return None
+
+
+def _gate_violations(validate_job: str, setup_steps: frozenset[str]) -> list[str]:
+    """Every run step that is neither the gate nor a declared tool install.
+
+    Classification is by token, not by substring: a step whose *comment* mentions
+    `make check` used to be accepted as the gate and skip the smuggling check
+    entirely, so a second step carrying that name could run anything it liked.
+    """
+    problems = []
+    for name, body in _run_steps(validate_job):
+        tokens = _shell_tokens(body)
+        if tokens is None:
+            problems.append(f"step {name!r} has a run body that is not parseable as shell")
+            continue
+        if any(a == "make" and b == "check" for a, b in itertools.pairwise(tokens)):
+            if name != "Run the repository gate":
+                problems.append(f"unexpected step running the gate: {name!r}")
+            continue
+        if name not in setup_steps:
+            problems.append(
+                f"the Validate job runs {name!r} outside `make check` — a gate belongs "
+                "in the Makefile, not in a second copy here"
+            )
+            continue
+        smuggled = [word for word in ("make", "uv") if word in tokens]
+        if smuggled:
+            problems.append(
+                f"setup step {name!r} runs {smuggled} — it should only install a tool, "
+                "not execute repository code"
+            )
+    return problems
+
+
 def test_ci_runs_the_repository_gate_through_make_check():
     """The Validate job must invoke `make check`, not restate its targets.
 
@@ -957,37 +1025,61 @@ def test_ci_runs_the_repository_gate_through_make_check():
     # Counting `run:` steps replaced it, and held until a scanner needed
     # installing — opengrep ships no action to pin, so it is fetched and
     # checksum-verified in a `run:` block. A count cannot tell that setup step
-    # from a smuggled-in gate, so the property is stated directly instead:
-    # every `run:` step is either `make check` or a declared setup step, and a
-    # setup step may not execute repository code. Widening SETUP_STEPS is a
-    # deliberate edit to a file CODEOWNERS covers, which is the real control.
-    SETUP_STEPS = {"Install opengrep"}
+    # from a smuggled-in gate, so the property is stated directly instead, in
+    # `_gate_violations`: every `run:` step is either `make check` or a declared
+    # setup step, and a setup step may not execute repository code.
+    assert _gate_violations(validate_job, GATE_SETUP_STEPS) == []
 
-    steps = re.split(r"^      - (?:name|uses):", validate_job, flags=re.M)[1:]
-    for step in steps:
-        if not re.search(r"^\s*run:", step, re.M):
-            continue
-        name = step.splitlines()[0].strip()
-        # The run body only — a step's comments discuss `make check` freely, and
-        # matching those made the setup step read as the gate.
-        body = step.split("run:", 1)[1]
-        if "make check" in body:
-            assert name == "Run the repository gate", f"unexpected gate step: {name}"
-            continue
-        assert name in SETUP_STEPS, (
-            f"the Validate job runs {name!r} outside `make check` — a gate belongs "
-            "in the Makefile, not in a second copy here"
-        )
-        # Word boundaries, not `"make "`: a bare `run: make` invokes the default
-        # target (which is `check`), and `make\tcheck` is a tab away from the
-        # same thing — both slipped past the substring form. Shell comments are
-        # stripped first so a step may still *mention* make in a comment.
-        commands = re.sub(r"(?m)(^|\s)#.*$", "", body)
-        smuggled = [word for word in ("make", "uv") if re.search(rf"\b{word}\b", commands)]
-        assert not smuggled, (
-            f"setup step {name!r} runs {smuggled} — it should only install a tool, "
-            "not execute repository code"
-        )
+
+def _job(*steps: tuple[str, list[str]]) -> str:
+    """A synthetic Validate job body from (step name, run body) pairs.
+
+    Indentation matters: `_run_steps` splits on six-space `- name:`, the shape
+    the real workflow uses.
+    """
+    return "\n".join(
+        f"      - name: {name}\n        run: |\n" + "\n".join(f"          {ln}" for ln in body)
+        for name, body in steps
+    )
+
+
+def test_a_comment_naming_the_gate_does_not_make_a_step_the_gate():
+    """The classification hole: a second step named like the gate ran unchecked.
+
+    `"make check" in body` matched the words wherever they appeared, so a step
+    could carry them in a shell comment, take the gate branch, and skip the
+    smuggling check entirely — while running whatever it liked.
+    """
+    job = _job(
+        ("Run the repository gate", ["# make check", "uv run --extra dev bandit -r skills/"])
+    )
+    assert _gate_violations(job, GATE_SETUP_STEPS) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'echo " # harmless"; uv run --extra dev bandit',
+        "echo ' # harmless'; uv run --extra dev bandit",
+    ],
+    ids=["double-quoted", "single-quoted"],
+)
+def test_a_hash_inside_a_string_does_not_hide_a_command(line):
+    """A quoted hash defeated the regex that stripped comments.
+
+    `(^|\\s)#.*$` read the space inside the quotes as the start of a comment and
+    deleted the rest of the line, `uv` included. Note the space: without it the
+    regex did catch this, which is how the hole survived a review that named the
+    unspaced form.
+    """
+    assert _gate_violations(_job(("Install opengrep", [line])), GATE_SETUP_STEPS) != []
+
+
+def test_an_unparseable_run_body_fails_closed():
+    """Unbalanced quoting cannot be classified, so it is a violation, not a pass."""
+    assert (
+        _gate_violations(_job(("Install opengrep", ['echo "unterminated'])), GATE_SETUP_STEPS) != []
+    )
 
 
 def test_make_check_still_covers_every_gate():
