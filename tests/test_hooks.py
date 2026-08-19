@@ -948,17 +948,39 @@ def test_ci_runs_the_repository_gate_through_make_check():
         "the Validate job must run `make check`"
     )
 
-    # Exactly one `run:` step, so a gate cannot be re-added alongside it.
+    # No gate may run outside `make check`.
     #
     # Matching each `make check` target name against the `run:` lines was the
     # obvious check and is useless: a reintroduced security step runs
-    # `bandit ...`, which contains no "security". Counting the steps is the
-    # property that actually holds — the job's whole job is to call the Makefile.
-    runs = re.findall(r"^\s*run:", validate_job, re.M)
-    assert len(runs) == 1, (
-        f"the Validate job has {len(runs)} run steps; it should have exactly one "
-        "(`make check`) — an extra step is a second copy of a gate"
-    )
+    # `bandit ...`, which contains no "security".
+    #
+    # Counting `run:` steps replaced it, and held until a scanner needed
+    # installing — opengrep ships no action to pin, so it is fetched and
+    # checksum-verified in a `run:` block. A count cannot tell that setup step
+    # from a smuggled-in gate, so the property is stated directly instead:
+    # every `run:` step is either `make check` or a declared setup step, and a
+    # setup step may not execute repository code. Widening SETUP_STEPS is a
+    # deliberate edit to a file CODEOWNERS covers, which is the real control.
+    SETUP_STEPS = {"Install opengrep"}
+
+    steps = re.split(r"^      - (?:name|uses):", validate_job, flags=re.M)[1:]
+    for step in steps:
+        if not re.search(r"^\s*run:", step, re.M):
+            continue
+        name = step.splitlines()[0].strip()
+        # The run body only — a step's comments discuss `make check` freely, and
+        # matching those made the setup step read as the gate.
+        body = step.split("run:", 1)[1]
+        if "make check" in body:
+            assert name == "Run the repository gate", f"unexpected gate step: {name}"
+            continue
+        assert name in SETUP_STEPS, (
+            f"the Validate job runs {name!r} outside `make check` — a gate belongs "
+            "in the Makefile, not in a second copy here"
+        )
+        assert "make " not in body and "uv run" not in body, (
+            f"setup step {name!r} executes repository code; it should only install a tool"
+        )
 
 
 def test_make_check_still_covers_every_gate():

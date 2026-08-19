@@ -733,6 +733,13 @@ def provider_for(target: Target) -> Any:
     """
     import importlib
 
+    # The imported name is never attacker-influenced: it is one of the three
+    # literal values in _PROVIDER_MODULES, keyed by a platform that
+    # platform_for_host already refused to guess at. Any other value raises
+    # KeyError here rather than reaching importlib.
+    # The marker must sit on the line directly above the call — opengrep ignores
+    # it even one line further up, silently.
+    # nosemgrep: non-literal-import
     return importlib.import_module(_PROVIDER_MODULES[target.platform])
 
 
