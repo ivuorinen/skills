@@ -39,6 +39,17 @@ Limitations, both flowing from the single configured ruleset:
   rather than passed over silently, since an unjudged marker is exactly the thing
   this check exists to notice.
 
+`CONFIG` names a registry namespace, which is mutable — the binary is pinned but
+its rules are not, so a green run today can go red next month with no code
+change. That is deliberate. Codacy runs a mutable ruleset too, and pinning ours
+would make the two drift apart, which defeats the point of reproducing what
+Codacy reports. Drift is loud in both directions rather than silent: a new rule
+surfaces as an unsuppressed finding, and a withdrawn one turns every marker that
+depended on it stale (measured — narrowing CONFIG to drop
+`dangerous-subprocess-use-audit` fails the gate with seven stale markers, it does
+not quietly pass). Vendor the corpus only if reproducing an old commit's verdict
+ever matters more than tracking Codacy.
+
 Exit codes: 0 success, 1 a finding or a stale marker (or an unrunnable scan under
 CI), 2 usage error.
 """

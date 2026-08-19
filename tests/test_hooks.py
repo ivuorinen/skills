@@ -978,8 +978,15 @@ def test_ci_runs_the_repository_gate_through_make_check():
             f"the Validate job runs {name!r} outside `make check` — a gate belongs "
             "in the Makefile, not in a second copy here"
         )
-        assert "make " not in body and "uv run" not in body, (
-            f"setup step {name!r} executes repository code; it should only install a tool"
+        # Word boundaries, not `"make "`: a bare `run: make` invokes the default
+        # target (which is `check`), and `make\tcheck` is a tab away from the
+        # same thing — both slipped past the substring form. Shell comments are
+        # stripped first so a step may still *mention* make in a comment.
+        commands = re.sub(r"(?m)(^|\s)#.*$", "", body)
+        smuggled = [word for word in ("make", "uv") if re.search(rf"\b{word}\b", commands)]
+        assert not smuggled, (
+            f"setup step {name!r} runs {smuggled} — it should only install a tool, "
+            "not execute repository code"
         )
 
 
@@ -1003,6 +1010,7 @@ def test_make_check_still_covers_every_gate():
         "lint",
         "format-check",
         "security",
+        "opengrep",
         "typecheck",
         "test",
         "pre-commit",
