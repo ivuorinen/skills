@@ -12,11 +12,18 @@ license-files = ["LICENSE"]
 # the Makefile and scripts/hooks/ruff-hook.py pin it too, so none of the four
 # call sites can disagree about what passes. test_hooks.py enforces the match.
 # bandit is pinned to its .pre-commit-config.yaml rev for the same reason.
+# pyyaml parses the workflows in tests/test_hooks.py. It was already importable
+# as a transitive of another dev tool, and the guard that reads the Validate job
+# was hand-parsing YAML with regexes instead — four separate bypasses came from
+# that, the last being a bare `- run:` step silently absorbed into its
+# predecessor. Declared rather than relied on incidentally, since a lockfile
+# change could otherwise remove it and take the test's parser with it.
 dev = [
   "pytest>=9.1,<10",
   "pytest-cov>=7.1,<8",
   "ruff==0.16.2",
   "bandit==1.9.4",
+  "pyyaml>=6.0,<7",
 ]
 
 [tool.coverage.run]

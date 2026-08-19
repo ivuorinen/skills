@@ -9,7 +9,6 @@ import ast
 import fnmatch
 import importlib.util
 import io
-import itertools
 import json
 import re
 import runpy
@@ -20,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 HOOKS_DIR = Path(__file__).parent.parent / "scripts" / "hooks"
 SCRIPTS_DIR = HOOKS_DIR.parent
@@ -940,14 +940,21 @@ def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
 GATE_SETUP_STEPS = frozenset({"Install opengrep"})
 
 
-def _run_steps(validate_job: str) -> list[tuple[str, str]]:
-    """(name, run-body) for each step in the job that executes something."""
-    steps = re.split(r"^      - (?:name|uses):", validate_job, flags=re.M)[1:]
-    return [
-        (step.splitlines()[0].strip(), step.split("run:", 1)[1])
-        for step in steps
-        if re.search(r"^\s*run:", step, re.M)
-    ]
+def _run_steps(workflow: str, job: str = "validate") -> list[tuple[str, str]]:
+    """(name, run-body) for each step in `job` that executes something.
+
+    Parsed, not pattern-matched. Four separate bypasses of this guard came from
+    hand-rolling the YAML: splitting on `- name:`/`- uses:` made a bare `- run:`
+    step invisible as a boundary and merged it into its predecessor's body, so a
+    `- run: ./deploy.sh` after the allowed install step was scanned as part of
+    that step and waved through. Key order, block scalars, and quoting were the
+    same accident waiting to happen. A parser knows all of it.
+
+    Name is "" for an unnamed step, which no setup allowlist contains, so such a
+    step fails on its own rather than needing a rule of its own.
+    """
+    steps = yaml.safe_load(workflow)["jobs"][job].get("steps") or []
+    return [(step.get("name") or "", step["run"]) for step in steps if "run" in step]
 
 
 def _shell_tokens(body: str) -> list[str] | None:
@@ -975,14 +982,22 @@ def _gate_violations(validate_job: str, setup_steps: frozenset[str]) -> list[str
     Classification is by token, not by substring: a step whose *comment* mentions
     `make check` used to be accepted as the gate and skip the smuggling check
     entirely, so a second step carrying that name could run anything it liked.
+
+    The gate body must be exactly the two tokens, and there must be exactly one
+    such step. Accepting `make check` merely *among* the tokens let
+    `echo make check && uv run …` pass as the gate, and counting nothing let a
+    second identical gate step through — neither is the single invocation the
+    job is supposed to be.
     """
     problems = []
+    gates = 0
     for name, body in _run_steps(validate_job):
         tokens = _shell_tokens(body)
         if tokens is None:
             problems.append(f"step {name!r} has a run body that is not parseable as shell")
             continue
-        if any(a == "make" and b == "check" for a, b in itertools.pairwise(tokens)):
+        if tokens == ["make", "check"]:
+            gates += 1
             if name != "Run the repository gate":
                 problems.append(f"unexpected step running the gate: {name!r}")
             continue
@@ -998,6 +1013,8 @@ def _gate_violations(validate_job: str, setup_steps: frozenset[str]) -> list[str
                 f"setup step {name!r} runs {smuggled} — it should only install a tool, "
                 "not execute repository code"
             )
+    if gates != 1:
+        problems.append(f"expected exactly one `make check` step, found {gates}")
     return problems
 
 
@@ -1010,12 +1027,6 @@ def test_ci_runs_the_repository_gate_through_make_check():
     steps that already existed. Running the Makefile removes the second copy
     instead of guarding it.
     """
-    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    validate_job = workflow.split("  validate:", 1)[1]
-    assert re.search(r"^\s*run:\s*make check\s*$", validate_job, re.M), (
-        "the Validate job must run `make check`"
-    )
-
     # No gate may run outside `make check`.
     #
     # Matching each `make check` target name against the `run:` lines was the
@@ -1026,21 +1037,28 @@ def test_ci_runs_the_repository_gate_through_make_check():
     # installing — opengrep ships no action to pin, so it is fetched and
     # checksum-verified in a `run:` block. A count cannot tell that setup step
     # from a smuggled-in gate, so the property is stated directly instead, in
-    # `_gate_violations`: every `run:` step is either `make check` or a declared
-    # setup step, and a setup step may not execute repository code.
-    assert _gate_violations(validate_job, GATE_SETUP_STEPS) == []
+    # `_gate_violations`: exactly one step runs `make check` and nothing else,
+    # and every other step is a declared install that executes no repo code.
+    #
+    # The separate `run: make check` line assertion this replaced is subsumed:
+    # `gates != 1` fails when that step is missing, and it checks the parsed
+    # command rather than the file's text.
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    assert _gate_violations(workflow, GATE_SETUP_STEPS) == []
 
 
-def _job(*steps: tuple[str, list[str]]) -> str:
-    """A synthetic Validate job body from (step name, run body) pairs.
+# The one legitimate gate step, for composing synthetic jobs that need it present.
+_GATE_STEP = {"name": "Run the repository gate", "run": "make check"}
 
-    Indentation matters: `_run_steps` splits on six-space `- name:`, the shape
-    the real workflow uses.
+
+def _job(*steps: dict) -> str:
+    """A synthetic workflow containing `validate` with the given steps.
+
+    Emitted through the YAML dumper rather than assembled as text, so a fixture
+    cannot encode an indentation assumption the parser does not share — the
+    thing that made the previous hand-rolled fixtures agree with a broken parser.
     """
-    return "\n".join(
-        f"      - name: {name}\n        run: |\n" + "\n".join(f"          {ln}" for ln in body)
-        for name, body in steps
-    )
+    return yaml.safe_dump({"jobs": {"validate": {"steps": list(steps)}}})
 
 
 def test_a_comment_naming_the_gate_does_not_make_a_step_the_gate():
@@ -1050,10 +1068,8 @@ def test_a_comment_naming_the_gate_does_not_make_a_step_the_gate():
     could carry them in a shell comment, take the gate branch, and skip the
     smuggling check entirely — while running whatever it liked.
     """
-    job = _job(
-        ("Run the repository gate", ["# make check", "uv run --extra dev bandit -r skills/"])
-    )
-    assert _gate_violations(job, GATE_SETUP_STEPS) != []
+    smuggler = {"name": "Run the repository gate", "run": "# make check\nuv run --extra dev bandit"}
+    assert _gate_violations(_job(_GATE_STEP, smuggler), GATE_SETUP_STEPS) != []
 
 
 @pytest.mark.parametrize(
@@ -1072,14 +1088,48 @@ def test_a_hash_inside_a_string_does_not_hide_a_command(line):
     regex did catch this, which is how the hole survived a review that named the
     unspaced form.
     """
-    assert _gate_violations(_job(("Install opengrep", [line])), GATE_SETUP_STEPS) != []
+    step = {"name": "Install opengrep", "run": line}
+    assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
+
+
+def test_an_unnamed_run_step_is_its_own_step():
+    """An unnamed `- run:` step was absorbed into the previous step's body.
+
+    Splitting on `- name:`/`- uses:` made a bare `- run:` invisible as a
+    boundary, so a repository command placed after the allowed install step was
+    scanned as part of it — and passed, since it contains neither `make` nor
+    `uv`. Parsed as its own step it has no name, which no allowlist contains.
+    """
+    install = {"name": "Install opengrep", "run": "curl -sSfL -o /tmp/og https://x"}
+    job = _job(install, {"run": "./scripts/deploy-everything.sh"}, _GATE_STEP)
+    assert [name for name, _ in _run_steps(job)] == ["Install opengrep", "", _GATE_STEP["name"]]
+    assert _gate_violations(job, GATE_SETUP_STEPS) != []
+
+
+def test_the_gate_step_must_be_exactly_make_check():
+    """`echo make check && uv run …` contained the tokens without being the gate.
+
+    Adjacency was too weak: any body mentioning the two words in order was
+    classified as the gate and skipped the smuggling check.
+    """
+    extra = {
+        "name": "Run the repository gate",
+        "run": "echo make check && uv run --extra dev bandit",
+    }
+    assert _gate_violations(_job(_GATE_STEP, extra), GATE_SETUP_STEPS) != []
+
+
+def test_exactly_one_gate_step_is_required():
+    """Two gate steps, or none, is not the single invocation the job is meant to be."""
+    assert _gate_violations(_job(_GATE_STEP, dict(_GATE_STEP)), GATE_SETUP_STEPS) != []
+    install = {"name": "Install opengrep", "run": "curl https://x"}
+    assert _gate_violations(_job(install), GATE_SETUP_STEPS) != []
 
 
 def test_an_unparseable_run_body_fails_closed():
     """Unbalanced quoting cannot be classified, so it is a violation, not a pass."""
-    assert (
-        _gate_violations(_job(("Install opengrep", ['echo "unterminated'])), GATE_SETUP_STEPS) != []
-    )
+    broken = {"name": "Install opengrep", "run": 'echo "unterminated'}
+    assert _gate_violations(_job(_GATE_STEP, broken), GATE_SETUP_STEPS) != []
 
 
 def test_make_check_still_covers_every_gate():

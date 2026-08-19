@@ -134,6 +134,7 @@ dev = [
     { name = "bandit" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -142,6 +143,7 @@ requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = "==1.9.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1,<8" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.2" },
 ]
 provides-extras = ["dev"]
