@@ -1050,6 +1050,18 @@ def _gate_violations(validate_job: str, setup_steps: frozenset[str]) -> list[str
                 "in the Makefile, not in a second copy here"
             )
             continue
+        # Command substitution runs a command without putting it in command
+        # position, so the allowlist never sees it: `echo "$(./deploy.sh)"`
+        # tokenises to a bare `echo`. Rejected outright rather than parsed,
+        # since a setup step has no need of it. `${VAR}` is untouched — the
+        # install step interpolates its pinned version and digest that way.
+        substitutions = [form for form in ("$(", "`") if form in body]
+        if substitutions:
+            problems.append(
+                f"setup step {name!r} uses command substitution {substitutions} — "
+                "it hides a command from the allowlist"
+            )
+            continue
         words = _command_words(body)
         if words is None:
             problems.append(f"step {name!r} has a run body that is not parseable as shell")
@@ -1195,6 +1207,26 @@ def test_a_declared_setup_step_may_not_run_repository_code(run):
     assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
 
 
+@pytest.mark.parametrize(
+    "run",
+    [
+        'echo "$(./scripts/deploy-everything.sh)"',
+        'echo "`./scripts/deploy-everything.sh`"',
+    ],
+    ids=["dollar-paren", "backticks"],
+)
+def test_command_substitution_cannot_hide_a_command(run):
+    """Substitution runs a command without it ever being in command position.
+
+    `echo "$(./deploy.sh)"` tokenises to a bare `echo`, so the allowlist saw
+    nothing to object to while the script ran. Only the quoted forms bypassed it
+    — unquoted `$(` happens to split into its own token — which is why both are
+    pinned rather than the one that failed.
+    """
+    step = {"name": "Install opengrep", "run": run}
+    assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
+
+
 def test_the_real_install_step_satisfies_the_command_allowlist():
     """The allowlist has to admit the actual install step, or it is just a ban.
 
@@ -1205,7 +1237,12 @@ def test_the_real_install_step_satisfies_the_command_allowlist():
     workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
     install = [body for name, body in _run_steps(workflow) if name == "Install opengrep"]
     assert install, "the Install opengrep step is gone; this test guards the wrong thing now"
-    assert set(_command_words(install[0]) or []) <= _SETUP_COMMANDS
+    words = _command_words(install[0])
+    # Not `or []`: that turned a parse failure into an empty set, which satisfies
+    # any allowlist — a malformed body would have passed this assertion instead
+    # of failing it.
+    assert words is not None, "the install step's run body no longer parses as shell"
+    assert set(words) <= _SETUP_COMMANDS
 
 
 def test_an_unparseable_run_body_fails_closed():
