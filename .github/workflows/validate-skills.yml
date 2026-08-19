@@ -131,6 +131,37 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
+      - name: Install opengrep
+        # Pinned by version and verified by digest — the same discipline
+        # .claude/rules/github-actions-security.md applies to actions and
+        # pre-commit revs, and for the same reason: this binary executes inside
+        # the authoritative Validate job. There is no action to SHA-pin, so the
+        # release asset is pinned by its own sha256 instead.
+        #
+        # A setup step, not a gate: `make check` stays the single definition of
+        # what "checked" means. Its `opengrep` target fails rather than skips
+        # when the binary is missing under CI, so a broken install here surfaces
+        # as a failed gate instead of a silent pass.
+        #
+        # Deliberately not on Renovate. It cannot compute a release asset's
+        # sha256, so it would raise the version and leave the digest behind —
+        # a PR that fails this step on every release. Move both by hand:
+        #   gh api repos/opengrep/opengrep/releases/latest \
+        #     --jq '.assets[] | select(.name=="opengrep_manylinux_x86") | .digest'
+        # Half an update cannot merge: the checksum check below fails loudly
+        # rather than running an unverified binary.
+        env:
+          OPENGREP_VERSION: v1.27.1
+          OPENGREP_SHA256: 58053da76672bbeb5b0a5441021c58338707052e10f81d777140ca879bd491ce
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/opengrep \
+            "https://github.com/opengrep/opengrep/releases/download/${OPENGREP_VERSION}/opengrep_manylinux_x86"
+          echo "${OPENGREP_SHA256}  /tmp/opengrep" | sha256sum -c -
+          chmod +x /tmp/opengrep
+          sudo mv /tmp/opengrep /usr/local/bin/opengrep
+          opengrep --version
+
       - name: Run the repository gate
         # ONE invocation, deliberately: the Makefile is the single definition of
         # what "checked" means. Listing the targets as separate steps here bought
@@ -141,9 +172,9 @@ jobs:
         #
         # `make check` = validate + validate-evals + validate-rules +
         # version-sync + lock-check + audit-consistency + index-check + lint +
-        # format-check + security + typecheck + test + pre-commit. Each target
-        # names the failing gate in its own output, so a failure is still
-        # identifiable from the log.
+        # format-check + security + opengrep + typecheck + test + pre-commit.
+        # Each target names the failing gate in its own output, so a failure is
+        # still identifiable from the log.
         #
         # tests/test_hooks.py asserts this job runs `make check` rather than
         # restating the targets, so the collapse cannot quietly be undone.
