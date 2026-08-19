@@ -94,7 +94,11 @@ preference above, the MCP tools are the default and the CLI is the fallback:
 
 1. **The `nitpicker` MCP tools — the default whenever the session exposes
    them.** They call the same functions the CLI does, so the result is identical
-   — but they need no shell, no path resolution, and no heredoc quoting, and
+   — with one exception, marked in the table: `np_findings_index` *renders*
+   `INDEX.md` and returns it, where `findings.py index` writes it to disk. That
+   difference is deliberate; the tool is annotated `readOnlyHint: true`, and a
+   read-only tool must not mutate the working tree. The tools otherwise
+   need no shell, no path resolution, and no heredoc quoting, and
    the server enforces each tool's required parameters before dispatch (value
    checks stay in the backing functions, exactly as for the CLI). Use them for
    every operation in the table below; in a session that has them, dropping to
@@ -104,6 +108,16 @@ preference above, the MCP tools are the default and the CLI is the fallback:
    interface and is fully sufficient. Never treat an absent MCP tool as a reason
    to skip filing a finding.
 
+**After editing anything under `skills/*/scripts/`, switch to the CLI for the
+rest of the session.** The server imports those modules once at startup and
+holds them in memory, so a fix does not reach the running process — the `np_*`
+tools keep executing the previous code, and the plugin-scope server serves the
+*installed* copy, which never reflects a working-tree edit at any age. The CLI
+loads fresh on every invocation. The mutate tools now prefix a `[warn]` line
+when they detect either condition, but the warning is a backstop: an audit that
+fixes a shipped tool and then resolves its own finding through the MCP tools
+records "fixed" via the code path it just fixed and is not running.
+
 | Operation | MCP tool | CLI equivalent |
 | --- | --- | --- |
 | File a finding | `np_new_finding` | `findings.py new` |
@@ -112,7 +126,8 @@ preference above, the MCP tools are the default and the CLI is the fallback:
 | List, waiving baselined ids | `np_list_findings` with `exclude_baseline: true` | `findings.py list --exclude-baseline` |
 | Show one finding | `np_show_finding` | `findings.py show` |
 | Validate the store | `np_validate_store` | `findings.py validate` |
-| Regenerate `INDEX.md` | `np_findings_index` | `findings.py index` |
+| Render `INDEX.md` content (does **not** write) | `np_findings_index` | — |
+| Write `INDEX.md` to disk | — (read-only tools never write) | `findings.py index` |
 
 Three operations have **no** MCP tool and always use the CLI: `baseline`,
 `migrate`, and `migrate-resolved`. That omission is deliberate, not a gap
@@ -184,8 +199,11 @@ Run protocol:
    leave truly open ones open.
 2. File new findings as they are confirmed, not at the end
    (`np_new_finding`, else `findings.py new`).
-3. After filing, refresh `INDEX.md` (`np_findings_index`, else
-   `findings.py index`).
+3. `INDEX.md` is refreshed for you when findings are filed or resolved through
+   `np_new_finding` / `np_resolve_finding` / the CLI — each writes the index
+   itself. Run `findings.py index` explicitly only after changing the store some
+   other way (a hand-edited or repaired finding file). `np_findings_index`
+   renders the content and does not write, so it never refreshes anything.
 4. Present a findings summary in the response.
 5. If the command applies fixes: ask
    `Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o`

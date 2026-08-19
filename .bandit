@@ -1,0 +1,50 @@
+# Bandit configuration in the INI form (`bandit --ini .bandit`).
+#
+# WHY THIS FILE EXISTS, given pyproject.toml already has [tool.bandit]:
+# bandit auto-discovers THIS file and only this file — it never auto-discovers
+# pyproject.toml at all. Discovery is an `os.walk` of every target it was handed,
+# collecting any file named `.bandit` at any depth beneath them, so it finds this
+# file exactly when a target contains it (`bandit/cli/main.py`,
+# `_get_options_from_ini`). Measured:
+#
+#   bandit -r .          (.bandit present)  -> config applied
+#   bandit -r src                           -> not applied (no .bandit under src/)
+#   bandit -r src/a.py                      -> not applied (walking a file finds nothing)
+#
+# Keep this the only `.bandit` in the tree. Discovery collects all of them and
+# two is a hard error — bandit exits 2 rather than choosing one.
+#
+# So `-c pyproject.toml` (what `make security` and the pre-commit hook pass) and
+# a hosted runner invoking `bandit -r .` reach the same policy only because both
+# files exist and agree. Without this one, any runner that does not pass `-c`
+# would silently fall back to bandit's defaults and report B404/B603/B607.
+#
+# pyproject.toml stays the source of truth — it carries the full reasoning for
+# each skip and each excluded directory. This file mirrors the values only, and
+# `tests/test_bandit_config.py` fails if the two ever disagree, so a skip added
+# in one place cannot silently go missing in the other.
+
+# The INI keys mirror bandit's COMMAND-LINE options, not pyproject.toml's keys:
+# it is `exclude` here, where pyproject.toml says `exclude_dirs`. `exclude_dirs`
+# in an INI parses cleanly and is then ignored.
+#
+# Each directory is listed TWICE, bare and globbed, because which form works
+# depends on how bandit is invoked — measured, not assumed:
+#
+#   exclude=tests      target=.      -> tests/ still scanned
+#   exclude=tests      target=tests  -> tests/ excluded
+#   exclude=*/tests/*  target=.      -> tests/ excluded
+#   exclude=*/tests/*  target=tests  -> tests/ still scanned
+#
+# bandit matches the exclusion against the path it walked, and that path depends
+# on the target it was given. `make security` passes `-r skills/ scripts/`; a
+# hosted runner may pass `.` or the directory itself. Listing both forms is the
+# only spelling that holds for every invocation, and `tests/test_bandit_config.py`
+# asserts the resulting behaviour through bandit's own file discovery rather
+# than the syntax of these patterns.
+#
+# Setting `exclude` replaces bandit's built-in default list, so the usual
+# VCS/cache directories are restated here rather than lost.
+[bandit]
+exclude = tests,*/tests/*,.venv,*/.venv/*,graphify-out,*/graphify-out/*,_extra,*/_extra/*,.git,*/.git/*,__pycache__,*/__pycache__/*,.tox,*/.tox/*,.eggs,*/.eggs/*
+skips = B404,B603,B607

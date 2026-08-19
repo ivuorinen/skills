@@ -78,6 +78,63 @@ python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|inde
 
 IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
 
+## PR Fetchers
+
+`cr` reads a PR's review surface through two entry points —
+`fetch-pr-comments.py` and `fetch-pr-status.py` — that cover GitHub, GitLab and
+Bitbucket Cloud behind **one** JSON format. Both are thin: they resolve their
+sibling directory and delegate to `pr_common.run_cli`, which parses the argument
+forms, dispatches on platform, and maps exceptions to the 0/1/2 exit contract.
+
+`pr_common.py` owns everything shared — git-remote parsing, platform detection,
+the `Target` (platform + git host + project path, from which the API base is
+derived), the credential-pinned HTTP layer, both pagination styles, and the
+output envelopes. One provider module per platform (`pr_github.py`,
+`pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly `fetch_comments(target, n)`
+and `fetch_status(target, n)`.
+
+Two invariants make the shared format worth having, and both are pinned by
+tests. A field a platform cannot supply is present and empty or null rather than
+absent, so a caller reads every key unconditionally instead of branching on key
+existence to learn which platform answered. And a credential is only ever sent
+to the host it was declared for:
+the redirect handler is built per-request with that host, every paginated URL is
+re-validated before it is followed (both `Link` headers and body `next` fields
+are server-controlled), and `GH_HOST`/`GITLAB_HOST` gate a token against a
+self-hosted instance. Platform detection refuses an unrecognised host rather
+than guessing, since a wrong guess is a credential handed to a third party.
+
+The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
+the same providers. They are the only tools on the server carrying
+`openWorldHint: true`, and the only ones whose results are wrapped in an
+`<untrusted-data source="pull-request">` envelope — PR bodies are written by
+anyone who can comment on the PR.
+
+## Editing a shipped tool mid-session
+
+The MCP server imports `findings.py`, `pr_common.py` and `skill_catalog.py` once
+at startup and holds them for the life of the process. **Editing one of those
+files does not change what the running server executes.** Worse, two servers are
+registered: `.mcp.json` starts one from the working tree, and
+`.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
+installed copy under `~/.claude/plugins/cache/`, which reflects only the
+installed version, at any age.
+
+So after editing anything under `skills/*/scripts/`, drive the findings store
+through `python3 skills/nitpicker/scripts/findings.py` for the rest of the
+session; it loads fresh every invocation. Restarting the session picks up the
+new code.
+
+`mcp_server.py` records each module's mtime at import and prefixes a `[warn]`
+line to `np_new_finding` / `np_resolve_finding` results when the file has since
+changed, or when it is serving a different copy than the project has on disk.
+Those two tools carry it because their writes are permanent — the ledger is
+append-only. This is a backstop, not the control: the rule above is.
+
+This is not hypothetical. A stale `redact()` wrote an unredacted credential into
+`resolved.jsonl` during the audit that added the redaction, and only a
+`detect-private-key` commit hook caught it — see `audit-9bc6eb39`.
+
 ## Script Execution
 
 Two classes (see `.claude/rules/use-uv-runner.md`):
@@ -186,7 +243,10 @@ the most behaviour-changing entries in the file:
 - matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
   text names `.claude/agents/` **or a full protected agent filename** —
   literally, quoted, escaped, variable-built, or glob-spelled (the
-  `permissions.deny` block covers only the Read/Edit/Write tools, not Bash). So
+  `permissions.deny` block binds file tools only, not Bash — it names `Read`,
+  `Edit` **and** `Write` rules explicitly, rather than assuming an `Edit` rule
+  also binds Write, which is undocumented client behaviour no in-repo gate can
+  observe. `tests/test_settings.py` pins the exact list). So
   `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
   It raises the cost of reaching that tree; it does not close it. The guard
   matches tokens, so a command that locates the files by **content** rather than

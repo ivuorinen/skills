@@ -178,17 +178,43 @@ every alias next to its command.
 
 ## MCP server
 
-Installing the plugin registers a stdlib-only stdio MCP server (`nitpicker`)
-that exposes skill introspection (`np_list_skills`, `np_read_skill`,
+Installing the plugin registers a stdlib-only stdio MCP (Model Context Protocol)
+server (`nitpicker`) that exposes skill introspection (`np_list_skills`,
+`np_read_skill`,
 `np_read_command`, `np_read_reference`, `np_list_commands` — filterable to one
-category of the command table) and findings
+category of the command table), findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
-`np_validate_store`, `np_new_finding`, `np_resolve_finding`). Every tool is
-prefixed `np_` and publishes MCP annotations, so a client can tell the nine
+`np_validate_store`, `np_new_finding`, `np_resolve_finding`), and pull-request
+reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and Bitbucket Cloud in
+one shared JSON format). Every tool is
+prefixed `np_` and publishes MCP annotations, so a client can tell the eleven
 read-only tools from `np_new_finding`, which only adds, and
-`np_resolve_finding`, the one irreversible call. See the
-"MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
+`np_resolve_finding`, the one irreversible call — and the two PR tools, the only
+ones that reach the network, from the nine whose domain is the local filesystem.
+See the "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
 non-interactive mutate contract.
+
+### PR fetchers
+
+`cr` reads a PR's review surface through two shipped tools that cover GitHub,
+GitLab and Bitbucket Cloud behind one output format:
+
+```bash
+python3 skills/nitpicker/scripts/fetch-pr-comments.py <pr-url|pr_number|owner/repo N>
+python3 skills/nitpicker/scripts/fetch-pr-status.py   <pr-url|pr_number|owner/repo N>
+```
+
+The platform comes from the git remote host; `--platform` names it for a
+self-hosted instance whose hostname does not. Auth is `gh`/`GITHUB_TOKEN`,
+`GITLAB_TOKEN`/`glab`, or `BITBUCKET_TOKEN` (or username + app password), and a
+token is never sent to a host it was not declared for.
+
+Declare the host with `GH_HOST` or `GITLAB_HOST` when the token belongs to a
+self-hosted instance. GitLab needs it only to _pin_ a token to one instance —
+the target host comes from the git remote — so setting it to a host you are not
+addressing withholds the token rather than sending it. `--platform` selects the
+API to speak, not the host to trust; the two are separate. The full auth table
+is in `skills/nitpicker/commands/cr.md`.
 
 ## Development
 

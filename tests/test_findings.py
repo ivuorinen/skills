@@ -6,6 +6,7 @@ import re
 import runpy
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -1185,6 +1186,145 @@ def test_migrate_v1_redacts_the_resolved_records_it_appends(tmp_path):
     assert "AKIA***MPLE" in ledger
     assert "carol@example.com" not in ledger
     assert "<email>" in ledger
+
+
+class TestRedactVendorCoverage:
+    """The register for `_SECRET_RE`. Add a vendor here and in findings.py together.
+
+    A credential shape the repo tells users to configure but cannot redact is a
+    silent gap: the ledger is append-only, so a secret that reaches it is
+    permanent, and the store's linguist-generated mark collapses these files in
+    PR review — removing the human check that would otherwise catch it. Pinning
+    one correctly-shaped token per vendor turns the next gap into a red test.
+    """
+
+    # (label, token) — shape-accurate, not real credentials.
+    #
+    # Fixtures that look like credentials trip the repo's own scanners, and the
+    # right answer is to keep the scanners strict rather than allowlist this
+    # file: the JWT is joined from its three segments so the contiguous
+    # `eyJ…​.eyJ…​.` shape never appears in the source for gitleaks to match, and
+    # TestRedactPrivateKeys assembles its PEM markers for detect-private-key for
+    # the same reason. Anything added here must clear both.
+    VENDORS: ClassVar[list[tuple[str, str]]] = [
+        ("github classic", "ghp_" + "A" * 36),
+        ("github fine-grained", "github_pat_" + "A" * 22 + "_" + "B" * 59),
+        ("gitlab pat", "glpat-" + "A" * 20),
+        ("gitlab runner modern", "glrt-" + "A" * 20),
+        ("gitlab runner legacy", "GR1348941" + "A" * 20),
+        ("bitbucket app password", "ATBB" + "A" * 28),
+        # BITBUCKET_TOKEN holds an Atlassian API/scoped token, not an app
+        # password — the ATBB prefix above never covered the variable the docs
+        # actually tell users to set.
+        ("atlassian api token", "ATATT" + "A" * 180),
+        ("atlassian scoped token", "ATCTT" + "A" * 180),
+        ("openai", "sk-" + "A" * 40),
+        ("aws key id", "AKIA" + "B" * 16),
+        ("google api key", "AIza" + "A" * 35),
+        ("npm token", "npm_" + "A" * 36),
+        ("slack", "xoxb-1234567890-abcdefghij"),
+        ("jwt", ".".join(["eyJ" + "h" * 18, "eyJ" + "z" * 18, "s" * 12])),
+    ]
+
+    @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
+    def test_vendor_token_never_survives_redaction(self, label, token):
+        assert token not in findings.redact(f"found in config: {token}"), label
+
+    @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
+    def test_vendor_token_redacted_on_every_write_path(self, label, token, tmp_path):
+        # Not just the function — the store writer that actually persists it.
+        path = findings.new_finding(
+            tmp_path,
+            auditor="audit",
+            severity="low",
+            category="security",
+            area="cfg.env",
+            title="leaked",
+            body=f"## Problem\n{token}\n\n## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n",
+        )
+        assert token not in path.read_text(encoding="utf-8"), label
+
+    def test_documented_env_vars_all_have_a_vendor_entry(self):
+        """The repo must not document a credential it cannot redact.
+
+        `cr.md` names the variables a user is told to set; every platform named
+        there needs a shape in the register above.
+        """
+        covered = " ".join(label for label, _ in self.VENDORS)
+        for platform in ("github", "gitlab", "bitbucket"):
+            assert platform in covered, f"{platform} credentials are documented but unregistered"
+
+
+class TestRedactPrivateKeys:
+    """PEM markers are assembled at runtime, never written as literals.
+
+    pre-commit's `detect private key` hook scans this file too, and a real-looking
+    header in the source fails the commit — so the fixtures build the marker from
+    parts. Verified by watching that hook fail on the literal form first.
+    """
+
+    _BODY = "MIIEpAIBAAKCAQEA" + "x" * 60
+    _D = "-" * 5
+
+    def _pem(self, kind: str, body: str = "", closed: bool = True) -> str:
+        head = f"{self._D}BEGIN {kind} PRIVATE KEY{self._D}"
+        return (
+            f"{head}\n{body}\n{self._D}END {kind} PRIVATE KEY{self._D}"
+            if closed
+            else f"{head}\n{body}"
+        )
+
+    def test_whole_pem_block_is_removed_not_just_the_header(self):
+        # Masking the header alone would leave the key material in the record
+        # while reading as redacted — worse than no redaction.
+        out = findings.redact(f"key was committed:\n{self._pem('RSA', self._BODY)}\n")
+        assert self._BODY not in out
+        assert "BEGIN RSA" not in out and "END RSA" not in out
+        assert "[REDACTED PRIVATE KEY]" in out
+
+    def test_truncated_pem_keeps_no_short_trailing_line(self):
+        """A real PEM's last line is a short base64 remainder.
+
+        The first fix required 16+ characters per run, so `CC==` survived and the
+        output read as redacted while still carrying key material. A narrowly
+        wrapped body would have survived in full.
+        """
+        body = "A" * 64 + "\n" + "B" * 64 + "\nCC=="
+        out = findings.redact(self._pem("RSA", body, closed=False))
+        assert "A" * 64 not in out
+        assert "CC==" not in out
+
+    def test_truncated_pem_stops_at_the_first_non_base64_line(self):
+        # The line-shaped match is what keeps ordinary evidence out; without it a
+        # lower length floor would swallow the prose after the key.
+        text = self._pem("RSA", "A" * 64, closed=False) + "\nfound at src/app.py:42"
+        out = findings.redact(text)
+        assert "found at src/app.py:42" in out
+        assert "A" * 64 not in out
+
+    def test_truncated_pem_without_an_end_marker_takes_the_body_too(self):
+        """Evidence is often clipped, and the clipped case is the dangerous one.
+
+        Matching the header alone replaced it with the redaction marker and left
+        the base64 body on the following line — output that reads as redacted
+        while still carrying the key. Caught by this test, not by review.
+        """
+        out = findings.redact(self._pem("OPENSSH", self._BODY, closed=False))
+        assert "BEGIN OPENSSH" not in out
+        assert self._BODY not in out
+
+    def test_pem_is_unreachable_from_the_word_boundary_pattern(self):
+        """Why _PEM_RE exists at all: `_SECRET_RE` opens with `\\b`, which cannot
+        match before a leading `-`, so a PEM block can never match inside it."""
+        assert findings._SECRET_RE.search(self._pem("RSA", closed=False)) is None
+
+
+def test_redact_leaves_a_bare_aws_secret_alone_by_design():
+    """A 40-char unprefixed base64 blob is indistinguishable from a hash or diff
+    noise, so it is deliberately not matched. Pinned so the omission stays a
+    recorded decision rather than being 'fixed' into a false-positive machine."""
+    blob = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    assert findings.redact(blob) == blob
 
 
 def test_every_store_writer_redacts(tmp_path):

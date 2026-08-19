@@ -21,6 +21,7 @@ skills/nitpicker/
     _conventions.md        # Shared conventions binding every command (severity, findings protocol)
     <command>.md           # One file per command, no frontmatter
   scripts/                 # Shipped tools: findings.py, fetch-pr-comments.py,
+                           #   fetch-pr-status.py, pr_common.py + pr_{github,gitlab,bitbucket}.py,
                            #   process-sarif.py, check-rules-anatomy.py,
                            #   mcp_server.py, skill_catalog.py — stdlib-only, plain python3
 .claude/
