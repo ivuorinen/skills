@@ -167,8 +167,9 @@ which engine was actually reporting. `make opengrep` runs
 
 **A `# nosemgrep` marker only counts on the finding's own line or the line
 directly above it.** One line further up is ignored silently — no warning, no
-diff, the finding just quietly comes back. Reason comments go *above* the
-marker, never between it and the code.
+diff, the finding just quietly comes back. A reason comment therefore belongs
+*above* the marker: one placed between the marker and the code separates the
+two, and the suppression stops applying.
 
 So the gate also runs a second pass with `--disable-nosem` and fails on any
 marker that lines up with no revealed finding. That catches the misplaced marker
@@ -183,9 +184,10 @@ Two things worth knowing before trusting a clean run:
   rather than passed over silently.
 
 A scan error fails the gate. opengrep skips a file it cannot parse, so a parse
-error means unscanned code and must never read as clean. This is also why the
-gate runs opengrep rather than semgrep: semgrep 1.172.0 cannot parse a `match`
-statement and drops the whole file, and this repo uses them.
+error means unscanned code, and reporting the remainder as clean would hide it.
+This is also why the gate runs opengrep rather than semgrep: semgrep 1.172.0
+cannot parse a `match` statement and drops the whole file, and this repo uses
+them.
 
 Locally the target skips when opengrep is absent; under CI it fails instead,
 because a gate that skips silently is not a gate. The `Validate` workflow
