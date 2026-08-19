@@ -82,6 +82,13 @@ engines:
   # The shipped tools stay under opengrep. It is the most precise scanner on
   # this codebase (0 findings across 202 rules once the audit-rule call sites
   # are annotated), so narrowing it beyond tests/ would lose real coverage.
+  #
+  # `make opengrep` now reproduces these findings locally, against
+  # r/python.lang.security.audit — the namespace measured to match what this
+  # engine reports here. Until it existed, that ruleset lived only in the Codacy
+  # UI, so a finding could not be seen from a checkout. Keep the two in step: a
+  # rule newly reported here that the local gate does not run is a gap in
+  # scripts/check-opengrep.py's CONFIG, not a reason to exclude a path.
   opengrep:
     exclude_paths:
       - "tests/**"

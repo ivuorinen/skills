@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security list test typecheck help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major
 
 UV := uv run --quiet
 
@@ -6,7 +6,7 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-evals + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + typecheck + test + pre-commit (default)"
+	@echo "  check        — validate + validate-evals + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + opengrep + typecheck + test + pre-commit (default)"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-evals — validate the evals/ sets bundled with each skill"
 	@echo "  spec-check   — cross-check skills against the Agent Skills reference validator (network)"
@@ -20,13 +20,14 @@ help:
 	@echo "  format       — ruff format on scripts/, tests/, skills/"
 	@echo "  format-check — ruff format --check (CI-safe, no writes)"
 	@echo "  security     — bandit static security scan of shipped tools and internal scripts"
+	@echo "  opengrep     — opengrep scan (the rules Codacy reports) + stale-suppression check"
 	@echo "  list         — list all skills with descriptions"
 	@echo "  test         — run pytest unit tests"
 	@echo "  bump-patch   — bump patch version"
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-evals validate-rules version-sync lock-check audit-consistency index-check lint format-check security typecheck test pre-commit
+check: validate validate-evals validate-rules version-sync lock-check audit-consistency index-check lint format-check security opengrep typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -105,6 +106,17 @@ lint:
 # .github/workflows/validate-skills.yml — change both together.
 security:
 	uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
+
+# The second scanner, and the only one whose findings Codacy also reports. Its
+# ruleset lived solely in the Codacy UI until this target existed, so a finding
+# was invisible from a checkout and reproducible only by pushing. Also fails on
+# a `# nosemgrep` that suppresses nothing — a check nothing else here performs.
+#
+# Degrades to a skip when opengrep is absent, so a clone without it still runs
+# `make check`; under CI it fails instead, because a gate that skips silently is
+# not a gate. The workflow installs opengrep before calling this.
+opengrep:
+	$(UV) scripts/check-opengrep.py
 
 # ruff pinned to the same version pyproject.toml and .pre-commit-config.yaml
 # name. These two targets WRITE, so a stale pin here reformats the tree one way
