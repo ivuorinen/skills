@@ -68,7 +68,7 @@ def main() -> None:
     try:
         # argv is the resolved validator path plus the skill directory derived
         # from the event — no shell, and nothing interpolated from user text.
-        result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
+        result = subprocess.run(
             ["uv", "run", "--quiet", str(validator), str(path.parent.parent)],
             cwd=str(REPO_ROOT),
             capture_output=True,
