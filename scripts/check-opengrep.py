@@ -142,6 +142,13 @@ def _scan(opengrep: str, *, disable_nosem: bool) -> dict:
 
 
 def _locations(scan: dict) -> set[tuple[str, int]]:
+    """Where a scan found something, as (path, line).
+
+    Reduced to positions because the two passes are compared by subtraction:
+    what the `--disable-nosem` pass found and the active pass did not is exactly
+    the set a marker suppressed. Rule ids are dropped deliberately — the same
+    line can carry findings from two rules, and a marker suppresses by position.
+    """
     return {(r["path"], r["start"]["line"]) for r in scan.get("results", [])}
 
 
@@ -169,10 +176,19 @@ def _markers_in(paths: list[Path]) -> list[tuple[str, int, str]]:
 
 
 def _scanned_sources() -> list[Path]:
+    """The files opengrep saw, and therefore the only ones staleness can judge."""
     return sorted(p for root in SCAN_ROOTS for p in (REPO_ROOT / root).rglob("*.py"))
 
 
 def _unscanned_sources() -> list[Path]:
+    """Python outside the scanned roots, for the unjudged-marker count.
+
+    A marker here has no finding to line up with, so calling it stale would be
+    wrong and calling it live would be a guess. Counting them keeps the gap
+    visible instead of letting a clean run imply the whole tree was covered.
+    `_SKIP_DIRS` drops vendored and generated trees, whose markers are nobody's
+    to answer for.
+    """
     roots = {REPO_ROOT / r for r in SCAN_ROOTS}
     return sorted(
         p
@@ -194,6 +210,12 @@ def _report_errors(scans: list[dict]) -> int:
 
 
 def _report_findings(active: dict) -> int:
+    """Print what opengrep still reports with suppression active; return the count.
+
+    The half Codacy already performs. Sorted by (path, line) so a run's output is
+    stable enough to diff against the previous one — an unsorted set makes an
+    unchanged failure look like a new one.
+    """
     findings = sorted(active.get("results", []), key=lambda r: (r["path"], r["start"]["line"]))
     if not findings:
         return 0
@@ -208,6 +230,14 @@ def _report_findings(active: dict) -> int:
 
 
 def _report_stale(suppressed: set[tuple[str, int]]) -> int:
+    """Print markers that suppress nothing; return the count.
+
+    `suppressed` is what the two passes disagreed about — every position a marker
+    actually silenced. A marker matching none of those positions is either
+    misplaced or left over, and both are invisible without this check: the
+    misplaced one lets a finding return unannounced, the leftover one implies a
+    rule is being waived when it is not.
+    """
     stale = [
         marker
         for marker in _markers_in(_scanned_sources())
@@ -250,6 +280,14 @@ def _resolve_opengrep() -> tuple[str | None, int]:
 
 
 def main(argv: list[str]) -> int:
+    """Run both passes and return the process exit code.
+
+    Order matters: scan errors are reported before findings, because a file
+    opengrep could not parse makes every later count an undercount, and a
+    "2 problem(s)" line computed over a partial scan reads as precise when it is
+    not. Exit codes: 0 success, 1 finding or stale marker (or a gate that could
+    not run under CI), 2 usage error.
+    """
     if any(a in ("-h", "--help") for a in argv):
         print(USAGE)
         return 0

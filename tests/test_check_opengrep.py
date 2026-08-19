@@ -28,14 +28,30 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 
 def _result(stdout: str = "", returncode: int = 0, stderr: str = ""):
+    """A stand-in for the opengrep process, so no scanner runs during the tests.
+
+    A real invocation would need the binary present and would reach the registry,
+    making the suite depend on both a tool and the network.
+    """
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def _finding(path: str, line: int, rule: str = "python.lang.security.audit.x.dangerous-x"):
+    """One opengrep result, trimmed to the three keys the tool actually reads.
+
+    The fully-qualified `rule` is deliberate: the tool prints only the last
+    dotted segment, and a short id here would let that truncation pass untested.
+    """
     return {"path": path, "start": {"line": line}, "check_id": rule}
 
 
 def _scan_json(results=(), errors=()):
+    """A scan payload with both keys always present.
+
+    `errors` is never omitted, because the tool treats a scan error as fatal and
+    a fixture that dropped the key would exercise the `.get` default instead of
+    the real shape opengrep emits.
+    """
     return json.dumps({"results": list(results), "errors": list(errors)})
 
 
@@ -100,6 +116,7 @@ def test_scan_passes_disable_nosem_only_when_asked(monkeypatch):
     seen = []
 
     def fake(argv, **kwargs):
+        """Record the argv each pass builds, so the flag can be asserted on."""
         seen.append(argv)
         return _result(_scan_json())
 
@@ -120,6 +137,7 @@ def test_scan_passes_disable_nosem_only_when_asked(monkeypatch):
 )
 def test_scan_turns_process_failures_into_runtime_errors(monkeypatch, exc, fragment):
     def fake(*a, **k):
+        """Simulate the process dying rather than returning — timeout or exec failure."""
         raise exc
 
     monkeypatch.setattr(_mod.subprocess, "run", fake)
@@ -251,6 +269,11 @@ def run_main(tool, monkeypatch, tmp_path):
     """Drive main() with a scripted pair of scans."""
 
     def go(active_json, revealed_json):
+        """Feed the two passes in order: active scan first, --disable-nosem second.
+
+        The order is the contract — main() subtracts the first from the second to
+        derive what a marker suppressed, so swapping them inverts every verdict.
+        """
         monkeypatch.setattr(tool.shutil, "which", lambda _: "/usr/bin/opengrep")
         calls = iter([_result(active_json), _result(revealed_json)])
         monkeypatch.setattr(tool.subprocess, "run", lambda *a, **k: next(calls))
@@ -347,6 +370,11 @@ def test_module_runs_as_a_script(monkeypatch):
 
 
 def _sha_pin(workflow: str) -> str:
+    """The digest the workflow pins, or "" if the line is gone.
+
+    Returns a string rather than raising so the caller's length assertion is what
+    reports a missing pin — a KeyError here would name the parser, not the pin.
+    """
     for line in workflow.splitlines():
         if "OPENGREP_SHA256:" in line:
             return line.split(":", 1)[1].strip()
