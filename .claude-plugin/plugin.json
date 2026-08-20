@@ -2,7 +2,7 @@
   "$schema": "../schemas/plugin.schema.json",
   "name": "ivuorinen-skills",
   "description": "Nitpicker — hostile audit toolkit: /nitpicker <command> dispatches specialist audit commands (adversarial review, security, tests, docs, types, architecture, perf, reliability, caching, concurrency, error handling, leaks, deps, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, IaC, prompt safety, complexity, dead and unwired code, agent rule and hook enforcement) plus planning, plan execution, teaching, triage and PR review. Bundles a stdio MCP server for skill introspection and findings management. Also installable in Copilot, pi, and any Agent Skills-compatible agent.",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "author": {
     "name": "Ismo Vuorinen",
     "email": "ismo@ivuorinen.net"
