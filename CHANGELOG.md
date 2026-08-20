@@ -35,6 +35,21 @@ each new release directly beneath the header above, and these notes stay here.
 > itself is the maintainer's decision, made in the open, and the CI guard
 > prevents a repeat.
 
+## [3.1.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v3.0.0...ivuorinen-skills-v3.1.0) (2026-08-20)
+
+
+### Features
+
+* complete the nitpicker MCP tool surface and add commit discipline ([#116](https://github.com/ivuorinen/skills/issues/116)) ([91bcb66](https://github.com/ivuorinen/skills/commit/91bcb66d0c883695864033a08ed70bbad07ed244))
+* conform every skill to the Agent Skills specification ([#117](https://github.com/ivuorinen/skills/issues/117)) ([114c102](https://github.com/ivuorinen/skills/commit/114c102b22f21194d8683dcad87136ff0237f27b))
+* fetch PR status and comments across GitHub, GitLab and Bitbucket ([#119](https://github.com/ivuorinen/skills/issues/119)) ([09ded3b](https://github.com/ivuorinen/skills/commit/09ded3bb36bf7db742182cfd047ef8cc1bdd1244))
+* gate uv.lock against version drift ([#112](https://github.com/ivuorinen/skills/issues/112)) ([422ef6a](https://github.com/ivuorinen/skills/commit/422ef6a2b1eef69099f0adc0dcdadb9bec5937f1))
+
+
+### Bug Fixes
+
+* **deps:** update ruff ([#121](https://github.com/ivuorinen/skills/issues/121)) ([bb47c92](https://github.com/ivuorinen/skills/commit/bb47c92207bc68323305eb1cbb581bc295def70d))
+
 ## [3.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v2.0.0...ivuorinen-skills-v3.0.0) (2026-08-12)
 
 
