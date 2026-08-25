@@ -122,10 +122,10 @@ opengrep:
 # name. These two targets WRITE, so a stale pin here reformats the tree one way
 # while the gate judges it another.
 format:
-	uv run --with ruff==0.16.3 ruff format scripts/ tests/ skills/
+	uv run --with ruff==0.16.4 ruff format scripts/ tests/ skills/
 
 format-check:
-	uv run --with ruff==0.16.3 ruff format --check scripts/ tests/ skills/
+	uv run --with ruff==0.16.4 ruff format --check scripts/ tests/ skills/
 
 bump-patch:
 	$(UV) scripts/bump-version.py patch
