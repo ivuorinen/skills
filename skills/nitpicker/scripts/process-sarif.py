@@ -70,6 +70,14 @@ def _normalize_severity(  # noqa: C901
     security_severity: str | None,
     tool_severity: str | None,
 ) -> str:
+    """Reconcile the several places SARIF can carry severity into one vocabulary.
+
+    Scanners populate different fields — some only `level`, some a CVSS score,
+    some a tool-specific rank — so a consolidated report that trusted any single
+    field would rank whole tools wrongly rather than individual findings. The
+    candidate order below is the precedence; it is the part to change if a
+    scanner's ranking looks off.
+    """
     candidates: list[str] = []
 
     # CVSS security-severity score (one signal; the most severe of CVSS and the
@@ -148,6 +156,13 @@ def _extract_rules(run: dict) -> dict[str, dict]:
 
 
 def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C901
+    """Findings from one SARIF `runs` entry, tolerating a schema tools bend.
+
+    Typed `object` rather than `dict` on purpose: the input is third-party JSON,
+    and a scanner writing something other than an object here should cost that
+    one run, not the process. Every nested access below defends the same way,
+    because the fields SARIF marks optional are exactly the ones tools omit.
+    """
     if not isinstance(run, dict):
         return []  # a `runs` entry from untrusted JSON need not be an object
     driver = (run.get("tool") or {}).get("driver") or {}
@@ -237,6 +252,13 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
 
 def _parse_sarif(path: Path) -> list[dict]:
+    """Findings from one SARIF file; an unreadable file yields none, not an abort.
+
+    A run consolidates several scanners' output, and one malformed file is the
+    normal consequence of a scanner crashing mid-write. Aborting would discard
+    the findings already collected from the files that parsed — the failure
+    is reported on stderr and the run continues short one input.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, ValueError, RecursionError, OSError) as e:
@@ -261,6 +283,15 @@ def _parse_sarif(path: Path) -> list[dict]:
 
 
 def _deduplicate(findings: list[dict]) -> tuple[list[dict], int]:
+    """Collapse findings sharing a fingerprint, keeping the most severe.
+
+    Scanners overlap, so the same defect arrives from several tools — and they
+    rank it differently. Keeping the highest severity means an overlap can only
+    raise the reported risk, never lower it by whichever duplicate happened to
+    be seen last. The count of dropped duplicates is returned so the summary can
+    say what was collapsed rather than silently reporting fewer findings.
+    """
+
     def _rank(finding: dict) -> int:
         sev = finding.get("severity")
         return _SEVERITY_RANK.get(sev, 99) if isinstance(sev, str) else 99

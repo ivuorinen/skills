@@ -31,6 +31,15 @@ KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 def validate(  # noqa: C901
     path: Path, errors: list[str], warnings: list[str], repo_root: Path
 ) -> None:
+    """Check one rule file, appending to the caller's lists rather than returning.
+
+    Same split as the skill validator, for the same reason: errors fail the
+    gate, warnings are reported and do not. Structure only — whether the file
+    parses and loads. Rule *quality* is `check-rules-anatomy.py`'s job, and
+    keeping them apart is what lets a badly-worded rule still load while an
+    unparseable one cannot.
+    """
+
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
 
@@ -180,6 +189,13 @@ def check_rules_index(repo_root: Path, errors: list[str]) -> None:
 
 
 def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
+    """Repo-wide rule checks that no single file can answer on its own.
+
+    A rule file is well-formed in isolation and still wrong in context — absent
+    from the index, or carrying a hardcoded date that will read as stale the
+    moment it passes. Both need the whole tree in view, which is why they live
+    here rather than in the per-file validator.
+    """
     check_rules_index(repo_root, errors)
     for path in sorted(repo_root.glob("skills/**/*.md")):
         try:

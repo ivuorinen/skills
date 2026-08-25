@@ -77,6 +77,13 @@ class Target:
         return f"Target(platform={self.platform!r}, host={self.host!r}, path={self.path!r})"
 
     def __eq__(self, other: object) -> bool:
+        """Value equality on the resolved triple, so tests can compare targets.
+
+        Defining this leaves Target unhashable — Python drops the inherited
+        `__hash__` — which is fine while nothing keys a dict or set by target.
+        Adding `__hash__` is the fix if that changes; widening the comparison is
+        not, since two targets differing in host are different targets.
+        """
         return isinstance(other, Target) and (self.platform, self.host, self.path) == (
             other.platform,
             other.host,
@@ -114,6 +121,14 @@ class Target:
 
 
 def _check_segments(platform: str, path: str) -> None:
+    """Reject a project path before it is interpolated into an API URL.
+
+    Two separate guards. The count bounds catch a path aimed at the wrong
+    platform — GitHub is always owner/repo, GitLab nests arbitrarily — which
+    would otherwise become a confusing 404 from a real host. The per-segment
+    charset, plus the explicit `.`/`..` rejection, is what keeps a crafted path
+    from walking out of the project namespace once it reaches the URL.
+    """
     segments = [s for s in path.split("/") if s]
     low, high = _MIN_SEGMENTS[platform], _MAX_SEGMENTS[platform]
     if len(segments) < low or (high is not None and len(segments) > high):
@@ -186,6 +201,14 @@ def parse_remote_url(url: str) -> tuple[str, str]:
 
 
 def git_remote_url(remote: str = "origin", cwd: str | None = None) -> str:
+    """The remote's URL, or a UsageError naming what to pass instead.
+
+    Raises rather than returning empty on a missing remote: the caller's next
+    step is to derive a Target from this string, and an empty one produces a
+    parse failure that describes the wrong problem. The error carries git's own
+    stderr plus the explicit alternatives, so a checkout with no remote — a
+    tarball, a fresh CI clone — is one message away from working.
+    """
     result = subprocess.run(
         ["git", "remote", "get-url", remote],
         capture_output=True,
@@ -258,6 +281,12 @@ def resolve_target(spec: str, platform: str = "") -> Target:
 
 
 def parse_pr_number(raw: str) -> int:
+    """Parse a PR number, rejecting the values that fail late instead of here.
+
+    Zero and negatives are refused because every platform numbers PRs from one:
+    they build a well-formed URL that returns 404, which reads as a missing PR
+    rather than a bad argument.
+    """
     try:
         number = int(raw)
     except (TypeError, ValueError):
@@ -284,6 +313,15 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Drop the Authorization header when a redirect leaves the pinned host.
+
+        urllib copies request headers onto a redirect by default, so a server
+        that answers with a redirect elsewhere would be handed the credential
+        the caller declared for *this* host. The handler is built per request
+        with the host it is allowed to keep the header for, because a shared
+        instance would have to be told which host applies on every call — and
+        the one that forgot would leak silently rather than fail.
+        """
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None and urllib.parse.urlsplit(newurl).netloc != self.allowed_netloc:
             for key in [k for k in new.headers if k.lower() == "authorization"]:
@@ -321,6 +359,12 @@ def http_json(
 
 
 def _next_from_link(link_header: str) -> str:
+    """The `rel="next"` URL from a Link header, or "" when there is no next page.
+
+    Empty string rather than None so the paginator's loop condition stays a
+    plain truth test. The returned URL is server-controlled and is re-validated
+    against the pinned host before it is followed — see `_check_url`.
+    """
     for part in (link_header or "").split(","):
         if 'rel="next"' in part:
             return part.split(";")[0].strip().strip("<>")
@@ -423,6 +467,14 @@ def _decode_concatenated(text: str) -> list[Any]:
 
 
 def cli_available(name: str) -> bool:
+    """Whether `name` can actually be executed, not merely whether it is on PATH.
+
+    Runs the tool because a broken or half-installed CLI still resolves on PATH,
+    and the caller uses this to choose a transport — discovering the breakage at
+    that point costs a confusing API failure instead of a clean fallback. Every
+    failure mode collapses to False for the same reason: the answer feeds a
+    choice between transports, and none of the distinctions change it.
+    """
     try:
         # `name` is a literal tool name from this module ("gh", "glab"), never
         # caller input, and the argv is a list with no shell.
@@ -449,6 +501,12 @@ def best_effort(label: str, fn: Callable[[], Any], default: Any) -> Any:
 
 
 def warn(message: str) -> None:
+    """Emit a diagnostic on stderr, keeping stdout parseable as JSON.
+
+    Every shipped tool here publishes structured data on stdout and diagnostics
+    on stderr, so a caller can pipe one without the other. A warning printed to
+    stdout would corrupt the payload rather than annotate it.
+    """
     print(f"[warn] {message}", file=sys.stderr)
 
 
@@ -465,6 +523,14 @@ def comment(
     diff_hunk: str = "",
     url: str = "",
 ) -> dict[str, Any]:
+    """One comment in the shared shape, with every key present.
+
+    Keyword-only and fully defaulted so a provider fills what its platform
+    supplies and leaves the rest without the result changing shape. That is the
+    format's central promise: a field a platform cannot supply is present and
+    empty rather than absent, so a caller reads every key unconditionally
+    instead of branching on key existence to infer which platform answered.
+    """
     return {
         "id": str(id),
         "author": author or "unknown",
@@ -619,6 +685,14 @@ def summarize_checks(checks: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def summarize_reviews(reviews: list[dict[str, Any]]) -> dict[str, int]:
+    """Tally review verdicts into the three states every platform agrees on.
+
+    The keys are seeded rather than accumulated, so a caller reads a count
+    without checking whether that verdict occurred. A state outside the three —
+    a platform-specific verdict, or one added later — is counted nowhere rather
+    than raising, which keeps an unrecognised verdict from failing a fetch whose
+    purpose is reporting.
+    """
     summary = {"approved": 0, "changes_requested": 0, "commented": 0}
     for item in reviews:
         state = (item.get("state") or "").lower()

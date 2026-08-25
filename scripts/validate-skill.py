@@ -271,6 +271,15 @@ def validate_frontmatter_fields(block: str, err: Callable[[str], None]) -> None:
 
 
 def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noqa: C901
+    """Check one SKILL.md, appending to the caller's lists rather than returning.
+
+    Accumulating across files lets a run report every problem in the tree at
+    once, which is what an author fixing skills needs — one pass, not one error
+    per attempt. Errors and warnings stay separate because only the first fails
+    the gate: a body over the size guidance is worth saying and not worth
+    blocking a commit over.
+    """
+
     def err(msg: str) -> None:
         errors.append(f"  ERROR  {path}: {msg}")
 

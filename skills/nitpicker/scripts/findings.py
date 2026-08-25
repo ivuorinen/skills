@@ -360,6 +360,15 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def render_finding(fm: dict[str, str], title: str, body: str) -> str:
+    """Serialise a finding to the on-disk form, refusing anything that will not
+    round-trip.
+
+    The id is a content hash over the frontmatter, so a value that parses back
+    differently than it was written breaks identity rather than formatting: the
+    same finding re-filed would hash to something else. Every rejection below
+    guards that round-trip, which is why they raise instead of normalising —
+    silently rewriting a value would change the id it produced.
+    """
     if "\n" in title:
         raise FindingError("title must be single-line")
     lines = ["---"]
@@ -585,6 +594,12 @@ def write_ledger(root: Path, records: list[dict]) -> None:
 def _record_from_finding(
     fm: dict[str, str], title: str, body: str, status: str, resolved: str, fid: str
 ) -> dict:
+    """Build the ledger record — the single funnel every resolution passes through.
+
+    Being the only path in is what makes redaction here sufficient. The ledger
+    is append-only, so a credential written into it cannot be edited out
+    afterwards, and the bodies arriving here are not all ones this module wrote.
+    """
     extra = {k: v for k, v in fm.items() if k not in _KNOWN_FM}
     rec: dict[str, object] = {
         "id": fm.get("id", fid),
@@ -715,6 +730,18 @@ def _store_rel(root: Path) -> str:
 
 
 def is_store_gitignored(root: Path) -> bool:
+    """Whether the store sits under a .gitignore rule, which would hide every finding.
+
+    An ignored store still accepts findings and still validates; they simply
+    never reach a diff, so an audit reports work that no reviewer will see.
+    Detected here so the CLI can warn rather than fail — the state is a
+    misconfiguration, not a reason to refuse to record anything.
+
+    Deliberately partial: this reads the repository's own .gitignore only, so a
+    rule in a parent directory, a global excludes file, or `.git/info/exclude`
+    is missed. Those are rarer, and a false "not ignored" costs a missing
+    warning where a false positive would cost a wrong one on every run.
+    """
     repo = find_repo_root(root)
     if repo is None:
         return False
@@ -813,6 +840,14 @@ def new_finding(
     found: str | None = None,
     force: bool = False,
 ) -> Path:
+    """File a new open finding and return the path written.
+
+    The id is derived from the content rather than assigned, so filing the same
+    finding twice is idempotent instead of producing a duplicate — and, for the
+    same reason, an id cannot be chosen or reused by a caller. `force` exists
+    for the one case that is not a duplicate: deliberately overwriting a finding
+    whose body has been rewritten under the same title and area.
+    """
     _check_auditor(auditor)
     # Redact and strip before hashing: the id is derived from title+area, so
     # normalizing first keeps the id stable for the text actually written to
@@ -891,6 +926,13 @@ def resolve_finding(
     date: str | None = None,
     force: bool = False,
 ) -> Path:
+    """Move an open finding into the append-only ledger and delete the open file.
+
+    Not reversible through this module: the ledger only ever grows, and the open
+    file is gone once the record lands. That asymmetry is the reason the whole
+    read-modify-write below is one critical section rather than two steps —
+    a half-completed resolve loses the finding from both halves of the store.
+    """
     if status not in ("fixed", "invalid"):
         raise FindingError(f"resolve status must be fixed|invalid, got {status!r}")
     # Notes land in the append-only ledger, where a leaked secret is permanent.
@@ -1073,6 +1115,13 @@ def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:  # 
 
 
 def validate_store(root: Path) -> list[str]:  # noqa: C901
+    """Check the store as a whole, returning every problem rather than the first.
+
+    Collects instead of raising because this backs a commit-time gate: a caller
+    fixing the store wants the full list in one run, not one error per attempt.
+    Covers what per-file validation cannot see — duplicate ids across auditors,
+    and findings sitting somewhere no command reads from.
+    """
     errors: list[str] = []
     seen: dict[str, Path] = {}
     # A leftover legacy tree is the state an aborted `migrate-resolved` leaves
@@ -1129,6 +1178,12 @@ def validate_store(root: Path) -> list[str]:  # noqa: C901
 
 
 def build_index(root: Path) -> str:
+    """Render INDEX.md's content without writing it.
+
+    Split from the write so a read-only caller can show the index without
+    touching the tree — the MCP server's index tool is annotated read-only and
+    must not mutate the working directory to answer a question.
+    """
     rows: dict[str, dict[str, int]] = {}
     open_findings: list[tuple[int, str, dict[str, str], str, Path]] = []
     for path, fm, title in iter_open(root):
@@ -1188,6 +1243,12 @@ def build_index(root: Path) -> str:
 
 
 def write_index(root: Path) -> Path:
+    """Regenerate INDEX.md in place, safely against concurrent writers.
+
+    INDEX.md is derived, never hand-edited, so this is the only way it changes.
+    It is also the one file in the store with several writers at once, which is
+    what the lock and the atomic replace below are for.
+    """
     # Managing the store's own review-hygiene mark rides along with the index
     # refresh that every mutating command already runs.
     ensure_store_gitattributes(root)

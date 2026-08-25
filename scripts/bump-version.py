@@ -32,6 +32,13 @@ FILES = [
 
 
 def bump_version(version: str, part: str) -> str:
+    """Bump one component of a MAJOR.MINOR.PATCH string, resetting the lower ones.
+
+    Refuses anything that is not three plain integers rather than bumping what
+    it can parse: this value is written into several manifests at once, and a
+    version that only half-matches produces a set that disagrees with itself —
+    which the sync check then reports as drift rather than as a bad input here.
+    """
     m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
     if not m:
         sys.exit(f"error: version {version!r} is not in MAJOR.MINOR.PATCH form")

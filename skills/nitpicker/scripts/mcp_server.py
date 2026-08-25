@@ -115,6 +115,13 @@ class MethodError(Exception):
 
 
 def tool(name: str, description: str, schema: dict, annotations: dict):
+    """Register a handler as an MCP tool, declared beside the function it runs.
+
+    Keeping the schema and annotations on the decorator means `tools/list` is
+    generated from the same statement that wires the handler, so a tool cannot
+    be advertised without an implementation or added without being advertised.
+    """
+
     def register(fn):
         TOOLS.append(
             {
@@ -509,6 +516,12 @@ def _pr_fenced(payload: str) -> str:
     {**_READ_ONLY_NETWORK, "title": "Fetch PR review comments"},
 )
 def _pr_comments(args: dict) -> str:
+    """PR comments, wrapped so the caller cannot mistake them for instructions.
+
+    Anyone able to comment on the PR writes this text, and bot reviewers echo
+    repository content back into it. The envelope is the marker that a directive
+    found inside is content to report, not to follow.
+    """
     target, pr_number = _pr_target(args)
     provider = pr_common.provider_for(target)
     return _pr_fenced(json.dumps(provider.fetch_comments(target, pr_number), indent=2))
@@ -699,6 +712,11 @@ def _negotiate(requested) -> str:
 
 
 def _handle(method: str, params: dict):
+    """Dispatch one JSON-RPC method, raising MethodError for anything unknown.
+
+    Returns the `result` payload rather than a full frame, so the transport
+    owns framing and error codes in one place instead of at every branch.
+    """
     if method == "ping":
         return {}  # MCP liveness check — empty result
     if method == "initialize":
@@ -743,6 +761,13 @@ def _handle(method: str, params: dict):
 
 
 def serve(stdin, stdout) -> None:
+    """Read newline-delimited JSON-RPC frames until stdin closes.
+
+    Every failure is answered rather than logged: this speaks to a client over
+    a pipe with no other channel, so a request that draws no reply blocks that
+    client until its own timeout. Closed stdin is the shutdown signal — the
+    loop ends rather than treating it as an error.
+    """
     for line in stdin:
         line = line.strip()
         if not line:

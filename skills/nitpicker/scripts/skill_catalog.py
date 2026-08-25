@@ -162,6 +162,12 @@ def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
 
 
 def read_command(command: str, root: Path | None = None) -> str:
+    """One public command file by name; KeyError for anything outside that set.
+
+    The `_`-prefixed shared references are deliberately not reachable here —
+    they are not commands, and resolving them by this name would let a caller
+    treat one as dispatchable. `read_reference` is their entry point.
+    """
     root = root or plugin_root()
     cmd_dir = _nitpicker_dir(root) / "commands"
     valid = {p.stem for p in cmd_dir.glob("*.md") if not p.name.startswith("_")}

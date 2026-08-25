@@ -108,6 +108,12 @@ def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[st
         base = ["glab", "api", "--hostname", target.host]
 
         def glab_list(path: str) -> list[Any]:
+            """Normalise `glab`'s output to a list, whatever arrived.
+
+            The CLI returns a bare object for a single-record endpoint and null
+            for an empty one, so callers that iterate would otherwise have to
+            re-check the type at each site.
+            """
             joiner = "&" if "?" in path else "?"
             result = pr_common.cli_json([*base, "--paginate", f"{path}{joiner}per_page=100"])
             return result if isinstance(result, list) else ([] if result is None else [result])
@@ -196,6 +202,14 @@ def _split_discussions(
 
 
 def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
+    """GitLab's half of the shared comment contract.
+
+    One endpoint answers both sections: a discussion whose notes carry a
+    `position` is an inline thread, and one without is an MR-level comment.
+    `review_bodies` is always empty here because GitLab has no review-body
+    concept — reviewer prose arrives as an ordinary comment — and that emptiness
+    is the contract rather than a failed fetch.
+    """
     rest_list, _get_one, label = _transport(target)
     discussions = rest_list(f"{_mr_path(target, pr_number)}/discussions")
     threads, summary_comments = _split_discussions(target, pr_number, discussions)
@@ -273,6 +287,14 @@ def _mergeable(detailed: str) -> bool | None:
 
 
 def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
+    """GitLab's half of the shared status contract.
+
+    GitLab's own vocabulary differs from the shared one at both ends — merge
+    requests carry a `detailed_merge_status` with no GitHub counterpart, and
+    pipeline jobs are not check runs — so the mapping into the common shape
+    happens here rather than in the caller, which is what lets `cr` read the
+    same field names whichever platform answered.
+    """
     rest_list, rest_get, _label = _transport(target)
     mr = rest_get(_mr_path(target, pr_number))
     if not isinstance(mr, dict) or "iid" not in mr:

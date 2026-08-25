@@ -65,6 +65,13 @@ def _headers() -> dict[str, str]:
 
 
 def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[str], Any]]:
+    """Both accessors, closed over one set of credentials and one pinned host.
+
+    Bound together so the header set and the host a redirect may keep it for
+    cannot drift apart between a list call and a single-record call. Bitbucket
+    has no CLI, so unlike the other providers there is only ever one transport
+    and no fallback to label.
+    """
     headers = _headers()
 
     def list_all(path: str) -> list[Any]:
@@ -191,6 +198,14 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
 
 
 def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
+    """Bitbucket's half of the shared comment contract.
+
+    One endpoint answers both sections, split on whether a comment carries an
+    `inline` anchor. `review_bodies` is always empty — Bitbucket has no review
+    body — and `diff_hunk` is too, because comments anchor to a line rather
+    than a hunk; `line` carries the anchor instead. Both emptinesses are the
+    contract, not a failed fetch.
+    """
     list_all, _get_one = _transport(target)
     # `sort=id` keeps parents ahead of their replies in the common case.
     # `_split_comments` does not rely on it — it resolves parent chains in a
@@ -210,6 +225,16 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
 
 # ── status ───────────────────────────────────────────────────────────────────
 def _checks(target: Target, sha: str, list_all: Callable[[str], list[Any]]):
+    """Commit build statuses, mapped into the shared status/conclusion pair.
+
+    Bitbucket reports one field where the shared shape carries two, so the
+    split happens here. A state outside the mapping falls back to in-progress
+    with no conclusion: never a pass, since reporting an unknown build as green
+    is the one answer that misleads. The cost is that a state Bitbucket adds
+    later reads as permanently running rather than as unrecognised — a caller
+    waiting for checks to settle would wait forever, so a new state belongs in
+    the mapping rather than left to the default.
+    """
     raw = list_all(f"repositories/{target.path}/commit/{sha}/statuses")
     checks = []
     for record in raw:
@@ -258,6 +283,14 @@ def _reviews(pr: dict[str, Any]):
 
 
 def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
+    """Bitbucket's half of the shared status contract.
+
+    Checks come from the commit's build statuses rather than from the PR, since
+    Bitbucket attaches them to the head commit. Only Bitbucket Cloud is
+    covered — Data Center serves a different API, and platform detection
+    refuses that host rather than sending a credential to an endpoint shaped
+    unlike this one.
+    """
     list_all, get_one = _transport(target)
     pr = get_one(_pr_path(target, pr_number))
     if not isinstance(pr, dict) or "id" not in pr:
