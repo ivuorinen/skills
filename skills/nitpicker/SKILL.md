@@ -170,8 +170,8 @@ flow.
 | `scripts/findings.py` | every file-writing command (findings store CLI) |
 | `scripts/fetch-pr-comments.py` | `cr` — PR/MR review threads and out-of-thread notices |
 | `scripts/fetch-pr-status.py` | `cr` — PR/MR state, CI checks, review verdicts, changed files |
-| `scripts/process-sarif.py` | `security` — behind `np_process_sarif` |
-| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` — behind `np_check_rules_anatomy` |
+| `scripts/process-sarif.py` | `security` |
+| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` |
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
 | `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |

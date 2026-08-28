@@ -113,9 +113,11 @@ anyone who can comment on the PR.
 
 ## Editing a shipped tool mid-session
 
-The MCP server imports `findings.py`, `pr_common.py` and `skill_catalog.py` once
-at startup and holds them for the life of the process. **Editing one of those
-files does not change what the running server executes.** Worse, two servers are
+The MCP server imports five modules once at startup and holds them for the life
+of the process: `findings.py`, `pr_common.py`, `skill_catalog.py`, and — through
+`_load_bundled`, since their hyphenated filenames are not importable —
+`process-sarif.py` and `check-rules-anatomy.py`. **Editing any of those files
+does not change what the running server executes.** Worse, two servers are
 registered: `.mcp.json` starts one from the working tree, and
 `.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
 installed copy under `~/.claude/plugins/cache/`, which reflects only the
@@ -127,10 +129,13 @@ session; it loads fresh every invocation. Restarting the session picks up the
 new code.
 
 `mcp_server.py` records each module's mtime at import and prefixes a `[warn]`
-line to `np_new_finding` / `np_resolve_finding` results when the file has since
-changed, or when it is serving a different copy than the project has on disk.
-Those two tools carry it because their writes are permanent — the ledger is
-append-only. This is a backstop, not the control: the rule above is.
+line to the results of the three tools that write — `np_new_finding`,
+`np_resolve_finding`, `np_write_index` — when the file has since changed, or
+when it is serving a different copy than the project has on disk. The thirteen
+read tools carry no such prefix, so an edit to `process-sarif.py` or
+`check-rules-anatomy.py` reaches you through the rule above and through nothing
+else: `np_process_sarif` will consolidate a security scan with code that is not
+on disk and say nothing. This is a backstop, not the control: the rule above is.
 
 This is not hypothetical. A stale `redact()` wrote an unredacted credential into
 `resolved.jsonl` during the audit that added the redaction, and only a

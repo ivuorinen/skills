@@ -16,8 +16,15 @@ Roots by scope:
     the project's git remote, and that read runs under the same confined root as
     the findings tools. Their results are third-party text and are returned
     inside an `<untrusted-data>` envelope; see `_pr_fenced`.
+  * scanner / rule tools (`np_process_sarif`, `np_check_rules_anatomy`) resolve
+    the same per-call project root and are bound by the same confinement.
+    `np_process_sarif` adds a second layer nothing else here needs: its `paths`
+    are named by the caller rather than drawn from an enumerated set, because
+    scanner output lands wherever the scanner was pointed — so `_confined`
+    re-resolves every path under the allowed root before opening it.
+    `np_check_rules_anatomy` reads the audited project's `.claude/rules/`.
 
-Mutate tools (`new_finding`, `resolve_finding`) are intentionally NON-interactive:
+Mutate tools (`new_finding`, `resolve_finding`, `write_index`) are intentionally NON-interactive:
 unlike the /nitpicker command flow they run without a consent prompt. The
 containment above is what makes that safe — it keeps every mutation inside the
 project root, where it is a reviewable, revertible working-tree change. Git alone
@@ -27,9 +34,9 @@ there is no diff and nothing to revert.
 Every tool publishes MCP tool annotations (`readOnlyHint`, `destructiveHint`,
 `idempotentHint`, `openWorldHint`). They are behavioural hints, not access
 control — a client may ignore them — but they are the only machine-readable
-signal distinguishing the eleven read tools from the two that mutate the store
-without a consent prompt, and the nine local read tools from the two that reach
-the network. See `_READ_ONLY`/`_READ_ONLY_NETWORK`/`_MUTATES` below.
+signal distinguishing the thirteen read tools from the three that write without
+a consent prompt, and the eleven local read tools from the two that reach the
+network. See `_READ_ONLY`/`_READ_ONLY_NETWORK`/`_MUTATES` below.
 
 stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.
@@ -668,9 +675,16 @@ def _foreign_copy(project_dir: Path) -> Path | None:
 def _code_warning(project_dir: Path) -> str:
     """A one-line provenance warning, or "" when this server's code is current.
 
-    Prefixed to the mutate tools' results rather than logged: a write here is
-    permanent — the ledger is append-only — so the caller must see it in the
-    same breath as the result it is about to trust.
+    Prefixed to the result of every tool that writes, rather than logged: the
+    caller has to learn that the code which produced the write is not the code
+    on disk, in the same breath as the result it is about to trust. Stderr does
+    not reach it, and a write already made cannot be warned about afterwards.
+
+    Permanence sets how much each one costs to get wrong, not whether it carries
+    the warning. `np_resolve_finding` and `np_new_finding` matter most — the
+    ledger is append-only, so a bad record stays. `np_write_index` rewrites a
+    file generated wholly from the store, so rerunning fixes it; it carries the
+    warning anyway, because a caller reading a stale index has no other signal.
     """
     notes = []
     if stale := _stale_modules():
