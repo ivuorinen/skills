@@ -44,6 +44,7 @@ stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -570,7 +571,15 @@ def _check_rules_anatomy(args: dict) -> str:
     # choice (an argument, or the resolved allowed root), never the CLI's silent
     # cwd fallback — so a missing .claude/rules/ is a misconfiguration to report,
     # not a clean result to return.
-    report, blocking = rules_anatomy.check(_project_root(args), explicit=True)
+    root = _project_root(args)
+    report, blocking = rules_anatomy.check(root, explicit=True)
+    # Same disclosure rule as np_process_sarif's meta.errors, and the same miss:
+    # `rules_dir` is built from the resolved project root, so returning it as-is
+    # hands the caller the server's filesystem layout and the account name in it.
+    # Relative to the root it is `.claude/rules` — the part the caller did not
+    # already know is exactly the part that must not travel.
+    with contextlib.suppress(ValueError):
+        report["rules_dir"] = Path(report["rules_dir"]).relative_to(root).as_posix()
     return json.dumps({**report, "blocking": blocking}, indent=2)
 
 

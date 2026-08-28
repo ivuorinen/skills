@@ -291,7 +291,23 @@ def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
     rules_dir = project_root / ".claude" / "rules"
     empty_summary = {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0}
 
-    if not rules_dir.exists():
+    try:
+        rules_dir.stat()
+        present = True
+    except FileNotFoundError:
+        present = False
+    except OSError as e:
+        # `Path.exists()` answers False for a directory that IS there but cannot
+        # be looked at — it swallows EACCES along with every other OSError — so
+        # using it here sent an unreadable rules directory down the
+        # missing-directory branch and out as a clean report at exit 0, with
+        # nothing scanned. `stat()` separates "not there" from "cannot look",
+        # and only the first of those is a clean result.
+        raise ValueError(
+            f"cannot stat {rules_dir}: {e.strerror or type(e).__name__} — rules left unread"
+        ) from e
+
+    if not present:
         if explicit:
             # The argument is a PROJECT ROOT, not a rules dir. Pointing it at
             # `.claude/rules/` itself yields `.claude/rules/.claude/rules` and

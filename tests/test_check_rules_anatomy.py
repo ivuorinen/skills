@@ -434,6 +434,35 @@ class TestAdditionalCoverage:
             result = _iter_rules(rules_dir)
         assert result == []
 
+    def test_unreadable_rules_path_is_not_reported_as_a_missing_one(self, tmp_path):
+        """An unreadable `.claude/rules` must not report as a clean, absent one.
+
+        `Path.exists()` gives two different wrong answers across the versions
+        this repo supports (>=3.11), which is why the check cannot rest on it:
+        3.12 propagates PermissionError, so it escaped a CLI catching only
+        ValueError; 3.13+ swallows EACCES and returns False, so the same
+        directory took the missing-directory branch and came back clean at exit 0
+        with nothing scanned. `stat()` separates "not there" from "cannot look"
+        on every version, and only the first is a clean result.
+
+        Asserting on the ValueError rather than on `exists()` keeps this test
+        version-independent — the precondition is what differs, not the contract.
+        """
+        import os
+
+        if os.geteuid() == 0:
+            pytest.skip("root ignores permission bits, so EACCES cannot be provoked")
+
+        parent = tmp_path / ".claude"
+        parent.mkdir()
+        (parent / "rules").mkdir()
+        parent.chmod(0o000)
+        try:
+            with pytest.raises(ValueError, match="rules left unread"):
+                _mod.check(tmp_path, False)
+        finally:
+            parent.chmod(0o755)
+
     def test_rules_path_that_is_a_regular_file_raises_valueerror(self, tmp_path):
         """A `.claude/rules` that is a file passes `exists()` and reaches `os.scandir`.
 

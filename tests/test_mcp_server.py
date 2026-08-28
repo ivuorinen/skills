@@ -175,6 +175,24 @@ def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
     assert "blocking" in data, "the caller needs the gate verdict, not just the findings"
 
 
+def test_check_rules_anatomy_rules_dir_is_relative_to_the_project_root(tmp_path):
+    """The report names the rules directory, and the resolved form carries the layout.
+
+    Sibling of the `np_process_sarif` `meta.errors` leak: a path built from the
+    resolved project root, returned inside a normal result, so `_scrub` at the
+    dispatch boundary never sees it. Relative to the root it is `.claude/rules` —
+    the caller already knows its own root, and the rest must not travel.
+    """
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "a-rule.md").write_text("# A\n\nNever push to main.\n", encoding="utf-8")
+    mod = _load()
+
+    data = json.loads(_call(mod, "np_check_rules_anatomy", {})["content"][0]["text"])
+    assert data["rules_dir"] == ".claude/rules"
+    assert str(tmp_path) not in json.dumps(data), "resolved project root leaked into the report"
+
+
 def test_check_rules_anatomy_missing_dir_errors_rather_than_reporting_clean(tmp_path):
     """A named root with no .claude/rules/ is a misconfiguration, not a clean result.
 
