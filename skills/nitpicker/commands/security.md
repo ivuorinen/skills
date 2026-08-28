@@ -166,13 +166,21 @@ Parse `.advisories` (object keyed by advisory ID) → `.severity`, `.title`, `.m
 
 ## SARIF consolidation
 
-`scripts/process-sarif.py` (bundled with this skill) parses SARIF 2.1.0 output, deduplicates findings, and groups by severity and tool. Stdlib-only — invoke with plain `python3`, never uv:
+Consolidate SARIF 2.1.0 output with `np_process_sarif`, passing `paths` — the scanner output files, relative to the project root:
+
+```json
+np_process_sarif  {"paths": ["semgrep.sarif", "trivy.sarif"]}
+```
+
+Without the nitpicker MCP tools, the same code runs through the bundled CLI. Stdlib-only — plain `python3`, never uv; non-Claude agents resolve the path relative to this skill's directory:
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/process-sarif.py" <sarif-file> [<sarif-file>...]
 ```
 
-Non-Claude agents resolve the path relative to this skill's directory. Outputs JSON with `meta` (counts), `by_severity`, `by_tool`, and `findings`. Deduplicates by `(tool + rule_id + uri + start_line)` fingerprint; normalizes severity using CVSS `security-severity` first, then SARIF `level`. Use after running tools to consolidate multi-tool SARIF output before filing.
+Either way the output is JSON with `meta` (counts), `by_severity`, `by_tool`, and `findings`. Deduplicates by `(tool + rule_id + uri + start_line)` fingerprint; normalizes severity using CVSS `security-severity` first, then SARIF `level`. Use after running tools to consolidate multi-tool SARIF output before filing.
+
+**Read `meta.errors` before treating the result as complete.** A file that was missing or unparseable is listed there and its findings are absent; the remaining files still process, so a short list looks exactly like a clean scan. A non-empty `meta.errors` means that scanner's output is uncovered — record it as such in the run summary, exactly as for a scanner that failed to run.
 
 ## Severity mapping
 

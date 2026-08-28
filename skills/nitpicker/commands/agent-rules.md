@@ -102,11 +102,13 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
 
 ## Bundled tool
 
+`np_check_rules_anatomy` — no arguments; it reads the audited project's `.claude/rules/`. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
+
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 ```
 
-Non-Claude agents resolve the path relative to the nitpicker skill directory. Outputs JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. Use in step 2 for a programmatic report before filing findings.
+Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. The tool adds `blocking` — true when any finding is High or Critical, the CLI's exit-1 condition. Use in step 2 for a programmatic report before filing findings.
 
 ## Rule classification reference
 

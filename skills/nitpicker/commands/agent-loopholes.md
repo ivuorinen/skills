@@ -89,13 +89,13 @@ A finding for which closure cannot be demonstrated stays open — never resolved
 
 ## Bundled tool
 
-Run the rules-anatomy checker for a programmatic first pass on `.claude/rules/` files:
+Run the rules-anatomy checker for a programmatic first pass on `.claude/rules/` files: `np_check_rules_anatomy`, no arguments. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 ```
 
-Non-Claude agents resolve the path relative to the nitpicker skill directory. It already detects hedged language in `.claude/rules/` files, so for a rule file flag only the _enforcement consequence_ (the unenforced-rule loophole), not the wording; reserve the `rationalizable-step` class for skill bodies and hook/CI scripts.
+It already detects hedged language in `.claude/rules/` files, so for a rule file flag only the _enforcement consequence_ (the unenforced-rule loophole), not the wording; reserve the `rationalizable-step` class for skill bodies and hook/CI scripts.
 
 ## Severity guide
 

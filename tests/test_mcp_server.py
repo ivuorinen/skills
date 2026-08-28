@@ -65,6 +65,164 @@ def _allowed_root_is_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
 
+_SARIF = {
+    "version": "2.1.0",
+    "runs": [
+        {
+            "tool": {"driver": {"name": "semgrep", "rules": [{"id": "R1"}]}},
+            "results": [
+                {
+                    "ruleId": "R1",
+                    "level": "error",
+                    "message": {"text": "boom"},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": "a.py"},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_process_sarif_tool_parses_and_confines_paths(tmp_path):
+    """The one tool taking arbitrary paths rather than a name from an enumerated set.
+
+    Scanner output lands wherever the scanner was pointed, so the path is caller-
+    supplied. Without containment the SARIF parser reads any JSON the process can
+    open, so the traversal case matters as much as the happy path.
+    """
+    (tmp_path / "scan.sarif").write_text(json.dumps(_SARIF), encoding="utf-8")
+    mod = _load()
+
+    ok = _call(mod, "np_process_sarif", {"paths": ["scan.sarif"]})
+    assert ok.get("isError") is not True
+    data = json.loads(ok["content"][0]["text"])
+    assert data["meta"]["unique"] == 1
+    assert data["meta"]["errors"] == []
+    assert data["by_severity"]["High"][0]["tool"] == "semgrep"
+
+    escaped = _call(mod, "np_process_sarif", {"paths": ["../../../../etc/passwd"]})
+    assert escaped["isError"] is True
+    assert "outside the allowed project root" in escaped["content"][0]["text"]
+
+
+def test_process_sarif_reports_a_bad_file_in_band(tmp_path):
+    """stderr is invisible to an MCP caller, so a skipped file must reach it as data.
+
+    A silently smaller finding set is indistinguishable from a clean scan — the
+    one reading a security report must never invite.
+    """
+    (tmp_path / "good.sarif").write_text(json.dumps(_SARIF), encoding="utf-8")
+    mod = _load()
+    result = _call(mod, "np_process_sarif", {"paths": ["good.sarif", "missing.sarif"]})
+
+    assert result.get("isError") is not True, "one bad file must not discard the good one"
+    data = json.loads(result["content"][0]["text"])
+    assert data["meta"]["unique"] == 1
+    assert any("missing.sarif" in e for e in data["meta"]["errors"])
+
+
+def test_process_sarif_rejects_an_empty_paths_array(tmp_path):
+    """An empty array is a caller mistake, not "scan nothing and report clean"."""
+    mod = _load()
+    result = _call(mod, "np_process_sarif", {"paths": []})
+    assert result["isError"] is True
+    assert "non-empty array" in result["content"][0]["text"]
+
+
+def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "good-rule.md").write_text(
+        "# Good\n\nNever commit directly to main.\n", encoding="utf-8"
+    )
+    mod = _load()
+
+    result = _call(mod, "np_check_rules_anatomy", {})
+    assert result.get("isError") is not True
+    data = json.loads(result["content"][0]["text"])
+    assert data["summary"]["total"] == 1
+    assert "blocking" in data, "the caller needs the gate verdict, not just the findings"
+
+
+def test_check_rules_anatomy_missing_dir_errors_rather_than_reporting_clean(tmp_path):
+    """A named root with no .claude/rules/ is a misconfiguration, not a clean result.
+
+    The CLI's no-argument case returns clean, because a consumer repo with no
+    rules directory genuinely is. The tool never takes that branch — its root is
+    always deliberate — so it must not inherit the silently-green answer.
+    """
+    mod = _load()
+    result = _call(mod, "np_check_rules_anatomy", {})
+    assert result["isError"] is True
+    assert "must be a project root" in result["content"][0]["text"]
+
+
+def test_write_index_writes_to_disk_unlike_the_read_only_renderer(tmp_path):
+    """np_findings_index renders; this one writes. The split is why both exist.
+
+    A `readOnlyHint: true` tool must not touch the working tree, which left the
+    index write with no tool at all and forced a shell call out of an otherwise
+    tool-driven flow.
+    """
+    mod = _load()
+    _call(
+        mod,
+        "np_new_finding",
+        {
+            "auditor": "audit",
+            "severity": "low",
+            "category": "docs",
+            "area": "x.py",
+            "title": "something",
+        },
+    )
+    index = tmp_path / "docs" / "audit" / "findings" / "INDEX.md"
+    index.unlink()
+
+    result = _call(mod, "np_write_index", {})
+    assert result.get("isError") is not True
+    assert index.is_file(), "np_write_index must write INDEX.md to disk"
+    assert "something" in index.read_text(encoding="utf-8")
+
+    rendered = _call(mod, "np_findings_index", {})
+    index.unlink()
+    _call(mod, "np_findings_index", {})
+    assert not index.exists(), "np_findings_index is readOnlyHint: true and must never write"
+    assert "something" in rendered["content"][0]["text"]
+
+
+def test_skill_md_documents_every_tool_the_server_exposes():
+    """SKILL.md's MCP section is how a reader learns which tools exist.
+
+    It carries a literal tool list and a literal count, so both drift the moment
+    a tool is added — the same failure that left `_teach-formats` reachable but
+    undocumented in `np_read_reference`'s description.
+    """
+    import re
+
+    mod = _load()
+    names = {t["name"] for t in mod.TOOLS}
+    skill_md = (Path(__file__).parent.parent / "skills" / "nitpicker" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    undocumented = sorted(n for n in names if n not in skill_md)
+    assert not undocumented, f"SKILL.md does not name: {undocumented}"
+
+    claimed = re.search(r"exposes (\d+) tools", skill_md)
+    assert claimed, "SKILL.md no longer states the tool count"
+    assert int(claimed.group(1)) == len(names), (
+        f"SKILL.md claims {claimed.group(1)} tools, server exposes {len(names)}"
+    )
+
+
 def test_project_dir_outside_allowed_root_is_rejected(tmp_path, monkeypatch):
     """An unconfined project_dir would let one tool call write anywhere."""
     allowed = tmp_path / "allowed"

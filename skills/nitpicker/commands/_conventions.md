@@ -48,16 +48,31 @@ Severity reflects actual risk, never preference.
 Reach for the most specific tool that covers the operation; drop to raw shell or
 a direct `scripts/*.py` call only when nothing higher does. Highest first:
 
-1. **A purpose-built MCP tool, whenever the session exposes it.** The `nitpicker`
-   MCP tools for every findings-store operation (see Findings store below) and
-   for loading nitpicker's own bundled files — `np_read_command` for a command
-   file, `np_read_reference` for a shared `_`-prefixed file (this one,
-   `_audit-coverage`), `np_read_skill` for the router, `np_list_commands` /
-   `np_list_skills` for the listings (`np_list_commands` tags every row with its
-   SKILL.md category and takes `category` to narrow to one group — "Review and
-   fixing", "Planning", "Security and data", …); a GitHub MCP for pull-request, issue, and repository
-   operations; a documentation MCP for library and API references. These need no
-   shell, path resolution, or quoting.
+1. **A purpose-built MCP tool, whenever the session exposes it.** Every bundled
+   nitpicker tool has one, and the tool is the default way to run it — the
+   `python3 scripts/…` form in a command file is the fallback spelling, never
+   the first reach:
+   - **Findings store** — see the table in Findings store below. Three
+     operations are CLI-only by design and are named there.
+   - **Bundled files** — `np_read_command` for a command file,
+     `np_read_reference` for a shared `_`-prefixed file (this one,
+     `_audit-coverage`, `_teach-formats`), `np_read_skill` for the router,
+     `np_list_commands` / `np_list_skills` for the listings (`np_list_commands`
+     tags every row with its SKILL.md category and takes `category` to narrow to
+     one group — "Review and fixing", "Planning", "Security and data", …).
+   - **Scanner output** — `np_process_sarif` instead of
+     `python3 scripts/process-sarif.py`. Paths are relative to the project root;
+     a file that is missing or unparseable comes back in `meta.errors` with the
+     rest still processed.
+   - **Rule anatomy** — `np_check_rules_anatomy` instead of
+     `python3 scripts/check-rules-anatomy.py`. Reads the audited project's
+     `.claude/rules/` and returns `blocking` with the findings.
+   - **Pull requests** — `np_pr_status` / `np_pr_comments` instead of the two
+     fetcher scripts.
+
+   Also: a GitHub MCP for pull-request, issue, and repository operations; a
+   documentation MCP for library and API references. These need no shell, path
+   resolution, or quoting.
 2. **context-mode for anything you read rather than act on** — listing files,
    `grep`, `git status`/`log`/`diff`, test and build output, parsing data,
    fetching a URL. The raw bytes stay in the sandbox; only the extract you print
@@ -93,12 +108,13 @@ Drive the store through one of two equivalent interfaces. Per the tool
 preference above, the MCP tools are the default and the CLI is the fallback:
 
 1. **The `nitpicker` MCP tools — the default whenever the session exposes
-   them.** They call the same functions the CLI does, so the result is identical
-   — with one exception, marked in the table: `np_findings_index` *renders*
-   `INDEX.md` and returns it, where `findings.py index` writes it to disk. That
-   difference is deliberate; the tool is annotated `readOnlyHint: true`, and a
-   read-only tool must not mutate the working tree. The tools otherwise
-   need no shell, no path resolution, and no heredoc quoting, and
+   them.** They call the same functions the CLI does, so the result is identical.
+   The index is the one operation split across two tools rather than one:
+   `np_findings_index` *renders* `INDEX.md` and returns it without writing,
+   because it is annotated `readOnlyHint: true` and a read-only tool must not
+   mutate the working tree; `np_write_index` writes it, and is the tool matching
+   `findings.py index`. Pick by whether the file on disk should change. The tools
+   otherwise need no shell, no path resolution, and no heredoc quoting, and
    the server enforces each tool's required parameters before dispatch (value
    checks stay in the backing functions, exactly as for the CLI). Use them for
    every operation in the table below; in a session that has them, dropping to
@@ -127,7 +143,7 @@ records "fixed" via the code path it just fixed and is not running.
 | Show one finding | `np_show_finding` | `findings.py show` |
 | Validate the store | `np_validate_store` | `findings.py validate` |
 | Render `INDEX.md` content (does **not** write) | `np_findings_index` | — |
-| Write `INDEX.md` to disk | — (read-only tools never write) | `findings.py index` |
+| Write `INDEX.md` to disk | `np_write_index` | `findings.py index` |
 
 Three operations have **no** MCP tool and always use the CLI: `baseline`,
 `migrate`, and `migrate-resolved`. That omission is deliberate, not a gap
@@ -201,9 +217,10 @@ Run protocol:
    (`np_new_finding`, else `findings.py new`).
 3. `INDEX.md` is refreshed for you when findings are filed or resolved through
    `np_new_finding` / `np_resolve_finding` / the CLI — each writes the index
-   itself. Run `findings.py index` explicitly only after changing the store some
-   other way (a hand-edited or repaired finding file). `np_findings_index`
-   renders the content and does not write, so it never refreshes anything.
+   itself. Refresh it explicitly (`np_write_index`, else `findings.py index`)
+   only after changing the store some other way (a hand-edited or repaired
+   finding file). `np_findings_index` renders the content and does not write, so
+   it never refreshes anything.
 4. Present a findings summary in the response.
 5. If the command applies fixes: ask
    `Apply fixes? (a)ll  (c)ritical-and-high only  (s)afe — no refactors  (n)o`

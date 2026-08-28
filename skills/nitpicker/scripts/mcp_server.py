@@ -48,6 +48,30 @@ import pr_common
 import skill_catalog
 
 
+def _load_bundled(stem: str) -> Any:
+    """Import a bundled script whose filename contains a hyphen.
+
+    `process-sarif.py` and `check-rules-anatomy.py` are named for the command an
+    agent types, and a hyphen cannot appear in an identifier, so a plain `import`
+    cannot reach them. Renaming them would break every documented invocation in
+    the command files and in SKILL.md's tool table, so load them by path instead
+    and leave the CLI name authoritative.
+    """
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / f"{stem}.py"
+    spec = importlib.util.spec_from_file_location(stem.replace("-", "_"), path)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise ImportError(f"cannot load bundled script {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sarif = _load_bundled("process-sarif")
+rules_anatomy = _load_bundled("check-rules-anatomy")
+
+
 # The shipped modules this process imported, with the mtime each file had at
 # import. A long-lived server holds these in memory: editing findings.py in a
 # working tree does NOT change what this process executes, and no tool result
@@ -76,7 +100,7 @@ def _snapshot(modules: Any) -> dict[str, tuple[Path, float]]:
     return snapshot
 
 
-_LOADED = _snapshot((findings, pr_common, skill_catalog))
+_LOADED = _snapshot((findings, pr_common, skill_catalog, sarif, rules_anatomy))
 
 # Newest first. Annotations reached the spec in 2025-03-26, so a session pinned
 # to 2024-11-05 carries them as ignorable extra fields — hence advertising a
@@ -290,6 +314,29 @@ def _store(args: dict) -> Path:
     return _project_root(args) / findings.DEFAULT_ROOT
 
 
+def _confined(root: Path, candidate: str) -> Path:
+    """A caller-supplied file path resolved under `root`, or a ValueError.
+
+    `np_process_sarif` is the one tool taking arbitrary paths rather than a name
+    from an enumerated set — scanner output lands wherever the scanner was
+    pointed. Without this test one call turns a SARIF parser into a reader for
+    any JSON file the process can open. `.resolve()` collapses `..` and follows
+    symlinks *before* the containment check, so neither reaches outside.
+
+    A relative path is taken against `root`, not the process cwd: the server's
+    cwd is unspecified when it runs as an installed plugin, so resolving against
+    it would make the same argument mean different files in different sessions.
+    """
+    given = Path(candidate)
+    path = (given if given.is_absolute() else root / given).resolve()
+    if path != root and not path.is_relative_to(root):
+        # Keep the server's absolute root on stderr only — the caller-visible
+        # message must not disclose the filesystem layout.
+        print(f"[nitpicker] path {candidate!r} resolved to {path}, outside {root}", file=sys.stderr)
+        raise ValueError(f"path is outside the allowed project root: {candidate}")
+    return path
+
+
 _CLOSING_TAG = "</untrusted-data>"
 # Case-insensitive, and tolerant of whitespace inside the tag. An exact-literal
 # replace defends only against `</untrusted-data>`; a payload writing
@@ -448,6 +495,50 @@ def _validate_store(args: dict) -> str:
     return "OK  findings store consistent." if not errors else "\n".join(errors)
 
 
+# ── scanner / rule analysis tools (project-scoped, read-only) ────────────────
+@tool(
+    "np_process_sarif",
+    "Parse SARIF 2.1.0 files (semgrep, grype, trivy, checkov, gitleaks), deduplicate "
+    "findings, and group by severity and tool. Paths are relative to the project root, "
+    "or absolute inside it. A file that is missing or unparseable is reported in "
+    "meta.errors and the remaining files are still processed.",
+    {
+        "type": "object",
+        "properties": {
+            **_PROJECT_DIR_PROP,
+            "paths": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["paths"],
+        "additionalProperties": False,
+    },
+    {**_READ_ONLY, "title": "Process SARIF reports"},
+)
+def _process_sarif(args: dict) -> str:
+    root = _project_root(args)
+    paths = args["paths"]
+    if not isinstance(paths, list) or not paths:
+        raise ValueError(f"paths must be a non-empty array of file paths, got {paths!r}")
+    report, _ = sarif.process([_confined(root, p) for p in paths])
+    return json.dumps(report, indent=2)
+
+
+@tool(
+    "np_check_rules_anatomy",
+    "Check the audited project's .claude/rules/ files for rule-file anatomy problems: "
+    "empty body, non-kebab-case filename, invalid path-scoped frontmatter, hedged "
+    "language, dangling symlinks. Reports whether any finding is blocking (High/Critical).",
+    {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    {**_READ_ONLY, "title": "Check rule file anatomy"},
+)
+def _check_rules_anatomy(args: dict) -> str:
+    # `explicit=True` always: a project_root reaching this tool is a deliberate
+    # choice (an argument, or the resolved allowed root), never the CLI's silent
+    # cwd fallback — so a missing .claude/rules/ is a misconfiguration to report,
+    # not a clean result to return.
+    report, blocking = rules_anatomy.check(_project_root(args), explicit=True)
+    return json.dumps({**report, "blocking": blocking}, indent=2)
+
+
 # ── PR tools (network; GitHub / GitLab / Bitbucket) ──────────────────────────
 _PR_ARGS = {
     "type": "object",
@@ -598,6 +689,30 @@ def _code_warning(project_dir: Path) -> str:
 
 
 # ── findings mutate tools (project-scoped, non-interactive; git is the net) ───
+@tool(
+    "np_write_index",
+    "Regenerate the findings INDEX.md on disk from the current store and return its path. "
+    "Needed only after changing the store some other way (a hand-edited or repaired "
+    "finding file) — np_new_finding and np_resolve_finding already rewrite it.",
+    {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    # The one write that is not destructive and IS idempotent: INDEX.md is
+    # generated wholly from the store, so rewriting it twice yields the same file
+    # and nothing unique is lost if it is overwritten. `np_findings_index` renders
+    # the same content without writing and stays `readOnlyHint: true`; this tool
+    # exists because a read-only tool must not touch the working tree, which left
+    # the write with no tool at all and forced a shell call.
+    {**_MUTATES, "destructiveHint": False, "idempotentHint": True, "title": "Write findings index"},
+)
+def _write_index(args: dict) -> str:
+    root = _project_root(args)
+    # Same provenance warning the other mutate tools carry: a stale server writes
+    # an index built by the code it loaded, not the code on disk. Cheaper to
+    # recover from than the append-only ledger — rerunning fixes it — but the
+    # caller still has to know the file it just wrote may not reflect the store.
+    path = findings.write_index(_store(args))
+    return f"{_code_warning(root)}{path}"
+
+
 def _assemble_body(args: dict) -> str:
     return (
         f"## Problem\n{args.get('problem', '')}\n\n"
