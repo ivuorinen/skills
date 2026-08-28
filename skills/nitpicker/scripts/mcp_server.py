@@ -187,7 +187,8 @@ def _read_command(args: dict) -> str:
 
 @tool(
     "np_read_reference",
-    "Return a shared nitpicker reference file: _conventions or _audit-coverage.",
+    "Return a shared nitpicker reference file: _conventions, _audit-coverage or "
+    "_teach-formats. The leading underscore is optional.",
     {
         "type": "object",
         "properties": {"name": {"type": "string"}},

@@ -74,7 +74,7 @@ Produce a capability diff:
 
 ## Actions and consent
 
-Findings are filed via the store protocol (`--auditor unwired`). Acting on
+Findings are filed via the store protocol, under the `unwired` auditor key. Acting on
 them is gated per finding. **This gate overrides the generic apply-fixes
 prompt in `_conventions.md`** — there is no batch `(a)ll` option for this
 command:

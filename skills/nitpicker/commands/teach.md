@@ -21,7 +21,7 @@ Never trust your parametric knowledge as the source of truth. Ground every claim
 
 The workspace is `docs/lessons/` in the current repository. Create it lazily — only the parts a session actually needs. Its state:
 
-- `docs/lessons/MISSION.md` — the _reason_ the user is learning this. Grounds every teaching decision. Format in `_teach-formats.md`.
+- `docs/lessons/MISSION.md` — the _reason_ the user is learning this. Grounds every teaching decision. Format in `_teach-formats.md` (`np_read_reference` with `name: "teach-formats"` when the session exposes the nitpicker MCP tools, else read the file directly — this applies to every `_teach-formats.md` citation below).
 - `docs/lessons/RESOURCES.md` — the curated set of trusted sources (knowledge) and communities (wisdom). Format in `_teach-formats.md`.
 - `docs/lessons/lessons/NNNN-<slug>.html` — the lessons themselves. A **lesson** is one self-contained HTML file that teaches a single tightly-scoped thing tied to the mission. This is the primary unit of teaching.
 - `docs/lessons/reference/*.html` — compressed reference material: cheat sheets, algorithms, syntax cards, pose sequences, glossaries. Beautiful documents that print well and are built for quick lookup.
