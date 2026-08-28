@@ -456,6 +456,23 @@ class TestAdditionalCoverage:
             result = _iter_rules(rules_dir)
         assert result == []
 
+    def test_iter_rules_resolve_oserror_is_recorded_not_silently_empty(self, tmp_path):
+        """Returning [] without recording the failure reports a narrowed scan as clean.
+
+        `check` cannot tell an empty result from an unreadable one, so a
+        `resolve()` failure surfaced as "exists but is empty" — exit 0 with the
+        rules unread. The scandir path already recorded; this one did not.
+        """
+        rules_dir = tmp_path / ".claude" / "rules"
+        rules_dir.mkdir(parents=True)
+        errors: list = []
+        with patch.object(Path, "resolve", side_effect=OSError("io error")):
+            result = _iter_rules(rules_dir, errors=errors)
+
+        assert result == []
+        assert errors, "a resolve failure must be recorded, not swallowed"
+        assert errors[0][0] == rules_dir
+
     def test_iter_rules_seen_prevents_revisit(self, tmp_path):
         """'real in seen' guard prevents revisiting (line 161)."""
         rules_dir = tmp_path / ".claude" / "rules"

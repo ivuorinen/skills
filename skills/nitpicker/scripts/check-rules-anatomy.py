@@ -205,6 +205,26 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
     return findings
 
 
+def _unscannable(rules_dir: Path, exc: OSError, errors: list[tuple[Path, str]] | None) -> None:
+    """Record a directory whose rules could not be read, for the gate to fail on.
+
+    Both ways the walk can fail mean the same thing, so both report through here:
+    `resolve()` raising, and `os.scandir` raising — the latter covering a
+    `.claude/rules` that is a regular file (NotADirectoryError) as well as one
+    the process may not read (PermissionError). In every case the rules under it
+    went unread, and a report built from what remains is a narrowed scan. Left
+    unrecorded it reads as "exists but is empty", which is a clean result.
+
+    Warning and recording are separate jobs: the warning is for a human watching
+    the run, the record is what makes `check` raise. A warning alone still lets
+    CI exit 0 with rules unread.
+    """
+    reason = exc.strerror or type(exc).__name__
+    print(f"[warn] cannot scan {rules_dir}: {reason}", file=sys.stderr)
+    if errors is not None:
+        errors.append((rules_dir, reason))
+
+
 def _iter_rules(
     rules_dir: Path,
     seen: set[Path] | None = None,
@@ -225,7 +245,8 @@ def _iter_rules(
         seen = set()
     try:
         real = rules_dir.resolve()
-    except OSError:
+    except OSError as e:
+        _unscannable(rules_dir, e, errors)
         return []
     if real in seen:
         return []
@@ -243,20 +264,7 @@ def _iter_rules(
                 elif entry.name.endswith(".md"):
                     results.append(p)
     except OSError as e:
-        # A dir the process cannot read silently narrows the gate. Warn for a human,
-        # and record it so main() can fail the gate — a warning alone still lets CI
-        # exit 0 with rules unread.
-        #
-        # OSError rather than PermissionError, because a `.claude/rules` that is a
-        # regular file raises NotADirectoryError here — it passed the `exists()`
-        # test in `check`, so it reached `os.scandir` and escaped as an uncaught
-        # traceback from a CLI that catches only ValueError. Both failures mean
-        # the scan is narrower than it claims; the reason is carried so the
-        # message names which one happened.
-        reason = e.strerror or type(e).__name__
-        print(f"[warn] cannot scan {rules_dir}: {reason}", file=sys.stderr)
-        if errors is not None:
-            errors.append((rules_dir, reason))
+        _unscannable(rules_dir, e, errors)
     return sorted(results)
 
 
