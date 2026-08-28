@@ -252,6 +252,92 @@ def _iter_rules(
     return sorted(results)
 
 
+def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
+    """The rule-anatomy report for `project_root`, and whether it blocks; (report, blocking).
+
+    Split out of `main` so the `np_check_rules_anatomy` MCP tool and the CLI run
+    one implementation rather than two that drift apart.
+
+    `explicit` distinguishes a caller that named a project root from the CLI's
+    bare no-argument default. A named root with no `.claude/rules/` is a
+    misconfiguration and raises; the default case returns an empty clean report,
+    because a consumer repo with no rules directory is genuinely clean. The MCP
+    tool always passes True — its `project_root` argument is always a deliberate
+    choice, never a cwd fallback.
+
+    Raises ValueError rather than exiting, for both the missing-directory and the
+    unreadable-directory case. `sys.exit` inside the MCP server would unwind
+    through the request loop and kill the process; the dispatcher renders a
+    ValueError as an error result instead. An unreadable rules directory raises
+    rather than returning a partial report, because a silently narrowed scan
+    reported as a result reads exactly like a clean one.
+    """
+    rules_dir = project_root / ".claude" / "rules"
+    empty_summary = {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0}
+
+    if not rules_dir.exists():
+        if explicit:
+            # The argument is a PROJECT ROOT, not a rules dir. Pointing it at
+            # `.claude/rules/` itself yields `.claude/rules/.claude/rules` and
+            # used to exit 0 — a silently green gate.
+            raise ValueError(f"{rules_dir} not found — argument must be a project root")
+        return {
+            "rules_dir": str(rules_dir),
+            "exists": False,
+            "message": ".claude/rules/ not found",
+            "files": [],
+            "summary": empty_summary,
+        }, False
+
+    scan_errors: list[Path] = []
+    rule_files = _iter_rules(rules_dir, errors=scan_errors)
+
+    if scan_errors:
+        # An unreadable rule directory means the gate ran on an incomplete set;
+        # fail rather than report exit 0 on a silently narrowed scan (including
+        # the case where the top rules dir itself is unreadable and rule_files is
+        # empty).
+        joined = ", ".join(str(d) for d in scan_errors)
+        raise ValueError(f"cannot scan {joined}: permission denied — rules left unread")
+
+    if not rule_files:
+        return {
+            "rules_dir": str(rules_dir),
+            "exists": True,
+            "message": ".claude/rules/ exists but is empty",
+            "files": [],
+            "summary": empty_summary,
+        }, False
+
+    report: list[dict] = []
+    has_blocking = False
+
+    for path in rule_files:
+        file_findings = _check_file(path, project_root)
+        try:
+            rel = str(path.relative_to(project_root))
+        except ValueError:
+            rel = str(path)
+        report.append({"file": rel, "findings": file_findings})
+        if any(f["severity"] in ("High", "Critical") for f in file_findings):
+            has_blocking = True
+
+    total = len(report)
+    with_issues = sum(1 for r in report if r["findings"])
+
+    return {
+        "rules_dir": str(rules_dir),
+        "exists": True,
+        "files": report,
+        "summary": {
+            "total": total,
+            "ok": total - with_issues,
+            "with_issues": with_issues,
+            "error_count": sum(len(r["findings"]) for r in report),
+        },
+    }, has_blocking
+
+
 def main() -> None:
     # --help is how an agent learns this script's interface
     # (https://agentskills.io/skill-creation/using-scripts). Checked before the
@@ -262,91 +348,14 @@ def main() -> None:
 
     explicit = bool(sys.argv[1:])
     project_root = Path(sys.argv[1]).resolve() if explicit else Path.cwd()
-    rules_dir = project_root / ".claude" / "rules"
 
-    if not rules_dir.exists() and explicit:
-        # The argument is a PROJECT ROOT, not a rules dir. Pointing it at
-        # `.claude/rules/` itself yields `.claude/rules/.claude/rules` and used
-        # to exit 0 — a silently green gate. A supplied path that has no rules
-        # dir is a misconfiguration, so fail loudly; the no-argument case stays
-        # exit 0 because a consumer repo with no .claude/rules/ is clean.
-        print(f"ERROR  {rules_dir} not found — argument must be a project root", file=sys.stderr)
+    try:
+        report, has_blocking = check(project_root, explicit)
+    except ValueError as e:
+        print(f"ERROR  {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not rules_dir.exists():
-        print(
-            json.dumps(
-                {
-                    "rules_dir": str(rules_dir),
-                    "exists": False,
-                    "message": ".claude/rules/ not found",
-                    "files": [],
-                    "summary": {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0},
-                },
-                indent=2,
-            )
-        )
-        sys.exit(0)
-
-    scan_errors: list[Path] = []
-    rule_files = _iter_rules(rules_dir, errors=scan_errors)
-
-    if scan_errors:
-        # An unreadable rule directory means the gate ran on an incomplete set;
-        # fail rather than exit 0 on a silently narrowed scan (including the case
-        # where the top rules dir itself is unreadable and rule_files is empty).
-        for d in scan_errors:
-            print(f"ERROR  cannot scan {d}: permission denied — rules left unread", file=sys.stderr)
-        sys.exit(1)
-
-    if not rule_files:
-        print(
-            json.dumps(
-                {
-                    "rules_dir": str(rules_dir),
-                    "exists": True,
-                    "message": ".claude/rules/ exists but is empty",
-                    "files": [],
-                    "summary": {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0},
-                },
-                indent=2,
-            )
-        )
-        sys.exit(0)
-
-    report: list[dict] = []
-    has_blocking = False
-
-    for path in rule_files:
-        findings = _check_file(path, project_root)
-        try:
-            rel = str(path.relative_to(project_root))
-        except ValueError:
-            rel = str(path)
-        report.append({"file": rel, "findings": findings})
-        if any(f["severity"] in ("High", "Critical") for f in findings):
-            has_blocking = True
-
-    total = len(report)
-    with_issues = sum(1 for r in report if r["findings"])
-
-    print(
-        json.dumps(
-            {
-                "rules_dir": str(rules_dir),
-                "exists": True,
-                "files": report,
-                "summary": {
-                    "total": total,
-                    "ok": total - with_issues,
-                    "with_issues": with_issues,
-                    "error_count": sum(len(r["findings"]) for r in report),
-                },
-            },
-            indent=2,
-        )
-    )
-
+    print(json.dumps(report, indent=2))
     sys.exit(1 if has_blocking else 0)
 
 
