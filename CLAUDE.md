@@ -113,11 +113,12 @@ anyone who can comment on the PR.
 
 ## Editing a shipped tool mid-session
 
-The MCP server imports five modules once at startup and holds them for the life
-of the process: `findings.py`, `pr_common.py`, `skill_catalog.py`, and — through
-`_load_bundled`, since their hyphenated filenames are not importable —
-`process-sarif.py` and `check-rules-anatomy.py`. **Editing any of those files
-does not change what the running server executes.** Worse, two servers are
+The MCP server imports every shipped module it depends on once at startup and
+holds them for the life of the process. `_LOADED` in `mcp_server.py` is the
+authoritative list; it includes the hyphen-named `process-sarif.py` and
+`check-rules-anatomy.py`, which reach it through `_load_bundled` rather than a
+plain import and are easy to overlook. **Editing any module on that list does
+not change what the running server executes.** Worse, two servers are
 registered: `.mcp.json` starts one from the working tree, and
 `.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
 installed copy under `~/.claude/plugins/cache/`, which reflects only the
@@ -129,10 +130,10 @@ session; it loads fresh every invocation. Restarting the session picks up the
 new code.
 
 `mcp_server.py` records each module's mtime at import and prefixes a `[warn]`
-line to the results of the three tools that write — `np_new_finding`,
-`np_resolve_finding`, `np_write_index` — when the file has since changed, or
-when it is serving a different copy than the project has on disk. The thirteen
-read tools carry no such prefix, so an edit to `process-sarif.py` or
+line to the result of every tool that writes (`np_new_finding`,
+`np_resolve_finding`, `np_write_index`) when the file has since changed, or
+when it is serving a different copy than the project has on disk. The read
+tools carry no such prefix, so an edit to `process-sarif.py` or
 `check-rules-anatomy.py` reaches you through the rule above and through nothing
 else: `np_process_sarif` will consolidate a security scan with code that is not
 on disk and say nothing. This is a backstop, not the control: the rule above is.
@@ -212,6 +213,8 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 
 - `skill-format.md`
 - `skill-style.md`
+- `counts-in-prose.md` (author discipline; no gate — nothing parses English
+  number words, which is why the rule exists)
 - `skill-lifecycle.md` (agent discipline; no gate)
 - `skill-official-best-practices.md`
 - `use-uv-runner.md`
@@ -234,7 +237,7 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 
 Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
 
-`uv.lock` carries a sixth copy in its root `[[package]]` entry.
+`uv.lock` carries one more copy in its root `[[package]]` entry.
 Neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped
 with the lockfile still declaring 2.0.0. `make lock-check` gates it with
 `uv lock --check`, uv's own staleness test, which also catches dependency drift.
@@ -274,7 +277,7 @@ Merge to `main` → release-please opens a Release PR → merging it creates the
 
 - `validate-skill-hook.py` — validates SKILL.md structure on any edited SKILL.md or `commands/*.md` file
 - `validate-json-hook.py` — validates JSON syntax on any edited `.json` file
-- `check-version-sync-hook.py` — warns when a version file edit desyncs the five manifests
+- `check-version-sync-hook.py` — warns when a version file edit desyncs the version manifests
 - `ruff-hook.py` — auto-fixes and lints any edited `.py` file
 - `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
 - `validate-rules-hook.py` — validates any edited `.claude/rules/*.md` file (`validate-rules.py` + `check-rules-anatomy.py`)

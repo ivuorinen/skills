@@ -124,14 +124,14 @@ make test      # pytest suite for the tooling
 
 CI runs the same checks on every push/PR touching skills, scripts, tests, rules, or version files.
 
-## Versioning — Five Files Must Stay in Sync
+## Versioning — Every Manifest Must Stay in Sync
 
-The canonical version lives in `package.json`. All five must match: `package.json`,
+The canonical version lives in `package.json`. These must match it: `package.json`,
 `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`plugins[0].version`),
 `.release-please-manifest.json`, `pyproject.toml`. Use `scripts/bump-version.py [major|minor|patch]`
 for manual bumps — never edit version fields by hand in individual files.
 
-`uv.lock` holds a sixth copy in its root `[[package]]` entry that neither
+`uv.lock` holds one more copy in its root `[[package]]` entry that neither
 `check-version-sync.py` nor release-please updates. `make lock-check`
 (`uv lock --check`) gates it.
 

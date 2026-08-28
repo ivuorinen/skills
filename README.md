@@ -191,18 +191,17 @@ Bitbucket Cloud in one shared JSON format). Every bundled tool is reachable this
 way, so a command runs its analysis without a shell; the `python3 scripts/…`
 form stays the documented fallback for Copilot, pi and CI, where no MCP server
 exists. Every tool is
-prefixed `np_` and publishes MCP annotations, so a client can tell the thirteen
-read-only tools from the three that write — `np_new_finding` only adds,
-`np_write_index` rewrites a generated file, and `np_resolve_finding` is the one
-irreversible call — and the two PR tools, the only ones that reach the network,
-from the fourteen whose domain is the local filesystem.
+prefixed `np_` and publishes MCP annotations, so a client can tell the read-only
+tools from the ones that write — `np_new_finding` only adds, `np_write_index`
+rewrites a generated file, and `np_resolve_finding` is the one irreversible
+call — and the PR tools, the only ones that reach the network, from the rest,
+whose domain is the local filesystem.
 See the "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
 non-interactive mutate contract.
 
-Three findings-store operations are deliberately **not** exposed as tools —
-`baseline`, `migrate` and `migrate-resolved`. Each waives or rewrites the store
-behind a consent gate, and the mutate tools run without an interactive prompt,
-so they stay CLI-only.
+`baseline`, `migrate` and `migrate-resolved` are deliberately **not** exposed as
+tools. Each waives or rewrites the store behind a consent gate, and the mutate
+tools run without an interactive prompt, so they stay CLI-only.
 
 ### PR fetchers
 

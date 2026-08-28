@@ -34,9 +34,11 @@ there is no diff and nothing to revert.
 Every tool publishes MCP tool annotations (`readOnlyHint`, `destructiveHint`,
 `idempotentHint`, `openWorldHint`). They are behavioural hints, not access
 control — a client may ignore them — but they are the only machine-readable
-signal distinguishing the thirteen read tools from the three that write without
-a consent prompt, and the eleven local read tools from the two that reach the
-network. See `_READ_ONLY`/`_READ_ONLY_NETWORK`/`_MUTATES` below.
+signal distinguishing the read tools from the ones that write without a consent
+prompt, and the local-only tools from the ones that reach the network. The three
+annotation sets below are the authority for which tool is which; counting them
+out in prose here would only drift from the decorators.
+See `_READ_ONLY`/`_READ_ONLY_NETWORK`/`_MUTATES` below.
 
 stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.

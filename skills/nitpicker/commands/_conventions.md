@@ -145,7 +145,7 @@ records "fixed" via the code path it just fixed and is not running.
 | Render `INDEX.md` content (does **not** write) | `np_findings_index` | — |
 | Write `INDEX.md` to disk | `np_write_index` | `findings.py index` |
 
-Three operations have **no** MCP tool and always use the CLI: `baseline`,
+These operations have **no** MCP tool and always use the CLI: `baseline`,
 `migrate`, and `migrate-resolved`. That omission is deliberate, not a gap
 waiting to be filled: `baseline` waives every open finding from the release
 gate, and migration sits behind a per-run consent gate that overrides

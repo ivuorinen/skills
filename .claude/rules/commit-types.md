@@ -17,6 +17,14 @@ passes the build for everyone who pins this repo.
 CI workflows, or the findings store. No path under `skills/` changed, so no
 installed consumer sees a difference and no version bump is warranted.
 
+`docs:` also covers a prose-only change **under** `skills/` that alters no
+instruction — rewording that leaves every directive, name, and value identical.
+The test is what a consumer's agent does differently after installing it: for a
+rewrite that changes only how a fact is phrased, nothing, so no bump is
+warranted. Prose that was *wrong* is not this case: correcting a stale count, a
+misnamed tool, or a contradicted docstring changes what a consumer is told, and
+that is `fix:`.
+
 `feat!:` / a `BREAKING CHANGE:` footer — a change that breaks an existing
 consumer invocation. A workflow-only or CI-only dependency bump is never
 breaking: it touches no published surface, so it carries no `!`. Strip the `!`

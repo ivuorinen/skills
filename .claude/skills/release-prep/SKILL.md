@@ -93,7 +93,7 @@ After all steps pass, present:
 ```text
 ✅ All release gates passed.
 
-  [✓] validate-skills — no skill errors; all 5 version files in sync at vX.Y.Z
+  [✓] validate-skills — no skill errors; all version files in sync at vX.Y.Z
   [✓] all audit gates — no open Critical/High findings (see INDEX.md)
   [✓] /nitpicker release-gate — PASS (threshold High)
   [✓] conventional commits — all commits on branch use valid format

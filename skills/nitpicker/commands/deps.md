@@ -28,7 +28,7 @@ Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`.
 | typosquat-risk | A declared name within a small edit distance of a materially more popular package in the same ecosystem, where the declared one is the less-known — a likely typo'd or malicious substitute |
 | integrity-gap | A lockfile entry with no integrity hash, or resolved from a non-registry source (git URL, arbitrary tarball, a personal fork) that bypasses registry integrity verification |
 
-**Evidence rule:** every health finding (the eight classes above `install-script`) cites all three sources — the manifest line, the lockfile entry, and the usage-scan result. Any leg is satisfiable by an exhaustive negative ("declared in no manifest" for a phantom, "no reference after the full scan" for unused, "lockfile missing" for drift) — but only after the exhaustive check actually ran. A finding missing any leg is not filed; a leg is never skipped on the grounds that its class "obviously" lacks it.
+**Evidence rule:** every health finding (each class listed above `install-script` in the table) cites all three sources — the manifest line, the lockfile entry, and the usage-scan result. Any leg is satisfiable by an exhaustive negative ("declared in no manifest" for a phantom, "no reference after the full scan" for unused, "lockfile missing" for drift) — but only after the exhaustive check actually ran. A finding missing any leg is not filed; a leg is never skipped on the grounds that its class "obviously" lacks it.
 
 **Supply-chain evidence rule:** the four supply-chain classes turn on the install/resolution surface, not on usage, so they carry class-specific evidence instead of the three legs:
 
