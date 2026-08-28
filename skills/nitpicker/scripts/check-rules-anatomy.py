@@ -251,6 +251,7 @@ def _iter_rules(
     rules_dir: Path,
     seen: set[Path] | None = None,
     errors: list[tuple[Path, str]] | None = None,
+    contain: Path | None = None,
 ) -> list[Path]:
     """Rule files under `rules_dir`, following symlinks without looping forever.
 
@@ -270,6 +271,17 @@ def _iter_rules(
     except OSError as e:
         _unscannable(rules_dir, e, errors)
         return []
+
+    if contain is not None and not real.is_relative_to(contain):
+        # Containment has to happen HERE, before os.scandir, not only in
+        # `_check_file`. Checking per-file stops the contents leaking but still
+        # enumerates the external directory first, so every filename in it comes
+        # back in the report — and a link to `/` walks the whole disk to build
+        # that list. Returning the link itself lets `_check_file` report it once
+        # as `symlink_escapes_root`, so the refusal stays visible rather than
+        # becoming a silently narrower scan.
+        return [rules_dir]
+
     if real in seen:
         return []
     seen.add(real)
@@ -282,7 +294,7 @@ def _iter_rules(
                 if entry.is_symlink() and not p.exists():
                     results.append(p)
                 elif entry.is_dir(follow_symlinks=True):
-                    results.extend(_iter_rules(p, seen, errors))
+                    results.extend(_iter_rules(p, seen, errors, contain))
                 elif entry.name.endswith(".md"):
                     results.append(p)
     except OSError as e:
@@ -346,7 +358,7 @@ def check(
         }, False
 
     scan_errors: list[tuple[Path, str]] = []
-    rule_files = _iter_rules(rules_dir, errors=scan_errors)
+    rule_files = _iter_rules(rules_dir, errors=scan_errors, contain=contain)
 
     if scan_errors:
         # An unscannable rule directory means the gate ran on an incomplete set;
