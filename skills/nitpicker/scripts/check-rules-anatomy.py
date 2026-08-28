@@ -87,6 +87,14 @@ def _parse_frontmatter(text: str) -> tuple[dict | None, str]:  # noqa: C901
 
 
 def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
+    """Every anatomy problem in one rule file, as findings rather than exceptions.
+
+    Returns a list so one unusable rule does not hide the rest: this backs a
+    commit-time gate, and an author fixing rules wants the whole set in a single
+    run. Severity is carried per finding because the gate fails on the serious
+    ones and merely reports the rest — a rule that will not load is a different
+    problem from one that loads and reads poorly.
+    """
     findings: list[dict] = []
 
     def issue(severity: str, code: str, detail: str) -> None:
@@ -202,6 +210,17 @@ def _iter_rules(
     seen: set[Path] | None = None,
     errors: list[Path] | None = None,
 ) -> list[Path]:
+    """Rule files under `rules_dir`, following symlinks without looping forever.
+
+    Rules are commonly symlinked between projects, and a link pointing at an
+    ancestor turns a plain walk into an infinite one. `seen` tracks resolved
+    paths so each file is visited once.
+
+    A dangling symlink is returned in the results rather than dropped, so
+    `_check_file` reports it as the finding it is. `errors` is for something
+    else — a directory the process cannot read, which narrows the gate silently
+    and so is recorded for `main` to fail on rather than merely warn about.
+    """
     if seen is None:
         seen = set()
     try:

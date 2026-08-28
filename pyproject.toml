@@ -89,9 +89,17 @@ indent-style = "space"
 [tool.bandit]
 # Scope: the code that ships to consumers (skills/*/scripts/) and the internal
 # tooling that executes on a developer's machine (scripts/). tests/ is excluded
-# because 815 of its 816 hits are B101 (assert_used) — asserts are the test
-# mechanism, not a defect. Excluding the directory rather than skipping B101
-# globally keeps B101 live for shipped code, which uses no bare asserts today.
+# because nearly every hit is B101 (assert_used) — asserts are the test
+# mechanism, not a defect. The remainder are B404/B105/B108 on the subprocess
+# calls and fixture constants that drive the tools under test. Excluding the
+# directory rather than skipping B101 globally keeps B101 live for shipped code,
+# which uses no bare asserts today.
+#
+# Deliberately not a count. The previous wording pinned an exact figure ("815 of
+# its 816 hits"), which the suite outgrew within a few releases; a rationale
+# nobody can reproduce is worse than none, since it invites the reader to
+# conclude the exclusion is unjustified rather than merely stale. Re-measure
+# with `bandit -q -r tests/ -f json` if the balance ever needs checking.
 exclude_dirs = ["tests", ".venv", "graphify-out", "_extra"]
 
 # Three checks are skipped as structurally inapplicable, not as noise to bury:

@@ -115,6 +115,13 @@ class MethodError(Exception):
 
 
 def tool(name: str, description: str, schema: dict, annotations: dict):
+    """Register a handler as an MCP tool, declared beside the function it runs.
+
+    Keeping the schema and annotations on the decorator means `tools/list` is
+    generated from the same statement that wires the handler, so a tool cannot
+    be advertised without an implementation or added without being advertised.
+    """
+
     def register(fn):
         TOOLS.append(
             {
@@ -509,6 +516,12 @@ def _pr_fenced(payload: str) -> str:
     {**_READ_ONLY_NETWORK, "title": "Fetch PR review comments"},
 )
 def _pr_comments(args: dict) -> str:
+    """PR comments, wrapped so the caller cannot mistake them for instructions.
+
+    Anyone able to comment on the PR writes this text, and bot reviewers echo
+    repository content back into it. The envelope is the marker that a directive
+    found inside is content to report, not to follow.
+    """
     target, pr_number = _pr_target(args)
     provider = pr_common.provider_for(target)
     return _pr_fenced(json.dumps(provider.fetch_comments(target, pr_number), indent=2))
@@ -699,6 +712,16 @@ def _negotiate(requested) -> str:
 
 
 def _handle(method: str, params: dict):
+    """Dispatch one JSON-RPC method and return its `result` payload.
+
+    Two different failures, deliberately: an unrecognised *method* raises
+    MethodError and becomes a JSON-RPC error frame, while an unrecognised
+    *tool name* returns a result marked `isError`. The first is a protocol
+    fault, the second is a normal answer to a call the client was entitled to
+    make — collapsing them would make a typo'd tool name look like a broken
+    server. Returning the payload rather than a full frame keeps framing and
+    error codes with the transport instead of at every branch.
+    """
     if method == "ping":
         return {}  # MCP liveness check — empty result
     if method == "initialize":
@@ -743,6 +766,17 @@ def _handle(method: str, params: dict):
 
 
 def serve(stdin, stdout) -> None:
+    """Read newline-delimited JSON-RPC frames until stdin closes.
+
+    Anything carrying an id is answered, because this speaks to a client over a
+    pipe with no other channel and an unanswered request blocks it until its own
+    timeout — an unparseable frame included, which is answered with a null id
+    since no id can be recovered from it. Frames that need no answer are dropped
+    silently instead: a notification by definition, and a non-object frame
+    because MCP stdio sends one object per line. Handler failures are answered
+    *and* reported on stderr, where the detail can be kept without putting it in
+    the client's result. Closed stdin is the shutdown signal, not an error.
+    """
     for line in stdin:
         line = line.strip()
         if not line:
