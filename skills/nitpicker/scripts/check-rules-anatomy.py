@@ -208,7 +208,7 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
 def _iter_rules(
     rules_dir: Path,
     seen: set[Path] | None = None,
-    errors: list[Path] | None = None,
+    errors: list[tuple[Path, str]] | None = None,
 ) -> list[Path]:
     """Rule files under `rules_dir`, following symlinks without looping forever.
 
@@ -242,13 +242,21 @@ def _iter_rules(
                     results.extend(_iter_rules(p, seen, errors))
                 elif entry.name.endswith(".md"):
                     results.append(p)
-    except PermissionError:
+    except OSError as e:
         # A dir the process cannot read silently narrows the gate. Warn for a human,
         # and record it so main() can fail the gate — a warning alone still lets CI
         # exit 0 with rules unread.
-        print(f"[warn] cannot scan {rules_dir}: permission denied", file=sys.stderr)
+        #
+        # OSError rather than PermissionError, because a `.claude/rules` that is a
+        # regular file raises NotADirectoryError here — it passed the `exists()`
+        # test in `check`, so it reached `os.scandir` and escaped as an uncaught
+        # traceback from a CLI that catches only ValueError. Both failures mean
+        # the scan is narrower than it claims; the reason is carried so the
+        # message names which one happened.
+        reason = e.strerror or type(e).__name__
+        print(f"[warn] cannot scan {rules_dir}: {reason}", file=sys.stderr)
         if errors is not None:
-            errors.append(rules_dir)
+            errors.append((rules_dir, reason))
     return sorted(results)
 
 
@@ -289,16 +297,16 @@ def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
             "summary": empty_summary,
         }, False
 
-    scan_errors: list[Path] = []
+    scan_errors: list[tuple[Path, str]] = []
     rule_files = _iter_rules(rules_dir, errors=scan_errors)
 
     if scan_errors:
-        # An unreadable rule directory means the gate ran on an incomplete set;
+        # An unscannable rule directory means the gate ran on an incomplete set;
         # fail rather than report exit 0 on a silently narrowed scan (including
         # the case where the top rules dir itself is unreadable and rule_files is
-        # empty).
-        joined = ", ".join(str(d) for d in scan_errors)
-        raise ValueError(f"cannot scan {joined}: permission denied — rules left unread")
+        # empty, and the case where it is a regular file rather than a directory).
+        joined = ", ".join(f"{d} ({reason})" for d, reason in scan_errors)
+        raise ValueError(f"cannot scan {joined} — rules left unread")
 
     if not rule_files:
         return {

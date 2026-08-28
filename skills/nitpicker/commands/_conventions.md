@@ -49,9 +49,9 @@ Reach for the most specific tool that covers the operation; drop to raw shell or
 a direct `scripts/*.py` call only when nothing higher does. Highest first:
 
 1. **A purpose-built MCP tool, whenever the session exposes it.** Every bundled
-   nitpicker tool has one, and the tool is the default way to run it — the
-   `python3 scripts/…` form in a command file is the fallback spelling, never
-   the first reach:
+   tool a command invokes has one, and the tool is the default way to run it —
+   the `python3 scripts/…` form in a command file is the fallback spelling,
+   never the first reach:
    - **Findings store** — see the table in Findings store below. Three
      operations are CLI-only by design and are named there.
    - **Bundled files** — `np_read_command` for a command file,

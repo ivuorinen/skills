@@ -112,20 +112,37 @@ def test_process_sarif_tool_parses_and_confines_paths(tmp_path):
     assert "outside the allowed project root" in escaped["content"][0]["text"]
 
 
-def test_process_sarif_reports_a_bad_file_in_band(tmp_path):
-    """stderr is invisible to an MCP caller, so a skipped file must reach it as data.
+def test_process_sarif_marks_a_skipped_file_as_an_error_but_keeps_the_findings(tmp_path):
+    """A skipped input makes the scan incomplete, and isError is how the caller learns.
 
-    A silently smaller finding set is indistinguishable from a clean scan — the
-    one reading a security report must never invite.
+    Reporting it only in `meta.errors` puts the discovery behind an opt-in read,
+    so an incomplete security scan reads exactly like a clean one — the CLI exits
+    1 in the same case. The report still travels, because failing the whole call
+    would discard the findings the readable files did yield.
     """
     (tmp_path / "good.sarif").write_text(json.dumps(_SARIF), encoding="utf-8")
     mod = _load()
     result = _call(mod, "np_process_sarif", {"paths": ["good.sarif", "missing.sarif"]})
 
-    assert result.get("isError") is not True, "one bad file must not discard the good one"
+    assert result["isError"] is True, "a skipped input must not read as a clean scan"
     data = json.loads(result["content"][0]["text"])
-    assert data["meta"]["unique"] == 1
+    assert data["meta"]["unique"] == 1, "the readable file's findings must survive"
     assert any("missing.sarif" in e for e in data["meta"]["errors"])
+
+
+def test_process_sarif_error_paths_use_the_callers_spelling(tmp_path):
+    """A diagnostic must never hand back the path the server resolved.
+
+    The resolved form carries the project root and the account name under it.
+    `_scrub` covers exceptions at the dispatch boundary, but this message rides
+    inside a normal result and never reaches it.
+    """
+    mod = _load()
+    result = _call(mod, "np_process_sarif", {"paths": ["scans/missing.sarif"]})
+    errors = json.loads(result["content"][0]["text"])["meta"]["errors"]
+
+    assert errors == ["File not found: scans/missing.sarif"]
+    assert not any(str(tmp_path) in e for e in errors), "resolved absolute path leaked"
 
 
 def test_process_sarif_rejects_an_empty_paths_array(tmp_path):

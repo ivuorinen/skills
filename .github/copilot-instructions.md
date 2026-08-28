@@ -175,6 +175,6 @@ release-please derives releases from these prefixes; a wrong prefix mis-versions
 - **Do not** use `$ARGUMENTS` or other Claude-only substitution in skill bodies — parse the
   free text after the invocation instead.
 - **Do not** add frontmatter to command files, or omit it from the router SKILL.md.
-- **Do not** update the version in only one manifest — all five must move together.
+- **Do not** update the version in only one manifest — every manifest listed above moves together.
 - **Do not** read or modify anything under `.claude/agents/` — those are restricted.
 - **Do not** commit finding files silently — audits ask "Commit findings to git? (y/n)" first.

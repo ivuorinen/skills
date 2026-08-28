@@ -187,10 +187,10 @@ management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
 scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`), and
 pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
-Bitbucket Cloud in one shared JSON format). Every bundled tool is reachable this
-way, so a command runs its analysis without a shell; the `python3 scripts/…`
-form stays the documented fallback for Copilot, pi and CI, where no MCP server
-exists. Every tool is
+Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
+reachable this way, so a command runs its analysis without a shell; the
+`python3 scripts/…` form stays the documented fallback for Copilot, pi and CI,
+where no MCP server exists. Every tool is
 prefixed `np_` and publishes MCP annotations, so a client can tell the read-only
 tools from the ones that write — `np_new_finding` only adds, `np_write_index`
 rewrites a generated file, and `np_resolve_finding` is the one irreversible

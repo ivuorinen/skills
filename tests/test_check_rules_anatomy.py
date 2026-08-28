@@ -434,6 +434,20 @@ class TestAdditionalCoverage:
             result = _iter_rules(rules_dir)
         assert result == []
 
+    def test_rules_path_that_is_a_regular_file_raises_valueerror(self, tmp_path):
+        """A `.claude/rules` that is a file passes `exists()` and reaches `os.scandir`.
+
+        `os.scandir` raises NotADirectoryError there. It is an OSError but not a
+        PermissionError, so a handler catching only the latter let it escape —
+        past a CLI that catches only ValueError, as an uncaught traceback, and
+        past the MCP tool's ValueError validation path.
+        """
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "rules").touch()
+
+        with pytest.raises(ValueError, match="rules left unread"):
+            _mod.check(tmp_path, True)
+
     def test_iter_rules_resolve_oserror(self, tmp_path):
         """OSError in rules_dir.resolve() returns [] (lines 158-159)."""
         rules_dir = tmp_path / ".claude" / "rules"

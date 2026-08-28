@@ -323,6 +323,20 @@ def _store(args: dict) -> Path:
     return _project_root(args) / findings.DEFAULT_ROOT
 
 
+def _as_given(message: str, resolved: dict[Path, str]) -> str:
+    """`message` with each resolved absolute path put back to the caller's spelling.
+
+    A diagnostic returned to an MCP caller must name the path that caller passed,
+    never the one the server resolved it to: the resolved form carries the
+    project root and the account name under it. `_scrub` covers the same ground
+    for exceptions, but only at the dispatch boundary — a message travelling
+    inside a normal result never reaches it.
+    """
+    for path, given in resolved.items():
+        message = message.replace(str(path), given)
+    return message
+
+
 def _confined(root: Path, candidate: str) -> Path:
     """A caller-supplied file path resolved under `root`, or a ValueError.
 
@@ -522,13 +536,25 @@ def _validate_store(args: dict) -> str:
     },
     {**_READ_ONLY, "title": "Process SARIF reports"},
 )
-def _process_sarif(args: dict) -> str:
+def _process_sarif(args: dict) -> tuple[str, bool]:
     root = _project_root(args)
     paths = args["paths"]
     if not isinstance(paths, list) or not paths:
         raise ValueError(f"paths must be a non-empty array of file paths, got {paths!r}")
-    report, _ = sarif.process([_confined(root, p) for p in paths])
-    return json.dumps(report, indent=2)
+    # Keep each caller spelling against the path it resolved to. `process` names
+    # the resolved absolute path in its error strings, and those are returned to
+    # the caller rather than raised — so `_scrub`, which only runs on exceptions
+    # at the dispatch boundary, never sees them. Handing back the server's
+    # absolute layout is the disclosure `_project_root` already refuses to make.
+    resolved = {_confined(root, p): p for p in paths}
+    report, errors = sarif.process(list(resolved))
+    report["meta"]["errors"] = [_as_given(m, resolved) for m in report["meta"]["errors"]]
+    # A requested file that was missing or unparseable makes this an incomplete
+    # scan, and an incomplete security scan returned as a normal result reads as
+    # a clean one — the reading `meta.errors` alone has to be opted into. The CLI
+    # exits 1 in the same case; isError is that signal here. The report still
+    # travels, so the findings the readable files yielded are not lost.
+    return json.dumps(report, indent=2), bool(errors)
 
 
 @tool(
@@ -884,7 +910,15 @@ def _handle(method: str, params: dict):
                         is_error=True,
                     )
                 try:
-                    return _text_result(t["handler"](args))
+                    result = t["handler"](args)
+                    # A handler returns bare text, or (text, is_error) when it
+                    # has a result worth returning *and* a failure to report —
+                    # a partial SARIF scan is both. Raising instead would be the
+                    # only other way to set isError, and that discards the
+                    # findings the readable files did yield.
+                    if isinstance(result, tuple):
+                        return _text_result(result[0], is_error=result[1])
+                    return _text_result(result)
                 except Exception as e:
                     # Redact at the dispatch boundary, not in each backing
                     # function: findings.py errors interpolate absolute store

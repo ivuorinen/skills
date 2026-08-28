@@ -187,12 +187,17 @@ refuses to guess rather than sending a credential to the wrong API;
 `--platform` names it for a self-hosted instance. Bitbucket Data Center serves
 a different API and is out of scope.
 
-Every one of these is also reachable as an MCP tool (see below), and that is the
-way a command runs it when the session has the server. The CLI form stays the
-documented fallback: all bundled tools are stdlib-only and run with plain
-`python3 <path>` — no uv or package installs required on the host. In Claude
-Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents resolve the path
-relative to this file.
+Every tool a command *invokes* — the findings store, both PR fetchers, and both
+analyzers — is also reachable as an MCP tool (see below), and that is the way a
+command runs it when the session has the server. The rest of the table is
+support code with no tool of its own and none needed: `mcp_server.py` is the
+server, and `skill_catalog.py`, `pr_common.py` and the three provider modules
+are libraries the entry points import.
+
+The CLI form stays the documented fallback: all bundled tools are stdlib-only
+and run with plain `python3 <path>` — no uv or package installs required on the
+host. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
+resolve the path relative to this file.
 
 ## MCP server
 

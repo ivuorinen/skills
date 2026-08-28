@@ -178,7 +178,12 @@ Without the nitpicker MCP tools, the same code runs through the bundled CLI. Std
 python3 "${CLAUDE_SKILL_DIR}/scripts/process-sarif.py" <sarif-file> [<sarif-file>...]
 ```
 
-Either way the output is JSON with `meta` (counts), `by_severity`, `by_tool`, and `findings`. Deduplicates by `(tool + rule_id + uri + start_line)` fingerprint; normalizes severity using CVSS `security-severity` first, then SARIF `level`. Use after running tools to consolidate multi-tool SARIF output before filing.
+Either way the output is JSON with `meta` (counts), `by_severity`, `by_tool`, and `findings`. Use after running tools to consolidate multi-tool SARIF output before filing.
+
+Two behaviours decide what you are reading, and both differ from the obvious guess:
+
+- **Deduplication** hashes `tool | rule_id | location`, where location is `uri:start_line:start_column` — the column is part of it, so two findings on one line at different columns stay separate. A finding carrying no `uri` keys on `cve_or_rule:start_line:start_column:message` instead, so distinct location-less findings (several CVEs from `grype` with an empty message) do not collapse into one. On a collision the **most severe** duplicate is kept, so an overlap can only raise reported risk.
+- **Severity** is not first-match. A CVSS `security-severity` score (≥9.0 Critical, ≥7.0 High, ≥4.0 Medium, else Low) and a mapped tool-specific severity string are both collected, and the **most severe of the two** wins — a coarse `WARNING` cannot bury an explicit CVSS Critical, or the reverse. An *unmapped* tool severity fails safe to High with a `[warn]` naming the token, rather than being downgraded. SARIF `level` is the fallback only when neither of those was usable: `error` → High, `warning` → Medium, everything else → Low.
 
 **Read `meta.errors` before treating the result as complete.** A file that was missing or unparseable is listed there and its findings are absent; the remaining files still process, so a short list looks exactly like a clean scan. A non-empty `meta.errors` means that scanner's output is uncovered — record it as such in the run summary, exactly as for a scanner that failed to run.
 
