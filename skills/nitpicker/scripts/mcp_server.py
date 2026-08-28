@@ -572,7 +572,12 @@ def _check_rules_anatomy(args: dict) -> str:
     # cwd fallback — so a missing .claude/rules/ is a misconfiguration to report,
     # not a clean result to return.
     root = _project_root(args)
-    report, blocking = rules_anatomy.check(root, explicit=True)
+    # `contain=root` only here, never for the CLI: `.claude/rules` entries are
+    # commonly symlinks into a shared rules repo, which is legitimate when a
+    # human ran the command against their own tree. This caller is confined to
+    # the project root, and the scan reads every file it reaches, so a link out
+    # of the tree would read past that boundary.
+    report, blocking = rules_anatomy.check(root, explicit=True, contain=root)
     # Same disclosure rule as np_process_sarif's meta.errors, and the same miss:
     # `rules_dir` is built from the resolved project root, so returning it as-is
     # hands the caller the server's filesystem layout and the account name in it.

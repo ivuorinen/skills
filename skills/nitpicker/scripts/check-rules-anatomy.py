@@ -86,7 +86,7 @@ def _parse_frontmatter(text: str) -> tuple[dict | None, str]:  # noqa: C901
     return fm, "".join(lines[body_start:])
 
 
-def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
+def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> list[dict]:  # noqa: C901
     """Every anatomy problem in one rule file, as findings rather than exceptions.
 
     Returns a list so one unusable rule does not hide the rest: this backs a
@@ -103,6 +103,28 @@ def _check_file(path: Path, project_root: Path) -> list[dict]:  # noqa: C901
     if path.is_symlink() and not path.exists():
         issue("High", "dangling_symlink", "Symlink target missing — rule will not load")
         return findings
+
+    if contain is not None:
+        # Symlinks in `.claude/rules` are followed on purpose — rules get shared
+        # between projects that way — so the walk cannot simply refuse them. But
+        # a caller confined to a project root must not reach past it: this file
+        # is read below, and `hedged_language` quotes the matching line back, so
+        # an escaping link turns any file on disk into line-granular disclosure.
+        # Reported rather than dropped, matching the dangling case above: a
+        # silently skipped rule is a narrower scan wearing a clean result.
+        try:
+            outside = not path.resolve().is_relative_to(contain)
+        except OSError:
+            outside = True  # cannot resolve it, so cannot vouch for it
+        if outside:
+            # The resolved target is deliberately absent from the message: naming
+            # it would disclose the path this branch exists to refuse to read.
+            issue(
+                "High",
+                "symlink_escapes_root",
+                "Symlink resolves outside the project root — not read",
+            )
+            return findings
 
     if path.suffix != ".md":
         issue("Low", "non_md_extension", f"Filename must have .md extension (got '{path.suffix}')")
@@ -268,7 +290,9 @@ def _iter_rules(
     return sorted(results)
 
 
-def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
+def check(
+    project_root: Path, explicit: bool = True, contain: Path | None = None
+) -> tuple[dict, bool]:
     """The rule-anatomy report for `project_root`, and whether it blocks; (report, blocking).
 
     Split out of `main` so the `np_check_rules_anatomy` MCP tool and the CLI run
@@ -345,7 +369,7 @@ def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
     has_blocking = False
 
     for path in rule_files:
-        file_findings = _check_file(path, project_root)
+        file_findings = _check_file(path, project_root, contain)
         try:
             rel = str(path.relative_to(project_root))
         except ValueError:

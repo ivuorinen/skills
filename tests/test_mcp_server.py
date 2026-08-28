@@ -175,6 +175,38 @@ def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
     assert "blocking" in data, "the caller needs the gate verdict, not just the findings"
 
 
+def test_check_rules_anatomy_refuses_a_symlink_escaping_the_root(tmp_path):
+    """A symlink in `.claude/rules` must not read a file outside the confined root.
+
+    The walk follows symlinks deliberately — rules get shared between projects
+    that way — but this tool is confined to the project root, and the scan reads
+    every file it reaches. `hedged_language` quotes the matching line back, so an
+    escaping link turns any file on disk into line-granular disclosure past the
+    boundary `_project_root` exists to enforce.
+
+    Reported as a finding rather than skipped, matching how a dangling symlink is
+    handled: a silently dropped rule is a narrower scan wearing a clean result.
+    """
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    outside = tmp_path.parent / "outside-secret.md"
+    outside.write_text("# S\n\nyou might consider this private\nSENTINEL_TOKEN\n", encoding="utf-8")
+    (rules / "leaked.md").symlink_to(outside)
+    mod = _load()
+
+    try:
+        payload = _call(mod, "np_check_rules_anatomy", {})["content"][0]["text"]
+    finally:
+        outside.unlink()
+
+    assert "SENTINEL_TOKEN" not in payload, "content outside the root was read"
+    assert "you might consider this private" not in payload, "a line outside the root was quoted"
+    data = json.loads(payload)
+    codes = [f["code"] for entry in data["files"] for f in entry["findings"]]
+    assert "symlink_escapes_root" in codes, "the escape must be reported, not silently skipped"
+    assert data["blocking"] is True, "an escaping symlink is a High finding and must block"
+
+
 def test_check_rules_anatomy_rules_dir_is_relative_to_the_project_root(tmp_path):
     """The report names the rules directory, and the resolved form carries the layout.
 
