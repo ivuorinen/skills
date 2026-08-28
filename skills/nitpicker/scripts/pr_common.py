@@ -297,6 +297,23 @@ def parse_pr_number(raw: str) -> int:
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
+def _credential_safe(url: str, allowed_netloc: str) -> bool:
+    """Whether `url` may carry the caller's Authorization header.
+
+    Both halves are the guard: the scheme, because a matching hostname reached
+    over plaintext still puts the token on the wire, and the netloc, because a
+    redirect elsewhere hands it to a third party.
+
+    Shared by the redirect handler and `_check_url` deliberately. They enforced
+    the same intent in two places and only one of them checked the scheme, so a
+    same-host `https` -> `http` redirect kept the header while the paginator
+    would have refused the identical URL. One predicate cannot disagree with
+    itself that way.
+    """
+    split = urllib.parse.urlsplit(url)
+    return split.scheme == "https" and split.netloc == allowed_netloc
+
+
 class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Strip Authorization on a redirect that leaves the pinned API host.
 
@@ -313,17 +330,18 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Drop the Authorization header when a redirect leaves the pinned host.
+        """Drop the Authorization header unless the redirect target is still
+        https on the pinned host.
 
         urllib copies request headers onto a redirect by default, so a server
-        that answers with a redirect elsewhere would be handed the credential
-        the caller declared for *this* host. The handler is built per request
-        with the host it is allowed to keep the header for, because a shared
-        instance would have to be told which host applies on every call — and
-        the one that forgot would leak silently rather than fail.
+        answering with a redirect elsewhere — or to plaintext on its own
+        hostname — would be handed the credential the caller declared for this
+        host. The handler is built per request with the netloc it may keep the
+        header for, because a shared instance would have to be told which host
+        applies on every call, and the one that forgot would leak silently.
         """
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and urllib.parse.urlsplit(newurl).netloc != self.allowed_netloc:
+        if new is not None and not _credential_safe(newurl, self.allowed_netloc):
             for key in [k for k in new.headers if k.lower() == "authorization"]:
                 del new.headers[key]
         return new
@@ -337,8 +355,7 @@ def _check_url(url: str, allowed_netloc: str) -> None:
     server-controlled (a `Link` header or a `next` field in the body), so this
     runs on each hop and not only on the first.
     """
-    split = urllib.parse.urlsplit(url)
-    if split.scheme != "https" or split.netloc != allowed_netloc:
+    if not _credential_safe(url, allowed_netloc):
         raise TransportError(
             f"refusing to send credentials to {url!r}; expected https://{allowed_netloc}"
         )

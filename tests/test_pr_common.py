@@ -416,6 +416,34 @@ class TestTokenSafeRedirectHandler:
         new = self._redirect("api.github.com", "https://api.github.com/b")
         assert any(k.lower() == "authorization" for k in new.headers)
 
+    def test_authorization_stripped_on_a_same_host_scheme_downgrade(self):
+        """A matching hostname over plaintext still puts the token on the wire.
+
+        The handler compared netloc alone, so `https` -> `http` on the *same*
+        host kept the header — while `_check_url` would have refused the
+        identical URL on the next paginated hop. Same intent, two places, one of
+        them missing the scheme check.
+        """
+        new = self._redirect("api.github.com", "http://api.github.com/b")
+        assert not any(k.lower() == "authorization" for k in new.headers)
+
+    def test_the_handler_and_the_url_check_agree(self):
+        """Both guard the same thing, so they share one predicate.
+
+        Pinned because the bug above was not a wrong rule — it was the right
+        rule written down twice and implemented once.
+        """
+        for url in (
+            "https://api.github.com/b",
+            "http://api.github.com/b",
+            "https://evil.example/b",
+        ):
+            safe = c._credential_safe(url, "api.github.com")
+            kept = any(
+                k.lower() == "authorization" for k in self._redirect("api.github.com", url).headers
+            )
+            assert safe is kept, f"{url}: predicate says {safe}, handler says {kept}"
+
     def test_pinned_host_is_per_instance_not_global(self):
         # Three platforms mean three hosts; a handler pinned to one of them must
         # not silently accept another's.
