@@ -363,11 +363,13 @@ def render_finding(fm: dict[str, str], title: str, body: str) -> str:
     """Serialise a finding to the on-disk form, refusing anything that will not
     round-trip.
 
-    The id is a content hash over the frontmatter, so a value that parses back
-    differently than it was written breaks identity rather than formatting: the
-    same finding re-filed would hash to something else. Every rejection below
-    guards that round-trip, which is why they raise instead of normalising —
-    silently rewriting a value would change the id it produced.
+    `finding_id` hashes the auditor, area and title, so for those two fields a
+    value that parses back differently than it was written breaks identity
+    rather than formatting: re-filing the same finding would hash to something
+    else and be rejected as a phantom collision. The rejections raise instead of
+    normalising for that reason — quietly rewriting a value would change the id
+    it produced. The remaining fields are guarded to keep the frontmatter block
+    parseable, which is a smaller claim than identity.
     """
     if "\n" in title:
         raise FindingError("title must be single-line")
@@ -594,11 +596,17 @@ def write_ledger(root: Path, records: list[dict]) -> None:
 def _record_from_finding(
     fm: dict[str, str], title: str, body: str, status: str, resolved: str, fid: str
 ) -> dict:
-    """Build the ledger record — the single funnel every resolution passes through.
+    """Build the ledger record for a finding being resolved or migrated.
 
-    Being the only path in is what makes redaction here sufficient. The ledger
-    is append-only, so a credential written into it cannot be edited out
-    afterwards, and the bodies arriving here are not all ones this module wrote.
+    Redaction happens here rather than only in `new_finding` because the bodies
+    arriving are not all ones this module wrote: a hand-edited open file or a
+    legacy resolved document reaches the ledger through this path, and the
+    ledger is append-only, so a credential written into it cannot be taken out.
+
+    Not the only writer, despite that: force-re-resolving a finding already in
+    the ledger updates its record in place and never reaches here. That path
+    copies a body this function already redacted on the way in, so the guarantee
+    holds — but it holds by history, not because this is the sole funnel.
     """
     extra = {k: v for k, v in fm.items() if k not in _KNOWN_FM}
     rec: dict[str, object] = {
@@ -842,11 +850,11 @@ def new_finding(
 ) -> Path:
     """File a new open finding and return the path written.
 
-    The id is derived from the content rather than assigned, so filing the same
-    finding twice is idempotent instead of producing a duplicate — and, for the
-    same reason, an id cannot be chosen or reused by a caller. `force` exists
-    for the one case that is not a duplicate: deliberately overwriting a finding
-    whose body has been rewritten under the same title and area.
+    The id is derived from the auditor, area and title rather than assigned, so
+    a caller cannot choose or reuse one. Re-filing the same finding is refused,
+    not absorbed: an id already open — or already in the ledger — raises and
+    names `--force`, so a duplicate is reported rather than silently
+    overwriting a body that may have been edited since.
     """
     _check_auditor(auditor)
     # Redact and strip before hashing: the id is derived from title+area, so

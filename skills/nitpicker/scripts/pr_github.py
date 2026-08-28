@@ -439,13 +439,14 @@ def _out_of_thread_notes(
 
 
 def _is_transient(err: Exception) -> bool:
-    """Whether a `gh` failure is worth falling back over, or should surface as-is.
+    """Whether a `gh` failure should stop the run instead of falling back to REST.
 
-    The distinction decides between two very different outcomes: a transient
-    fault (network, rate limit, timeout) is worth retrying on another transport,
-    while a permanent one — no such PR, no permission — would produce the same
-    failure again and is better reported than retried into a second, less
-    informative error.
+    The fallback is not free: REST cannot report thread resolution, so taking it
+    silently converts "unknown" into "looks unresolved". That inverts the
+    intuitive handling. A transient fault — network, rate limit, timeout — means
+    GraphQL would probably answer on a retry, so the caller raises and says to
+    retry rather than degrading. A permanent one means GraphQL will not answer
+    at all, and resolved-blind data beats none.
     """
     return isinstance(err, GhTransportError) and any(
         marker in str(err).lower() for marker in _TRANSIENT_MARKERS

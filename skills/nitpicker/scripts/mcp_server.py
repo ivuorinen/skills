@@ -712,10 +712,15 @@ def _negotiate(requested) -> str:
 
 
 def _handle(method: str, params: dict):
-    """Dispatch one JSON-RPC method, raising MethodError for anything unknown.
+    """Dispatch one JSON-RPC method and return its `result` payload.
 
-    Returns the `result` payload rather than a full frame, so the transport
-    owns framing and error codes in one place instead of at every branch.
+    Two different failures, deliberately: an unrecognised *method* raises
+    MethodError and becomes a JSON-RPC error frame, while an unrecognised
+    *tool name* returns a result marked `isError`. The first is a protocol
+    fault, the second is a normal answer to a call the client was entitled to
+    make — collapsing them would make a typo'd tool name look like a broken
+    server. Returning the payload rather than a full frame keeps framing and
+    error codes with the transport instead of at every branch.
     """
     if method == "ping":
         return {}  # MCP liveness check — empty result
@@ -763,10 +768,14 @@ def _handle(method: str, params: dict):
 def serve(stdin, stdout) -> None:
     """Read newline-delimited JSON-RPC frames until stdin closes.
 
-    Every failure is answered rather than logged: this speaks to a client over
-    a pipe with no other channel, so a request that draws no reply blocks that
-    client until its own timeout. Closed stdin is the shutdown signal — the
-    loop ends rather than treating it as an error.
+    Anything carrying an id is answered, because this speaks to a client over a
+    pipe with no other channel and an unanswered request blocks it until its own
+    timeout — an unparseable frame included, which is answered with a null id
+    since no id can be recovered from it. Frames that need no answer are dropped
+    silently instead: a notification by definition, and a non-object frame
+    because MCP stdio sends one object per line. Handler failures are answered
+    *and* reported on stderr, where the detail can be kept without putting it in
+    the client's result. Closed stdin is the shutdown signal, not an error.
     """
     for line in stdin:
         line = line.strip()

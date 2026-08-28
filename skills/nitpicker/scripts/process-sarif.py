@@ -160,8 +160,14 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
     Typed `object` rather than `dict` on purpose: the input is third-party JSON,
     and a scanner writing something other than an object here should cost that
-    one run, not the process. Every nested access below defends the same way,
-    because the fields SARIF marks optional are exactly the ones tools omit.
+    one run, not the process.
+
+    The `or {}` guards below cover the shapes actually seen — a key absent or
+    explicitly null, which is what SARIF's optional fields produce. They do not
+    cover a key present with a wrong *type*: a `tool` holding a string still
+    raises on the attribute access. That has not come from a real scanner, and
+    the exception surfaces rather than corrupting the output, so it is left as a
+    known edge rather than guarded speculatively.
     """
     if not isinstance(run, dict):
         return []  # a `runs` entry from untrusted JSON need not be an object
@@ -252,12 +258,13 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
 
 def _parse_sarif(path: Path) -> list[dict]:
-    """Findings from one SARIF file; an unreadable file yields none, not an abort.
+    """Findings from one SARIF file; reports to stderr and exits 1 if it cannot parse.
 
-    A run consolidates several scanners' output, and one malformed file is the
-    normal consequence of a scanner crashing mid-write. Aborting would discard
-    the findings already collected from the files that parsed — the failure
-    is reported on stderr and the run continues short one input.
+    Exiting rather than returning empty is a deliberate contract, and a tested
+    one: an empty list is indistinguishable from a file that legitimately held
+    no findings, so a scanner that crashed mid-write would read as a clean
+    scan. `main` catches the SystemExit so a run over several files still
+    reports the ones that parsed — the skip is implemented there, not here.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

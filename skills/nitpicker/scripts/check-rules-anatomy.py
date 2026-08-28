@@ -214,8 +214,12 @@ def _iter_rules(
 
     Rules are commonly symlinked between projects, and a link pointing at an
     ancestor turns a plain walk into an infinite one. `seen` tracks resolved
-    paths so each file is visited once; `errors` collects the links that could
-    not be resolved, which are reported rather than skipped silently.
+    paths so each file is visited once.
+
+    A dangling symlink is returned in the results rather than dropped, so
+    `_check_file` reports it as the finding it is. `errors` is for something
+    else — a directory the process cannot read, which narrows the gate silently
+    and so is recorded for `main` to fail on rather than merely warn about.
     """
     if seen is None:
         seen = set()
