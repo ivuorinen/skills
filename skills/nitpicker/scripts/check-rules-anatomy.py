@@ -347,6 +347,14 @@ def check(project_root: Path, explicit: bool = True) -> tuple[dict, bool]:
 
 
 def main() -> None:
+    """CLI entry point: parse argv, print the report, exit per the outcome.
+
+    Thin by design — `check` holds the logic so the MCP tool runs the same code.
+    What lives only here is the CLI contract: `explicit` is true only when a root
+    was actually named on the command line, which is the distinction that decides
+    whether a missing `.claude/rules/` is a misconfiguration or a clean repo, and
+    a blocking finding exits 1 so CI fails on it.
+    """
     # --help is how an agent learns this script's interface
     # (https://agentskills.io/skill-creation/using-scripts). Checked before the
     # argument is read as a path, or `--help` resolves as a project root.

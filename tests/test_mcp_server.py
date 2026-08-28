@@ -154,6 +154,13 @@ def test_process_sarif_rejects_an_empty_paths_array(tmp_path):
 
 
 def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
+    """The tool must return the gate verdict, not just the per-file findings.
+
+    The CLI carries that verdict in its exit code, which an MCP caller never
+    sees; without `blocking` in the payload the caller would have to re-derive it
+    by scanning every finding's severity, and a caller that skipped that step
+    would read a High finding as a clean report.
+    """
     rules = tmp_path / ".claude" / "rules"
     rules.mkdir(parents=True)
     (rules / "good-rule.md").write_text(

@@ -378,6 +378,14 @@ def process(paths: list[Path]) -> tuple[dict, list[str]]:
 
 
 def main() -> None:
+    """CLI entry point: parse argv, print the report, exit per the outcome.
+
+    Thin by design — `process` holds the logic so the MCP tool runs the same
+    code. What lives only here is the CLI contract: usage on stderr with exit 2
+    for a missing argument, each skipped file on stderr, and exit 1 when any
+    input was skipped. That last one is the CLI's half of a signal the MCP tool
+    carries as `isError`; both exist so an incomplete scan cannot read as clean.
+    """
     # --help is how an agent learns this script's interface
     # (https://agentskills.io/skill-creation/using-scripts).
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:

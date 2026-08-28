@@ -92,6 +92,17 @@ def list_skills(root: Path | None = None) -> list[dict]:
 
 
 def read_skill(name: str, root: Path | None = None) -> str:
+    """One bundled skill's SKILL.md by its frontmatter `name`; KeyError otherwise.
+
+    The name comes from frontmatter rather than the directory, because that is
+    what the spec makes authoritative and what `list_skills` reports — matching
+    on the directory would answer for a skill whose folder was renamed and miss
+    one whose `name` was.
+
+    Names are collected during the scan rather than in a second pass so the
+    KeyError can name the full vocabulary; the file is read once per candidate
+    either way.
+    """
     root = root or plugin_root()
     known = []
     for path in _skill_files(root):
