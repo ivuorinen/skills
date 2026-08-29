@@ -88,7 +88,7 @@ tags; release-please handles that from `main`.
 
 ## New Command Registration Checklist
 
-When adding a command, update all five surfaces (the validator enforces 1–2):
+When adding a command, update every surface below (the validator enforces 1–2):
 
 1. `skills/nitpicker/commands/<name>.md` — the command file
    (h1 `# /nitpicker <name> — …`, `## When to use`).

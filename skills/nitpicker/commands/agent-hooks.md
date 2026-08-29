@@ -91,8 +91,8 @@ File a finding only with concrete evidence drawn from the evidence base. Each cl
    routing hook (PreToolUse, for Claude Code) enforces the redirect. If no
    context-saving tool exists in the project, record that and file no routing
    findings.
-5. File findings via the store protocol in `_conventions.md`, using
-   `--auditor agent-hooks`. Each finding records the class, the evidence (the
+5. File findings via the store protocol in `_conventions.md`, under the
+   `agent-hooks` auditor key. Each finding records the class, the evidence (the
    recurrence or the bloating command), and the exact hook — event, matcher,
    command, fail-closed shape — in the detected harness's format.
 6. Present the summary with the run verdict (COMPLETE only if every evidence

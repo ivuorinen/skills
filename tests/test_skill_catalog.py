@@ -167,6 +167,50 @@ def test_read_reference_serves_the_shared_files_in_both_spellings():
     assert "# Shared Conventions" in underscored
     assert sc.read_reference("conventions") == underscored
     assert "## How audit uses this file" in sc.read_reference("audit-coverage")
+    # The third file resolved from the day it landed but no test named it, so a
+    # narrowing of the `_*.md` glob to an allowlist would have dropped it silently.
+    assert sc.read_reference("teach-formats") == sc.read_reference("_teach-formats")
+
+
+def test_read_reference_description_names_every_shared_file():
+    """The tool description is the only surface a model picks `np_read_reference` from.
+
+    It can carry a literal list, so it drifts from `commands/_*.md` the moment a
+    shared file is added — and it did: it named two of three, leaving
+    `_teach-formats` reachable but invisible, so `teach` read it off disk instead.
+    Pinning the description against the filesystem fails that commit instead.
+    """
+    import re
+    from pathlib import Path
+
+    root = sc.plugin_root()
+    on_disk = {p.stem.lstrip("_") for p in (root / "skills/nitpicker/commands").glob("_*.md")}
+    described = (
+        Path(root / "skills/nitpicker/scripts/mcp_server.py")
+        .read_text(encoding="utf-8")
+        .split('"np_read_reference"')[1]
+        .split("def ")[0]
+    )
+    missing = {n for n in on_disk if not re.search(rf"\b_?{re.escape(n)}\b", described)}
+    assert not missing, f"np_read_reference's description does not name: {sorted(missing)}"
+
+
+def test_unknown_name_errors_name_the_valid_set():
+    """A bare `KeyError(name)` renders as `KeyError: 'loopholes'` — no recovery path.
+
+    `loopholes` is a SKILL.md-declared alias, not a typo, and these resolvers take
+    canonical names only. Without the vocabulary in the message an agent reads the
+    tool as dead and falls back to reading the file off disk, which is the
+    fallback these readers exist to remove.
+    """
+    import pytest
+
+    with pytest.raises(KeyError, match="agent-loopholes"):
+        sc.read_command("loopholes")
+    with pytest.raises(KeyError, match="teach-formats"):
+        sc.read_reference("no-such-reference")
+    with pytest.raises(KeyError, match="nitpicker"):
+        sc.read_skill("no-such-skill")
 
 
 def test_read_reference_rejects_non_reference_names_before_reading(monkeypatch):

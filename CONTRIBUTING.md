@@ -17,7 +17,7 @@ make check
 | `validate`          | `scripts/validate-skill.py` on the router, command files, internal skills |
 | `validate-evals`    | `scripts/validate-evals.py` — the `evals/` sets bundled with each skill   |
 | `validate-rules`    | `scripts/validate-rules.py` — `.claude/rules/` structure + path freshness |
-| `version-sync`      | `scripts/check-version-sync.py` — version equal across five manifests     |
+| `version-sync`      | `scripts/check-version-sync.py` — version equal across every manifest     |
 | `lock-check`        | `uv lock --check` — `uv.lock` not stale against `pyproject.toml`          |
 | `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
 | `index-check`       | regenerates `INDEX.md`, fails if it was stale (`git diff --exit-code`)    |

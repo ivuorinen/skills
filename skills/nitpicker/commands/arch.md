@@ -46,7 +46,7 @@ Load `docs/audit/arch-profile.md` if present — use its **Inferred Structural R
 1. Load `docs/audit/arch-profile.md` if present; detect inline if not.
 2. Re-validate open findings per `_conventions.md`.
 3. Audit the codebase against the structural rules and the violation catalogue.
-4. File findings via the store protocol in `_conventions.md`, using `--auditor arch` and `--category maintainability`. Fold the domain fields into the finding body: Problem names the concern (dependency-direction, ddd, hexagonal, cqrs, event-sourcing, explicit-architecture, general, …) and quotes the structural rule violated — from `arch-profile.md` when present; Evidence is the exact file path and the import/pattern that proves the violation; Impact states the boundary or invariant the violation erodes; Fix is the minimal concrete change — move file, invert dependency, extract interface.
+4. File findings via the store protocol in `_conventions.md`, under the `arch` auditor key with category `maintainability`. Fold the domain fields into the finding body: Problem names the concern (dependency-direction, ddd, hexagonal, cqrs, event-sourcing, explicit-architecture, general, …) and quotes the structural rule violated — from `arch-profile.md` when present; Evidence is the exact file path and the import/pattern that proves the violation; Impact states the boundary or invariant the violation erodes; Fix is the minimal concrete change — move file, invert dependency, extract interface.
 5. Present the summary and offer fixes per `_conventions.md`.
 
 ## Rules

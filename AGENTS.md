@@ -19,8 +19,12 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
   start with `#!/usr/bin/env -S uv run --quiet` and a `# /// script` block.
 - Audit findings: one file per open finding under `docs/audit/findings/`;
   resolved ones are appended to `docs/audit/findings/resolved.jsonl`. Managed
-  only through `skills/nitpicker/scripts/findings.py`
-  (new/resolve/list/show/validate/index/baseline/migrate/migrate-resolved).
+  through the `np_*` MCP (Model Context Protocol) tools where the session
+  exposes them, else `skills/nitpicker/scripts/findings.py`
+  (new/resolve/list/show/validate/index/baseline/migrate/migrate-resolved) —
+  the CLI is the only interface in Copilot, pi and CI, and the only one for
+  `baseline`, `migrate` and `migrate-resolved`, which no tool wraps.
+  `commands/_conventions.md` maps every operation to both.
   Never hand-edit `INDEX.md` or `resolved.jsonl`.
 - Command files live in `skills/nitpicker/commands/<command>.md`; each must
   have a row in one of the command tables of `skills/nitpicker/SKILL.md`

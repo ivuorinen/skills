@@ -315,28 +315,32 @@ def _deduplicate(findings: list[dict]) -> tuple[list[dict], int]:
     return unique, len(findings) - len(unique)
 
 
-def main() -> None:
-    # --help is how an agent learns this script's interface
-    # (https://agentskills.io/skill-creation/using-scripts).
-    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
-        print(__doc__)
-        return
+def process(paths: list[Path]) -> tuple[dict, list[str]]:
+    """Parse, deduplicate and group the SARIF files at `paths`; (report, errors).
 
-    if not sys.argv[1:]:
-        print("Usage: process-sarif.py <sarif-file> [<sarif-file>...]", file=sys.stderr)
-        sys.exit(2)
+    Split out of `main` so the `np_process_sarif` MCP tool and the CLI run one
+    implementation rather than two that drift apart. The report is returned, not
+    printed, and errors come back in-band as well as inside `meta.errors`: the
+    MCP caller never sees stderr, so a file that failed to parse would otherwise
+    reach it as a silently smaller finding set — indistinguishable from a clean
+    scan, which is the one reading a security report must never invite.
 
+    `SystemExit` is caught rather than allowed to propagate. `_parse_sarif`
+    reports to stderr and exits, and that is fine under a CLI; inside the MCP
+    server it would unwind through the request loop — `SystemExit` derives from
+    `BaseException`, so the dispatcher's `except Exception` does not stop it —
+    and take the whole server down over one malformed input file.
+    """
     all_findings: list[dict] = []
     sources: list[str] = []
-    had_error = False
+    errors: list[str] = []
 
-    for arg in sys.argv[1:]:
-        path = Path(arg)
+    for path in paths:
+        path = Path(path)
         if not path.exists():
             # Match the parse-error path below: record and continue so findings
             # already collected from valid files are not discarded by one bad arg.
-            print(f"[error] File not found: {path}", file=sys.stderr)
-            had_error = True
+            errors.append(f"File not found: {path}")
             continue
         # A single unparseable file must not discard findings already collected
         # from valid files; _parse_sarif reports to stderr then exits, so catch
@@ -346,7 +350,7 @@ def main() -> None:
             all_findings.extend(_parse_sarif(path))
             sources.append(path.name)
         except SystemExit:
-            had_error = True
+            errors.append(f"Unparseable SARIF, file skipped: {path}")
 
     unique, removed = _deduplicate(all_findings)
     unique.sort(key=lambda f: (_SEVERITY_RANK.get(f["severity"], 99), f["uri"], f["start_line"]))
@@ -357,27 +361,47 @@ def main() -> None:
         by_severity[f["severity"]].append(f)
         by_tool.setdefault(f["tool"], []).append(f)
 
-    print(
-        json.dumps(
-            {
-                "meta": {
-                    "source_files": sources,
-                    "total_raw": len(all_findings),
-                    "unique": len(unique),
-                    "duplicates_removed": removed,
-                    "severity_counts": {
-                        level: len(by_severity[level]) for level in _SEVERITY_ORDER
-                    },
-                },
-                "by_severity": by_severity,
-                "by_tool": by_tool,
-                "findings": unique,
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "meta": {
+            "source_files": sources,
+            "total_raw": len(all_findings),
+            "unique": len(unique),
+            "duplicates_removed": removed,
+            "severity_counts": {level: len(by_severity[level]) for level in _SEVERITY_ORDER},
+            "errors": errors,
+        },
+        "by_severity": by_severity,
+        "by_tool": by_tool,
+        "findings": unique,
+    }
+    return report, errors
 
-    if had_error:
+
+def main() -> None:
+    """CLI entry point: parse argv, print the report, exit per the outcome.
+
+    Thin by design — `process` holds the logic so the MCP tool runs the same
+    code. What lives only here is the CLI contract: usage on stderr with exit 2
+    for a missing argument, each skipped file on stderr, and exit 1 when any
+    input was skipped. That last one is the CLI's half of a signal the MCP tool
+    carries as `isError`; both exist so an incomplete scan cannot read as clean.
+    """
+    # --help is how an agent learns this script's interface
+    # (https://agentskills.io/skill-creation/using-scripts).
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(__doc__)
+        return
+
+    if not sys.argv[1:]:
+        print("Usage: process-sarif.py <sarif-file> [<sarif-file>...]", file=sys.stderr)
+        sys.exit(2)
+
+    report, errors = process([Path(a) for a in sys.argv[1:]])
+    for message in errors:
+        print(f"[error] {message}", file=sys.stderr)
+    print(json.dumps(report, indent=2))
+
+    if errors:
         sys.exit(1)
 
 

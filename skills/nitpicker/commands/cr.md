@@ -37,15 +37,20 @@ If none is available the fetch exits 1 naming what to set; stop and report that 
 
 Do not validate a GitHub token with `GET /user` — Actions and App installation tokens return 403 there even when valid; the Step 2 fetch surfaces any real auth failure.
 
-**3. Resolve the repository and PR number, then read the PR's status.** Run the bundled status tool — it resolves the repo from the git remote when you do not name one:
+**3. Resolve the repository and PR number, then read the PR's status.** Use `np_pr_status` with `pr_number` — it resolves the repo from the git remote when you do not pass `repo`, and takes an optional `platform` and `remote`:
+
+```json
+np_pr_status  {"pr_number": 123}
+np_pr_status  {"pr_number": 123, "repo": "<owner>/<repo>"}
+```
+
+Without the nitpicker MCP tools, the same providers run through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-status.py" <pr_number>
 python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-status.py" <pr-url>
 python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-status.py" <owner>/<repo> <pr_number>
 ```
-
-Non-Claude agents resolve the path relative to the nitpicker skill directory. When the nitpicker MCP tools are available, prefer `np_pr_status` over invoking the script.
 
 Read four things off the result before continuing, and stop if any of them says to:
 
@@ -62,7 +67,13 @@ If the PR number is not supplied, find it from the current branch (`gh pr view -
 
 ### Step 2 — Fetch all review comments
 
-Use the bundled fetcher. It accepts the same argument forms as the status tool and returns one JSON shape for all three platforms:
+Use `np_pr_comments`. It takes the same arguments as `np_pr_status` and returns one JSON shape for all three platforms:
+
+```json
+np_pr_comments  {"pr_number": 123}
+```
+
+Without the nitpicker MCP tools, the same providers run through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-comments.py" <pr_number>
@@ -70,7 +81,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-comments.py" <pr-url>
 python3 "${CLAUDE_SKILL_DIR}/scripts/fetch-pr-comments.py" <owner>/<repo> <pr_number>
 ```
 
-Non-Claude agents resolve the path relative to the nitpicker skill directory. When the nitpicker MCP tools are available, prefer `np_pr_comments` over invoking the script. It outputs a JSON **object** — never an array — whose three review sections are:
+Either way the result is a JSON **object** — never an array — whose three review sections are:
 
 - `threads` — the inline review threads (each with `thread_id`, `path`, `line`, `diff_hunk`, `is_resolved`, `url`, `comments`).
 - `review_bodies` — every non-empty PR **review body** (any author). A reviewer's outside-diff-range comments (CodeRabbit's `⚠️ Outside diff range comments` block) live here, **not** as inline threads. **GitHub only** — GitLab and Bitbucket have no review-body concept and always return this empty; a reviewer's prose there is an ordinary comment and arrives in `summary_comments`.

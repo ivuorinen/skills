@@ -426,6 +426,23 @@ class TestAdditionalCoverage:
             findings = _check_file(f, tmp_path)
         assert any(fi["code"] == "unreadable" for fi in findings)
 
+    def test_unresolvable_path_is_treated_as_escaping_the_root(self, tmp_path):
+        """A path that cannot be resolved cannot be vouched for, so it is refused.
+
+        Failing open here would make an unresolvable link the single easiest way
+        past the containment check — and an attacker plants the link, so it is
+        the case they control most directly.
+        """
+        f = tmp_path / "rule.md"
+        f.write_text("Never push to main.\n", encoding="utf-8")
+
+        with patch.object(Path, "resolve", side_effect=OSError("io error")):
+            findings = _check_file(f, tmp_path, tmp_path)
+
+        assert any(x["code"] == "symlink_escapes_root" for x in findings), (
+            "an unresolvable path must fail closed, not be scanned"
+        )
+
     def test_iter_rules_permission_error(self, tmp_path):
         """PermissionError in os.scandir is swallowed (lines 175-176)."""
         rules_dir = tmp_path / ".claude" / "rules"
@@ -434,6 +451,49 @@ class TestAdditionalCoverage:
             result = _iter_rules(rules_dir)
         assert result == []
 
+    def test_unreadable_rules_path_is_not_reported_as_a_missing_one(self, tmp_path):
+        """An unreadable `.claude/rules` must not report as a clean, absent one.
+
+        `Path.exists()` gives two different wrong answers across the versions
+        this repo supports (>=3.11), which is why the check cannot rest on it:
+        3.12 propagates PermissionError, so it escaped a CLI catching only
+        ValueError; 3.13+ swallows EACCES and returns False, so the same
+        directory took the missing-directory branch and came back clean at exit 0
+        with nothing scanned. `stat()` separates "not there" from "cannot look"
+        on every version, and only the first is a clean result.
+
+        Asserting on the ValueError rather than on `exists()` keeps this test
+        version-independent — the precondition is what differs, not the contract.
+        """
+        import os
+
+        if os.geteuid() == 0:
+            pytest.skip("root ignores permission bits, so EACCES cannot be provoked")
+
+        parent = tmp_path / ".claude"
+        parent.mkdir()
+        (parent / "rules").mkdir()
+        parent.chmod(0o000)
+        try:
+            with pytest.raises(ValueError, match="rules left unread"):
+                _mod.check(tmp_path, False)
+        finally:
+            parent.chmod(0o755)
+
+    def test_rules_path_that_is_a_regular_file_raises_valueerror(self, tmp_path):
+        """A `.claude/rules` that is a file passes `exists()` and reaches `os.scandir`.
+
+        `os.scandir` raises NotADirectoryError there. It is an OSError but not a
+        PermissionError, so a handler catching only the latter let it escape —
+        past a CLI that catches only ValueError, as an uncaught traceback, and
+        past the MCP tool's ValueError validation path.
+        """
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "rules").touch()
+
+        with pytest.raises(ValueError, match="rules left unread"):
+            _mod.check(tmp_path, True)
+
     def test_iter_rules_resolve_oserror(self, tmp_path):
         """OSError in rules_dir.resolve() returns [] (lines 158-159)."""
         rules_dir = tmp_path / ".claude" / "rules"
@@ -441,6 +501,23 @@ class TestAdditionalCoverage:
         with patch.object(Path, "resolve", side_effect=OSError("io error")):
             result = _iter_rules(rules_dir)
         assert result == []
+
+    def test_iter_rules_resolve_oserror_is_recorded_not_silently_empty(self, tmp_path):
+        """Returning [] without recording the failure reports a narrowed scan as clean.
+
+        `check` cannot tell an empty result from an unreadable one, so a
+        `resolve()` failure surfaced as "exists but is empty" — exit 0 with the
+        rules unread. The scandir path already recorded; this one did not.
+        """
+        rules_dir = tmp_path / ".claude" / "rules"
+        rules_dir.mkdir(parents=True)
+        errors: list = []
+        with patch.object(Path, "resolve", side_effect=OSError("io error")):
+            result = _iter_rules(rules_dir, errors=errors)
+
+        assert result == []
+        assert errors, "a resolve failure must be recorded, not swallowed"
+        assert errors[0][0] == rules_dir
 
     def test_iter_rules_seen_prevents_revisit(self, tmp_path):
         """'real in seen' guard prevents revisiting (line 161)."""

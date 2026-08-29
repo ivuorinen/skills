@@ -184,15 +184,24 @@ server (`nitpicker`) that exposes skill introspection (`np_list_skills`,
 `np_read_command`, `np_read_reference`, `np_list_commands` — filterable to one
 category of the command table), findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
-`np_validate_store`, `np_new_finding`, `np_resolve_finding`), and pull-request
-reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and Bitbucket Cloud in
-one shared JSON format). Every tool is
-prefixed `np_` and publishes MCP annotations, so a client can tell the eleven
-read-only tools from `np_new_finding`, which only adds, and
-`np_resolve_finding`, the one irreversible call — and the two PR tools, the only
-ones that reach the network, from the nine whose domain is the local filesystem.
+`np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
+scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`), and
+pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
+Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
+reachable this way, so a command runs its analysis without a shell; the
+`python3 scripts/…` form stays the documented fallback for Copilot, pi and CI,
+where no MCP server exists. Every tool is
+prefixed `np_` and publishes MCP annotations, so a client can tell the read-only
+tools from the ones that write — `np_new_finding` only adds, `np_write_index`
+rewrites a generated file, and `np_resolve_finding` is the one irreversible
+call — and the PR tools, the only ones that reach the network, from the rest,
+whose domain is the local filesystem.
 See the "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
 non-interactive mutate contract.
+
+`baseline`, `migrate` and `migrate-resolved` are deliberately **not** exposed as
+tools. Each waives or rewrites the store behind a consent gate, and the mutate
+tools run without an interactive prompt, so they stay CLI-only.
 
 ### PR fetchers
 

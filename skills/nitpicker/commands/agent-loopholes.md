@@ -66,8 +66,8 @@ Check every element against every applicable class. A loophole is filed only wit
 5. Read every skill body in full — including ones you recognize. Flag every
    hedged or optional step where intent is mandatory, and every mode/flag
    combination that lets a safety step be skipped.
-6. File findings via the store protocol in `_conventions.md`, using
-   `--auditor agent-loopholes`. Record the class and the concrete constructed bypass in
+6. File findings via the store protocol in `_conventions.md`, under the
+   `agent-loopholes` auditor key. Record the class and the concrete constructed bypass in
    Evidence. No finding without a constructed bypass.
 7. Present the summary with the run verdict, then follow the apply-fixes prompt
    from `_conventions.md`. For this command, `(s)afe` means: only skill-body
@@ -89,13 +89,13 @@ A finding for which closure cannot be demonstrated stays open — never resolved
 
 ## Bundled tool
 
-Run the rules-anatomy checker for a programmatic first pass on `.claude/rules/` files:
+Run the rules-anatomy checker for a programmatic first pass on `.claude/rules/` files: `np_check_rules_anatomy`, no arguments. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 ```
 
-Non-Claude agents resolve the path relative to the nitpicker skill directory. It already detects hedged language in `.claude/rules/` files, so for a rule file flag only the _enforcement consequence_ (the unenforced-rule loophole), not the wording; reserve the `rationalizable-step` class for skill bodies and hook/CI scripts.
+It already detects hedged language in `.claude/rules/` files, so for a rule file flag only the _enforcement consequence_ (the unenforced-rule loophole), not the wording; reserve the `rationalizable-step` class for skill bodies and hook/CI scripts.
 
 ## Severity guide
 

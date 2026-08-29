@@ -19,9 +19,9 @@ These enrich rule suggestions. Run the corresponding command before this one to 
 | Artifact | Prerequisite command | Purpose |
 | --- | --- | --- |
 | `docs/audit/arch-profile.md` | `/nitpicker arch-profile` | Architectural boundary rules |
-| Findings store, `--auditor arch` | `/nitpicker arch` | Violated conventions worth enforcing |
-| Findings store, `--auditor security` | `/nitpicker security` | Security mandates from high-severity findings |
-| Findings store, `--auditor audit` | `/nitpicker audit` | Code convention rules from repeated violations |
+| Findings store, `arch` auditor key | `/nitpicker arch` | Violated conventions worth enforcing |
+| Findings store, `security` auditor key | `/nitpicker security` | Security mandates from high-severity findings |
+| Findings store, `audit` auditor key | `/nitpicker audit` | Code convention rules from repeated violations |
 
 If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the highest-yield single source for new rule suggestions.
 
@@ -85,8 +85,8 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
    repeated code constructs → code generation rules. Report only the top 3
    most-repeated patterns per category; cap total Advisory suggestions from this
    step at 10.
-6. File findings via the store protocol in `_conventions.md`, using
-   `--auditor agent-rules`.
+6. File findings via the store protocol in `_conventions.md`, under the
+   `agent-rules` auditor key.
 7. Present the summary: validation errors, misplaced rules, redundant rules,
    suggestions. Then, instead of the generic apply-fixes prompt, ask per action:
    - Each MISPLACED rule: "Move to `.claude/rules/<filename>.md`? (y/n)"
@@ -102,11 +102,13 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
 
 ## Bundled tool
 
+`np_check_rules_anatomy` — no arguments; it reads the audited project's `.claude/rules/`. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
+
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 ```
 
-Non-Claude agents resolve the path relative to the nitpicker skill directory. Outputs JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. Use in step 2 for a programmatic report before filing findings.
+Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. The tool adds `blocking` — true when any finding is High or Critical, the CLI's exit-1 condition. Use in step 2 for a programmatic report before filing findings.
 
 ## Rule classification reference
 

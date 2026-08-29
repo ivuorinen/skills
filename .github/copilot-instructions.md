@@ -124,14 +124,14 @@ make test      # pytest suite for the tooling
 
 CI runs the same checks on every push/PR touching skills, scripts, tests, rules, or version files.
 
-## Versioning — Five Files Must Stay in Sync
+## Versioning — Every Manifest Must Stay in Sync
 
-The canonical version lives in `package.json`. All five must match: `package.json`,
+The canonical version lives in `package.json`. These must match it: `package.json`,
 `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`plugins[0].version`),
 `.release-please-manifest.json`, `pyproject.toml`. Use `scripts/bump-version.py [major|minor|patch]`
 for manual bumps — never edit version fields by hand in individual files.
 
-`uv.lock` holds a sixth copy in its root `[[package]]` entry that neither
+`uv.lock` holds one more copy in its root `[[package]]` entry that neither
 `check-version-sync.py` nor release-please updates. `make lock-check`
 (`uv lock --check`) gates it.
 
@@ -175,6 +175,6 @@ release-please derives releases from these prefixes; a wrong prefix mis-versions
 - **Do not** use `$ARGUMENTS` or other Claude-only substitution in skill bodies — parse the
   free text after the invocation instead.
 - **Do not** add frontmatter to command files, or omit it from the router SKILL.md.
-- **Do not** update the version in only one manifest — all five must move together.
+- **Do not** update the version in only one manifest — every manifest listed above moves together.
 - **Do not** read or modify anything under `.claude/agents/` — those are restricted.
 - **Do not** commit finding files silently — audits ask "Commit findings to git? (y/n)" first.

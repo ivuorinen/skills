@@ -12,7 +12,7 @@ enumerated skill/command set, never by building a path from raw input.
 
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -52,6 +52,28 @@ def _nitpicker_dir(root: Path) -> Path:
     return root / "skills" / "nitpicker"
 
 
+def _unknown(subject: str, name: str, valid: Iterable[str]) -> KeyError:
+    """A KeyError naming the rejected value *and* the full vocabulary that would work.
+
+    `mcp_server` renders an escaping exception as `f"{type(e).__name__}:
+    {_scrub(e)}"`, so a bare `KeyError(name)` reaches the agent as
+    `KeyError: 'loopholes'` — no vocabulary, no recovery. That matters because
+    `loopholes` is not a typo: SKILL.md's command tables declare the 1.x aliases
+    "legitimate invocations", and these readers resolve canonical names only. An
+    agent that reads an unrecoverable error treats the tool as dead and reads the
+    file off disk instead, which is the filesystem fallback these readers exist
+    to remove. Listing the valid set lets it recover to `agent-loopholes` in the
+    same turn, so the resolvers keep their narrow "the name the dispatcher
+    resolved" contract instead of widening to accept aliases.
+
+    Stays a KeyError rather than the ValueError `_filter_category` raises: the
+    type is the miss-in-a-lookup signal the callers and tests already pin, and
+    only the message was uninformative. The message shape matches
+    `_filter_category`'s so both read alike.
+    """
+    return KeyError(f"unknown {subject} {name!r}; known {subject}s: {', '.join(sorted(valid))}")
+
+
 def list_skills(root: Path | None = None) -> list[dict]:
     root = root or plugin_root()
     out: list[dict] = []
@@ -70,12 +92,26 @@ def list_skills(root: Path | None = None) -> list[dict]:
 
 
 def read_skill(name: str, root: Path | None = None) -> str:
+    """One bundled skill's SKILL.md by its frontmatter `name`; KeyError otherwise.
+
+    The name comes from frontmatter rather than the directory, because that is
+    what the spec makes authoritative and what `list_skills` reports — matching
+    on the directory would answer for a skill whose folder was renamed and miss
+    one whose `name` was.
+
+    Names are collected during the scan rather than in a second pass so the
+    KeyError can name the full vocabulary; the file is read once per candidate
+    either way.
+    """
     root = root or plugin_root()
+    known = []
     for path in _skill_files(root):
         fm, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
-        if fm.get("name", path.parent.name) == name:
+        found = fm.get("name", path.parent.name)
+        if found == name:
             return path.read_text(encoding="utf-8")
-    raise KeyError(name)
+        known.append(found)
+    raise _unknown("skill", name, known)
 
 
 def _outside_fences(body: str) -> Iterator[str]:
@@ -172,12 +208,20 @@ def read_command(command: str, root: Path | None = None) -> str:
     cmd_dir = _nitpicker_dir(root) / "commands"
     valid = {p.stem for p in cmd_dir.glob("*.md") if not p.name.startswith("_")}
     if command not in valid:
-        raise KeyError(command)
+        raise _unknown("command", command, valid)
     return (cmd_dir / f"{command}.md").read_text(encoding="utf-8")
 
 
 def read_reference(name: str, root: Path | None = None) -> str:
-    """Read a shared `_`-prefixed command file (`_conventions`, `_audit-coverage`).
+    """Read a shared `_`-prefixed command file: `_conventions`, `_audit-coverage`, `_teach-formats`.
+
+    The set is every `_*.md` in `commands/`, discovered per call — a new shared
+    file is readable the commit it lands. The three are named anyway because the
+    `np_read_reference` tool description is the only surface a model picks the
+    tool from, and it can only carry a literal; naming two of three there once
+    left `_teach-formats` reachable but invisible, so `teach` read it off disk.
+    `test_read_reference_description_names_every_shared_file` pins the two lists
+    together.
 
     Separate from `read_command` on purpose: that one's contract is "a public
     command by the name the dispatcher resolved", and the shared files are not
@@ -196,5 +240,8 @@ def read_reference(name: str, root: Path | None = None) -> str:
     refs = {p.stem: p for p in (_nitpicker_dir(root) / "commands").glob("_*.md")}
     key = name if name.startswith("_") else f"_{name}"
     if key not in refs:
-        raise KeyError(name)
+        # Underscore-stripped, because that is the spelling a caller passes
+        # (`name: "conventions"`) and echoing `_conventions` invites a retry
+        # with a leading underscore the argument does not need.
+        raise _unknown("reference", name, (k.lstrip("_") for k in refs))
     return refs[key].read_text(encoding="utf-8")
