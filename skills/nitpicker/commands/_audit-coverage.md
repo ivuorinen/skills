@@ -4,7 +4,12 @@ The default `audit` command (`commands/audit.md`) copies every task below
 into the agent's task list at run start, in the form the task-list rule in
 `_conventions.md` prescribes — which also covers the session that exposes no
 tracker at all. This list is the audit's coverage contract: `audit` is
-"exhaustive" only when every task has been addressed.
+**exhaustive** only when every task has been addressed *and none closed
+`out of scope`* (state 4 below). A run with any such closure is a **scoped
+audit**, reports as one, and names how many tasks it excluded. The word is
+reserved deliberately — otherwise a run that skipped most of the surface
+borrows it, and state 4's whole purpose is undone by the sentence describing
+what the states add up to.
 
 Each task names the quality lens and the specialist command
 (`commands/<command>.md`) that owns it. Together the tasks cover the full

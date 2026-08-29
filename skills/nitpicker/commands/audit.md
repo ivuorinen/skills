@@ -29,7 +29,7 @@ Analyze all of:
 ## Behavior
 
 ```text
-1. Re-validate open findings per `_conventions.md` (`--auditor audit`).
+1. Re-validate open findings per `_conventions.md` (the `audit` auditor key).
 2. Load `_audit-coverage.md` (`np_read_reference` with
    `name: "audit-coverage"`, else read the file) and copy every task in it into
    your task list, per the task-list rule in `_conventions.md` — which also
@@ -43,14 +43,23 @@ Analyze all of:
      `command: <command>`, else read `<command>.md`) — its findings land under
      its own auditor key. A focus deepens one lens and never narrows the
      checklist; every other coverage task still runs.
-   - A **scope** bounds the subject matter or the file set ("only the MCP
-     tools", "just the docs", `changed-files`). A scope narrows the checklist,
-     and that is legitimate — an audit the user scoped is the audit they asked
-     for. What is not legitimate is narrowing invisibly: every task the scope
-     excludes is closed **out of scope** (`_audit-coverage.md` state 4) naming
-     what the scope excluded, and each one appears in the run summary. The user
-     then sees what was not looked at, rather than reading a narrowed run as an
-     exhaustive one.
+   - A **scope** bounds what the run covers, along one of two axes. Name which:
+     - **Input** — the files each lens runs against (`changed-files`). Every
+       lens still applies, to a smaller input. No task is dropped and none
+       closes `out of scope`.
+     - **Checklist** — the subject matter itself ("only the MCP tools", "just
+       the docs"). Tasks outside it are dropped, each closed **out of scope**
+       (`_audit-coverage.md` state 4) naming what the scope excluded, and each
+       appears in the run summary. The user then sees what was not looked at,
+       rather than reading a narrowed run as an exhaustive one.
+
+     A checklist scope is legitimate — an audit the user scoped is the audit
+     they asked for — but it is theirs to grant, not yours to infer: **quote
+     the words that establish it**. An instruction you cannot quote is a focus.
+     And when the scope would drop more tasks than it keeps, say so and confirm
+     before starting: that is where the two readings diverge most, where the
+     cheaper one is always the tempting one, and where the whole cost of
+     guessing wrong lands on the user.
    When the instructions read as either, ask instead of guessing — the two
    produce very different runs, and the wrong pick is only visible afterwards.
 4. Work the task list in order. For each task: apply the lens (using its

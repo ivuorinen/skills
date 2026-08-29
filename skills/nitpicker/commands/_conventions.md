@@ -26,8 +26,8 @@ Severity reflects actual risk, never preference.
   begins — in Claude Code one `TaskCreate`/`TodoWrite` entry per step, the
   equivalent task tracker in other agents — and closes every step before
   reporting. **Where the session exposes no task tracker, print the numbered
-  steps with a one-line outcome each in the response instead, ahead of the run
-  summary.** A tracker is the preferred form, never the condition: naming a tool
+  steps with a one-line outcome each in the response instead, before
+  reporting.** A tracker is the preferred form, never the condition: naming a tool
   as the only way to satisfy a rule means the rule disappears in a session
   without that tool, silently and with nothing to notice — the same failure the
   preflight rule below exists to prevent, so it gets the same treatment. No step

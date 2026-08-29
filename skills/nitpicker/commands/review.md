@@ -41,7 +41,7 @@ Work through these categories in order. Skip a category only if the code under r
 
 ## Output
 
-File each bug via the store protocol in `_conventions.md`, using `--auditor review`. Map the bug into the finding fields: Problem = what's wrong (one or two sentences, no filler), Evidence = the concrete trigger scenario, Impact = what breaks and for whom, Fix = the minimal code change — don't rewrite the function. Name the checklist category in the finding body.
+File each bug via the store protocol in `_conventions.md`, under the `review` auditor key. Map the bug into the finding fields: Problem = what's wrong (one or two sentences, no filler), Evidence = the concrete trigger scenario, Impact = what breaks and for whom, Fix = the minimal code change — don't rewrite the function. Name the checklist category in the finding body.
 
 With the `inline` modifier (or for a quick conversational review), present the same per-bug structure in the response instead, ordered Critical first.
 
