@@ -1,9 +1,9 @@
 # Audit Coverage Checklist
 
 The default `audit` command (`commands/audit.md`) copies every task below
-into the agent's task list at run start — in Claude Code one
-`TaskCreate`/`TodoWrite` entry per task, the equivalent task tracker in
-other agents. This list is the audit's coverage contract: `audit` is
+into the agent's task list at run start, in the form the task-list rule in
+`_conventions.md` prescribes — which also covers the session that exposes no
+tracker at all. This list is the audit's coverage contract: `audit` is
 "exhaustive" only when every task has been addressed.
 
 Each task names the quality lens and the specialist command
@@ -26,6 +26,10 @@ review surface the skill offers.
   1. **findings filed** — one or more findings recorded for the lens;
   2. **clean** — lens applied, nothing found (record it in the run summary);
   3. **N/A** — the surface the lens needs is absent, with a one-line reason.
+  4. **out of scope** — the surface exists and the run was scoped away from it
+     (`audit.md` step 3), naming what the scope excluded. Distinct from N/A on
+     purpose: N/A says there was nothing to look at, this says there was and
+     the user chose not to. Reading them as one hides the second.
 - A task in none of those states is a silently skipped lens. Silence =
   approval: an unaddressed task is an accepted blind spot. Do not close the
   audit while any task is open, and list every task's outcome in the run

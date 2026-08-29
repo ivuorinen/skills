@@ -32,15 +32,27 @@ Analyze all of:
 1. Re-validate open findings per `_conventions.md` (`--auditor audit`).
 2. Load `_audit-coverage.md` (`np_read_reference` with
    `name: "audit-coverage"`, else read the file) and copy every task in it into
-   your task list (in Claude Code: one TaskCreate/TodoWrite entry per task; the
-   equivalent task tracker in other agents). This is mandatory — the task
-   list is the audit's coverage contract, and no task may be dropped.
-3. If the extra instructions name a focus matching a specialist command,
-   order that lens's task first and deep-run its command file
-   (`np_read_command` with `command: <command>`, else read `<command>.md`)
-   — its findings land under its own auditor key.
-   A named focus deepens one lens; it never narrows the checklist — every
-   other coverage task still runs.
+   your task list, per the task-list rule in `_conventions.md` — which also
+   gives the form to use when the session exposes no tracker. This is
+   mandatory: the list is the audit's coverage contract, and no task may be
+   dropped **silently**. Dropping one on request is step 3's business.
+3. Read the extra instructions as one of two things, and say which before
+   starting:
+   - A **focus** names a lens (a specialist command). Order that lens's task
+     first and deep-run its command file (`np_read_command` with
+     `command: <command>`, else read `<command>.md`) — its findings land under
+     its own auditor key. A focus deepens one lens and never narrows the
+     checklist; every other coverage task still runs.
+   - A **scope** bounds the subject matter or the file set ("only the MCP
+     tools", "just the docs", `changed-files`). A scope narrows the checklist,
+     and that is legitimate — an audit the user scoped is the audit they asked
+     for. What is not legitimate is narrowing invisibly: every task the scope
+     excludes is closed **out of scope** (`_audit-coverage.md` state 4) naming
+     what the scope excluded, and each one appears in the run summary. The user
+     then sees what was not looked at, rather than reading a narrowed run as an
+     exhaustive one.
+   When the instructions read as either, ask instead of guessing — the two
+   produce very different runs, and the wrong pick is only visible afterwards.
 4. Work the task list in order. For each task: apply the lens (using its
    specialist command as the authority; deep-run it via `np_read_command`,
    else `<command>.md`, when the lens is high-risk), and file findings as
