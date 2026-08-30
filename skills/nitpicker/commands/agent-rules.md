@@ -108,7 +108,15 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 ```
 
-Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks. The tool adds `blocking` — true when any finding is High or Critical, the CLI's exit-1 condition. Use in step 2 for a programmatic report before filing findings.
+Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks, symlinks escaping the project root, stale paths, unfilled placeholders, stale dates, duplicate lines, dead same-file anchors, and a directive buried mid-file. The tool adds `blocking` — true when any finding is High or Critical, the CLI's exit-1 condition. Use in step 2 for a programmatic report before filing findings.
+
+A second tool covers what no per-file check can see — the always-loaded **set**:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-agent-instructions.py" [<project_root>]
+```
+
+It reads `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md` and `.claude/rules/*.md` together and reports three defects that only exist across files or against a whole-set total: `instruction_budget` (the set's directives against the ~150 a session can carry once the harness takes its share), `position_risk` (a critical rule titled in the middle 20–80% of a root file, where it is skimmed past), and `cross_file_duplicate` (one directive stated in two files, so editing either leaves the other contradicting it). Only the budget limit blocks. Position risk on `.claude/rules/` belongs to `check-rules-anatomy.py`, which scores that file shape with a stricter rule — do not report it from both.
 
 ## Rule classification reference
 

@@ -171,7 +171,8 @@ flow.
 | `scripts/fetch-pr-comments.py` | `cr` — PR/MR review threads and out-of-thread notices |
 | `scripts/fetch-pr-status.py` | `cr` — PR/MR state, CI checks, review verdicts, changed files |
 | `scripts/process-sarif.py` | `security` |
-| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` |
+| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` — one rule file at a time |
+| `scripts/check-agent-instructions.py` | `agent-rules` — the always-loaded set as a whole (budget, position, cross-file duplication) |
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
 | `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |
