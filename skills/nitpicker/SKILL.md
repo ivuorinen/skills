@@ -137,7 +137,7 @@ categories is maintained anywhere else.
 | --- | --- |
 | `agent-loopholes` | Audit the agent enforcement surface (rules, hooks, settings) for bypasses (aliases: `loopholes`, `loophole-hunter`) |
 | `agent-hooks` | Audit hook coverage against the project's evidence base (aliases: `hooks`, `hooks-enforcer`) |
-| `agent-rules` | Audit `.claude/rules/` quality; suggest new rules from conventions (aliases: `rules`, `claude-rules-auditor`) |
+| `agent-rules` | Audit agent rule files — any harness — and suggest new rules from conventions (aliases: `rules`, `claude-rules-auditor`) |
 
 ### Meta
 
@@ -238,10 +238,13 @@ that root is refused, since scanner output is the one input named by the caller
 rather than drawn from an enumerated set. A missing or unparseable file is
 reported in `meta.errors` and the remaining files still process, because a
 silently smaller finding set reads exactly like a clean scan.
-`np_check_rules_anatomy` reads the **audited project's** `.claude/rules/` — the
-one place a tool here reaches outside the plugin's own files — and returns
-`blocking` alongside the findings. A project root with no `.claude/rules/` is an
-error, not a clean report.
+`np_check_rules_anatomy` reads the **audited project's** rule files — the one
+place a tool here reaches outside the plugin's own files — and returns `blocking`
+alongside the findings. It scans whichever rules directories the project keeps
+(`.claude/rules/`, `.cursor/rules/`, `.windsurf/rules/`, `.github/instructions/`,
+`.clinerules/`), since the harness a consumer runs is not ours to assume, and
+reports every one it found in `rules_dirs`. A project root with no rules
+directory at all is an error, not a clean report.
 
 PR tools wrap the two fetchers above, taking `pr_number` plus an optional
 `repo`, `platform` and `remote`; omitting `repo` reads it from the project's git

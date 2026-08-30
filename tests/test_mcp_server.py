@@ -280,7 +280,7 @@ def test_check_rules_anatomy_rules_dir_is_relative_to_the_project_root(tmp_path)
     mod = _load()
 
     data = json.loads(_unfence(_call(mod, "np_check_rules_anatomy", {}), "rule-files"))
-    assert data["rules_dir"] == ".claude/rules"
+    assert data["rules_dirs"] == [".claude/rules"]
     assert str(tmp_path) not in json.dumps(data), "resolved project root leaked into the report"
 
 

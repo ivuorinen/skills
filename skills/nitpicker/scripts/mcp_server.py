@@ -22,7 +22,7 @@ Roots by scope:
     are named by the caller rather than drawn from an enumerated set, because
     scanner output lands wherever the scanner was pointed — so `_confined`
     re-resolves every path under the allowed root before opening it.
-    `np_check_rules_anatomy` reads the audited project's `.claude/rules/`.
+    `np_check_rules_anatomy` reads the audited project's rule directories.
 
 Mutate tools (`new_finding`, `resolve_finding`, `write_index`) are intentionally NON-interactive:
 unlike the /nitpicker command flow they run without a consent prompt. The
@@ -44,7 +44,6 @@ stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.
 """
 
-import contextlib
 import json
 import os
 import re
@@ -588,7 +587,9 @@ def _process_sarif(args: dict) -> tuple[str, bool]:
 
 @tool(
     "np_check_rules_anatomy",
-    "Check the audited project's .claude/rules/ files for rule-file anatomy problems: "
+    "Check the audited project's rule files for anatomy problems — .claude/rules/, "
+    ".cursor/rules/, .windsurf/rules/, .github/instructions/ and .clinerules/, whichever "
+    "the project keeps: "
     "empty body, non-kebab-case filename, invalid path-scoped frontmatter, hedged "
     "language, dangling symlinks. Reports whether any finding is blocking (High/Critical).",
     {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
@@ -597,22 +598,25 @@ def _process_sarif(args: dict) -> tuple[str, bool]:
 def _check_rules_anatomy(args: dict) -> str:
     # `explicit=True` always: a project_root reaching this tool is a deliberate
     # choice (an argument, or the resolved allowed root), never the CLI's silent
-    # cwd fallback — so a missing .claude/rules/ is a misconfiguration to report,
-    # not a clean result to return.
+    # cwd fallback — so a project with no rules directory at all is a
+    # misconfiguration to report, not a clean result to return.
     root = _project_root(args)
-    # `contain=root` only here, never for the CLI: `.claude/rules` entries are
+    # `contain=root` only here, never for the CLI: rule directory entries are
     # commonly symlinks into a shared rules repo, which is legitimate when a
     # human ran the command against their own tree. This caller is confined to
     # the project root, and the scan reads every file it reaches, so a link out
     # of the tree would read past that boundary.
     report, blocking = rules_anatomy.check(root, explicit=True, contain=root)
     # Same disclosure rule as np_process_sarif's meta.errors, and the same miss:
-    # `rules_dir` is built from the resolved project root, so returning it as-is
+    # each entry is built from the resolved project root, so returning them as-is
     # hands the caller the server's filesystem layout and the account name in it.
-    # Relative to the root it is `.claude/rules` — the part the caller did not
-    # already know is exactly the part that must not travel.
-    with contextlib.suppress(ValueError):
-        report["rules_dir"] = Path(report["rules_dir"]).relative_to(root).as_posix()
+    # Relative to the root an entry is `.claude/rules` — the part the caller did
+    # not already know is exactly the part that must not travel.
+    # No fallback for a path outside the root: every entry is built as
+    # `project_root / <relative dir>` inside the call above, against this same
+    # root, so `relative_to` cannot fail. Catching it here would only hide a bug
+    # in that construction behind a leaked absolute path.
+    report["rules_dirs"] = [Path(d).relative_to(root).as_posix() for d in report["rules_dirs"]]
     return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
 
 

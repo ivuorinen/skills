@@ -1,16 +1,35 @@
 # /nitpicker agent-rules — Rules Auditor
 
-Audits the project's `.claude/rules/` configuration end-to-end: validates every rule file, classifies every rule in CLAUDE.md as correctly placed or misplaced, and generates concrete new-rule suggestions from audit artifacts and project conventions. Assume every rule file has defects until proven otherwise.
+Audits the project's agent rule configuration end-to-end: validates every rule file, classifies every rule in the root instruction file as correctly placed or misplaced, and generates concrete new-rule suggestions from audit artifacts and project conventions. Assume every rule file has defects until proven otherwise.
 
 ## When to use
 
-- `.claude/rules/` is absent and the project has a non-trivial CLAUDE.md
-- CLAUDE.md has grown large and may contain rules that belong in `.claude/rules/`
-- A `.claude/rules/` file is vague, covers too many topics, or duplicates another file
+- The project has a non-trivial root instruction file and no rules directory
+- The root instruction file has grown large and may hold rules belonging in a rules directory
+- A rule file is vague, covers too many topics, or duplicates another file
 - You want to discover implicit rules from architectural, security, or code-quality audits
-- Setting up or reviewing Claude Code configuration for a new or existing project
+- Setting up or reviewing coding-agent configuration for a new or existing project
 
 Not for enforcement bypasses — whether rules and hooks actually bind is `/nitpicker agent-loopholes`. Not for missing hook coverage — that is `/nitpicker agent-hooks`.
+
+## Harness scope
+
+The audited project's agent is not knowable in advance, so this command names
+surfaces by role and resolves each against whatever the project actually keeps.
+Detect by presence; a project serving several agents at once has all of them,
+and every one is in scope.
+
+| Role | Where it lives |
+| --- | --- |
+| **Root instruction file** — loaded every turn, read start to finish | `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.clinerules` (file form), `GEMINI.md`, `.rules`, `CONVENTIONS.md`, `.continuerules` |
+| **Rules directory** — one file per rule, loaded on demand or by path scope | `.claude/rules/`, `.cursor/rules/` (`.mdc`), `.windsurf/rules/`, `.github/instructions/`, `.clinerules/` (directory form) |
+
+`AGENTS.md` is the cross-agent convention: near enough every harness reads it,
+so it co-loads with all of the above rather than belonging to any one of them.
+
+Where a step below names a Claude Code path, read it as the example of its role,
+not the only file that fills it. The two genuinely Claude-only surfaces are
+marked as such where they appear: `claudeMdExcludes` and `.claude/settings.json`.
 
 ## Prerequisite artifacts
 
@@ -28,17 +47,20 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
 ## Process
 
 1. Discovery
-   - Find all CLAUDE.md files in the project (root + any subdirectory).
-   - If `.claude/rules/` does not exist or is empty, record this as a finding and continue.
+   - Find every root instruction file in the project (root + any subdirectory), per the Harness scope table.
+   - If no rules directory exists, or every one found is empty, record this as a finding and continue.
    - Collect every available artifact from the Prerequisite Artifacts table
      (`np_list_findings` with `auditor: <name>`, else
      `findings.py list --auditor <name>`, for store-backed artifacts).
-   - Read `.claude/settings.json`, `.claude/settings.local.json`, and
-     `~/.claude/settings.json` for `claudeMdExcludes` patterns. Any `.claude/rules/`
-     file whose absolute path matches an exclusion glob is flagged Advisory: "Rule
-     file exists but is excluded by claudeMdExcludes — never loaded."
-2. Validate existing `.claude/rules/` files. For each file:
-   - Filename must be kebab-case with `.md` extension.
+   - Claude Code only: read `.claude/settings.json`, `.claude/settings.local.json`
+     and `~/.claude/settings.json` for `claudeMdExcludes` patterns. Any rule file
+     whose absolute path matches an exclusion glob is flagged Advisory: "Rule
+     file exists but is excluded by claudeMdExcludes — never loaded." Skip this
+     where the project has no Claude Code configuration; a rules directory for
+     another harness has no equivalent exclusion mechanism.
+2. Validate every existing rule file. For each file:
+   - Filename must be kebab-case, with the extension its directory uses
+     (`.md` everywhere except `.cursor/rules/`, which uses `.mdc`).
    - Optional YAML frontmatter with a `paths:` field (array of glob strings) is
      valid and expected — such rules load only when a matching file is read, not
      in every session. Validate every `paths:` value is a valid glob string (not
@@ -102,7 +124,7 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
 
 ## Bundled tool
 
-`np_check_rules_anatomy` — no arguments; it reads the audited project's `.claude/rules/`. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
+`np_check_rules_anatomy` — no arguments; it reads whichever rules directories the audited project keeps, per the Harness scope table, and names them in `rules_dirs`. Without the nitpicker MCP tools, the same code runs through the bundled CLI (non-Claude agents resolve the path relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
@@ -116,7 +138,9 @@ A second tool covers what no per-file check can see — the always-loaded **set*
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-agent-instructions.py" [<project_root>]
 ```
 
-It reads `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md` and `.claude/rules/*.md` together and reports three defects that only exist across files or against a whole-set total: `instruction_budget` (the set's directives against the ~150 a session can carry once the harness takes its share), `position_risk` (a critical rule titled in the middle 20–80% of a root file, where it is skimmed past), and `cross_file_duplicate` (one directive stated in two files, so editing either leaves the other contradicting it). Only the budget limit blocks. Position risk on `.claude/rules/` belongs to `check-rules-anatomy.py`, which scores that file shape with a stricter rule — do not report it from both.
+It reads every instruction file the detected harnesses load — both roles in the Harness scope table — and reports three defects that only exist across files or against a whole-set total: `instruction_budget` (the set's directives against the ~150 a session can carry once the harness takes its share), `position_risk` (a critical rule titled in the middle 20–80% of a root file, where it is skimmed past), and `cross_file_duplicate` (one directive stated in two files). Only the budget limit blocks. It names the harnesses it detected in `harnesses`.
+
+A duplicate is graded by whether one session ever holds both copies: Medium within a harness, where the two are genuinely competing sources; Low across two, where the repetition is a deliberate mirror — `.github/copilot-instructions.md` exists precisely because Copilot does not read `CLAUDE.md` — and the hazard is that editing one leaves the other stale rather than contradicted. Position risk inside a rules directory belongs to `check-rules-anatomy.py`, which scores that file shape with a stricter rule — do not report it from both.
 
 ## Rule classification reference
 

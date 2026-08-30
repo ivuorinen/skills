@@ -326,12 +326,15 @@ class TestMain:
         assert "Usage:" in capsys.readouterr().out
 
     def test_explicit_path_without_rules_dir_exits_1(self, tmp_path, capsys, monkeypatch):
-        # The argument is a project root. A supplied path lacking .claude/rules/
-        # is a misconfiguration (e.g. passing `.claude/rules/` itself), not a
-        # clean repo — it must fail rather than report a silently green run.
+        # The argument is a project root. A supplied path with no rules directory
+        # for any harness is a misconfiguration (e.g. passing `.claude/rules/`
+        # itself), not a clean repo — it must fail rather than report a silently
+        # green run.
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
         assert code == 1
-        assert "not found" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "no rules directory" in err
+        assert ".cursor/rules" in err, "the error must name what was looked for"
 
     def test_no_arg_and_no_rules_dir_exits_0(self, tmp_path, capsys, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -345,7 +348,7 @@ class TestMain:
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
         assert code == 0
         data = __import__("json").loads(capsys.readouterr().out)
-        assert data["message"] == ".claude/rules/ exists but is empty"
+        assert data["message"].endswith("exists but is empty")
 
     def test_clean_rules_exits_0(self, tmp_path, capsys, monkeypatch):
         self._setup_rules(tmp_path, {"my-rule.md": "# Title\n\nNever use grep.\n"})
@@ -768,6 +771,78 @@ def test_paths_glob_that_the_stdlib_rejects_is_reported_not_crashed(tmp_path, mo
     assert not _has(findings, "stale_glob")  # the `continue` skipped the staleness check
 
 
+class TestHarnessCoverage:
+    """The tool audits somebody else's repo, so it may not assume their agent.
+
+    Hardcoded to `.claude/rules`, it answered ".claude/rules/ not found" for
+    every Cursor, Windsurf, Cline or Copilot project — taking /nitpicker
+    agent-rules out of service for them rather than auditing the rules they have.
+    """
+
+    _RULE = "# My Rule\n\nA rule body that says something concrete.\n"
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".claude/rules/a.md",
+            ".cursor/rules/a.mdc",
+            ".cursor/rules/a.md",
+            ".windsurf/rules/a.md",
+            ".github/instructions/py.instructions.md",
+            ".clinerules/a.md",
+        ],
+    )
+    def test_each_harness_rules_directory_is_scanned(self, tmp_path, rel):
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(self._RULE, encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 1
+        assert report["rules_dirs"] == [str(f.parent)]
+
+    def test_a_project_serving_two_agents_scans_both(self, tmp_path):
+        for rel in (".claude/rules/a.md", ".cursor/rules/b.mdc"):
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True)
+            f.write_text(self._RULE, encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 2
+        assert len(report["rules_dirs"]) == 2
+
+    def test_one_set_symlinked_for_two_agents_is_not_counted_twice(self, tmp_path):
+        """Serving Cursor from the same files as Claude Code is a real setup, and
+        double-reporting every rule would be the visible result of scanning each
+        directory with its own `seen` set."""
+        claude = tmp_path / ".claude" / "rules"
+        claude.mkdir(parents=True)
+        (claude / "a.md").write_text(self._RULE, encoding="utf-8")
+        (tmp_path / ".cursor").mkdir()
+        (tmp_path / ".cursor" / "rules").symlink_to(claude, target_is_directory=True)
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 1
+
+    def test_clinerules_as_a_file_is_the_other_tools_subject(self, tmp_path):
+        """Cline reads `.clinerules` as either a file or a directory. Scanning the
+        file form raises NotADirectoryError, which would fail the gate on a valid
+        Cline project; the always-loaded-set check owns that form instead."""
+        (tmp_path / ".clinerules").write_text(self._RULE, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="no rules directory"):
+            _mod.check(tmp_path, explicit=True)
+
+    def test_a_non_directory_at_a_non_ambiguous_path_still_fails(self, tmp_path):
+        """Only `.clinerules` is allowed to be a regular file. Skipping the others
+        would turn a real misconfiguration into a silently clean scan."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "rules").write_text("not a directory", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="cannot scan"):
+            _mod.check(tmp_path, explicit=True)
+
+
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
     (tmp_path / ".claude" / "rules").mkdir(parents=True)
@@ -775,4 +850,4 @@ def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0
-    assert '"rules_dir"' in capsys.readouterr().out
+    assert '"rules_dirs"' in capsys.readouterr().out

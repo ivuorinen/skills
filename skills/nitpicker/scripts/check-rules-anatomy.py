@@ -466,11 +466,33 @@ def _unscannable(rules_dir: Path, exc: OSError, errors: list[tuple[Path, str]] |
         errors.append((rules_dir, reason))
 
 
+# Rule *directories* by harness. This tool audits somebody else's repository and
+# which agent they run is not ours to assume: hardcoded to `.claude/rules`, it
+# answered ".claude/rules/ not found" for every Cursor, Windsurf, Cline or
+# Copilot project, taking `/nitpicker agent-rules` out of service for them
+# entirely rather than auditing the rules they do have.
+#
+# The single-file forms (`.cursorrules`, `CLAUDE.md`, `.clinerules` as a file)
+# belong to check-agent-instructions.py, which scores the always-loaded set.
+# This tool is the per-file authority for whichever directory a project keeps.
+_RULE_DIRS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+    (".claude/rules", (".md",), False),
+    (".cursor/rules", (".mdc", ".md"), False),
+    (".windsurf/rules", (".md",), False),
+    (".github/instructions", (".md",), False),
+    # Cline reads `.clinerules` as either a file or a directory. In its file form
+    # it is the other tool's subject, so it is skipped here — scanning it would
+    # raise NotADirectoryError and fail the gate on a valid Cline project.
+    (".clinerules", (".md",), True),
+)
+
+
 def _iter_rules(
     rules_dir: Path,
     seen: set[Path] | None = None,
     errors: list[tuple[Path, str]] | None = None,
     contain: Path | None = None,
+    suffixes: tuple[str, ...] = (".md",),
 ) -> list[Path]:
     """Rule files under `rules_dir`, following symlinks without looping forever.
 
@@ -513,12 +535,42 @@ def _iter_rules(
                 if entry.is_symlink() and not p.exists():
                     results.append(p)
                 elif entry.is_dir(follow_symlinks=True):
-                    results.extend(_iter_rules(p, seen, errors, contain))
-                elif entry.name.endswith(".md"):
+                    results.extend(_iter_rules(p, seen, errors, contain, suffixes))
+                elif entry.name.endswith(suffixes):
                     results.append(p)
     except OSError as e:
         _unscannable(rules_dir, e, errors)
     return sorted(results)
+
+
+def _present_rule_dirs(project_root: Path) -> list[tuple[Path, tuple[str, ...]]]:
+    """Every harness rules directory this project actually has, with its suffixes.
+
+    Raises ValueError for a directory that is there but cannot be looked at.
+    `Path.exists()` answers False in that case — it swallows EACCES along with
+    every other OSError — which sent an unreadable rules directory down the
+    missing-directory branch and out as a clean report at exit 0, with nothing
+    scanned. `stat()` separates "not there" from "cannot look", and only the
+    first of those is a clean result.
+    """
+    present: list[tuple[Path, tuple[str, ...]]] = []
+    for rel, suffixes, may_be_file in _RULE_DIRS:
+        d = project_root / rel
+        try:
+            d.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            raise ValueError(
+                f"cannot stat {d}: {e.strerror or type(e).__name__} — rules left unread"
+            ) from e
+        # Only the ambiguous entry is allowed to be a regular file. Everywhere
+        # else a non-directory is a real misconfiguration, and skipping it here
+        # would turn that into a silently clean scan.
+        if may_be_file and not d.is_dir():
+            continue
+        present.append((d, suffixes))
+    return present
 
 
 def check(
@@ -543,41 +595,37 @@ def check(
     rather than returning a partial report, because a silently narrowed scan
     reported as a result reads exactly like a clean one.
     """
-    rules_dir = project_root / ".claude" / "rules"
     empty_summary = {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0}
+    known = ", ".join(rel for rel, _, _ in _RULE_DIRS)
 
-    try:
-        rules_dir.stat()
-        present = True
-    except FileNotFoundError:
-        present = False
-    except OSError as e:
-        # `Path.exists()` answers False for a directory that IS there but cannot
-        # be looked at — it swallows EACCES along with every other OSError — so
-        # using it here sent an unreadable rules directory down the
-        # missing-directory branch and out as a clean report at exit 0, with
-        # nothing scanned. `stat()` separates "not there" from "cannot look",
-        # and only the first of those is a clean result.
-        raise ValueError(
-            f"cannot stat {rules_dir}: {e.strerror or type(e).__name__} — rules left unread"
-        ) from e
+    present = _present_rule_dirs(project_root)
 
     if not present:
         if explicit:
             # The argument is a PROJECT ROOT, not a rules dir. Pointing it at
             # `.claude/rules/` itself yields `.claude/rules/.claude/rules` and
             # used to exit 0 — a silently green gate.
-            raise ValueError(f"{rules_dir} not found — argument must be a project root")
+            raise ValueError(
+                f"no rules directory under {project_root} (looked for {known}) — "
+                f"argument must be a project root"
+            )
         return {
-            "rules_dir": str(rules_dir),
+            "rules_dirs": [],
             "exists": False,
-            "message": ".claude/rules/ not found",
+            "message": f"no rules directory found (looked for {known})",
             "files": [],
             "summary": empty_summary,
         }, False
 
     scan_errors: list[tuple[Path, str]] = []
-    rule_files = _iter_rules(rules_dir, errors=scan_errors, contain=contain)
+    # One `seen` set across every directory: a project that symlinks
+    # `.cursor/rules` at `.claude/rules` to serve two agents from one set would
+    # otherwise report each rule twice.
+    seen: set[Path] = set()
+    rule_files: list[Path] = []
+    for d, suffixes in present:
+        rule_files += _iter_rules(d, seen, scan_errors, contain, suffixes)
+    rule_files.sort()
 
     if scan_errors:
         # An unscannable rule directory means the gate ran on an incomplete set;
@@ -588,10 +636,11 @@ def check(
         raise ValueError(f"cannot scan {joined} — rules left unread")
 
     if not rule_files:
+        known_present = ", ".join(str(d) for d, _ in present)
         return {
-            "rules_dir": str(rules_dir),
+            "rules_dirs": [str(d) for d, _ in present],
             "exists": True,
-            "message": ".claude/rules/ exists but is empty",
+            "message": f"{known_present} exists but is empty",
             "files": [],
             "summary": empty_summary,
         }, False
@@ -613,7 +662,7 @@ def check(
     with_issues = sum(1 for r in report if r["findings"])
 
     return {
-        "rules_dir": str(rules_dir),
+        "rules_dirs": [str(d) for d, _ in present],
         "exists": True,
         "files": report,
         "summary": {

@@ -71,8 +71,8 @@ a direct `scripts/*.py` call only when nothing higher does. Highest first:
      a file that is missing or unparseable comes back in `meta.errors` with the
      rest still processed.
    - **Rule anatomy** — `np_check_rules_anatomy` instead of
-     `python3 scripts/check-rules-anatomy.py`. Reads the audited project's
-     `.claude/rules/` and returns `blocking` with the findings.
+     `python3 scripts/check-rules-anatomy.py`. Reads whichever rules directories
+     the audited project keeps and returns `blocking` with the findings.
    - **Pull requests** — `np_pr_status` / `np_pr_comments` instead of the two
      fetcher scripts.
 
