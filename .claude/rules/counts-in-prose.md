@@ -39,6 +39,14 @@ gets whatever was true the day it was typed.
 
 ## Enforcement
 
-Author discipline. No gate parses English number words, which is the reason
-this rule exists: three separate count drifts shipped in a single session, each
-one accurate when it was written.
+Author discipline for counts themselves. No gate parses English number words,
+which is the reason this rule exists: three separate count drifts shipped in a
+single session, each one accurate when it was written.
+
+The neighbouring drift *is* gated, and the split is worth knowing. A number is
+prose, so nothing checks it. A **reference** has a referent on disk, so
+`check-rules-anatomy.py` does check it, and fails or reports on four shapes of
+the same rot: `stale_path` for a cited file that is gone, `dead_anchor` for a
+link into a heading that was renamed, `stale_date` for a date left behind, and
+`placeholder` for a slot nobody filled. Write a reference rather than a count
+wherever both would say the same thing: only one of them can be checked.

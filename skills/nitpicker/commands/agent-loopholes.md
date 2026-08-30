@@ -97,6 +97,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 
 It already detects hedged language in `.claude/rules/` files, so for a rule file flag only the _enforcement consequence_ (the unenforced-rule loophole), not the wording; reserve the `rationalizable-step` class for skill bodies and hook/CI scripts.
 
+The same tool now reports four more shapes a bypass hides behind, so do not re-file any of them as findings — cite the code instead: `stale_path` and `dead_anchor` (a rule pointing at something gone, which is a rule nobody can follow), `placeholder` (a rule with a blank where its value belongs), and `buried_directive` (a rule whose own directive sits mid-file). Each is a rule that reads as enforced and is not, which is this command's subject rather than its noise.
+
 ## Severity guide
 
 | Severity | Condition |
