@@ -19,6 +19,7 @@ Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, or
 an explicitly supplied <project_root> that has no .claude/rules/ subdirectory.
 """
 
+import functools
 import json
 import os
 import re
@@ -26,6 +27,87 @@ import sys
 from pathlib import Path
 
 _KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# A backticked repo-relative path: it has a directory separator or a known
+# extension. Requiring the backticks is what keeps the false-positive rate
+# usable — prose names files constantly, but a *reference* is quoted here.
+_REPO_PATH_RE = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*(?:/[A-Za-z0-9_.-]+|\.[a-z]{2,5}))`")
+
+# A directive whose whole point is that it is not negotiable. Deliberately
+# narrow: `should`/`avoid` are the hedges the rule above already rejects, so a
+# rule file that follows this repo's own style states its core as one of these.
+_CRITICAL_RE = re.compile(r"\b(?:NEVER|Never|never|MUST|must not|Do not|DO NOT|Always|always)\b")
+
+# The middle band, from the "lost in the middle" effect: an instruction at the
+# top or bottom of a file survives; one buried between them is the one an agent
+# skims past. Short files are exempt — in a 20-line rule every line is at some
+# percentage, and the depth means nothing until there is enough file to get lost in.
+_POSITION_BAND = (0.20, 0.80)
+_POSITION_MIN_LINES = 40
+
+# A section opener: a markdown heading, or a bolded lead-in that titles a bullet
+# (`- **Never prompts.** …`). Both announce a rule; a sentence in a paragraph
+# does not, and matching sentences is what made the first cut of this check
+# score ordinary prose in a repo whose style guide mandates that prose.
+_SECTION_OPENER_RE = re.compile(r"(#{1,6}\s|(?:[-*+]\s+)?\*\*)")
+
+
+_NOT_A_PATH_SUFFIX = re.compile(r"\.(?:ai|com|io|org|net|dev|sh|md5)$")
+
+
+def _looks_illustrative(ref: str) -> bool:
+    """True when a backticked token is not a claim that this repo holds that file.
+
+    Three things wear the shape of a repo path and are not one, all three seen in
+    this repo's own rules on the first run of this check:
+
+    - a domain (`claude.ai`) — `.ai` reads as an extension;
+    - a GitHub slug (`PyCQA/bandit`) — two segments, no extension;
+    - a deliberate example (`src/auth.py`, a glob, a `<placeholder>`), because a
+      rule file teaches by showing and names paths that are meant not to exist.
+
+    Each false positive costs more than the miss it prevents: this backs a
+    commit-time gate, and a check that cries wolf gets switched off rather than
+    heeded.
+    """
+    if any(c in ref for c in "*<>{}$"):  # glob or placeholder
+        return True
+    if ref.startswith(("/", "~", "http")):  # absolute, or a URL fragment
+        return True
+    if _NOT_A_PATH_SUFFIX.search(ref):  # a domain, not a file
+        return True
+    parts = ref.split("/")
+    if len(parts) == 2 and "." not in parts[1]:  # org/repo slug
+        return True
+    return parts[0] in {"src", "path", "example", "foo", "bar", "tmp", "a", "b"}
+
+
+@functools.lru_cache(maxsize=8)
+def _tracked(root: Path) -> tuple[frozenset[str], frozenset[str]]:
+    """(relative paths, basenames) under `root`, for resolving a reference.
+
+    A rule cites a file by whatever spelling reads clearly at that point — the
+    repo-relative path, or just `findings.py` when the surrounding sentence
+    already says where it lives. Both are correct prose and neither is stale, so
+    resolution accepts either. Cached because every rule file asks the same
+    question of the same tree.
+
+    Walks the filesystem rather than shelling to `git ls-files`: this is a
+    stdlib-only shipped tool, and it must answer the same way in a consumer
+    checkout that has no git.
+    """
+    rel: set[str] = set()
+    base: set[str] = set()
+    skip = {".git", "node_modules", ".venv", "__pycache__", "graphify-out", ".pytest_cache"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        for name in filenames:
+            full = Path(dirpath, name)
+            rel.add(full.relative_to(root).as_posix())
+            base.add(name)
+    return frozenset(rel), frozenset(base)
+
+
 _HEDGED_RE = re.compile(
     r"\b(try to|prefer|consider|generally|when possible|might|may want to|should consider)\b",
     re.IGNORECASE,
@@ -185,6 +267,8 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
         return findings
 
     fm_line_count = len(text.splitlines()) - len(body.splitlines())
+    body_total = len(body.splitlines())
+    buried: list[tuple[int, int, str]] = []
     # Match fences by their full opening run (``` closed only by a run of ``` at
     # least as long, ~~~ likewise) — a four-backtick opener is not closed by a
     # three-backtick line. A naive toggle left an unclosed fence "open" for the
@@ -202,6 +286,21 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
         if opener:
             fence = opener.group(1)
             continue
+        # Position risk is judged on *section openers* only — a heading or a
+        # bolded lead-in — never on every line. This repo's style guide requires
+        # rules be unconditional, so "never" and "always" saturate ordinary
+        # prose; scoring each occurrence inverts the signal and flags hardest the
+        # files that follow the guide best. What the effect actually describes is
+        # a titled rule an agent skims past, and a title is what this matches.
+        depth = body_lineno / body_total
+        if (
+            body_total >= _POSITION_MIN_LINES
+            and _POSITION_BAND[0] <= depth <= _POSITION_BAND[1]
+            and _SECTION_OPENER_RE.match(stripped)
+            and _CRITICAL_RE.search(stripped)
+        ):
+            buried.append((lineno, round(depth * 100), stripped[:70]))
+
         if not stripped or stripped.startswith("#"):
             continue
         m = _HEDGED_RE.search(line)
@@ -215,6 +314,32 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
                 "hedged_language",
                 f"Line {lineno}: hedged '{m.group()}' — rules must be unconditional: \"{snippet}\"",
             )
+
+        for ref in _REPO_PATH_RE.findall(line):
+            if _looks_illustrative(ref):
+                continue
+            rel, base = _tracked(project_root)
+            if ref in rel or ref.split("/")[-1] in base or (project_root / ref).exists():
+                continue
+            issue(
+                # Low, like `stale_glob` above and for the same reason: a rule may
+                # legitimately name a path this repo does not have, so a blocking
+                # verdict would fail commits on a judgement call. It reports.
+                "Low",
+                "stale_path",
+                f"Line {lineno}: '{ref}' does not exist under the project root",
+            )
+
+    if buried:
+        where = "; ".join(f'line {ln} ({pct}%): "{txt}"' for ln, pct, txt in buried[:3])
+        more = f" (+{len(buried) - 3} more)" if len(buried) > 3 else ""
+        issue(
+            "Low",
+            "buried_directive",
+            f"{len(buried)} unconditional directive(s) in the middle of a "
+            f"{body_total}-line rule — {where}{more}. A rule file long enough to "
+            "bury its own directive is a rule file to split.",
+        )
 
     if fence:
         issue(

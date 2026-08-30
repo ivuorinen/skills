@@ -443,6 +443,89 @@ class TestAdditionalCoverage:
             "an unresolvable path must fail closed, not be scanned"
         )
 
+    def test_looks_illustrative_covers_each_non_path_shape(self):
+        """Three things wear the shape of a repo path and are not one.
+
+        All three were false positives on this check's first run against this
+        repo's own rules, which is why each has a branch rather than a comment.
+        """
+        assert _mod._looks_illustrative("claude.ai"), "a domain is not a file"
+        assert _mod._looks_illustrative("PyCQA/bandit"), "an org/repo slug is not a path"
+        assert _mod._looks_illustrative("src/auth.py"), "a documented example is not a claim"
+        assert _mod._looks_illustrative("skills/**/*.md"), "a glob is not a path"
+        assert _mod._looks_illustrative("<placeholder>/x.py")
+        assert _mod._looks_illustrative("/etc/passwd"), "absolute paths are out of scope"
+        assert not _mod._looks_illustrative("skills/nitpicker/scripts/findings.py")
+
+    def test_tracked_indexes_relative_paths_and_basenames(self, tmp_path):
+        """A rule cites a file by whichever spelling reads clearly, so both resolve.
+
+        `findings.py` and `skills/nitpicker/scripts/findings.py` are both correct
+        prose for the same file; neither is stale.
+        """
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "thing.py").write_text("x\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        rel, base = _mod._tracked(tmp_path)
+
+        assert "pkg/thing.py" in rel
+        assert "thing.py" in base
+
+    def test_stale_path_flags_only_what_is_actually_absent(self, tmp_path):
+        """The check earns its place only if it separates a real miss from a real hit."""
+        (tmp_path / "real.py").write_text("x\n", encoding="utf-8")
+        f = tmp_path / "r.md"
+        f.write_text(
+            "# R\n\nNever skip it. See `real.py` and also `gone/missing.py`.\n"
+            "The example `src/auth.py` is illustrative and must not be flagged.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        findings = _check_file(f, tmp_path)
+
+        stale = [x for x in findings if x["code"] == "stale_path"]
+        assert len(stale) == 1, f"expected exactly the absent path, got {stale}"
+        assert "src/auth.py" not in str(stale), "a documented example is not a stale path"
+        assert "gone/missing.py" in stale[0]["detail"]
+        assert stale[0]["severity"] == "Low", "must not block a commit on a judgement call"
+
+    def test_buried_directive_scores_section_openers_not_prose(self, tmp_path):
+        """Scoring every sentence inverts the signal in a repo that mandates 'never'.
+
+        `skill-style.md` requires unconditional phrasing, so the word saturates
+        ordinary prose; the first cut of this check flagged hardest the files
+        that followed the style guide best. Only a heading or a bolded lead-in
+        titles a rule, so only those are scored.
+        """
+        filler = ["Ordinary prose that says never in passing."] * 25
+        buried = ["# R", "", *filler, "", "## Never touch the ledger", "", *filler]
+        f = tmp_path / "long.md"
+        f.write_text("\n".join(buried) + "\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+
+        hits = [x for x in _check_file(f, tmp_path) if x["code"] == "buried_directive"]
+        assert len(hits) == 1, "the heading is the finding; the prose lines are not"
+        assert "Never touch the ledger" in hits[0]["detail"]
+        assert hits[0]["severity"] == "Low"
+
+    def test_buried_directive_ignores_short_files_and_the_edges(self, tmp_path):
+        """Depth is meaningless until there is enough file to get lost in.
+
+        In a 10-line rule every line sits at some percentage, and a directive at
+        the top or bottom is the one an agent does read.
+        """
+        short = tmp_path / "short.md"
+        short.write_text("# R\n\n## Never do it\n\nBody.\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        assert not [x for x in _check_file(short, tmp_path) if x["code"] == "buried_directive"]
+
+        filler = ["Filler."] * 45
+        edge = tmp_path / "edge.md"
+        edge.write_text("\n".join(["## Never do it", "", *filler]) + "\n", encoding="utf-8")
+        assert not [x for x in _check_file(edge, tmp_path) if x["code"] == "buried_directive"], (
+            "a directive at the very top is not buried"
+        )
+
     def test_iter_rules_permission_error(self, tmp_path):
         """PermissionError in os.scandir is swallowed (lines 175-176)."""
         rules_dir = tmp_path / ".claude" / "rules"
