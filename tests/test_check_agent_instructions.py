@@ -79,11 +79,118 @@ class TestLoadedFiles:
     def test_finds_root_files_and_rules_without_duplicates(self, tmp_path):
         _workspace(tmp_path, claude="# C\n", agents="# A\n", rules={"a.md": "# R\n"})
         names = [p.name for p in _mod.loaded_files(tmp_path)]
-        assert names == ["CLAUDE.md", "AGENTS.md", "a.md"]
+        assert sorted(names) == ["AGENTS.md", "CLAUDE.md", "a.md"]
 
     def test_absent_files_are_skipped(self, tmp_path):
         _workspace(tmp_path, claude="# C\n")
         assert [p.name for p in _mod.loaded_files(tmp_path)] == ["CLAUDE.md"]
+
+    def test_one_file_matched_by_two_patterns_is_counted_once(self, tmp_path, monkeypatch):
+        """No shipped pattern pair overlaps today, so this pins the contract
+        rather than a current behaviour: the next entry added to _HARNESSES must
+        not be able to double a file's instructions into the shared budget.
+        """
+        monkeypatch.setattr(_mod, "_HARNESSES", {"A": ("R.md", "*.md"), "B": ("R.md",)})
+        (tmp_path / "R.md").write_text("# R\n\n- Never do the bad thing.\n", encoding="utf-8")
+
+        assert [p.name for p in _mod.loaded_files(tmp_path)] == ["R.md"]
+        assert _mod.check(tmp_path)[0]["total_instructions"] == 1
+
+
+class TestHarnessCoverage:
+    """This tool audits somebody else's repo, so it may not assume their agent.
+
+    A file set hardcoded to Claude Code answered "not an agent workspace" for
+    every one of the harnesses below — telling a user their agent config was not
+    agent config, which is the one answer that is never useful.
+    """
+
+    @pytest.mark.parametrize(
+        ("harness", "rel"),
+        [
+            ("Claude Code", "CLAUDE.md"),
+            ("Claude Code", ".claude/rules/a.md"),
+            ("Cursor", ".cursorrules"),
+            ("Cursor", ".cursor/rules/main.mdc"),
+            ("GitHub Copilot", ".github/copilot-instructions.md"),
+            ("GitHub Copilot", ".github/instructions/py.instructions.md"),
+            ("Gemini CLI", "GEMINI.md"),
+            ("Windsurf", ".windsurfrules"),
+            ("Cline", ".clinerules"),
+            ("Zed", ".rules"),
+            ("Aider", "CONVENTIONS.md"),
+            ("Continue", ".continuerules"),
+            ("cross-agent", "AGENTS.md"),
+        ],
+    )
+    def test_each_harness_is_audited_from_its_own_file(self, tmp_path, harness, rel):
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# R\n\n- Never do the bad thing.\n", encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path)
+        assert report["harnesses"] == [harness]
+        assert report["total_instructions"] == 1
+
+    def test_a_repo_serving_several_agents_counts_one_shared_budget(self, tmp_path):
+        """Files for different agents still compete for one window, so the
+        budget is the union rather than a per-harness tally."""
+        for rel in ("CLAUDE.md", "AGENTS.md", ".cursorrules"):
+            (tmp_path / rel).write_text("# R\n\n- Never do the bad thing.\n", encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path)
+        assert report["harnesses"] == ["Claude Code", "Cursor", "cross-agent"]
+        assert report["total_instructions"] == 3
+
+    def test_a_directory_named_like_an_instruction_file_is_not_one(self, tmp_path):
+        """`.rules/` as a directory is not Zed's `.rules` file. Globbing without
+        the is_file() test would hand a directory to read_text()."""
+        (tmp_path / ".rules").mkdir()
+        (tmp_path / "CLAUDE.md").write_text("# C\n", encoding="utf-8")
+
+        assert _mod.check(tmp_path)[0]["harnesses"] == ["Claude Code"]
+
+
+class TestDuplicateGrading:
+    """A duplicate is graded by whether one session ever holds both copies."""
+
+    def test_two_files_of_one_harness_contradict_each_other(self, tmp_path):
+        line = "- Never commit a credential to this repository, ever.\n"
+        _workspace(tmp_path, claude="# C\n\n" + line, rules={"a.md": "# R\n\n" + line})
+
+        f = next(
+            x for x in _mod.check(tmp_path)[0]["findings"] if x["code"] == "cross_file_duplicate"
+        )
+        assert f["severity"] == "Medium"
+        assert "single session" in f["detail"]
+
+    def test_a_mirror_for_another_agent_is_drift_not_contradiction(self, tmp_path):
+        """.github/copilot-instructions.md exists *because* Copilot does not read
+        CLAUDE.md. Calling that one window holding two competing rules states
+        something false about a duplication that is deliberate."""
+        line = "- Never commit a credential to this repository, ever.\n"
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n" + line, encoding="utf-8")
+        copilot = tmp_path / ".github" / "copilot-instructions.md"
+        copilot.parent.mkdir(parents=True)
+        copilot.write_text("# C\n\n" + line, encoding="utf-8")
+
+        f = next(
+            x for x in _mod.check(tmp_path)[0]["findings"] if x["code"] == "cross_file_duplicate"
+        )
+        assert f["severity"] == "Low"
+        assert "no session holds both" in f["detail"]
+
+    def test_agents_md_co_loads_with_every_harness(self, tmp_path):
+        """The exception in the other direction: near enough every agent reads
+        AGENTS.md, so a duplicate against it is a real same-session conflict."""
+        line = "- Never commit a credential to this repository, ever.\n"
+        (tmp_path / "AGENTS.md").write_text("# A\n\n" + line, encoding="utf-8")
+        (tmp_path / ".cursorrules").write_text("# C\n\n" + line, encoding="utf-8")
+
+        f = next(
+            x for x in _mod.check(tmp_path)[0]["findings"] if x["code"] == "cross_file_duplicate"
+        )
+        assert f["severity"] == "Medium"
 
 
 class TestBudget:
@@ -205,7 +312,7 @@ class TestCli:
         with pytest.raises(SystemExit) as exc:
             _mod.main()
         assert exc.value.code == 1
-        assert "not an agent workspace" in capsys.readouterr().err
+        assert "no agent instruction file for any known harness" in capsys.readouterr().err
 
     def test_unreadable_file_exits_one_rather_than_tracebacking(
         self, tmp_path, capsys, monkeypatch
