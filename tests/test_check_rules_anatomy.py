@@ -1,5 +1,6 @@
 """Tests for skills/nitpicker/scripts/check-rules-anatomy.py."""
 
+import datetime
 import importlib.util
 import runpy
 import sys
@@ -525,6 +526,71 @@ class TestAdditionalCoverage:
         assert not [x for x in _check_file(edge, tmp_path) if x["code"] == "buried_directive"], (
             "a directive at the very top is not buried"
         )
+
+    def test_placeholder_and_stale_date_and_duplicate_and_dead_anchor(self, tmp_path):
+        """The four checks borrowed from agentlinter's catalogue, each on one probe.
+
+        Together they cover the drift a rule file accumulates without anyone
+        editing it: a slot nobody filled, a date nobody revisited, a sentence
+        pasted twice that now has two truths, and a link into a heading that was
+        renamed. All four are deterministic, which is why they are gates rather
+        than audit prompts.
+        """
+        f = tmp_path / "probe.md"
+        f.write_text(
+            "# P\n\n## Real Section\n\n"
+            "Never link to [Real Section](#real-section).\n"
+            "Never link to [Ghost](#no-such-heading).\n"
+            "Set the value to YYYY-MM-DD before shipping.\n"
+            "Decided on 2024-01-15 and never revisited since.\n"
+            "This exact sentence is long enough to count as a duplicate line.\n"
+            "This exact sentence is long enough to count as a duplicate line.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        by_code = {x["code"]: x for x in _check_file(f, tmp_path)}
+
+        assert "placeholder" in by_code and "YYYY-MM-DD" in by_code["placeholder"]["detail"]
+        assert "stale_date" in by_code and "2024-01-15" in by_code["stale_date"]["detail"]
+        assert "duplicate_line" in by_code
+        assert "dead_anchor" in by_code
+        assert "no-such-heading" in by_code["dead_anchor"]["detail"]
+        assert "real-section" not in by_code["dead_anchor"]["detail"], (
+            "a link to a heading that exists must not be reported"
+        )
+
+    def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
+        """The negative half: these checks must stay quiet on a healthy file.
+
+        A gate that fires on ordinary content gets switched off, so the absence
+        of a finding is as much the contract as its presence.
+        """
+        recent = datetime.date.today() - datetime.timedelta(days=10)
+        f = tmp_path / "ok.md"
+        f.write_text(
+            f"# P\n\n## Section\n\nNever do it. Reviewed {recent.isoformat()}.\n"
+            "One distinct sentence that is comfortably over the length threshold.\n"
+            "Another distinct sentence that is also over the length threshold.\n"
+            "See [Section](#section) for the reasoning behind this rule.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        codes = {x["code"] for x in _check_file(f, tmp_path)}
+
+        assert not codes & {"placeholder", "stale_date", "duplicate_line", "dead_anchor"}, (
+            f"healthy file produced {codes}"
+        )
+
+    def test_malformed_date_is_left_to_a_human(self, tmp_path):
+        """`2026-13-45` parses as an ISO date by shape and not by calendar.
+
+        Reporting it as stale would be wrong (it has no age) and crashing on it
+        would take out the gate, so it is passed over deliberately.
+        """
+        f = tmp_path / "bad-date.md"
+        f.write_text("# P\n\nNever ship. Dated 2026-13-45 in the header.\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        assert not [x for x in _check_file(f, tmp_path) if x["code"] == "stale_date"]
 
     def test_iter_rules_permission_error(self, tmp_path):
         """PermissionError in os.scandir is swallowed (lines 175-176)."""

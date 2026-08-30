@@ -19,6 +19,7 @@ Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, or
 an explicitly supplied <project_root> that has no .claude/rules/ subdirectory.
 """
 
+import datetime
 import functools
 import json
 import os
@@ -53,6 +54,32 @@ _SECTION_OPENER_RE = re.compile(r"(#{1,6}\s|(?:[-*+]\s+)?\*\*)")
 
 
 _NOT_A_PATH_SUFFIX = re.compile(r"\.(?:ai|com|io|org|net|dev|sh|md5)$")
+
+# An unfilled slot. `YYYY-MM-DD` and friends are what a template leaves behind
+# when it is copied and not completed, and a rule carrying one states a
+# requirement nobody can satisfy.
+_PLACEHOLDER_RE = re.compile(r"(YYYY-MM-DD|XXXX?|\bTBD\b|\bTODO\b|\bFIXME\b|\{\{[^}]*\}\})")
+
+# An ISO date in prose. Rules describe standing policy, so a date in one is
+# either a decision record or a deadline; both rot.
+_ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+_STALE_DATE_DAYS = 180
+
+# A same-file section link. Cross-file links are `stale_path`'s job.
+_ANCHOR_LINK_RE = re.compile(r"\]\(#([a-z0-9][a-z0-9-]*)\)")
+
+
+def _slug(heading: str) -> str:
+    """GitHub's heading-to-anchor slug, close enough for a same-file link.
+
+    Lowercase, punctuation dropped, spaces to hyphens. Matching GitHub exactly
+    would need its full algorithm; this covers the shapes a rule file uses and
+    errs toward *not* reporting — an anchor this misses is a missed finding,
+    while one it invents is a false alarm on a commit-time gate.
+    """
+    text = re.sub(r"`[^`]*`", "", heading.lstrip("#").strip())
+    text = re.sub(r"[^\w\s-]", "", text).strip().lower()
+    return re.sub(r"[\s_]+", "-", text)
 
 
 def _looks_illustrative(ref: str) -> bool:
@@ -269,6 +296,10 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
     fm_line_count = len(text.splitlines()) - len(body.splitlines())
     body_total = len(body.splitlines())
     buried: list[tuple[int, int, str]] = []
+    headings: set[str] = set()
+    anchors: list[tuple[int, str]] = []
+    seen_lines: dict[str, int] = {}
+    dupes: list[tuple[int, int, str]] = []
     # Match fences by their full opening run (``` closed only by a run of ``` at
     # least as long, ~~~ likewise) — a four-backtick opener is not closed by a
     # three-backtick line. A naive toggle left an unclosed fence "open" for the
@@ -301,8 +332,51 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
         ):
             buried.append((lineno, round(depth * 100), stripped[:70]))
 
-        if not stripped or stripped.startswith("#"):
+        if stripped.startswith("#"):
+            headings.add(_slug(stripped))
             continue
+        if not stripped:
+            continue
+
+        for anchor in _ANCHOR_LINK_RE.findall(line):
+            anchors.append((lineno, anchor))
+
+        p = _PLACEHOLDER_RE.search(line)
+        if p:
+            issue(
+                # Medium: a rule with an unfilled slot states a requirement
+                # nobody can satisfy, but the slot may be deliberate prose about
+                # placeholders — which is why it reports rather than blocks.
+                "Medium",
+                "placeholder",
+                f"Line {lineno}: unfilled placeholder '{p.group(1)}' — "
+                f"a rule with a blank in it cannot be followed",
+            )
+
+        d = _ISO_DATE_RE.search(line)
+        if d:
+            try:
+                when = datetime.date(int(d.group(1)), int(d.group(2)), int(d.group(3)))
+                age = (datetime.date.today() - when).days
+            except ValueError:
+                age = 0  # 2026-13-45 is not a date; leave it to a human
+            if age > _STALE_DATE_DAYS:
+                issue(
+                    "Low",
+                    "stale_date",
+                    f"Line {lineno}: date {d.group(0)} is {age} days old — a standing "
+                    f"rule that cites a date is either a decision record or a deadline",
+                )
+
+        # Exact repeats only. Near-duplicate detection needs similarity scoring,
+        # which is a judgement call this gate deliberately does not make.
+        if len(stripped) >= 30:
+            first = seen_lines.get(stripped)
+            if first is None:
+                seen_lines[stripped] = lineno
+            else:
+                dupes.append((first, lineno, stripped[:60]))
+
         m = _HEDGED_RE.search(line)
         if m:
             snippet = line.strip()[:80]
@@ -329,6 +403,26 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
                 "stale_path",
                 f"Line {lineno}: '{ref}' does not exist under the project root",
             )
+
+    for lineno, anchor in anchors:
+        if anchor not in headings:
+            issue(
+                # Medium: a link into this file that lands nowhere. Deterministic
+                # — the headings are right here — so it is graded above the
+                # judgement-call checks, but still below the ones that stop a
+                # rule loading at all.
+                "Medium",
+                "dead_anchor",
+                f"Line {lineno}: link to '#{anchor}' matches no heading in this file",
+            )
+
+    for first, again, text in dupes:
+        issue(
+            "Low",
+            "duplicate_line",
+            f'Line {again} repeats line {first} verbatim: "{text}" — '
+            f"a rule stated twice drifts when only one copy is edited",
+        )
 
     if buried:
         where = "; ".join(f'line {ln} ({pct}%): "{txt}"' for ln, pct, txt in buried[:3])
