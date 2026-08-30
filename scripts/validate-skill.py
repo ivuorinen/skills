@@ -120,6 +120,57 @@ def strip_fences(lines: list[str]) -> list[str]:
     return result
 
 
+# Shapes that are destructive, exfiltrating, or fetch-and-execute. Deliberately
+# small: each is a thing no legitimate instruction block in this repo asks a
+# reader to run, so a hit is a planted line rather than a style preference.
+_UNSAFE_SHELL_RE = re.compile(
+    r"(?:curl|wget)[^|\n]*\|\s*(?:ba)?sh"  # fetch-and-execute
+    r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
+    r"|chmod\s+777"
+    r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb
+    r"|>\s*/dev/sd[a-z]"  # write to a raw device
+    r"|~/\.ssh|~/\.aws|id_rsa|/etc/shadow"  # credential material
+    r"|eval\s+\"?\$\("  # eval of command substitution
+)
+# The languages whose blocks a reader copies and runs. A ```text or ```json
+# block is illustration; a ```bash block is an instruction.
+_EXECUTABLE_FENCE_RE = re.compile(r"^(?:`{3,}|~{3,})\s*(bash|sh|shell|zsh|console)\b")
+
+
+def unsafe_shell_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """(lineno, line) for dangerous commands inside *executable* fenced blocks.
+
+    Scoped to shell fences on purpose, and the scoping is what makes the check
+    usable here at all. This repo's shipped prose documents the defects it audits
+    for — `iac.md` describes `curl | sh` as a Dockerfile finding, `prompt-safety.md`
+    quotes "ignore prior instructions" as the attack string — so a scan over prose
+    flags a security toolkit for containing security content. Measured on this
+    repo: 10 hits across prose, all correct content; 0 inside the 19 blocks a
+    reader is actually told to run.
+
+    These files ship to consumers through `npx skills add`, and nothing else
+    scans them — bandit and opengrep read `.py` only. A planted fetch-and-execute
+    in a command file would reach every install.
+    """
+    out: list[tuple[int, str]] = []
+    fence = ""
+    executable = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.lstrip()
+        if fence:
+            if _fence_closes(stripped, fence):
+                fence = ""
+                executable = False
+            elif executable and _UNSAFE_SHELL_RE.search(line):
+                out.append((i, line.strip()))
+            continue
+        opened = _fence_open(stripped)
+        if opened:
+            fence = opened
+            executable = bool(_EXECUTABLE_FENCE_RE.match(stripped))
+    return out
+
+
 def _unterminated_fence(lines: list[str]) -> bool:
     """True if a fenced code block is opened but never closed.
 
@@ -353,6 +404,9 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
     if _unterminated_fence(body.splitlines()):
         err("unterminated code fence — every ``` or ~~~ must be closed")
 
+    for lineno, snippet in unsafe_shell_lines(body.splitlines()):
+        err(f"line {lineno}: unsafe command in an executable block: {snippet[:80]}")
+
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
     for line in strip_fences(body.splitlines()):
@@ -502,6 +556,9 @@ def validate_commands(  # noqa: C901
 
         if _unterminated_fence(text.splitlines()):
             cerr("unterminated code fence — every ``` or ~~~ must be closed")
+
+        for lineno, snippet in unsafe_shell_lines(text.splitlines()):
+            cerr(f"line {lineno}: unsafe command in an executable block: {snippet[:80]}")
 
         # All structural checks ignore fenced code blocks.
         content_lines = strip_fences(text.splitlines())
