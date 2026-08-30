@@ -22,6 +22,13 @@ three defects only exist across files or against a whole-set budget:
                           gets edited, the other becomes a second, contradicting
                           source — and this repo already forbids the practice in
                           prose without checking it.
+    dangling_import       an `@path.md` import whose target does not exist. The
+                          harness skips it in silence, so the author reads their
+                          own file, sees the rule referenced, and never learns it
+                          was never loaded.
+    circular_import       an import chain that returns to a file already on it.
+                          The chain is cut at a depth limit rather than followed,
+                          making what actually loads depend on the entry point.
 
 Outputs a JSON report to stdout, diagnostics to stderr.
 
@@ -192,6 +199,117 @@ def loaded_files(project_root: Path) -> list[Path]:
     return out
 
 
+# An `@path.md` import. Harnesses that support imports pull the target in as
+# though its text were pasted at that point, and a target that does not resolve
+# is skipped in silence — the author reads their own instruction file, sees the
+# rule referenced, and never learns it was never loaded.
+#
+# Requiring a `.md` suffix is what keeps this off ordinary prose: an email
+# address, a scoped npm package (`@types/node`), a Python decorator and a handle
+# all carry an `@` and none of them end in `.md`. Inline code spans are stripped
+# first, so `@old-rules.md` quoted as an example of the syntax is not read as a
+# live import.
+_IMPORT_RE = re.compile(r"(?<![\w./-])@([\w~./-]+\.md)")
+_CODE_SPAN_RE = re.compile(r"`[^`]*`")
+
+
+def _imports(text: str) -> list[tuple[int, str]]:
+    """(lineno, target) for each `@path.md` import outside code fences and spans."""
+    out = []
+    for lineno, s in _content_lines(text):
+        for m in _IMPORT_RE.finditer(_CODE_SPAN_RE.sub("", s)):
+            out.append((lineno, m.group(1)))
+    return out
+
+
+def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
+    """Imports that resolve to nothing, and import cycles.
+
+    Resolution is relative to the *importing* file's directory, which is how the
+    harnesses that support this resolve it. A `~` path is left alone: it points
+    outside the repository at the machine running the agent, so its presence here
+    would say nothing about whether it resolves there.
+    """
+    findings: list[dict] = []
+    edges: dict[Path, list[tuple[Path, int, str]]] = {}
+    queue = list(files)
+    visited: set[Path] = set()
+
+    while queue:
+        path = queue.pop()
+        if path in visited or not path.is_file():
+            continue
+        visited.add(path)
+        rel = _rel_to(path, project_root)
+        edges[path] = []
+        for lineno, target in _imports(path.read_text(encoding="utf-8", errors="replace")):
+            if target.startswith("~"):
+                continue
+            resolved = (path.parent / target).resolve()
+            if not resolved.is_file():
+                findings.append(
+                    {
+                        "severity": "High",
+                        "code": "dangling_import",
+                        "file": rel,
+                        "detail": f"Line {lineno} imports @{target}, which does not exist — "
+                        f"the import is skipped in silence, so every rule the target "
+                        f"holds is absent from the session that reads this file",
+                    }
+                )
+                continue
+            edges[path].append((resolved, lineno, target))
+            # Imported files are instruction files too, and one of them importing
+            # a missing target is the same defect one level down.
+            queue.append(resolved)
+
+    findings += _import_cycles(edges, project_root)
+    return findings
+
+
+def _import_cycles(
+    edges: dict[Path, list[tuple[Path, int, str]]], project_root: Path
+) -> list[dict]:
+    """One finding per import cycle, reported at the edge that closes it."""
+    findings: list[dict] = []
+    state: dict[Path, int] = {}  # 1 = on the current path, 2 = finished
+    reported: set[tuple[Path, Path]] = set()
+
+    def walk(node: Path) -> None:
+        state[node] = 1
+        for target, lineno, spelling in edges.get(node, []):
+            if state.get(target) == 1:
+                if (node, target) not in reported:
+                    reported.add((node, target))
+                    findings.append(
+                        {
+                            "severity": "Medium",
+                            "code": "circular_import",
+                            "file": _rel_to(node, project_root),
+                            "detail": f"Line {lineno} imports @{spelling}, which imports its "
+                            f"way back here — the chain is cut at a depth limit rather "
+                            f"than followed, so what actually loads depends on where "
+                            f"the walk started",
+                        }
+                    )
+            elif target not in state:
+                walk(target)
+        state[node] = 2
+
+    for node in edges:
+        if node not in state:
+            walk(node)
+    return findings
+
+
+def _rel_to(path: Path, project_root: Path) -> str:
+    """`path` as a project-relative posix string, left absolute if it is outside."""
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _scan_file(
     rel: str,
     text: str,
@@ -291,6 +409,8 @@ def check(project_root: Path) -> tuple[dict, bool]:
         total += count
         per_file.append({"file": rel, "instructions": count})
         findings += _scan_file(rel, text, owners, seen_lines)
+
+    findings += _import_findings(project_root, files)
 
     if total > _BUDGET_ERROR:
         findings.append(

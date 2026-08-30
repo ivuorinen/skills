@@ -193,6 +193,109 @@ class TestDuplicateGrading:
         assert f["severity"] == "Medium"
 
 
+class TestImports:
+    """`@path.md` imports are pulled in as though pasted at that point, and a
+    target that does not resolve is skipped in silence — the author sees the rule
+    referenced in their own file and never learns it was never loaded."""
+
+    def _codes(self, tmp_path):
+        return [f["code"] for f in _mod.check(tmp_path)[0]["findings"] if "import" in f["code"]]
+
+    def test_a_missing_target_blocks(self, tmp_path):
+        (tmp_path / "CLAUDE.md").write_text(
+            "# C\n\nSee @docs/missing.md for the rest.\n", encoding="utf-8"
+        )
+        report, blocking = _mod.check(tmp_path)
+
+        f = next(x for x in report["findings"] if x["code"] == "dangling_import")
+        assert f["severity"] == "High"
+        assert blocking is True, "a rule that silently never loads is not a warning"
+
+    def test_a_resolving_import_is_not_a_finding(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "extra.md").write_text(
+            "# E\n\n- Always run tests.\n", encoding="utf-8"
+        )
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@docs/extra.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path) == []
+
+    def test_an_import_inside_an_imported_file_is_followed(self, tmp_path):
+        """The defect one level down is the same defect, and the file holding it
+        is not in the always-loaded set — nothing else would ever read it."""
+        (tmp_path / "a.md").write_text("# A\n\n@missing.md\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n", encoding="utf-8")
+
+        f = next(x for x in _mod.check(tmp_path)[0]["findings"] if x["code"] == "dangling_import")
+        assert f["file"] == "a.md"
+
+    def test_a_cycle_is_reported_once_at_the_closing_edge(self, tmp_path):
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n", encoding="utf-8")
+        (tmp_path / "a.md").write_text("# A\n\n@b.md\n", encoding="utf-8")
+        (tmp_path / "b.md").write_text("# B\n\n@a.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path) == ["circular_import"]
+
+    def test_one_cycle_named_twice_is_reported_once(self, tmp_path):
+        """Repeating the same import on two lines is one cycle, not two. Keyed on
+        the line instead of the edge, a file that references its partner several
+        times would report the same loop once per mention."""
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n", encoding="utf-8")
+        (tmp_path / "a.md").write_text("# A\n\n@b.md\n", encoding="utf-8")
+        (tmp_path / "b.md").write_text("# B\n\n@a.md\n\nand again @a.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path) == ["circular_import"]
+
+    def test_a_diamond_is_not_a_cycle(self, tmp_path):
+        """Two files importing one third is ordinary sharing. Reporting it would
+        make the check unusable on any repo that factors its rules out."""
+        (tmp_path / "shared.md").write_text("# S\n\n- Never skip the gate.\n", encoding="utf-8")
+        for name in ("a.md", "b.md"):
+            (tmp_path / name).write_text(f"# {name}\n\n@shared.md\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n\n@b.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path) == []
+
+    def test_a_home_relative_import_is_left_alone(self, tmp_path):
+        """`@~/rules.md` points outside the repository at whichever machine runs
+        the agent, so its absence here says nothing about whether it resolves
+        there — reporting it would be a guess dressed as a finding."""
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@~/personal/rules.md\n", encoding="utf-8")
+        assert self._codes(tmp_path) == []
+
+    def test_an_import_outside_the_project_keeps_its_absolute_path(self, tmp_path):
+        """A target above the root has no project-relative spelling, and inventing
+        one with `..` would name a file the reader cannot locate."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "shared.md").write_text("# S\n\n@nope.md\n", encoding="utf-8")
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "CLAUDE.md").write_text("# C\n\n@../outside/shared.md\n", encoding="utf-8")
+
+        f = next(x for x in _mod.check(root)[0]["findings"] if x["code"] == "dangling_import")
+        assert f["file"] == str(outside / "shared.md")
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "- Contact me@example.com about it.",
+            "- Ask @ivuorinen for the token.",
+            "- Install @types/node and @scope/pkg first.",
+            "- The import syntax is `@some-rule.md` here.",
+        ],
+    )
+    def test_an_at_sign_that_is_not_an_import_is_ignored(self, tmp_path, line):
+        """Requiring the `.md` suffix, and stripping code spans, is what keeps
+        this off ordinary prose — every line here carries an `@`."""
+        (tmp_path / "CLAUDE.md").write_text(f"# C\n\n{line}\n", encoding="utf-8")
+        assert self._codes(tmp_path) == []
+
+    def test_a_fenced_import_is_a_code_sample(self, tmp_path):
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n```bash\n@fenced.md\n```\n", encoding="utf-8")
+        assert self._codes(tmp_path) == []
+
+
 class TestBudget:
     def test_over_the_limit_blocks(self, tmp_path):
         """The budget is the one finding here graded High, because it is the one
