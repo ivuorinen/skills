@@ -256,6 +256,44 @@ class TestImports:
 
         assert self._codes(tmp_path) == []
 
+    def _chain(self, tmp_path, length):
+        """CLAUDE.md -> l1 -> ... -> l<length>, each importing the next."""
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@l1.md\n", encoding="utf-8")
+        for i in range(1, length):
+            (tmp_path / f"l{i}.md").write_text(f"# L{i}\n\n@l{i + 1}.md\n", encoding="utf-8")
+        (tmp_path / f"l{length}.md").write_text("# L\n\n- Never do it.\n", encoding="utf-8")
+
+    def test_a_chain_past_the_harness_limit_is_reported(self, tmp_path):
+        """The sixth file is not reported as skipped by the harness — it simply
+        never arrives, the same silence as a dangling target one hop further."""
+        self._chain(tmp_path, 6)
+
+        f = next(x for x in _mod.check(tmp_path)[0]["findings"] if x["code"] == "import_too_deep")
+        assert f["file"] == "l6.md"
+        assert "CLAUDE.md → l1.md" in f["detail"], "the chain must name how it got there"
+
+    def test_a_chain_at_the_limit_is_not_reported(self, tmp_path):
+        self._chain(tmp_path, 5)
+        assert "import_too_deep" not in self._codes(tmp_path)
+
+    def test_depth_does_not_double_report_a_shared_deep_file(self, tmp_path):
+        """Two chains reaching the same too-deep file are one problem with that
+        file, not two."""
+        self._chain(tmp_path, 6)
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@l1.md\n\n@alt.md\n", encoding="utf-8")
+        (tmp_path / "alt.md").write_text("# A\n\n@l2.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path).count("import_too_deep") == 1
+
+    def test_a_cycle_is_not_also_reported_as_too_deep(self, tmp_path):
+        """Walking a cycle would recurse until the depth limit tripped, turning
+        one circular_import into a depth finding as well."""
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n", encoding="utf-8")
+        (tmp_path / "a.md").write_text("# A\n\n@b.md\n", encoding="utf-8")
+        (tmp_path / "b.md").write_text("# B\n\n@a.md\n", encoding="utf-8")
+
+        assert self._codes(tmp_path) == ["circular_import"]
+
     def test_a_home_relative_import_is_left_alone(self, tmp_path):
         """`@~/rules.md` points outside the repository at whichever machine runs
         the agent, so its absence here says nothing about whether it resolves

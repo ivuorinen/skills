@@ -8,7 +8,7 @@ Defaults to cwd when no argument is given.
 
 `check-rules-anatomy.py` audits one rule file at a time. This one audits the
 *set* — every instruction file the detected harnesses load each turn — because
-three defects only exist across files or against a whole-set budget:
+these defects only exist across files or against a whole-set budget:
 
     instruction_budget    every always-loaded file's directives, counted
                           together. A harness reserves roughly 50 instructions
@@ -29,6 +29,9 @@ three defects only exist across files or against a whole-set budget:
     circular_import       an import chain that returns to a file already on it.
                           The chain is cut at a depth limit rather than followed,
                           making what actually loads depend on the entry point.
+    import_too_deep       a chain running past the hops the harness will follow.
+                          The file at the end never arrives, and nothing reports
+                          that it did not.
 
 Outputs a JSON report to stdout, diagnostics to stderr.
 
@@ -264,6 +267,52 @@ def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
             queue.append(resolved)
 
     findings += _import_cycles(edges, project_root)
+    findings += _import_depth(edges, files, project_root)
+    return findings
+
+
+# Claude Code follows an import chain five hops deep and stops. The sixth file
+# is not reported as skipped — it simply never arrives, which is the same silence
+# as a dangling target one step further out.
+_MAX_IMPORT_DEPTH = 5
+
+
+def _import_depth(
+    edges: dict[Path, list[tuple[Path, int, str]]],
+    roots: list[Path],
+    project_root: Path,
+) -> list[dict]:
+    """One finding per chain that runs deeper than the harness will follow.
+
+    Measured from a root file, because depth is only meaningful from where the
+    walk actually begins: the same file sitting three hops down one chain and
+    six down another is loaded in the first case and not in the second.
+    """
+    findings: list[dict] = []
+    reported: set[Path] = set()
+
+    def walk(node: Path, depth: int, path: tuple[Path, ...]) -> None:
+        if node in path:  # a cycle; _import_cycles owns that finding
+            return
+        if depth > _MAX_IMPORT_DEPTH and node not in reported:
+            reported.add(node)
+            chain = " → ".join(_rel_to(p, project_root) for p in (*path, node))
+            findings.append(
+                {
+                    "severity": "Medium",
+                    "code": "import_too_deep",
+                    "file": _rel_to(node, project_root),
+                    "detail": f"Reached at depth {depth}, past the {_MAX_IMPORT_DEPTH} hops the "
+                    f"harness follows: {chain} — the file never arrives, and nothing "
+                    f"reports that it did not",
+                }
+            )
+            return
+        for target, _lineno, _spelling in edges.get(node, []):
+            walk(target, depth + 1, (*path, node))
+
+    for root in roots:
+        walk(root, 0, ())
     return findings
 
 
