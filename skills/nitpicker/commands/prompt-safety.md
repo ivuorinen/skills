@@ -7,9 +7,9 @@ Hostile audit of a codebase that integrates a language model: assume every strin
 - Auditing code that calls an LLM API, builds prompts, defines model-callable tools/functions, retrieves context for RAG, or runs an agent loop
 - A new tool, data source, or model-driven action was added and you need to confirm untrusted content cannot steer it
 - Before shipping an AI feature, to prove injection cannot reach a privileged sink or exfiltrate secrets
-- When asked to "audit prompt safety", "check for prompt injection", "is this agent safe", "can the model be jailbroken into calling X", or "audit the LLM integration"
+- When asked to "audit prompt safety", "check for prompt injection", "is our LLM integration safe", "can the model be jailbroken into calling X", or "audit the LLM integration"
 
-Out of scope: general input validation and injection in non-LLM code routes to `/nitpicker security`; personal-data handling to `/nitpicker privacy`; secret storage and env config to `/nitpicker config`. A repo that does not call or embed a language model — no LLM SDK, no model endpoint, no prompt construction — gets the explicit verdict "no LLM-integration surface".
+Out of scope: installed third-party agent configuration — skills, subagent definitions, plugins, hooks and rule files obtained from a marketplace or a git URL — routes to `/nitpicker skill-safety`, which audits text that steers an agent rather than code that calls a model. A repo that installed a plugin and has no model integration gets this command's "no LLM-integration surface" verdict, which answers nothing it was asked. General input validation and injection in non-LLM code routes to `/nitpicker security`; personal-data handling to `/nitpicker privacy`; secret storage and env config to `/nitpicker config`. A repo that does not call or embed a language model — no LLM SDK, no model endpoint, no prompt construction — gets the explicit verdict "no LLM-integration surface".
 
 ## Process
 

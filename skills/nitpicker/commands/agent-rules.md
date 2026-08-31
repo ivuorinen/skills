@@ -10,7 +10,7 @@ Audits the project's agent rule configuration end-to-end: validates every rule f
 - You want to discover implicit rules from architectural, security, or code-quality audits
 - Setting up or reviewing coding-agent configuration for a new or existing project
 
-Not for enforcement bypasses — whether rules and hooks actually bind is `/nitpicker agent-loopholes`. Not for missing hook coverage — that is `/nitpicker agent-hooks`.
+Not for configuration the project installed rather than wrote — a marketplace skill, a plugin, a copied rule set is `/nitpicker skill-safety`, and this command's own Trust model resolves an ambiguous unit toward installed rather than routing it here. Not for enforcement bypasses — whether rules and hooks actually bind is `/nitpicker agent-loopholes`. Not for missing hook coverage — that is `/nitpicker agent-hooks`.
 
 ## Harness scope
 

@@ -9,7 +9,7 @@ Automated, tool-driven security audit: probe which security scanners are install
 - When asked to "run a security scan", "find vulnerabilities", "check for secrets", "scan dependencies", or "audit security"
 - As part of a CI gate or pre-push check
 
-Not for: general code quality (`/nitpicker audit`), architecture boundary violations (`/nitpicker arch`), or hostile logic review (`/nitpicker review`).
+Not for: general code quality (`/nitpicker audit`), architecture boundary violations (`/nitpicker arch`), hostile logic review (`/nitpicker review`), or installed third-party agent configuration (`/nitpicker skill-safety`) — no scanner here reads instruction prose, so a clean scan says nothing about what a marketplace skill instructs an agent to do.
 
 ## Tool detection
 

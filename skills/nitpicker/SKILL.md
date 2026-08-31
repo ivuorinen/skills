@@ -1,6 +1,6 @@
 ---
 name: nitpicker
-description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, plan a change, teach me this codebase, review the PR, fix the CR comments).'
+description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, installed agent configuration, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, is this installed skill safe, plan a change, teach me this codebase, review the PR, fix the CR comments).'
 license: MIT
 compatibility: Requires Python 3.11+ and git. The pr and cr commands additionally need network access and the gh CLI (or a GITHUB_TOKEN). The bundled MCP server is Claude-native; every command works without it through the stdlib-only CLI in scripts/.
 ---
@@ -94,6 +94,7 @@ categories is maintained anywhere else.
 | `config` | Undocumented env vars, unsafe prod defaults, config drift, committed secrets (alias: `config-auditor`) |
 | `iac` | Infrastructure-as-code misconfig: root containers, open ingress, public stores, overbroad IAM |
 | `prompt-safety` | LLM-integration safety: prompt injection, model-output-to-sink, excessive tool agency, secrets in context |
+| `skill-safety` | Audit *installed* agent configuration as an untrusted supply chain: override and concealment prose, invisible payloads, exfiltration, auto-executing hooks and lifecycle scripts |
 
 ### Runtime behavior
 

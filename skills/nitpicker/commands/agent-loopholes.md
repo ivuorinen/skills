@@ -9,7 +9,7 @@ Hostile audit of the project's agent enforcement surface: assume every constrain
 - Before a release, to prove the enforcement surface has no silent gaps
 - When asked to "close the loopholes", "harden the Claude Code setup", or "find ways our rules can be bypassed"
 
-Not for rule _quality and placement_ (kebab-case, grab-bags, misplaced CLAUDE.md rules) — that is `/nitpicker agent-rules`. Not for application source security — that is `/nitpicker security`. This command checks whether the enforcement — rules, hooks, settings, and skills together — can be _evaded_.
+Not for rule _quality and placement_ (kebab-case, grab-bags, misplaced CLAUDE.md rules) — that is `/nitpicker agent-rules`. Not for configuration the project installed rather than wrote — a marketplace skill, a plugin, a copied rule set is `/nitpicker skill-safety`; this command asks whether your own constraints bind, not whether what you installed is hostile. Not for application source security — that is `/nitpicker security`. This command checks whether the enforcement — rules, hooks, settings, and skills together — can be _evaded_.
 
 ## Enforcement surface
 

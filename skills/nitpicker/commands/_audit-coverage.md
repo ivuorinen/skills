@@ -118,6 +118,13 @@ review surface the skill offers.
   indirect prompt injection, model output reaching a privileged sink,
   excessive tool agency, secrets in the model context, cross-tenant
   retrieval. N/A when the repo does not call or embed a language model.
+- **Installed agent configuration** (`skill-safety`) — skills, subagent
+  definitions, plugins, hooks and rule files the project installed rather than
+  wrote, audited as an untrusted supply chain: override and concealment prose,
+  invisible payloads, exfiltration, credential reach, auto-executing hooks and
+  lifecycle scripts, unverifiable provenance. N/A only when the project
+  installed no agent configuration — which is a determination, not an
+  assumption from the absence of a directory.
 - **Complexity** (`complexity`) — over-engineering: speculative
   abstractions, reinvented standard library, dead flexibility, needless
   dependencies.
