@@ -128,8 +128,24 @@ def _content_lines(text: str):
     `check-rules-anatomy.py`. Getting this wrong in the other direction — treating
     an unclosed fence as closed — would count every code sample as instructions.
     """
+    lines = text.splitlines()
+    # Leading YAML frontmatter is metadata, not instructions. Its `paths:` entries
+    # are list items, so counting them scored every path-scoped rule file for the
+    # scoping that exempts it — and any frontmatter list inflates the budget,
+    # skews position depth, and makes two files declaring the same `paths:` look
+    # like they duplicate a rule. Line numbers keep counting through it so a
+    # finding still names the physical line.
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for i, raw in enumerate(lines[1:], 1):
+            if raw.strip() == "---":
+                start = i + 1
+                break
+
     fence = ""
-    for i, raw in enumerate(text.splitlines(), 1):
+    for i, raw in enumerate(lines, 1):
+        if i <= start:
+            continue
         s = raw.strip()
         if fence:
             close = re.fullmatch(r"(`{3,}|~{3,})\s*", s)
@@ -143,6 +159,25 @@ def _content_lines(text: str):
         if not s or s.startswith(("|", ">")):
             continue
         yield i, s
+
+
+_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+_PATHS_KEY_RE = re.compile(r"^paths:\s*(?:\[[^\]]*\S[^\]]*\]|\r?\n\s*-\s*\S)", re.MULTILINE)
+
+
+def is_path_scoped(text: str) -> bool:
+    """True when leading frontmatter declares a non-empty `paths:` list.
+
+    Such a file loads only when a matching file is read, so it spends no
+    always-loaded budget. Counting it did two things at once: it overstated the
+    total for any project that had already path-scoped its rules, and it made
+    the remediation this tool prints — move what is situational into a
+    path-scoped rule file — unable to lower the number it was printed against.
+
+    An empty `paths:` scopes nothing, so it does not qualify.
+    """
+    m = _FRONTMATTER_RE.match(text)
+    return bool(m) and bool(_PATHS_KEY_RE.search(m.group(1)))
 
 
 def _count_instructions(text: str) -> int:
@@ -450,13 +485,21 @@ def check(project_root: Path) -> tuple[dict, bool]:
     per_file: list[dict] = []
     seen_lines: dict[str, tuple[str, int]] = {}
     total = 0
+    scoped_total = 0
 
     for path in files:
         rel = path.relative_to(project_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         count = _count_instructions(text)
-        total += count
-        per_file.append({"file": rel, "instructions": count})
+        scoped = is_path_scoped(text)
+        # Scanned either way — a path-scoped file still loads, so a duplicate or
+        # a buried directive in it is still a defect. Only the budget excludes
+        # it, because the budget is about what every turn carries.
+        if scoped:
+            scoped_total += count
+        else:
+            total += count
+        per_file.append({"file": rel, "instructions": count, "path_scoped": scoped})
         findings += _scan_file(rel, text, owners, seen_lines)
 
     findings += _import_findings(project_root, files)
@@ -490,6 +533,7 @@ def check(project_root: Path) -> tuple[dict, bool]:
         "harnesses": sorted(harnesses),
         "files": per_file,
         "total_instructions": total,
+        "path_scoped_instructions": scoped_total,
         "budget": {"warn": _BUDGET_WARN, "limit": _BUDGET_ERROR},
         "findings": findings,
         "summary": {

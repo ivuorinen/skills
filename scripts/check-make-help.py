@@ -47,9 +47,14 @@ def read_makefile(path: Path) -> tuple[set[str], set[str], set[str]]:
     text = path.read_text(encoding="utf-8")
     targets = {m.group(1) for m in _TARGET_RE.finditer(text)}
 
+    # Prefixed with a newline so `help:` is found as the first line too. Without
+    # it the search misses a Makefile that opens with the help target, no help
+    # entries are collected, and every target is reported as undocumented — a
+    # confident wrong answer rather than an error.
+    prefixed = "\n" + text
     help_body = ""
-    if "\nhelp:" in text:
-        help_body = text.split("\nhelp:", 1)[1].split("\n\n", 1)[0]
+    if "\nhelp:" in prefixed:
+        help_body = prefixed.split("\nhelp:", 1)[1].split("\n\n", 1)[0]
     listed = set(_HELP_ENTRY_RE.findall(help_body))
 
     phony: set[str] = set()

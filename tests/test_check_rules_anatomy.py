@@ -108,11 +108,20 @@ class TestCheckFile:
         assert not _has(findings, "stale_glob")
         assert not _has(findings, "malformed_frontmatter")
 
-    def test_non_md_extension(self, tmp_path):
+    def test_unsupported_extension(self, tmp_path):
         f = tmp_path / "my-rule.txt"
         f.write_text("Never use grep.\n", encoding="utf-8")
         findings = _check_file(f, tmp_path)
-        assert _has(findings, "non_md_extension")
+        assert _has(findings, "unsupported_extension")
+
+    @pytest.mark.parametrize("name", ["my-rule.md", "my-rule.mdc"])
+    def test_every_discovered_suffix_is_accepted(self, tmp_path, name):
+        """`.mdc` is what Cursor's rules use, and the directory scan accepts it.
+        Reporting it per file put a valid Cursor rule set entirely in
+        `with_issues` — the harness assumption surviving one level down."""
+        f = tmp_path / name
+        f.write_text("Never use grep.\n", encoding="utf-8")
+        assert not _has(_check_file(f, tmp_path), "unsupported_extension")
 
     def test_non_kebab_case_filename(self, tmp_path):
         f = tmp_path / "MyRule.md"

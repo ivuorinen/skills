@@ -124,7 +124,7 @@ def strip_fences(lines: list[str]) -> list[str]:
 # small: each is a thing no legitimate instruction block in this repo asks a
 # reader to run, so a hit is a planted line rather than a style preference.
 _UNSAFE_SHELL_RE = re.compile(
-    r"(?:curl|wget)[^|\n]*\|\s*(?:ba)?sh"  # fetch-and-execute
+    r"(?:curl|wget)[^|\n]*\|\s*(?:ba|z|k|da)?sh\b"  # fetch-and-execute, any shell
     r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
     r"|chmod\s+777"
     r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb
@@ -133,8 +133,12 @@ _UNSAFE_SHELL_RE = re.compile(
     r"|eval\s+\"?\$\("  # eval of command substitution
 )
 # The languages whose blocks a reader copies and runs. A ```text or ```json
-# block is illustration; a ```bash block is an instruction.
-_EXECUTABLE_FENCE_RE = re.compile(r"^(?:`{3,}|~{3,})\s*(bash|sh|shell|zsh|console)\b")
+# block is illustration; a ```bash block is an instruction. Matched
+# case-insensitively: a fence tag is written by hand, and ```Bash runs exactly
+# like ```bash while a case-sensitive pattern reads it as prose.
+_EXECUTABLE_FENCE_RE = re.compile(
+    r"^(?:`{3,}|~{3,})\s*(bash|sh|shell|zsh|ksh|dash|console)\b", re.IGNORECASE
+)
 
 
 def unsafe_shell_lines(lines: list[str]) -> list[tuple[int, str]]:
@@ -404,8 +408,13 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
     if _unterminated_fence(body.splitlines()):
         err("unterminated code fence — every ``` or ~~~ must be closed")
 
+    # `body` starts after the frontmatter, so a line number from it is
+    # body-relative. Reported unadjusted it names a physical line that holds
+    # something else entirely — and the reader trusts it, because every other
+    # error in this file counts from line 1 of the file.
+    body_offset = len(text.splitlines()) - len(body.splitlines())
     for lineno, snippet in unsafe_shell_lines(body.splitlines()):
-        err(f"line {lineno}: unsafe command in an executable block: {snippet[:80]}")
+        err(f"line {lineno + body_offset}: unsafe command in an executable block: {snippet[:80]}")
 
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []

@@ -235,8 +235,17 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             )
             return findings
 
-    if path.suffix != ".md":
-        issue("Low", "non_md_extension", f"Filename must have .md extension (got '{path.suffix}')")
+    # Every suffix the discovery table accepts, not `.md` alone. Cursor's rules
+    # are `.mdc`, so a valid Cursor rule set landed entirely in `with_issues` —
+    # the same partial-harness assumption that made this tool refuse those
+    # projects outright, surviving one level down as a per-file finding.
+    if path.suffix not in _RULE_SUFFIXES:
+        issue(
+            "Low",
+            "unsupported_extension",
+            f"Filename must use a supported rule extension "
+            f"({', '.join(sorted(_RULE_SUFFIXES))}); got '{path.suffix}'",
+        )
 
     if not _KEBAB_RE.match(path.stem):
         issue("Low", "non_kebab_case", f"Filename stem must be kebab-case (got '{path.stem}')")
@@ -485,6 +494,11 @@ _RULE_DIRS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     # raise NotADirectoryError and fail the gate on a valid Cline project.
     (".clinerules", (".md",), True),
 )
+
+# Derived, never restated: a second list would let the per-file extension check
+# and the directory scan disagree, which is exactly how `.mdc` came to be
+# discovered and then reported as a defect.
+_RULE_SUFFIXES = frozenset(s for _, suffixes, _ in _RULE_DIRS for s in suffixes)
 
 
 def _iter_rules(

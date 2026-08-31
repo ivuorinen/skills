@@ -69,7 +69,8 @@ Analyze all of:
    under the specialist's auditor key when you deep-run it, under the `audit`
    auditor key when you apply the lens inline. Close each task in
    exactly one of the states `_audit-coverage.md` defines (findings filed,
-   clean, or N/A with a reason). Do not close the audit while any task is open.
+   clean, N/A with a reason, or out of scope naming what the scope excluded).
+   Do not close the audit while any task is open.
 5. Run the findings-store protocol in `_conventions.md` (index refresh,
    summary, apply-fixes and commit prompts). The run summary lists every
    coverage task's outcome. If fixing: severity order (Critical first), then

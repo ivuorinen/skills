@@ -193,6 +193,90 @@ class TestDuplicateGrading:
         assert f["severity"] == "Medium"
 
 
+class TestPathScopedFilesLeaveTheBudget:
+    """A `paths:`-scoped rule loads only when a matching file is read, so it
+    spends no always-loaded budget. Counting it also made the tool's own
+    remediation — move what is situational into a path-scoped rule file —
+    unable to lower the number it was printed against."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("# R\n\n- Never x.\n", False),
+            ("---\nname: r\n---\n\n# R\n", False),
+            ("---\npaths:\n  - 'src/**'\n---\n\n# R\n", True),
+            ('---\npaths: ["src/**"]\n---\n\n# R\n', True),
+            ("---\npaths:\n---\n\n# R\n", False),
+            ("---\npaths: []\n---\n\n# R\n", False),
+        ],
+    )
+    def test_detects_a_non_empty_paths_declaration(self, text, expected):
+        assert _mod.is_path_scoped(text) is expected
+
+    def test_a_scoped_rule_is_excluded_from_the_total_and_reported_separately(self, tmp_path):
+        _workspace(
+            tmp_path,
+            claude="# C\n\n- Never do the always thing.\n",
+            rules={"scoped.md": "---\npaths:\n  - 'src/**'\n---\n\n- Never do the scoped thing.\n"},
+        )
+        report, _ = _mod.check(tmp_path)
+
+        assert report["total_instructions"] == 1
+        assert report["path_scoped_instructions"] == 1
+        scoped = next(f for f in report["files"] if f["file"].endswith("scoped.md"))
+        assert scoped["path_scoped"] is True
+
+    def test_frontmatter_list_items_are_not_counted_as_directives(self, tmp_path):
+        """`paths:` entries are list items, so counting them scored a rule file
+        for the very scoping that exempts it — and any frontmatter list inflates
+        the budget it is measured against."""
+        _workspace(
+            tmp_path,
+            claude="---\ntags:\n  - one\n  - two\n  - three\n---\n\n- Never do the thing.\n",
+        )
+        assert _mod.check(tmp_path)[0]["total_instructions"] == 1
+
+    def test_unterminated_frontmatter_scans_the_whole_file(self, tmp_path):
+        """An opening `---` with no close is malformed, not a licence to skip
+        the file — treating the whole body as frontmatter would exempt it from
+        every check at once."""
+        _workspace(tmp_path, claude="---\nname: broken\n\n- Never do the thing.\n")
+        assert _mod.check(tmp_path)[0]["total_instructions"] == 1
+
+    def test_a_scoped_file_is_still_scanned_for_other_defects(self, tmp_path):
+        """Leaving the budget is not leaving the audit: the file still loads
+        when its paths match, so a duplicate in it still contradicts."""
+        line = "- Never commit a credential to this repository, ever.\n"
+        _workspace(
+            tmp_path,
+            claude="# C\n\n" + line,
+            rules={"scoped.md": "---\npaths:\n  - 'src/**'\n---\n\n" + line},
+        )
+        codes = [f["code"] for f in _mod.check(tmp_path)[0]["findings"]]
+        assert "cross_file_duplicate" in codes
+
+
+class TestCommandFileStaysInSync:
+    """`agent-rules.md` tells an agent which files to find by hand; this tool
+    finds them by pattern. When the two disagree, the manual steps skip a file
+    the tool still reports on, and the run reads as complete."""
+
+    _DOC = Path(__file__).parent.parent / "skills" / "nitpicker" / "commands" / "agent-rules.md"
+
+    def test_every_root_file_the_tool_knows_is_named_in_the_harness_table(self):
+        doc = self._DOC.read_text(encoding="utf-8")
+        missing = [p for p in sorted(_mod._ROOT_FILES) if f"`{p}`" not in doc]
+        assert not missing, f"Harness scope table omits root instruction files: {missing}"
+
+    def test_every_rules_directory_glob_is_named_in_the_harness_table(self):
+        doc = self._DOC.read_text(encoding="utf-8")
+        dirs = {
+            p.rsplit("/", 1)[0] + "/" for pats in _mod._HARNESSES.values() for p in pats if "*" in p
+        }
+        missing = [d for d in sorted(dirs) if f"`{d}`" not in doc]
+        assert not missing, f"Harness scope table omits rules directories: {missing}"
+
+
 class TestImports:
     """`@path.md` imports are pulled in as though pasted at that point, and a
     target that does not resolve is skipped in silence — the author sees the rule

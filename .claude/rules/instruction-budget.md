@@ -9,7 +9,16 @@ harness draw on one budget.
 
 `skills/nitpicker/scripts/check-agent-instructions.py` counts list items and
 imperative directives across the whole set. Above 150 it fails the gate; above
-100 it reports. This repo sits at 102.
+100 it reports. For this repo's current total, run it:
+
+```bash
+python3 skills/nitpicker/scripts/check-agent-instructions.py .
+```
+
+A number written here instead would be a copy of what that command already
+answers, and the warn band runs from 101 to 150 — so the gate stays green across
+the whole range a stale figure could drift within, and both files stating one
+are themselves in the set they describe.
 
 The count is of the *set*, not of any one file. A file that looks reasonable
 alone still spends budget, which is why no per-file check finds this and why

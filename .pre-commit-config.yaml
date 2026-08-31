@@ -172,4 +172,19 @@ repos:
         language: system
         entry: python3 skills/nitpicker/scripts/check-agent-instructions.py .
         pass_filenames: false
-        files: ^(CLAUDE\.md|AGENTS\.md|\.claude/(CLAUDE\.md|rules/)|skills/nitpicker/scripts/check-agent-instructions\.py)
+        # Every harness surface the checker knows, not only Claude Code's. A
+        # filter narrower than `_HARNESSES` lets an edit to a recognized file
+        # bypass the gate that exists to score it — the same partial-coverage
+        # defect the checker itself was widened to fix.
+        # `(?x)` is verbose mode: unescaped whitespace is ignored, so the
+        # alternation wraps and stays readable instead of running to 300 columns.
+        files: |
+          (?x)^(
+            CLAUDE\.md | AGENTS\.md | GEMINI\.md | CONVENTIONS\.md
+            | \.cursorrules | \.windsurfrules | \.clinerules
+            | \.continuerules | \.rules
+            | \.claude/(CLAUDE\.md|rules/)
+            | \.cursor/rules/ | \.windsurf/rules/ | \.gemini/
+            | \.github/(copilot-instructions\.md|instructions/)
+            | skills/nitpicker/scripts/check-agent-instructions\.py
+          )

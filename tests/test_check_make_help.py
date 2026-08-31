@@ -51,6 +51,18 @@ class TestParsing:
             "target 'build' is not listed in `make help` — nobody can discover it"
         ]
 
+    def test_help_is_found_when_it_is_the_first_target(self, tmp_path):
+        """Searching for "\\nhelp:" misses a Makefile that opens with it.
+
+        The failure is silent and inverted: no help entries are collected, so
+        every target reports as undocumented rather than the file erroring.
+        """
+        p = _makefile(tmp_path, _HELP_BLOCK + ".PHONY: build help\n\nbuild:\n\techo hi\n")
+        targets, listed, _ = _mod.read_makefile(p)
+
+        assert listed == {"build"}
+        assert _mod.drift(targets, listed, {"build", "help"}) == []
+
     def test_echo_lines_outside_the_help_recipe_are_not_help_entries(self, tmp_path):
         """Scanning the whole file for @echo would collect every other target's
         output as though it documented a command."""

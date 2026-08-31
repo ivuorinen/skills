@@ -21,7 +21,7 @@ and every one is in scope.
 
 | Role | Where it lives |
 | --- | --- |
-| **Root instruction file** — loaded every turn, read start to finish | `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.clinerules` (file form), `GEMINI.md`, `.rules`, `CONVENTIONS.md`, `.continuerules` |
+| **Root instruction file** — loaded every turn, read start to finish | `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.cursorrules`, `.windsurfrules`, `.clinerules` (file form), `GEMINI.md`, `.gemini/GEMINI.md`, `.github/copilot-instructions.md`, `.rules`, `CONVENTIONS.md`, `.continuerules` |
 | **Rules directory** — one file per rule, loaded on demand or by path scope | `.claude/rules/`, `.cursor/rules/` (`.mdc`), `.windsurf/rules/`, `.github/instructions/`, `.clinerules/` (directory form) |
 
 `AGENTS.md` is the cross-agent convention: near enough every harness reads it,
