@@ -125,9 +125,25 @@ def strip_fences(lines: list[str]) -> list[str]:
 # reader to run, so a hit is a planted line rather than a style preference.
 _UNSAFE_SHELL_RE = re.compile(
     # Fetch-and-execute, any shell, however the interpreter is spelled: a bare
-    # name, an absolute path, or by way of `env`. Matching the bare name alone
-    # left `| /bin/bash` and `| /usr/bin/env bash` walking straight past.
-    r"(?:curl|wget)[^|\n]*\|\s*(?:\S*/)?(?:env\s+)?(?:ba|z|k|da)?sh\b"
+    # name, an absolute path, or by way of `env` — including `env -i bash` and
+    # `env VAR=x bash`, both ordinary idioms rather than obfuscation. Matching
+    # the bare name alone let `| /bin/bash` past; allowing `env` but not its
+    # options let `| env -i bash` past one round later.
+    #
+    # The token run between `env` and the shell is bounded and lazy. Bounded
+    # because an unbounded repeat over `\S+` is the catastrophic-backtracking
+    # shape opengrep flagged in this file's sibling check, and eight tokens is
+    # far past any real invocation. Lazy because it must not swallow the shell
+    # name it precedes, and because `env -u FOO zsh` puts a bare word in that
+    # run — an option's argument, not an option.
+    #
+    # This is a heuristic over authored prose, not a security boundary: a
+    # determined spelling will always evade it. It exists to catch a planted or
+    # careless line in a file this repo ships.
+    r"(?:curl|wget)[^|\n]*\|\s*"
+    r"(?:\S*/)?"
+    r"(?:env(?:\s+\S+){0,8}?\s+(?:\S*/)?)?"
+    r"(?:ba|z|k|da)?sh\b"
     r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
     r"|chmod\s+777"
     r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb

