@@ -208,6 +208,13 @@ class TestPathScopedFilesLeaveTheBudget:
             ('---\npaths: ["src/**"]\n---\n\n# R\n', True),
             ("---\npaths:\n---\n\n# R\n", False),
             ("---\npaths: []\n---\n\n# R\n", False),
+            # A commented list is still a list. `\s*` stops at the `#`, so the
+            # file read as unscoped and was counted against a budget it is
+            # exempt from — a false budget failure, not a missed one.
+            ("---\npaths:\n  # only TypeScript\n  - 'src/**'\n---\n\n# R\n", True),
+            ("---\npaths:\n\n  # note\n  - 'src/**'\n---\n\n# R\n", True),
+            ("---\npaths:\n  # nothing yet\n---\n\n# R\n", False),
+            ("---\npaths:\nname: x\n---\n\n# R\n", False),
         ],
     )
     def test_detects_a_non_empty_paths_declaration(self, text, expected):

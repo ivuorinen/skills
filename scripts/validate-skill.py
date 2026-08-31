@@ -124,7 +124,10 @@ def strip_fences(lines: list[str]) -> list[str]:
 # small: each is a thing no legitimate instruction block in this repo asks a
 # reader to run, so a hit is a planted line rather than a style preference.
 _UNSAFE_SHELL_RE = re.compile(
-    r"(?:curl|wget)[^|\n]*\|\s*(?:ba|z|k|da)?sh\b"  # fetch-and-execute, any shell
+    # Fetch-and-execute, any shell, however the interpreter is spelled: a bare
+    # name, an absolute path, or by way of `env`. Matching the bare name alone
+    # left `| /bin/bash` and `| /usr/bin/env bash` walking straight past.
+    r"(?:curl|wget)[^|\n]*\|\s*(?:\S*/)?(?:env\s+)?(?:ba|z|k|da)?sh\b"
     r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
     r"|chmod\s+777"
     r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb

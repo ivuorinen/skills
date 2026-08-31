@@ -114,6 +114,22 @@ class TestCheckFile:
         findings = _check_file(f, tmp_path)
         assert _has(findings, "unsupported_extension")
 
+    def test_the_github_instructions_basename_convention_is_accepted(self, tmp_path):
+        """`.github/instructions/` names files `<name>.instructions.md`, so the
+        stem keeps a `.instructions` tail no kebab pattern accepts. The tool
+        scans that directory, so judging the raw stem reported every Copilot
+        instruction file as malformed."""
+        f = tmp_path / "py.instructions.md"
+        f.write_text("# Py\n\nNever use grep.\n", encoding="utf-8")
+        assert not _has(_check_file(f, tmp_path), "non_kebab_case")
+
+    def test_a_bad_name_before_the_instructions_suffix_still_fails(self, tmp_path):
+        """Stripping the suffix must not stop the check — `MyRule.instructions`
+        is still not kebab-case once the tail is removed."""
+        f = tmp_path / "MyRule.instructions.md"
+        f.write_text("# X\n\nNever use grep.\n", encoding="utf-8")
+        assert _has(_check_file(f, tmp_path), "non_kebab_case")
+
     @pytest.mark.parametrize("name", ["my-rule.md", "my-rule.mdc"])
     def test_every_discovered_suffix_is_accepted(self, tmp_path, name):
         """`.mdc` is what Cursor's rules use, and the directory scan accepts it.

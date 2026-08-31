@@ -247,8 +247,16 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             f"({', '.join(sorted(_RULE_SUFFIXES))}); got '{path.suffix}'",
         )
 
-    if not _KEBAB_RE.match(path.stem):
-        issue("Low", "non_kebab_case", f"Filename stem must be kebab-case (got '{path.stem}')")
+    # `.github/instructions/` uses a `<name>.instructions.md` convention, so
+    # `Path.stem` keeps a `.instructions` tail that no kebab-case pattern
+    # accepts. Judging the raw stem reported every Copilot instruction file as
+    # malformed — the same harness assumption that flagged every `.mdc`,
+    # surviving one level further down.
+    stem = path.stem
+    if stem.endswith(".instructions"):
+        stem = stem[: -len(".instructions")]
+    if not _KEBAB_RE.match(stem):
+        issue("Low", "non_kebab_case", f"Filename stem must be kebab-case (got '{stem}')")
 
     try:
         text = path.read_text(encoding="utf-8")

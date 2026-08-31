@@ -162,7 +162,15 @@ def _content_lines(text: str):
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
-_PATHS_KEY_RE = re.compile(r"^paths:\s*(?:\[[^\]]*\S[^\]]*\]|\r?\n\s*-\s*\S)", re.MULTILINE)
+_PATHS_KEY_RE = re.compile(
+    # Inline `[...]`, or a block list whose first item may sit below blank and
+    # comment-only lines. `\s*` alone stops at the `#`, so a list documented with
+    # a YAML comment read as unscoped — and the file then counted against the
+    # always-loaded budget it is exempt from, which is a false budget failure
+    # rather than a missed one.
+    r"^paths:[ \t]*(?:\[[^\]]*\S[^\]]*\]|(?:\r?\n(?:[ \t]*(?:#[^\n]*)?)?)*\r?\n?[ \t]*-[ \t]*\S)",
+    re.MULTILINE,
+)
 
 
 def is_path_scoped(text: str) -> bool:
