@@ -16,13 +16,19 @@ _HELP_BLOCK = 'help:\n\t@echo "Available targets:"\n\t@echo "  build        — 
 
 
 def _makefile(tmp_path: Path, body: str) -> Path:
+    """Write a Makefile fixture and return its path."""
     p = tmp_path / "Makefile"
     p.write_text(body, encoding="utf-8")
     return p
 
 
 class TestParsing:
+    """Reading targets, help entries and .PHONY out of one file, including the shapes that produce
+    confident wrong answers.
+    """
+
     def test_reads_targets_help_entries_and_phony(self, tmp_path):
+        """The three sets are parsed independently, so a later comparison is meaningful."""
         p = _makefile(tmp_path, ".PHONY: build help\n\n" + _HELP_BLOCK + "build:\n\techo hi\n")
         targets, listed, phony = _mod.read_makefile(p)
 
@@ -76,12 +82,16 @@ class TestParsing:
 
 
 class TestDrift:
+    """Each disagreement between the three sets, and the exemptions."""
+
     def test_target_missing_from_help(self):
+        """An undocumented target is a command nobody can discover."""
         problems = _mod.drift({"build", "ship"}, {"build"}, {"build", "ship"})
         assert len(problems) == 1
         assert "'ship' is not listed" in problems[0]
 
     def test_help_entry_with_no_target(self):
+        """`make <it>` fails for whoever reads the help and tries it."""
         problems = _mod.drift({"build"}, {"build", "ghost"}, {"build"})
         assert any("lists 'ghost'" in p for p in problems)
 
@@ -96,10 +106,13 @@ class TestDrift:
         assert _mod.drift({"help", "all"}, set(), set()) == []
 
     def test_agreement_reports_nothing(self):
+        """The clean case must be silent, or the gate cries wolf on every run."""
         assert _mod.drift({"build"}, {"build"}, {"build"}) == []
 
 
 class TestCli:
+    """The command-line contract: exit codes and where output goes."""
+
     def test_this_repos_makefile_agrees(self, capsys, monkeypatch):
         """The gate runs against the real Makefile, so this is the live contract."""
         monkeypatch.setattr(sys, "argv", ["check-make-help.py"])
@@ -107,6 +120,7 @@ class TestCli:
         assert "agree" in capsys.readouterr().out
 
     def test_drift_exits_one_and_names_each_mismatch(self, tmp_path, capsys, monkeypatch):
+        """Exit 1 fails CI, and every mismatch is named so one run fixes them all."""
         body = ".PHONY: help\n\n" + _HELP_BLOCK + "build:\n\techo hi\nship:\n\techo hi\n"
         monkeypatch.setattr(sys, "argv", ["x", str(_makefile(tmp_path, body))])
         with pytest.raises(SystemExit) as exc:
@@ -117,11 +131,13 @@ class TestCli:
         assert "missing from .PHONY" in out
 
     def test_help_flag_prints_usage(self, capsys, monkeypatch):
+        """How an agent learns the interface, so it goes to stdout at exit 0."""
         monkeypatch.setattr(sys, "argv", ["x", "--help"])
         _mod.main()
         assert "make help" in capsys.readouterr().out
 
     def test_too_many_arguments_is_a_usage_error(self, capsys, monkeypatch):
+        """Exit 2 marks a usage error, distinct from a runtime failure."""
         monkeypatch.setattr(sys, "argv", ["x", "a", "b"])
         with pytest.raises(SystemExit) as exc:
             _mod.main()
@@ -129,6 +145,7 @@ class TestCli:
         assert "Usage:" in capsys.readouterr().err
 
     def test_unreadable_makefile_exits_one(self, tmp_path, capsys, monkeypatch):
+        """A missing file exits non-zero rather than reporting an empty, clean-looking result."""
         monkeypatch.setattr(sys, "argv", ["x", str(tmp_path / "nope" / "Makefile")])
         with pytest.raises(SystemExit) as exc:
             _mod.main()
@@ -136,6 +153,7 @@ class TestCli:
         assert "cannot read" in capsys.readouterr().err
 
     def test_runs_as_a_script(self, capsys, monkeypatch):
+        """Covers the `__main__` wiring, which no import-based test reaches."""
         monkeypatch.setattr(sys, "argv", ["check-make-help.py"])
         runpy.run_path(str(_TOOL), run_name="__main__")
         assert "agree" in capsys.readouterr().out

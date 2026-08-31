@@ -596,6 +596,13 @@ def _process_sarif(args: dict) -> tuple[str, bool]:
     {**_READ_ONLY, "title": "Check rule file anatomy"},
 )
 def _check_rules_anatomy(args: dict) -> str:
+    """Run the rule-anatomy check over the audited project's rule directories.
+
+    Returns the report fenced as untrusted data with `blocking` attached. The
+    directory list is relativized before it travels: each entry is built from
+    the resolved project root, so returning it as-is hands the caller the
+    server's filesystem layout and the account name in it.
+    """
     # `explicit=True` always: a project_root reaching this tool is a deliberate
     # choice (an argument, or the resolved allowed root), never the CLI's silent
     # cwd fallback — so a project with no rules directory at all is a

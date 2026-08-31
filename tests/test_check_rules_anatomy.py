@@ -109,6 +109,9 @@ class TestCheckFile:
         assert not _has(findings, "malformed_frontmatter")
 
     def test_unsupported_extension(self, tmp_path):
+        """A suffix outside the discovery table is a real finding; the supported ones are covered
+        separately.
+        """
         f = tmp_path / "my-rule.txt"
         f.write_text("Never use grep.\n", encoding="utf-8")
         findings = _check_file(f, tmp_path)
@@ -818,6 +821,7 @@ class TestHarnessCoverage:
         ],
     )
     def test_each_harness_rules_directory_is_scanned(self, tmp_path, rel):
+        """Hardcoded to `.claude/rules`, this tool refused every other harness outright."""
         f = tmp_path / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(self._RULE, encoding="utf-8")
@@ -827,6 +831,7 @@ class TestHarnessCoverage:
         assert report["rules_dirs"] == [str(f.parent)]
 
     def test_a_project_serving_two_agents_scans_both(self, tmp_path):
+        """Serving several agents at once is normal, and each directory is its own scan."""
         for rel in (".claude/rules/a.md", ".cursor/rules/b.mdc"):
             f = tmp_path / rel
             f.parent.mkdir(parents=True)

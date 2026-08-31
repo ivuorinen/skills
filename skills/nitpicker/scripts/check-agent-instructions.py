@@ -162,15 +162,32 @@ def _content_lines(text: str):
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
-_PATHS_KEY_RE = re.compile(
-    # Inline `[...]`, or a block list whose first item may sit below blank and
-    # comment-only lines. `\s*` alone stops at the `#`, so a list documented with
-    # a YAML comment read as unscoped — and the file then counted against the
-    # always-loaded budget it is exempt from, which is a false budget failure
-    # rather than a missed one.
-    r"^paths:[ \t]*(?:\[[^\]]*\S[^\]]*\]|(?:\r?\n(?:[ \t]*(?:#[^\n]*)?)?)*\r?\n?[ \t]*-[ \t]*\S)",
-    re.MULTILINE,
-)
+
+
+def _declares_paths(frontmatter: str) -> bool:
+    """True when the frontmatter declares a `paths:` list with at least one item.
+
+    Scanned line by line rather than matched with one pattern. The regex this
+    replaced needed nested quantifiers to skip blank and comment-only lines
+    before the first item, which is catastrophic-backtracking shape — and a
+    reader could not tell what it accepted. A blank or comment-only line
+    continues the search; a list item ends it True; anything else ends it False.
+    """
+    lines = frontmatter.splitlines()
+    for i, raw in enumerate(lines):
+        if not raw.startswith("paths:"):
+            continue
+        inline = raw[len("paths:") :].strip()
+        if inline:
+            # `paths: [...]` — scoped only when the brackets hold something.
+            return inline.startswith("[") and inline.strip("[]").strip() != ""
+        for rest in lines[i + 1 :]:
+            stripped = rest.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            return stripped.startswith("-") and stripped[1:].strip() != ""
+        return False
+    return False
 
 
 def is_path_scoped(text: str) -> bool:
@@ -185,7 +202,7 @@ def is_path_scoped(text: str) -> bool:
     An empty `paths:` scopes nothing, so it does not qualify.
     """
     m = _FRONTMATTER_RE.match(text)
-    return bool(m) and bool(_PATHS_KEY_RE.search(m.group(1)))
+    return bool(m) and _declares_paths(m.group(1))
 
 
 def _count_instructions(text: str) -> int:
@@ -335,6 +352,13 @@ def _import_depth(
     reported: set[Path] = set()
 
     def walk(node: Path, depth: int, path: tuple[Path, ...]) -> None:
+        """Depth-first from a root, reporting the first file past the hop limit.
+
+        `path` carries the chain so a finding can name how it got there, and so
+        the walk stops on a repeat instead of recursing until the depth limit
+        trips — otherwise every cycle would also report as too deep, and the two
+        checks share this edge map.
+        """
         if node in path:  # a cycle; _import_cycles owns that finding
             return
         if depth > _MAX_IMPORT_DEPTH and node not in reported:
@@ -368,6 +392,13 @@ def _import_cycles(
     reported: set[tuple[Path, Path]] = set()
 
     def walk(node: Path) -> None:
+        """Depth-first from `node`, reporting the edge that closes each cycle.
+
+        `state` is the three-colour marking a cycle check needs: 1 while a node
+        is on the current path, 2 once finished. Testing membership of the path
+        rather than of `visited` is what distinguishes a cycle from a diamond,
+        which is ordinary sharing and not a defect.
+        """
         state[node] = 1
         for target, lineno, spelling in edges.get(node, []):
             if state.get(target) == 1:

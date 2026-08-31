@@ -21,6 +21,7 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 
 def _workspace(root: Path, claude: str = "", agents: str = "", rules: dict | None = None) -> Path:
+    """Build an agent workspace: root files plus an optional rules directory."""
     if claude:
         (root / "CLAUDE.md").write_text(claude, encoding="utf-8")
     if agents:
@@ -33,6 +34,8 @@ def _workspace(root: Path, claude: str = "", agents: str = "", rules: dict | Non
 
 
 class TestInstructionCounting:
+    """What counts as a directive, and what is markup or sample text around one."""
+
     def test_counts_list_items_and_imperatives_only(self, tmp_path):
         """Prose that mentions a rule is not a rule.
 
@@ -76,12 +79,16 @@ class TestInstructionCounting:
 
 
 class TestLoadedFiles:
+    """Which files enter the set, and that each enters it once."""
+
     def test_finds_root_files_and_rules_without_duplicates(self, tmp_path):
+        """Order is not guaranteed across harnesses, so the set is compared sorted."""
         _workspace(tmp_path, claude="# C\n", agents="# A\n", rules={"a.md": "# R\n"})
         names = [p.name for p in _mod.loaded_files(tmp_path)]
         assert sorted(names) == ["AGENTS.md", "CLAUDE.md", "a.md"]
 
     def test_absent_files_are_skipped(self, tmp_path):
+        """A pattern that matches nothing contributes nothing — absence is not an error here."""
         _workspace(tmp_path, claude="# C\n")
         assert [p.name for p in _mod.loaded_files(tmp_path)] == ["CLAUDE.md"]
 
@@ -124,6 +131,11 @@ class TestHarnessCoverage:
         ],
     )
     def test_each_harness_is_audited_from_its_own_file(self, tmp_path, harness, rel):
+        """One file from one harness is enough to make a workspace.
+
+        None of these may fall through to "not an agent workspace", which is
+        the answer every non-Claude harness used to get.
+        """
         f = tmp_path / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text("# R\n\n- Never do the bad thing.\n", encoding="utf-8")
@@ -155,6 +167,7 @@ class TestDuplicateGrading:
     """A duplicate is graded by whether one session ever holds both copies."""
 
     def test_two_files_of_one_harness_contradict_each_other(self, tmp_path):
+        """Both files load in the same session, so the duplicate is a genuine second source."""
         line = "- Never commit a credential to this repository, ever.\n"
         _workspace(tmp_path, claude="# C\n\n" + line, rules={"a.md": "# R\n\n" + line})
 
@@ -218,9 +231,15 @@ class TestPathScopedFilesLeaveTheBudget:
         ],
     )
     def test_detects_a_non_empty_paths_declaration(self, text, expected):
+        """Only a list with at least one item scopes anything; an empty `paths:` scopes nothing and
+        must not exempt the file.
+        """
         assert _mod.is_path_scoped(text) is expected
 
     def test_a_scoped_rule_is_excluded_from_the_total_and_reported_separately(self, tmp_path):
+        """The exclusion has to be visible, or a reader cannot tell a small budget from a narrow
+        scan.
+        """
         _workspace(
             tmp_path,
             claude="# C\n\n- Never do the always thing.\n",
@@ -271,11 +290,15 @@ class TestCommandFileStaysInSync:
     _DOC = Path(__file__).parent.parent / "skills" / "nitpicker" / "commands" / "agent-rules.md"
 
     def test_every_root_file_the_tool_knows_is_named_in_the_harness_table(self):
+        """The command tells an agent which files to find by hand; drift here means the manual steps
+        skip a file the tool still scores.
+        """
         doc = self._DOC.read_text(encoding="utf-8")
         missing = [p for p in sorted(_mod._ROOT_FILES) if f"`{p}`" not in doc]
         assert not missing, f"Harness scope table omits root instruction files: {missing}"
 
     def test_every_rules_directory_glob_is_named_in_the_harness_table(self):
+        """Same contract as the root files, for the directory half of the table."""
         doc = self._DOC.read_text(encoding="utf-8")
         dirs = {
             p.rsplit("/", 1)[0] + "/" for pats in _mod._HARNESSES.values() for p in pats if "*" in p
@@ -290,9 +313,13 @@ class TestImports:
     referenced in their own file and never learns it was never loaded."""
 
     def _codes(self, tmp_path):
+        """The import-related finding codes for a workspace, in report order."""
         return [f["code"] for f in _mod.check(tmp_path)[0]["findings"] if "import" in f["code"]]
 
     def test_a_missing_target_blocks(self, tmp_path):
+        """A rule that silently never loads is not a warning, so this is the one import defect that
+        fails the gate.
+        """
         (tmp_path / "CLAUDE.md").write_text(
             "# C\n\nSee @docs/missing.md for the rest.\n", encoding="utf-8"
         )
@@ -303,6 +330,7 @@ class TestImports:
         assert blocking is True, "a rule that silently never loads is not a warning"
 
     def test_a_resolving_import_is_not_a_finding(self, tmp_path):
+        """An import that resolves is ordinary composition and must stay silent."""
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "extra.md").write_text(
             "# E\n\n- Always run tests.\n", encoding="utf-8"
@@ -321,6 +349,10 @@ class TestImports:
         assert f["file"] == "a.md"
 
     def test_a_cycle_is_reported_once_at_the_closing_edge(self, tmp_path):
+        """Reported at the edge that closes the loop, so one cycle yields one finding rather than
+        one
+        per file on it.
+        """
         (tmp_path / "CLAUDE.md").write_text("# C\n\n@a.md\n", encoding="utf-8")
         (tmp_path / "a.md").write_text("# A\n\n@b.md\n", encoding="utf-8")
         (tmp_path / "b.md").write_text("# B\n\n@a.md\n", encoding="utf-8")
@@ -364,6 +396,7 @@ class TestImports:
         assert "CLAUDE.md → l1.md" in f["detail"], "the chain must name how it got there"
 
     def test_a_chain_at_the_limit_is_not_reported(self, tmp_path):
+        """The boundary itself still loads; only the hop past it is lost."""
         self._chain(tmp_path, 5)
         assert "import_too_deep" not in self._codes(tmp_path)
 
@@ -421,11 +454,14 @@ class TestImports:
         assert self._codes(tmp_path) == []
 
     def test_a_fenced_import_is_a_code_sample(self, tmp_path):
+        """Documentation showing the syntax must not read as a live import."""
         (tmp_path / "CLAUDE.md").write_text("# C\n\n```bash\n@fenced.md\n```\n", encoding="utf-8")
         assert self._codes(tmp_path) == []
 
 
 class TestBudget:
+    """The whole-set total against the warn band and the hard limit."""
+
     def test_over_the_limit_blocks(self, tmp_path):
         """The budget is the one finding here graded High, because it is the one
         with a hard number behind it rather than a judgement."""
@@ -439,6 +475,7 @@ class TestBudget:
         assert report["total_instructions"] == 160
 
     def test_warn_band_reports_without_blocking(self, tmp_path):
+        """The warn band exists to be visible without failing a build."""
         body = "# C\n\n" + "".join(f"- Rule {i}.\n" for i in range(120))
         _workspace(tmp_path, claude=body)
         report, blocking = _mod.check(tmp_path)
@@ -448,12 +485,15 @@ class TestBudget:
         assert f["severity"] == "Low"
 
     def test_under_the_warn_band_is_silent(self, tmp_path):
+        """A config inside budget produces no budget finding at all — silence is the signal."""
         _workspace(tmp_path, claude="# C\n\n- One rule.\n")
         report, _ = _mod.check(tmp_path)
         assert not [x for x in report["findings"] if x["code"] == "instruction_budget"]
 
 
 class TestPositionRisk:
+    """A critical rule buried mid-file, where a reader skims past it."""
+
     def test_catches_a_plain_bullet_rule_mid_file(self, tmp_path):
         """AGENTS.md states every rule as a plain bullet.
 
@@ -471,6 +511,7 @@ class TestPositionRisk:
         assert "Never read the agents directory" in hits[0]["detail"]
 
     def test_ignores_short_files_and_the_edges(self, tmp_path):
+        """Depth means nothing in a short file, and any file's top and bottom survive a skim."""
         _workspace(tmp_path, agents="# A\n\n- Never do it.\n\nBody.\n")
         report, _ = _mod.check(tmp_path)
         assert not [x for x in report["findings"] if x["code"] == "position_risk"]
@@ -493,6 +534,7 @@ class TestPositionRisk:
         assert not [x for x in report["findings"] if x["code"] == "position_risk"]
 
     def test_prose_mentioning_a_directive_is_not_a_rule_statement(self, tmp_path):
+        """The line must open with the directive; matching anywhere scores ordinary prose."""
         assert _mod._is_rule_statement("- Never do it.")
         assert _mod._is_rule_statement("## Never do it")
         assert _mod._is_rule_statement("- **Never** do it.")
@@ -500,7 +542,12 @@ class TestPositionRisk:
 
 
 class TestCrossFileDuplicate:
+    """One directive stated in two files, and the grading that depends on whether both load
+    together.
+    """
+
     def test_same_line_in_two_files_is_reported(self, tmp_path):
+        """The second file to state a line owns the finding; the first is the source."""
         dup = "Never hand-edit the ledger because it is append-only and permanent.\n"
         _workspace(tmp_path, claude="# C\n\n" + dup, agents="# A\n\n" + dup)
         report, _ = _mod.check(tmp_path)
@@ -518,12 +565,18 @@ class TestCrossFileDuplicate:
         assert not [x for x in report["findings"] if x["code"] == "cross_file_duplicate"]
 
     def test_short_lines_do_not_count(self, tmp_path):
+        """A short line repeats by coincidence — a heading, a fence, a bare path — so the length
+        floor
+        keeps those out.
+        """
         _workspace(tmp_path, claude="# C\n\nBe brief.\n", agents="# A\n\nBe brief.\n")
         report, _ = _mod.check(tmp_path)
         assert not [x for x in report["findings"] if x["code"] == "cross_file_duplicate"]
 
 
 class TestCli:
+    """The command-line contract: exit codes, JSON on stdout, diagnostics on stderr."""
+
     def test_help_prints_usage_before_resolving_a_path(self, capsys, monkeypatch):
         """--help must answer even where the positional would fail to resolve."""
         monkeypatch.setattr(sys, "argv", ["check-agent-instructions.py", "--help"])
@@ -531,6 +584,7 @@ class TestCli:
         assert "check-agent-instructions.py" in capsys.readouterr().out
 
     def test_too_many_arguments_is_a_usage_error(self, capsys, monkeypatch):
+        """Usage errors exit 2, distinct from a runtime failure, so a caller can tell them apart."""
         monkeypatch.setattr(sys, "argv", ["x", "a", "b"])
         with pytest.raises(SystemExit) as exc:
             _mod.main()
@@ -549,6 +603,7 @@ class TestCli:
     def test_unreadable_file_exits_one_rather_than_tracebacking(
         self, tmp_path, capsys, monkeypatch
     ):
+        """A traceback replaces a diagnosable message with a stack, and this runs inside a hook."""
         _workspace(tmp_path, claude="# C\n")
         monkeypatch.setattr(sys, "argv", ["x", str(tmp_path)])
 
@@ -563,6 +618,7 @@ class TestCli:
         assert "cannot read" in capsys.readouterr().err
 
     def test_clean_workspace_exits_zero_with_json(self, tmp_path, capsys, monkeypatch):
+        """Structured data on stdout is the contract an agent reads."""
         _workspace(tmp_path, claude="# C\n\n- One rule.\n")
         monkeypatch.setattr(sys, "argv", ["x", str(tmp_path)])
         with pytest.raises(SystemExit) as exc:
@@ -571,6 +627,7 @@ class TestCli:
         assert json.loads(capsys.readouterr().out)["total_instructions"] == 1
 
     def test_blocking_workspace_exits_one(self, tmp_path, capsys, monkeypatch):
+        """Exit 1 is what fails CI on a blocking finding."""
         _workspace(tmp_path, claude="# C\n\n" + "".join(f"- Rule {i}.\n" for i in range(160)))
         monkeypatch.setattr(sys, "argv", ["x", str(tmp_path)])
         with pytest.raises(SystemExit) as exc:
