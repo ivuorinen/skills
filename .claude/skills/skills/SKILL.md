@@ -38,7 +38,8 @@ If the user says… → run:
 - "privacy audit / PII audit / GDPR check" → `/nitpicker privacy`
 - "config audit / check env vars / config drift" → `/nitpicker config`
 - "audit the infra / Dockerfile / Terraform / k8s security / IaC misconfig" → `/nitpicker iac`
-- "audit prompt safety / check for prompt injection / is this agent safe / LLM integration" → `/nitpicker prompt-safety`
+- "audit prompt safety / check for prompt injection / is our LLM integration safe" → `/nitpicker prompt-safety`
+- "audit the installed skills / is this skill safe to install / anything malicious in the agent config / did that plugin do something" → `/nitpicker skill-safety`
 - "find leaks / unclosed connections / fd leak" → `/nitpicker leaks`
 - "i18n audit / find hardcoded strings" → `/nitpicker i18n`
 - "find race conditions / is this thread-safe" → `/nitpicker concurrency`

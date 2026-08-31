@@ -1,5 +1,6 @@
 """Tests for skills/nitpicker/scripts/check-rules-anatomy.py."""
 
+import datetime
 import importlib.util
 import runpy
 import sys
@@ -107,11 +108,39 @@ class TestCheckFile:
         assert not _has(findings, "stale_glob")
         assert not _has(findings, "malformed_frontmatter")
 
-    def test_non_md_extension(self, tmp_path):
+    def test_unsupported_extension(self, tmp_path):
+        """A suffix outside the discovery table is a real finding; the supported ones are covered
+        separately.
+        """
         f = tmp_path / "my-rule.txt"
         f.write_text("Never use grep.\n", encoding="utf-8")
         findings = _check_file(f, tmp_path)
-        assert _has(findings, "non_md_extension")
+        assert _has(findings, "unsupported_extension")
+
+    def test_the_github_instructions_basename_convention_is_accepted(self, tmp_path):
+        """`.github/instructions/` names files `<name>.instructions.md`, so the
+        stem keeps a `.instructions` tail no kebab pattern accepts. The tool
+        scans that directory, so judging the raw stem reported every Copilot
+        instruction file as malformed."""
+        f = tmp_path / "py.instructions.md"
+        f.write_text("# Py\n\nNever use grep.\n", encoding="utf-8")
+        assert not _has(_check_file(f, tmp_path), "non_kebab_case")
+
+    def test_a_bad_name_before_the_instructions_suffix_still_fails(self, tmp_path):
+        """Stripping the suffix must not stop the check — `MyRule.instructions`
+        is still not kebab-case once the tail is removed."""
+        f = tmp_path / "MyRule.instructions.md"
+        f.write_text("# X\n\nNever use grep.\n", encoding="utf-8")
+        assert _has(_check_file(f, tmp_path), "non_kebab_case")
+
+    @pytest.mark.parametrize("name", ["my-rule.md", "my-rule.mdc"])
+    def test_every_discovered_suffix_is_accepted(self, tmp_path, name):
+        """`.mdc` is what Cursor's rules use, and the directory scan accepts it.
+        Reporting it per file put a valid Cursor rule set entirely in
+        `with_issues` — the harness assumption surviving one level down."""
+        f = tmp_path / name
+        f.write_text("Never use grep.\n", encoding="utf-8")
+        assert not _has(_check_file(f, tmp_path), "unsupported_extension")
 
     def test_non_kebab_case_filename(self, tmp_path):
         f = tmp_path / "MyRule.md"
@@ -325,12 +354,15 @@ class TestMain:
         assert "Usage:" in capsys.readouterr().out
 
     def test_explicit_path_without_rules_dir_exits_1(self, tmp_path, capsys, monkeypatch):
-        # The argument is a project root. A supplied path lacking .claude/rules/
-        # is a misconfiguration (e.g. passing `.claude/rules/` itself), not a
-        # clean repo — it must fail rather than report a silently green run.
+        # The argument is a project root. A supplied path with no rules directory
+        # for any harness is a misconfiguration (e.g. passing `.claude/rules/`
+        # itself), not a clean repo — it must fail rather than report a silently
+        # green run.
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
         assert code == 1
-        assert "not found" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "no rules directory" in err
+        assert ".cursor/rules" in err, "the error must name what was looked for"
 
     def test_no_arg_and_no_rules_dir_exits_0(self, tmp_path, capsys, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -344,7 +376,7 @@ class TestMain:
         code = self._main(monkeypatch, ["prog", str(tmp_path)])
         assert code == 0
         data = __import__("json").loads(capsys.readouterr().out)
-        assert data["message"] == ".claude/rules/ exists but is empty"
+        assert data["message"].endswith("exists but is empty")
 
     def test_clean_rules_exits_0(self, tmp_path, capsys, monkeypatch):
         self._setup_rules(tmp_path, {"my-rule.md": "# Title\n\nNever use grep.\n"})
@@ -442,6 +474,154 @@ class TestAdditionalCoverage:
         assert any(x["code"] == "symlink_escapes_root" for x in findings), (
             "an unresolvable path must fail closed, not be scanned"
         )
+
+    def test_looks_illustrative_covers_each_non_path_shape(self):
+        """Three things wear the shape of a repo path and are not one.
+
+        All three were false positives on this check's first run against this
+        repo's own rules, which is why each has a branch rather than a comment.
+        """
+        assert _mod._looks_illustrative("claude.ai"), "a domain is not a file"
+        assert _mod._looks_illustrative("PyCQA/bandit"), "an org/repo slug is not a path"
+        assert _mod._looks_illustrative("src/auth.py"), "a documented example is not a claim"
+        assert _mod._looks_illustrative("skills/**/*.md"), "a glob is not a path"
+        assert _mod._looks_illustrative("<placeholder>/x.py")
+        assert _mod._looks_illustrative("/etc/passwd"), "absolute paths are out of scope"
+        assert not _mod._looks_illustrative("skills/nitpicker/scripts/findings.py")
+
+    def test_tracked_indexes_relative_paths_and_basenames(self, tmp_path):
+        """A rule cites a file by whichever spelling reads clearly, so both resolve.
+
+        `findings.py` and `skills/nitpicker/scripts/findings.py` are both correct
+        prose for the same file; neither is stale.
+        """
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "thing.py").write_text("x\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        rel, base = _mod._tracked(tmp_path)
+
+        assert "pkg/thing.py" in rel
+        assert "thing.py" in base
+
+    def test_stale_path_flags_only_what_is_actually_absent(self, tmp_path):
+        """The check earns its place only if it separates a real miss from a real hit."""
+        (tmp_path / "real.py").write_text("x\n", encoding="utf-8")
+        f = tmp_path / "r.md"
+        f.write_text(
+            "# R\n\nNever skip it. See `real.py` and also `gone/missing.py`.\n"
+            "The example `src/auth.py` is illustrative and must not be flagged.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        findings = _check_file(f, tmp_path)
+
+        stale = [x for x in findings if x["code"] == "stale_path"]
+        assert len(stale) == 1, f"expected exactly the absent path, got {stale}"
+        assert "src/auth.py" not in str(stale), "a documented example is not a stale path"
+        assert "gone/missing.py" in stale[0]["detail"]
+        assert stale[0]["severity"] == "Low", "must not block a commit on a judgement call"
+
+    def test_buried_directive_scores_section_openers_not_prose(self, tmp_path):
+        """Scoring every sentence inverts the signal in a repo that mandates 'never'.
+
+        `skill-style.md` requires unconditional phrasing, so the word saturates
+        ordinary prose; the first cut of this check flagged hardest the files
+        that followed the style guide best. Only a heading or a bolded lead-in
+        titles a rule, so only those are scored.
+        """
+        filler = ["Ordinary prose that says never in passing."] * 25
+        buried = ["# R", "", *filler, "", "## Never touch the ledger", "", *filler]
+        f = tmp_path / "long.md"
+        f.write_text("\n".join(buried) + "\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+
+        hits = [x for x in _check_file(f, tmp_path) if x["code"] == "buried_directive"]
+        assert len(hits) == 1, "the heading is the finding; the prose lines are not"
+        assert "Never touch the ledger" in hits[0]["detail"]
+        assert hits[0]["severity"] == "Low"
+
+    def test_buried_directive_ignores_short_files_and_the_edges(self, tmp_path):
+        """Depth is meaningless until there is enough file to get lost in.
+
+        In a 10-line rule every line sits at some percentage, and a directive at
+        the top or bottom is the one an agent does read.
+        """
+        short = tmp_path / "short.md"
+        short.write_text("# R\n\n## Never do it\n\nBody.\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        assert not [x for x in _check_file(short, tmp_path) if x["code"] == "buried_directive"]
+
+        filler = ["Filler."] * 45
+        edge = tmp_path / "edge.md"
+        edge.write_text("\n".join(["## Never do it", "", *filler]) + "\n", encoding="utf-8")
+        assert not [x for x in _check_file(edge, tmp_path) if x["code"] == "buried_directive"], (
+            "a directive at the very top is not buried"
+        )
+
+    def test_placeholder_and_stale_date_and_duplicate_and_dead_anchor(self, tmp_path):
+        """The four checks borrowed from agentlinter's catalogue, each on one probe.
+
+        Together they cover the drift a rule file accumulates without anyone
+        editing it: a slot nobody filled, a date nobody revisited, a sentence
+        pasted twice that now has two truths, and a link into a heading that was
+        renamed. All four are deterministic, which is why they are gates rather
+        than audit prompts.
+        """
+        f = tmp_path / "probe.md"
+        f.write_text(
+            "# P\n\n## Real Section\n\n"
+            "Never link to [Real Section](#real-section).\n"
+            "Never link to [Ghost](#no-such-heading).\n"
+            "Set the value to YYYY-MM-DD before shipping.\n"
+            "Decided on 2024-01-15 and never revisited since.\n"
+            "This exact sentence is long enough to count as a duplicate line.\n"
+            "This exact sentence is long enough to count as a duplicate line.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        by_code = {x["code"]: x for x in _check_file(f, tmp_path)}
+
+        assert "placeholder" in by_code and "YYYY-MM-DD" in by_code["placeholder"]["detail"]
+        assert "stale_date" in by_code and "2024-01-15" in by_code["stale_date"]["detail"]
+        assert "duplicate_line" in by_code
+        assert "dead_anchor" in by_code
+        assert "no-such-heading" in by_code["dead_anchor"]["detail"]
+        assert "real-section" not in by_code["dead_anchor"]["detail"], (
+            "a link to a heading that exists must not be reported"
+        )
+
+    def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
+        """The negative half: these checks must stay quiet on a healthy file.
+
+        A gate that fires on ordinary content gets switched off, so the absence
+        of a finding is as much the contract as its presence.
+        """
+        recent = datetime.date.today() - datetime.timedelta(days=10)
+        f = tmp_path / "ok.md"
+        f.write_text(
+            f"# P\n\n## Section\n\nNever do it. Reviewed {recent.isoformat()}.\n"
+            "One distinct sentence that is comfortably over the length threshold.\n"
+            "Another distinct sentence that is also over the length threshold.\n"
+            "See [Section](#section) for the reasoning behind this rule.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        codes = {x["code"] for x in _check_file(f, tmp_path)}
+
+        assert not codes & {"placeholder", "stale_date", "duplicate_line", "dead_anchor"}, (
+            f"healthy file produced {codes}"
+        )
+
+    def test_malformed_date_is_left_to_a_human(self, tmp_path):
+        """`2026-13-45` parses as an ISO date by shape and not by calendar.
+
+        Reporting it as stale would be wrong (it has no age) and crashing on it
+        would take out the gate, so it is passed over deliberately.
+        """
+        f = tmp_path / "bad-date.md"
+        f.write_text("# P\n\nNever ship. Dated 2026-13-45 in the header.\n", encoding="utf-8")
+        _mod._tracked.cache_clear()
+        assert not [x for x in _check_file(f, tmp_path) if x["code"] == "stale_date"]
 
     def test_iter_rules_permission_error(self, tmp_path):
         """PermissionError in os.scandir is swallowed (lines 175-176)."""
@@ -619,6 +799,80 @@ def test_paths_glob_that_the_stdlib_rejects_is_reported_not_crashed(tmp_path, mo
     assert not _has(findings, "stale_glob")  # the `continue` skipped the staleness check
 
 
+class TestHarnessCoverage:
+    """The tool audits somebody else's repo, so it may not assume their agent.
+
+    Hardcoded to `.claude/rules`, it answered ".claude/rules/ not found" for
+    every Cursor, Windsurf, Cline or Copilot project — taking /nitpicker
+    agent-rules out of service for them rather than auditing the rules they have.
+    """
+
+    _RULE = "# My Rule\n\nA rule body that says something concrete.\n"
+
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".claude/rules/a.md",
+            ".cursor/rules/a.mdc",
+            ".cursor/rules/a.md",
+            ".windsurf/rules/a.md",
+            ".github/instructions/py.instructions.md",
+            ".clinerules/a.md",
+        ],
+    )
+    def test_each_harness_rules_directory_is_scanned(self, tmp_path, rel):
+        """Hardcoded to `.claude/rules`, this tool refused every other harness outright."""
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(self._RULE, encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 1
+        assert report["rules_dirs"] == [str(f.parent)]
+
+    def test_a_project_serving_two_agents_scans_both(self, tmp_path):
+        """Serving several agents at once is normal, and each directory is its own scan."""
+        for rel in (".claude/rules/a.md", ".cursor/rules/b.mdc"):
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True)
+            f.write_text(self._RULE, encoding="utf-8")
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 2
+        assert len(report["rules_dirs"]) == 2
+
+    def test_one_set_symlinked_for_two_agents_is_not_counted_twice(self, tmp_path):
+        """Serving Cursor from the same files as Claude Code is a real setup, and
+        double-reporting every rule would be the visible result of scanning each
+        directory with its own `seen` set."""
+        claude = tmp_path / ".claude" / "rules"
+        claude.mkdir(parents=True)
+        (claude / "a.md").write_text(self._RULE, encoding="utf-8")
+        (tmp_path / ".cursor").mkdir()
+        (tmp_path / ".cursor" / "rules").symlink_to(claude, target_is_directory=True)
+
+        report, _ = _mod.check(tmp_path, explicit=True)
+        assert report["summary"]["total"] == 1
+
+    def test_clinerules_as_a_file_is_the_other_tools_subject(self, tmp_path):
+        """Cline reads `.clinerules` as either a file or a directory. Scanning the
+        file form raises NotADirectoryError, which would fail the gate on a valid
+        Cline project; the always-loaded-set check owns that form instead."""
+        (tmp_path / ".clinerules").write_text(self._RULE, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="no rules directory"):
+            _mod.check(tmp_path, explicit=True)
+
+    def test_a_non_directory_at_a_non_ambiguous_path_still_fails(self, tmp_path):
+        """Only `.clinerules` is allowed to be a regular file. Skipping the others
+        would turn a real misconfiguration into a silently clean scan."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "rules").write_text("not a directory", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="cannot scan"):
+            _mod.check(tmp_path, explicit=True)
+
+
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
     (tmp_path / ".claude" / "rules").mkdir(parents=True)
@@ -626,4 +880,4 @@ def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0
-    assert '"rules_dir"' in capsys.readouterr().out
+    assert '"rules_dirs"' in capsys.readouterr().out

@@ -43,7 +43,7 @@ File a finding only when the config value is actually read by code AND the speci
    - Read the actual read+use site — verify no existing validation, coercion, safe default, or documentation already neutralizes it. "Probably validated" and "probably documented in the schema" are both banned; the read site and the sources decide.
    - Name the specific gap or wrong input: which source of truth it is missing from, which sources disagree and how, the prod posture the default ships, or the string input that coerces wrong.
    - A candidate failing any of these is dropped. It is not a finding.
-4. **File findings** via the store protocol in `_conventions.md`, using `--auditor config`. `## Evidence` names the class, the read site (file:line), and the source-of-truth gap or wrong input; `## Impact` the consequence (deferred failure, insecure prod posture, portability break); `## Fix` the concrete change. Then follow the shared run protocol: summary (include loader/validator available and unexamined sources), apply-fixes prompt, commit gate.
+4. **File findings** via the store protocol in `_conventions.md`, under the `config` auditor key. `## Evidence` names the class, the read site (file:line), and the source-of-truth gap or wrong input; `## Impact` the consequence (deferred failure, insecure prod posture, portability break); `## Fix` the concrete change. Then follow the shared run protocol: summary (include loader/validator available and unexamined sources), apply-fixes prompt, commit gate.
 
 ## Severity guide
 

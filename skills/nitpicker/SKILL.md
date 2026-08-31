@@ -1,6 +1,6 @@
 ---
 name: nitpicker
-description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, plan a change, teach me this codebase, review the PR, fix the CR comments).'
+description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, installed agent configuration, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, is this installed skill safe, plan a change, teach me this codebase, review the PR, fix the CR comments).'
 license: MIT
 compatibility: Requires Python 3.11+ and git. The pr and cr commands additionally need network access and the gh CLI (or a GITHUB_TOKEN). The bundled MCP server is Claude-native; every command works without it through the stdlib-only CLI in scripts/.
 ---
@@ -94,6 +94,7 @@ categories is maintained anywhere else.
 | `config` | Undocumented env vars, unsafe prod defaults, config drift, committed secrets (alias: `config-auditor`) |
 | `iac` | Infrastructure-as-code misconfig: root containers, open ingress, public stores, overbroad IAM |
 | `prompt-safety` | LLM-integration safety: prompt injection, model-output-to-sink, excessive tool agency, secrets in context |
+| `skill-safety` | Audit *installed* agent configuration as an untrusted supply chain: override and concealment prose, invisible payloads, exfiltration, auto-executing hooks and lifecycle scripts |
 
 ### Runtime behavior
 
@@ -137,7 +138,7 @@ categories is maintained anywhere else.
 | --- | --- |
 | `agent-loopholes` | Audit the agent enforcement surface (rules, hooks, settings) for bypasses (aliases: `loopholes`, `loophole-hunter`) |
 | `agent-hooks` | Audit hook coverage against the project's evidence base (aliases: `hooks`, `hooks-enforcer`) |
-| `agent-rules` | Audit `.claude/rules/` quality; suggest new rules from conventions (aliases: `rules`, `claude-rules-auditor`) |
+| `agent-rules` | Audit agent rule files — any harness — and suggest new rules from conventions (aliases: `rules`, `claude-rules-auditor`) |
 
 ### Meta
 
@@ -171,7 +172,8 @@ flow.
 | `scripts/fetch-pr-comments.py` | `cr` — PR/MR review threads and out-of-thread notices |
 | `scripts/fetch-pr-status.py` | `cr` — PR/MR state, CI checks, review verdicts, changed files |
 | `scripts/process-sarif.py` | `security` |
-| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` |
+| `scripts/check-rules-anatomy.py` | `agent-rules`, `agent-loopholes` — one rule file at a time |
+| `scripts/check-agent-instructions.py` | `agent-rules` — the always-loaded set as a whole (budget, position, cross-file duplication) |
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
 | `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |
@@ -237,10 +239,13 @@ that root is refused, since scanner output is the one input named by the caller
 rather than drawn from an enumerated set. A missing or unparseable file is
 reported in `meta.errors` and the remaining files still process, because a
 silently smaller finding set reads exactly like a clean scan.
-`np_check_rules_anatomy` reads the **audited project's** `.claude/rules/` — the
-one place a tool here reaches outside the plugin's own files — and returns
-`blocking` alongside the findings. A project root with no `.claude/rules/` is an
-error, not a clean report.
+`np_check_rules_anatomy` reads the **audited project's** rule files — the one
+place a tool here reaches outside the plugin's own files — and returns `blocking`
+alongside the findings. It scans whichever rules directories the project keeps
+(`.claude/rules/`, `.cursor/rules/`, `.windsurf/rules/`, `.github/instructions/`,
+`.clinerules/`), since the harness a consumer runs is not ours to assume, and
+reports every one it found in `rules_dirs`. A project root with no rules
+directory at all is an error, not a clean report.
 
 PR tools wrap the two fetchers above, taking `pr_number` plus an optional
 `repo`, `platform` and `remote`; omitting `repo` reads it from the project's git

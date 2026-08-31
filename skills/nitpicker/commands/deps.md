@@ -9,7 +9,7 @@ Hostile audit of every dependency the project already declares or silently relie
 - A dependency tree that has grown for years without an audit
 - When asked to "audit dependencies", "find unused dependencies", "prune deps", or "check dependency health"
 
-Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`. The **supply-chain execution surface** — install-time code execution, namespace confusion, typosquats, and lockfile integrity — is audited *here* (the supply-chain classes below), not routed away: it is a structural property of the dependency set, not a per-version advisory. Whether a proposed NEW dependency is justified routes to `/nitpicker complexity` — its ladder governs the decision before the add; this command audits what is already installed. General code defects are `/nitpicker audit`.
+Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`. The **supply-chain execution surface** — install-time code execution, namespace confusion, typosquats, and lockfile integrity — is audited *here* (the supply-chain classes below), not routed away: it is a structural property of the dependency set, not a per-version advisory. One exception: where the installed unit is agent configuration — a skill, plugin, or subagent added by `npx skills add` or a marketplace — its lifecycle script travels with the rest of that unit to `/nitpicker skill-safety`, which reads the instruction prose the script ships alongside. Whether a proposed NEW dependency is justified routes to `/nitpicker complexity` — its ladder governs the decision before the add; this command audits what is already installed. General code defects are `/nitpicker audit`.
 
 ## Defect classes
 

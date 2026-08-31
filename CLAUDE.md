@@ -213,8 +213,12 @@ Skill/command writing style, lifecycle, and repo conventions live in `.claude/ru
 
 - `skill-format.md`
 - `skill-style.md`
-- `counts-in-prose.md` (author discipline; no gate — nothing parses English
-  number words, which is why the rule exists)
+- `counts-in-prose.md` (author discipline for counts; the neighbouring
+  reference drift — stale paths, dead anchors, stale dates, placeholders — is
+  gated by `check-rules-anatomy.py`)
+- `instruction-budget.md` (gated by `check-agent-instructions.py`: every file a
+  session loads each turn draws on one shared budget; the rule file names the
+  command that reports the current total)
 - `skill-lifecycle.md` (agent discipline; no gate)
 - `skill-official-best-practices.md`
 - `use-uv-runner.md`

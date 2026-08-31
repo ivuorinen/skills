@@ -38,7 +38,7 @@ File a finding only when the class, the acquisition site, the specific path wher
    - Verify no guaranteed-release construct already covers it: `with`/`try-finally`/`defer`/`using`/`try-with-resources`/RAII, or an existing teardown/cleanup hook. "Probably closed somewhere" is banned; the path decides.
    - Name the accumulation driver and confirm it repeats. A one-shot acquire on an exiting process is at most Low — grade it so, do not dismiss it and do not inflate it.
    - A candidate failing any of these is dropped. It is not a finding.
-4. **File findings** via the store protocol in `_conventions.md`, using `--auditor leaks`. `## Evidence` names the class, the acquisition site → leaking path (file:line), the specific path where release is skipped, and the driver; `## Impact` names what resource is exhausted and at what scale; `## Fix` the concrete guaranteed-release change. Then follow the shared run protocol: summary (include tools used and unexamined acquisition sites), apply-fixes prompt, commit gate.
+4. **File findings** via the store protocol in `_conventions.md`, under the `leaks` auditor key. `## Evidence` names the class, the acquisition site → leaking path (file:line), the specific path where release is skipped, and the driver; `## Impact` names what resource is exhausted and at what scale; `## Fix` the concrete guaranteed-release change. Then follow the shared run protocol: summary (include tools used and unexamined acquisition sites), apply-fixes prompt, commit gate.
 
 ## Severity guide
 

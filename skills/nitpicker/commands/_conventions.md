@@ -25,9 +25,15 @@ Severity reflects actual risk, never preference.
   Process or Procedure copies each step into the agent's task list before it
   begins — in Claude Code one `TaskCreate`/`TodoWrite` entry per step, the
   equivalent task tracker in other agents — and closes every step before
-  reporting. No step may be silently dropped: an unexecuted step is a coverage
-  gap, and silence means approval. The default `audit` command's
-  `_audit-coverage.md` checklist is this rule's expanded, cross-command form.
+  reporting. **Where the session exposes no task tracker, print the numbered
+  steps with a one-line outcome each in the response instead, before
+  reporting.** A tracker is the preferred form, never the condition: naming a tool
+  as the only way to satisfy a rule means the rule disappears in a session
+  without that tool, silently and with nothing to notice — the same failure the
+  preflight rule below exists to prevent, so it gets the same treatment. No step
+  may be silently dropped: an unexecuted step is a coverage gap, and silence
+  means approval. The default `audit` command's `_audit-coverage.md` checklist
+  is this rule's expanded, cross-command form.
 - **Standalone or in the default flow.** Every command runs either standalone
   or as part of the default `audit` flow; a command file states scope only
   where it differs from this.
@@ -65,8 +71,8 @@ a direct `scripts/*.py` call only when nothing higher does. Highest first:
      a file that is missing or unparseable comes back in `meta.errors` with the
      rest still processed.
    - **Rule anatomy** — `np_check_rules_anatomy` instead of
-     `python3 scripts/check-rules-anatomy.py`. Reads the audited project's
-     `.claude/rules/` and returns `blocking` with the findings.
+     `python3 scripts/check-rules-anatomy.py`. Reads whichever rules directories
+     the audited project keeps and returns `blocking` with the findings.
    - **Pull requests** — `np_pr_status` / `np_pr_comments` instead of the two
      fetcher scripts.
 

@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major
+.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major make-help
 
 UV := uv run --quiet
 
@@ -6,7 +6,7 @@ all: check
 
 help:
 	@echo "Available targets:"
-	@echo "  check        — validate + validate-evals + validate-rules + version-sync + lock-check + audit-consistency + index-check + lint + format-check + security + opengrep + typecheck + test + pre-commit (default)"
+	@echo "  check        — the full gate (default); its dependency list is the \`check:\` target below"
 	@echo "  validate     — validate all SKILL.md files"
 	@echo "  validate-evals — validate the evals/ sets bundled with each skill"
 	@echo "  spec-check   — cross-check skills against the Agent Skills reference validator (network)"
@@ -22,12 +22,14 @@ help:
 	@echo "  security     — bandit static security scan of shipped tools and internal scripts"
 	@echo "  opengrep     — opengrep scan (the rules Codacy reports) + stale-suppression check"
 	@echo "  list         — list all skills with descriptions"
+	@echo "  typecheck    — pyright over the repo (0 errors required)"
 	@echo "  test         — run pytest unit tests"
+	@echo "  make-help    — Makefile targets, \`make help\` and .PHONY agree"
 	@echo "  bump-patch   — bump patch version"
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-evals validate-rules version-sync lock-check audit-consistency index-check lint format-check security opengrep typecheck test pre-commit
+check: validate validate-evals validate-rules version-sync make-help lock-check audit-consistency index-check lint format-check security opengrep typecheck test pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -66,6 +68,11 @@ validate-rules:
 
 version-sync:
 	$(UV) scripts/check-version-sync.py
+
+# `make help` is a hand-maintained copy of the target list, so it drifts like any
+# second copy. This is the gate that keeps the two in step, in both directions.
+make-help:
+	$(UV) scripts/check-make-help.py
 
 # check-version-sync.py covers the five manifests release-please rewrites; it
 # does not cover uv.lock, which carries its own copy of the project version in

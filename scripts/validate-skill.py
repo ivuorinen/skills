@@ -120,6 +120,80 @@ def strip_fences(lines: list[str]) -> list[str]:
     return result
 
 
+# Shapes that are destructive, exfiltrating, or fetch-and-execute. Deliberately
+# small: each is a thing no legitimate instruction block in this repo asks a
+# reader to run, so a hit is a planted line rather than a style preference.
+_UNSAFE_SHELL_RE = re.compile(
+    # Fetch-and-execute, any shell, however the interpreter is spelled: a bare
+    # name, an absolute path, or by way of `env` — including `env -i bash` and
+    # `env VAR=x bash`, both ordinary idioms rather than obfuscation. Matching
+    # the bare name alone let `| /bin/bash` past; allowing `env` but not its
+    # options let `| env -i bash` past one round later.
+    #
+    # The token run between `env` and the shell is bounded and lazy. Bounded
+    # because an unbounded repeat over `\S+` is the catastrophic-backtracking
+    # shape opengrep flagged in this file's sibling check, and eight tokens is
+    # far past any real invocation. Lazy because it must not swallow the shell
+    # name it precedes, and because `env -u FOO zsh` puts a bare word in that
+    # run — an option's argument, not an option.
+    #
+    # This is a heuristic over authored prose, not a security boundary: a
+    # determined spelling will always evade it. It exists to catch a planted or
+    # careless line in a file this repo ships.
+    r"(?:curl|wget)[^|\n]*\|\s*"
+    r"(?:\S*/)?"
+    r"(?:env(?:\s+\S+){0,8}?\s+(?:\S*/)?)?"
+    r"(?:ba|z|k|da)?sh\b"
+    r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
+    r"|chmod\s+777"
+    r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb
+    r"|>\s*/dev/sd[a-z]"  # write to a raw device
+    r"|~/\.ssh|~/\.aws|id_rsa|/etc/shadow"  # credential material
+    r"|eval\s+\"?\$\("  # eval of command substitution
+)
+# The languages whose blocks a reader copies and runs. A ```text or ```json
+# block is illustration; a ```bash block is an instruction. Matched
+# case-insensitively: a fence tag is written by hand, and ```Bash runs exactly
+# like ```bash while a case-sensitive pattern reads it as prose.
+_EXECUTABLE_FENCE_RE = re.compile(
+    r"^(?:`{3,}|~{3,})\s*(bash|sh|shell|zsh|ksh|dash|console)\b", re.IGNORECASE
+)
+
+
+def unsafe_shell_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """(lineno, line) for dangerous commands inside *executable* fenced blocks.
+
+    Scoped to shell fences on purpose, and the scoping is what makes the check
+    usable here at all. This repo's shipped prose documents the defects it audits
+    for — `iac.md` describes `curl | sh` as a Dockerfile finding, `prompt-safety.md`
+    quotes "ignore prior instructions" as the attack string — so a scan over prose
+    flags a security toolkit for containing security content. Measured on this
+    repo: 10 hits across prose, all correct content; 0 inside the 19 blocks a
+    reader is actually told to run.
+
+    These files ship to consumers through `npx skills add`, and nothing else
+    scans them — bandit and opengrep read `.py` only. A planted fetch-and-execute
+    in a command file would reach every install.
+    """
+    out: list[tuple[int, str]] = []
+    fence = ""
+    executable = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.lstrip()
+        if fence:
+            if _fence_closes(stripped, fence):
+                fence = ""
+                executable = False
+            elif executable and _UNSAFE_SHELL_RE.search(line):
+                out.append((i, line.strip()))
+            continue
+        opened = _fence_open(stripped)
+        if opened:
+            fence = opened
+            executable = bool(_EXECUTABLE_FENCE_RE.match(stripped))
+    return out
+
+
 def _unterminated_fence(lines: list[str]) -> bool:
     """True if a fenced code block is opened but never closed.
 
@@ -353,6 +427,14 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
     if _unterminated_fence(body.splitlines()):
         err("unterminated code fence — every ``` or ~~~ must be closed")
 
+    # `body` starts after the frontmatter, so a line number from it is
+    # body-relative. Reported unadjusted it names a physical line that holds
+    # something else entirely — and the reader trusts it, because every other
+    # error in this file counts from line 1 of the file.
+    body_offset = len(text.splitlines()) - len(body.splitlines())
+    for lineno, snippet in unsafe_shell_lines(body.splitlines()):
+        err(f"line {lineno + body_offset}: unsafe command in an executable block: {snippet[:80]}")
+
     # Header level progression — no skipping levels (ignores fenced code blocks)
     headers: list[tuple[int, str]] = []
     for line in strip_fences(body.splitlines()):
@@ -502,6 +584,9 @@ def validate_commands(  # noqa: C901
 
         if _unterminated_fence(text.splitlines()):
             cerr("unterminated code fence — every ``` or ~~~ must be closed")
+
+        for lineno, snippet in unsafe_shell_lines(text.splitlines()):
+            cerr(f"line {lineno}: unsafe command in an executable block: {snippet[:80]}")
 
         # All structural checks ignore fenced code blocks.
         content_lines = strip_fences(text.splitlines())

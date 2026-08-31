@@ -9,7 +9,7 @@ Automated, tool-driven security audit: probe which security scanners are install
 - When asked to "run a security scan", "find vulnerabilities", "check for secrets", "scan dependencies", or "audit security"
 - As part of a CI gate or pre-push check
 
-Not for: general code quality (`/nitpicker audit`), architecture boundary violations (`/nitpicker arch`), or hostile logic review (`/nitpicker review`).
+Not for: general code quality (`/nitpicker audit`), architecture boundary violations (`/nitpicker arch`), hostile logic review (`/nitpicker review`), or installed third-party agent configuration (`/nitpicker skill-safety`) — no scanner here reads instruction prose, so a clean scan says nothing about what a marketplace skill instructs an agent to do.
 
 ## Tool detection
 
@@ -41,7 +41,7 @@ If a tool is found but fails to run (e.g., broken Python environment), record it
    - SAST / IaC: match on rule ID + file path
 6. Assign severity using the Severity Mapping table below.
 7. Re-validate open findings per `_conventions.md`, with this override: identify which tools ran successfully this pass (probed found AND did not error). For any open finding whose detecting tool did not run this pass, skip re-validation — leave it open and emit: "Re-validation skipped for N finding(s) from tools not run in this pass: <list>." Re-validate the rest using the match keys from step 5 (for SAST/gosec, ignore line-number drift of ±10).
-8. File new findings via the store protocol in `_conventions.md`, using `--auditor security` and `--category security`. Fold the domain fields into the finding body: Problem states what is wrong and the finding class (dependency-vulnerability, secret, sast, misconfiguration, supply-chain); Evidence carries the detecting tool(s), the CVE/rule ID, and the exact package version, file:line, or commit SHA; Impact states why it matters; Fix is the concrete remediation (upgrade command, config change, or code fix).
+8. File new findings via the store protocol in `_conventions.md`, under the `security` auditor key with category `security`. Fold the domain fields into the finding body: Problem states what is wrong and the finding class (dependency-vulnerability, secret, sast, misconfiguration, supply-chain); Evidence carries the detecting tool(s), the CVE/rule ID, and the exact package version, file:line, or commit SHA; Impact states why it matters; Fix is the concrete remediation (upgrade command, config change, or code fix).
 9. Present the summary: tool coverage (Available / Not available / Not applicable / Errored), finding counts by severity, top 5 Critical/High findings.
 10. Offer fixes per the Fix Strategy table and the `_conventions.md` prompts.
 

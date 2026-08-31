@@ -77,6 +77,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | `config`        | Undocumented env vars, unsafe prod defaults, committed secrets                   |
 | `iac`           | Container/IaC misconfig: root, open ingress, public stores, overbroad IAM        |
 | `prompt-safety` | LLM-integration safety: prompt injection, model-output-to-sink, tool agency      |
+| `skill-safety`  | Installed skills/agents/plugins as untrusted supply chain: overrides, exfil      |
 
 ### Runtime behavior
 
@@ -120,7 +121,7 @@ that run. The modifiers `inline` (nothing written to disk) and
 | ----------------- | ----------------------------------------------------------------- |
 | `agent-loopholes` | Bypassable constraints in the agent enforcement surface           |
 | `agent-hooks`     | Recurring failures no hook guards; missing hook coverage          |
-| `agent-rules`     | `.claude/rules/` quality and rules mined from project conventions |
+| `agent-rules`     | Rule file quality on any harness; rules mined from conventions    |
 
 ### Meta
 

@@ -29,18 +29,39 @@ Analyze all of:
 ## Behavior
 
 ```text
-1. Re-validate open findings per `_conventions.md` (`--auditor audit`).
+1. Re-validate open findings per `_conventions.md` (the `audit` auditor key).
 2. Load `_audit-coverage.md` (`np_read_reference` with
    `name: "audit-coverage"`, else read the file) and copy every task in it into
-   your task list (in Claude Code: one TaskCreate/TodoWrite entry per task; the
-   equivalent task tracker in other agents). This is mandatory — the task
-   list is the audit's coverage contract, and no task may be dropped.
-3. If the extra instructions name a focus matching a specialist command,
-   order that lens's task first and deep-run its command file
-   (`np_read_command` with `command: <command>`, else read `<command>.md`)
-   — its findings land under its own auditor key.
-   A named focus deepens one lens; it never narrows the checklist — every
-   other coverage task still runs.
+   your task list, per the task-list rule in `_conventions.md` — which also
+   gives the form to use when the session exposes no tracker. This is
+   mandatory: the list is the audit's coverage contract, and no task may be
+   dropped **silently**. Dropping one on request is step 3's business.
+3. Read the extra instructions as one of two things, and say which before
+   starting:
+   - A **focus** names a lens (a specialist command). Order that lens's task
+     first and deep-run its command file (`np_read_command` with
+     `command: <command>`, else read `<command>.md`) — its findings land under
+     its own auditor key. A focus deepens one lens and never narrows the
+     checklist; every other coverage task still runs.
+   - A **scope** bounds what the run covers, along one of two axes. Name which:
+     - **Input** — the files each lens runs against (`changed-files`). Every
+       lens still applies, to a smaller input. No task is dropped and none
+       closes `out of scope`.
+     - **Checklist** — the subject matter itself ("only the MCP tools", "just
+       the docs"). Tasks outside it are dropped, each closed **out of scope**
+       (`_audit-coverage.md` state 4) naming what the scope excluded, and each
+       appears in the run summary. The user then sees what was not looked at,
+       rather than reading a narrowed run as an exhaustive one.
+
+     A checklist scope is legitimate — an audit the user scoped is the audit
+     they asked for — but it is theirs to grant, not yours to infer: **quote
+     the words that establish it**. An instruction you cannot quote is a focus.
+     And when the scope would drop more tasks than it keeps, say so and confirm
+     before starting: that is where the two readings diverge most, where the
+     cheaper one is always the tempting one, and where the whole cost of
+     guessing wrong lands on the user.
+   When the instructions read as either, ask instead of guessing — the two
+   produce very different runs, and the wrong pick is only visible afterwards.
 4. Work the task list in order. For each task: apply the lens (using its
    specialist command as the authority; deep-run it via `np_read_command`,
    else `<command>.md`, when the lens is high-risk), and file findings as
@@ -48,7 +69,8 @@ Analyze all of:
    under the specialist's auditor key when you deep-run it, under the `audit`
    auditor key when you apply the lens inline. Close each task in
    exactly one of the states `_audit-coverage.md` defines (findings filed,
-   clean, or N/A with a reason). Do not close the audit while any task is open.
+   clean, N/A with a reason, or out of scope naming what the scope excluded).
+   Do not close the audit while any task is open.
 5. Run the findings-store protocol in `_conventions.md` (index refresh,
    summary, apply-fixes and commit prompts). The run summary lists every
    coverage task's outcome. If fixing: severity order (Critical first), then

@@ -162,3 +162,29 @@ repos:
         entry: python3 skills/nitpicker/scripts/check-rules-anatomy.py .
         pass_filenames: false
         files: ^(\.claude/rules/|skills/nitpicker/scripts/check-rules-anatomy\.py)
+      - id: agent-instructions
+        # Gates the always-loaded *set* — the instruction budget, a critical rule
+        # buried mid-file, and one directive stated in two files. Each of these
+        # only exists across files or against a whole-set total, so no per-file
+        # check can find them. Exits non-zero only on the budget limit; position
+        # and duplication are advisory.
+        name: agent instruction files stay within budget
+        language: system
+        entry: python3 skills/nitpicker/scripts/check-agent-instructions.py .
+        pass_filenames: false
+        # Every harness surface the checker knows, not only Claude Code's. A
+        # filter narrower than `_HARNESSES` lets an edit to a recognized file
+        # bypass the gate that exists to score it — the same partial-coverage
+        # defect the checker itself was widened to fix.
+        # `(?x)` is verbose mode: unescaped whitespace is ignored, so the
+        # alternation wraps and stays readable instead of running to 300 columns.
+        files: |
+          (?x)^(
+            CLAUDE\.md | AGENTS\.md | GEMINI\.md | CONVENTIONS\.md
+            | \.cursorrules | \.windsurfrules | \.clinerules
+            | \.continuerules | \.rules
+            | \.claude/(CLAUDE\.md|rules/)
+            | \.cursor/rules/ | \.windsurf/rules/ | \.gemini/
+            | \.github/(copilot-instructions\.md|instructions/)
+            | skills/nitpicker/scripts/check-agent-instructions\.py
+          )
