@@ -205,9 +205,12 @@ resolve the path relative to this file.
 
 `references/tools/<tool>.md` holds the invocation detail for each external
 scanner `security` drives — flags, output shape, preconditions, exit-code rules
-— one file per tool, named for the binary: `semgrep` (covering `opengrep`),
-`codeql`, `grype`, `trivy`, `gitleaks`, `checkov`, `gosec`, `snyk`, and
-`npm-audit` (covering `yarn` and `pnpm`).
+— one file per tool. The **reference name is the file stem, not the binary**:
+`semgrep` (covering `opengrep`), `codeql`, `grype`, `trivy`, `gitleaks`,
+`checkov`, `gosec`, `snyk`, and `npm-audit` (covering `npm`, `yarn` and
+`pnpm`). Two of those stems name no binary at all, so a detected binary is not
+always the name to ask for — `opengrep` resolves through `semgrep`, and all
+three package managers through `npm-audit`.
 
 Read one only after detection finds that binary. They are split for exactly that
 reason: a host with two scanners installed loads two files rather than the ~160
