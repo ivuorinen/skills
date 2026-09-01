@@ -180,7 +180,10 @@ def test_every_pretooluse_hook_is_documented_in_claude_md():
             if "$CLAUDE_PROJECT_DIR/" in cmd:
                 name = Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name
             elif "graphify hook-guard" in cmd:
-                name = "graphify hook-guard"
+                # The subcommand, not the bare prefix. Both graphify guards share
+                # `graphify hook-guard`, so collapsing them to it let CLAUDE.md
+                # drop either bullet and still pass on the strength of the other.
+                name = f"graphify hook-guard {cmd.split('graphify hook-guard')[1].split()[0]}"
             else:  # pragma: no cover - a spelling neither branch handles
                 pytest.fail(f"cannot name this PreToolUse hook for the docs check: {cmd!r}")
             if name not in documented:

@@ -216,18 +216,34 @@ def test_every_scanner_reference_is_reachable_by_name():
         assert sc.read_reference(path.stem), f"{path.stem} did not resolve"
 
 
-def test_a_command_reference_wins_a_name_collision():
+def test_a_command_reference_wins_a_name_collision(tmp_path):
     """`commands/_*.md` is the older contract, so a new scanner file sharing a
-    stem must not change what an existing caller already resolves."""
-    import pathlib as _p
+    stem must not change what an existing caller already resolves.
 
-    root = sc.plugin_root()
-    clash = root / "skills/nitpicker/references/tools/conventions.md"
-    clash.write_text("# not the conventions file\n", encoding="utf-8")
-    try:
-        assert "Shared Conventions" in sc.read_reference("conventions")
-    finally:
-        _p.Path(clash).unlink()
+    Built under `tmp_path` rather than by writing the colliding file into the
+    checked-out tree. The earlier version created
+    `references/tools/conventions.md` in the real skill directory and unlinked it
+    in a `finally` — which destroys the original if that name is ever taken, and
+    leaves the working tree mutated if the process dies between the two. Per
+    `.claude/rules/snapshot-before-mutating.md`, a check that mutates a file
+    restores it from a snapshot; not mutating the real tree at all is strictly
+    better than restoring it.
+    """
+    nit = tmp_path / "skills" / "nitpicker"
+    (nit / "commands").mkdir(parents=True)
+    (nit / "references" / "tools").mkdir(parents=True)
+    (nit / "commands" / "_conventions.md").write_text(
+        "# Shared Conventions — binding for every /nitpicker command\n", encoding="utf-8"
+    )
+    (nit / "references" / "tools" / "conventions.md").write_text(
+        "# not the conventions file\n", encoding="utf-8"
+    )
+
+    assert "Shared Conventions" in sc.read_reference("conventions", root=tmp_path)
+    # The scanner file is still reachable under a name of its own, so the
+    # precedence rule shadows the collision rather than dropping the file.
+    (nit / "references" / "tools" / "codeql.md").write_text("# codeql\n", encoding="utf-8")
+    assert "codeql" in sc.read_reference("codeql", root=tmp_path)
 
 
 def test_unknown_reference_names_both_roots():
