@@ -26,7 +26,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_common
-from pr_common import Target, TransportError
 
 _GRAPHQL_QUERY = """
 query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
@@ -87,7 +86,7 @@ query($id: ID!, $cursor: String) {
 _TRANSIENT_MARKERS = ("rate limit", "rate_limit", "ratelimited", "secondary", "502", "503", "504")
 
 
-class GhTransportError(TransportError):
+class GhTransportError(pr_common.TransportError):
     """gh itself failed — the only GraphQL failure class that can be transient.
 
     `fetch_comments` decides whether to abort or fall back to REST by scanning
@@ -115,7 +114,7 @@ def _gh_graphql(query: str, variables: dict[str, Any], hostname: str = "") -> di
 
     payload = json.dumps({"query": query, "variables": variables}).encode()
     # argv is a list and no shell is involved. Its only interpolated part is the
-    # hostname, validated by _HOST_RE before a Target is constructed.
+    # hostname, validated by _HOST_RE before a pr_common.Target is constructed.
     # nosemgrep: dangerous-subprocess-use-audit
     result = subprocess.run(argv, input=payload, capture_output=True, timeout=30)
     if result.returncode != 0:
@@ -136,7 +135,7 @@ def _gh_rest_paginate(path: str, hostname: str = "") -> list[Any]:
     if hostname:
         argv += ["--hostname", hostname]
     argv += [path]
-    # argv is a list and no shell is involved. `path` is built from a Target
+    # argv is a list and no shell is involved. `path` is built from a pr_common.Target
     # whose segments passed _check_segments, so it carries no separator or
     # traversal token.
     # nosemgrep: dangerous-subprocess-use-audit
@@ -165,7 +164,7 @@ def _token_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
 
-def _token_for(target: Target) -> str:
+def _token_for(target: pr_common.Target) -> str:
     """GITHUB_TOKEN, but only when it belongs to the host being addressed.
 
     A github.com token must never be forwarded to whatever GitHub Enterprise host
@@ -186,13 +185,13 @@ def _token_for(target: Target) -> str:
     return ""
 
 
-def _gh_transport(target: Target) -> Callable[[str], list[Any]]:
+def _gh_transport(target: pr_common.Target) -> Callable[[str], list[Any]]:
     """A rest_list callable(path) -> list bound to the gh CLI."""
     hostname = "" if target.host == "github.com" else target.host
     return lambda path: _gh_rest_paginate(path, hostname)
 
 
-def _token_transport(target: Target, token: str) -> Callable[[str], list[Any]]:
+def _token_transport(target: pr_common.Target, token: str) -> Callable[[str], list[Any]]:
     """A rest_list callable(path) -> list bound to the GITHUB_TOKEN REST transport.
 
     `fetch_comments` hands the out-of-thread fetch whichever transport actually
@@ -208,14 +207,16 @@ def _token_transport(target: Target, token: str) -> Callable[[str], list[Any]]:
     return fetch
 
 
-def _token_get(target: Target, token: str, path: str) -> Any:
+def _token_get(target: pr_common.Target, token: str, path: str) -> Any:
     body, _ = pr_common.http_json(
         f"{target.api_base}/{path}", _token_headers(token), target.api_netloc
     )
     return body
 
 
-def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[str], Any], str]:
+def _transport(
+    target: pr_common.Target,
+) -> tuple[Callable[[str], list[Any]], Callable[[str], Any], str]:
     """(paginating list transport, single-object transport, label) — or raise.
 
     Both transports come from the same source so a caller cannot mix a gh list
@@ -236,7 +237,7 @@ def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[st
             lambda path: _token_get(target, token, path),
             "token",
         )
-    raise TransportError("No auth available. Install the gh CLI or set GITHUB_TOKEN.")
+    raise pr_common.TransportError("No auth available. Install the gh CLI or set GITHUB_TOKEN.")
 
 
 # ── comments ─────────────────────────────────────────────────────────────────
@@ -273,7 +274,7 @@ def _all_thread_comments(node: dict[str, Any], hostname: str) -> list[dict[str, 
     return comments
 
 
-def fetch_graphql(target: Target, pr_number: int) -> list[dict[str, Any]]:
+def fetch_graphql(target: pr_common.Target, pr_number: int) -> list[dict[str, Any]]:
     """Review threads over GraphQL, the only transport that reports resolution.
 
     Tried before REST for that reason alone: `isResolved` has no REST
@@ -365,7 +366,7 @@ def _group_rest_comments(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(threads.values())
 
 
-def fetch_rest(target: Target, pr_number: int, rest_list: Callable[[str], list[Any]]):
+def fetch_rest(target: pr_common.Target, pr_number: int, rest_list: Callable[[str], list[Any]]):
     """The REST fallback: same threads, minus the resolution state.
 
     Takes its lister as an argument because both credentials reach this path —
@@ -376,7 +377,7 @@ def fetch_rest(target: Target, pr_number: int, rest_list: Callable[[str], list[A
 
 
 def _fetch_review_bodies(
-    target: Target, pr_number: int, rest_list: Callable[[str], list[Any]]
+    target: pr_common.Target, pr_number: int, rest_list: Callable[[str], list[Any]]
 ) -> list[dict[str, Any]]:
     """Every non-empty PR review body (any author) — outside-diff-range comments live here."""
     raw = rest_list(f"repos/{target.path}/pulls/{pr_number}/reviews")
@@ -394,7 +395,7 @@ def _fetch_review_bodies(
 
 
 def _fetch_summary_comments(
-    target: Target, pr_number: int, rest_list: Callable[[str], list[Any]]
+    target: pr_common.Target, pr_number: int, rest_list: Callable[[str], list[Any]]
 ) -> list[dict[str, Any]]:
     """Every non-empty PR issue comment, any author — bot summaries AND human notes.
 
@@ -421,7 +422,7 @@ def _fetch_summary_comments(
 
 
 def _out_of_thread_notes(
-    target: Target, pr_number: int, rest_list: Callable[[str], list[Any]]
+    target: pr_common.Target, pr_number: int, rest_list: Callable[[str], list[Any]]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(review_bodies, summary_comments): the review surface that is NOT an inline
     thread. Each half is fetched independently and best-effort, so a failure of one
@@ -453,7 +454,7 @@ def _is_transient(err: Exception) -> bool:
     )
 
 
-def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """GitHub's half of the shared comment contract.
 
     Walks the transports best-first — GraphQL, then `gh` REST, then a bare
@@ -480,7 +481,7 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
             # matches neither the `except` below nor `_is_transient`, and would
             # otherwise surface as a bare "timed out after 30 seconds" that tells
             # the caller nothing about retrying.
-            raise TransportError(
+            raise pr_common.TransportError(
                 f"GraphQL timed out ({timeout_err}); resolved state unknown — "
                 "retry rather than fall back to resolved-blind REST."
             ) from timeout_err
@@ -492,7 +493,7 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
             # unexpected 200 body, e.g. `repository: null`) is NOT caught here — it
             # propagates rather than silently downgrading to resolved-blind REST.
             if _is_transient(graphql_err):
-                raise TransportError(
+                raise pr_common.TransportError(
                     f"GraphQL transiently unavailable ({graphql_err}); resolved state unknown — "
                     "retry rather than fall back to resolved-blind REST."
                 ) from graphql_err
@@ -503,14 +504,16 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
                 transport_label = "gh-rest"
             except Exception as rest_err:
                 if not token:
-                    raise TransportError(f"gh REST failed: {rest_err}") from rest_err
+                    raise pr_common.TransportError(f"gh REST failed: {rest_err}") from rest_err
                 pr_common.warn(f"gh REST failed ({rest_err}), falling back to token REST")
                 rest_list = _token_transport(target, token)
                 threads = fetch_rest(target, pr_number, rest_list)
                 transport_label = "token-rest"
     else:
         if not token:
-            raise TransportError("No auth available. Install the gh CLI or set GITHUB_TOKEN.")
+            raise pr_common.TransportError(
+                "No auth available. Install the gh CLI or set GITHUB_TOKEN."
+            )
         rest_list = _token_transport(target, token)
         threads = fetch_rest(target, pr_number, rest_list)
         transport_label = "token-rest"
@@ -535,7 +538,7 @@ _REVIEW_STATES = {
 
 
 def _checks(
-    target: Target, sha: str, rest_list: Callable[[str], list[Any]]
+    target: pr_common.Target, sha: str, rest_list: Callable[[str], list[Any]]
 ) -> list[dict[str, Any]]:
     """Check runs plus legacy commit statuses — a repo can use either or both.
 
@@ -575,7 +578,7 @@ def _checks(
     return checks
 
 
-def _reviews(target: Target, pr_number: int, rest_list: Callable[[str], list[Any]]):
+def _reviews(target: pr_common.Target, pr_number: int, rest_list: Callable[[str], list[Any]]):
     """Latest verdict per reviewer.
 
     GitHub returns every review ever submitted, so a reviewer who requested
@@ -600,7 +603,7 @@ def _reviews(target: Target, pr_number: int, rest_list: Callable[[str], list[Any
     return list(latest.values())
 
 
-def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_status(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """GitHub's half of the shared status contract.
 
     A missing PR is raised rather than returned as an empty status, because
@@ -610,7 +613,7 @@ def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
     rest_list, get_one, _ = _transport(target)
     pr = get_one(f"repos/{target.path}/pulls/{pr_number}")
     if not isinstance(pr, dict) or "number" not in pr:
-        raise TransportError(f"PR #{pr_number} not found in {target.path}")
+        raise pr_common.TransportError(f"PR #{pr_number} not found in {target.path}")
 
     head_sha = ((pr.get("head") or {}).get("sha")) or ""
     state = "merged" if pr.get("merged") else (pr.get("state") or "")
