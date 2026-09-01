@@ -543,6 +543,14 @@ def check(project_root: Path) -> tuple[dict, bool]:
     harness — a repo with none is not one this check has anything to say about,
     and an empty clean report would present "nothing to check" as "nothing wrong".
     """
+    # Canonicalised once, here, because the import walk compares a resolved
+    # target against this value. `resolve()` on one side and not the other made
+    # `is_relative_to` compare a real path to a symlink or a relative one, so a
+    # legitimate import under a symlinked or relative root was reported as
+    # `escaping_import` — the containment check firing on the files it exists to
+    # admit. Every path below is derived from this, so resolving at the entry
+    # point is the only place it has to happen.
+    project_root = project_root.resolve()
     harnesses = detect(project_root)
     files = loaded_files(project_root)
     if not files:
