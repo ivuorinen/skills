@@ -589,10 +589,16 @@ def write_ledger(root: Path, records: list[dict]) -> None:
     # PID-suffixed: a fixed tmp name is shared mutable state, so two concurrent
     # writers interleave into it and both then rename it over the real ledger.
     tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    # 0o600 at creation, matching append_ledger. `tmp.open("w")` would take the
+    # umask instead — 0o664 on a default umask — and `replace` carries the temp
+    # file's mode onto the ledger, so a rewrite silently widened a file the
+    # append path had deliberately narrowed. Set at open rather than chmod'd
+    # after, so the records are never on disk under the wider mode.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     # fsync before the rename: resolve deletes the open finding file after this
     # returns, so the rename reaching disk ahead of the data would lose the whole
     # ledger on a crash. append_ledger already provides this durability.
-    with tmp.open("w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("".join(_ledger_line(r) + "\n" for r in records))
         f.flush()
         os.fsync(f.fileno())
