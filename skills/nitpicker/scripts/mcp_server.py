@@ -221,7 +221,9 @@ def _read_command(args: dict) -> str:
 @tool(
     "np_read_reference",
     "Return a shared nitpicker reference file: _conventions, _audit-coverage or "
-    "_teach-formats. The leading underscore is optional.",
+    "_teach-formats, or a scanner reference from references/tools/ by binary name "
+    "(semgrep, codeql, grype, trivy, gitleaks, checkov, gosec, snyk, npm-audit). "
+    "The leading underscore is optional.",
     {
         "type": "object",
         "properties": {"name": {"type": "string"}},

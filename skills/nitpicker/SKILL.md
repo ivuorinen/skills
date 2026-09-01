@@ -201,6 +201,19 @@ and run with plain `python3 <path>` — no uv or package installs required on th
 host. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
 resolve the path relative to this file.
 
+## External scanner reference
+
+`references/tools/<tool>.md` holds the invocation detail for each external
+scanner `security` drives — flags, output shape, preconditions, exit-code rules
+— one file per tool, named for the binary: `semgrep` (covering `opengrep`),
+`codeql`, `grype`, `trivy`, `gitleaks`, `checkov`, `gosec`, `snyk`, and
+`npm-audit` (covering `yarn` and `pnpm`).
+
+Read one only after detection finds that binary. They are split for exactly that
+reason: a host with two scanners installed loads two files rather than the ~160
+lines all of them come to. The path is named here so each is reachable directly
+from this file, not only through the command that uses it.
+
 ## MCP server
 
 Installing this plugin registers a stdio MCP server (`nitpicker`) from the

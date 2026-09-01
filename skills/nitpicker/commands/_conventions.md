@@ -38,8 +38,9 @@ Severity reflects actual risk, never preference.
   or as part of the default `audit` flow; a command file states scope only
   where it differs from this.
 - **Preflight every external tool.** Before invoking any external binary the
-  skill does not itself ship — a scanner (`semgrep`, `opengrep`, `grype`,
-  `trivy`, `gitleaks`, …), `gh`, a package manager, a linter or analyzer —
+  skill does not itself ship — a scanner (`semgrep`, `opengrep`, `codeql`,
+  `grype`, `trivy`, `gitleaks`, …), `gh`, a package manager, a linter or
+  analyzer —
   probe its availability with `command -v` / `which`. Never install it. Run
   only the tools found. Record a missing tool as "not available" and a tool
   that ran but failed as "errored: <message>" in the run summary; capture

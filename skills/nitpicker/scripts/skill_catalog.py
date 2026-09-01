@@ -213,10 +213,11 @@ def read_command(command: str, root: Path | None = None) -> str:
 
 
 def read_reference(name: str, root: Path | None = None) -> str:
-    """Read a shared `_`-prefixed command file: `_conventions`, `_audit-coverage`, `_teach-formats`.
+    """Read a shared reference: a `_`-prefixed command file, or a scanner reference.
 
-    The set is every `_*.md` in `commands/`, discovered per call — a new shared
-    file is readable the commit it lands. The three are named anyway because the
+    The set is every `_*.md` in `commands/` plus every `*.md` in
+    `references/tools/`, discovered per call — a new shared file or scanner
+    reference is readable the commit it lands. The three are named anyway because the
     `np_read_reference` tool description is the only surface a model picks the
     tool from, and it can only carry a literal; naming two of three there once
     left `_teach-formats` reachable but invisible, so `teach` read it off disk.
@@ -237,7 +238,19 @@ def read_reference(name: str, root: Path | None = None) -> str:
     built from the argument, so `../` in a name misses the set and raises.
     """
     root = root or plugin_root()
-    refs = {p.stem: p for p in (_nitpicker_dir(root) / "commands").glob("_*.md")}
+    nit = _nitpicker_dir(root)
+    refs = {p.stem: p for p in (nit / "commands").glob("_*.md")}
+    # `references/tools/<tool>.md` is the second root. Those files carry the
+    # per-scanner invocation detail `security` loads after detection, and they
+    # are references by every definition this file uses — without them here the
+    # only route to a bundled text was a raw filesystem read, which the tool
+    # preference in `_conventions.md` ranks last. Keyed with the leading
+    # underscore so one flat namespace serves both roots and the lookup below is
+    # unchanged; a name colliding with a `commands/_*.md` stem keeps the command
+    # reference, since that set is the older contract and the collision would
+    # otherwise change what an existing caller resolves.
+    for p in sorted((nit / "references" / "tools").glob("*.md")):
+        refs.setdefault(f"_{p.stem}", p)
     key = name if name.startswith("_") else f"_{name}"
     if key not in refs:
         # Underscore-stripped, because that is the spelling a caller passes
