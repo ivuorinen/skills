@@ -2,8 +2,10 @@
 
 import importlib.util
 import json
+import os
 import re
 import runpy
+import stat
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -62,6 +64,82 @@ def test_new_writes_open_file_that_validates(tmp_path):
     text = path.read_text(encoding="utf-8")
     assert "status: open" in text
     assert "# Token compared with ==" in text
+
+
+class TestWriteLedgerTempFile:
+    """`write_ledger` renames its temp file over the ledger, so the temp file's
+    own properties become the ledger's. Three ways that went wrong, each measured
+    before it was fixed and each pinned here."""
+
+    RECORD: ClassVar[dict] = {
+        "id": "audit-00000001",
+        "auditor": "audit",
+        "severity": "low",
+        "category": "docs",
+        "area": "x",
+        "title": "t",
+        "status": "fixed",
+        "found": "2026-01-01",
+        "resolved": "2026-01-01",
+        "body": "b",
+    }
+
+    @staticmethod
+    def _prepared(tmp_path):
+        """A store root whose ledger directory exists, plus the ledger path."""
+        p = findings.ledger_path(tmp_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def test_a_stale_wide_mode_temp_file_does_not_widen_the_ledger(self, tmp_path):
+        """A mode argument applies only when `os.open` *creates* the file.
+
+        With O_CREAT|O_TRUNC and no O_EXCL, a stale temp file left by a crashed
+        run kept its own mode and `replace` carried it onto the ledger —
+        measured at 0o666, silently undoing the 0o600 the append path sets.
+        """
+        p = self._prepared(tmp_path)
+        stale = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        stale.write_text("", encoding="utf-8")
+        stale.chmod(0o666)
+
+        findings.write_ledger(tmp_path, [self.RECORD])
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+
+    def test_a_symlinked_temp_path_is_not_followed(self, tmp_path):
+        """O_CREAT|O_TRUNC follows a symlink and truncates its target.
+
+        Anyone able to pre-create the temp name in the store directory therefore
+        had an arbitrary-file write: the victim was measured overwritten with
+        ledger content. mkstemp's O_EXCL refuses to follow one.
+        """
+        p = self._prepared(tmp_path)
+        victim = tmp_path / "VICTIM.txt"
+        victim.write_text("IMPORTANT DATA\n", encoding="utf-8")
+        p.with_name(f"{p.name}.{os.getpid()}.tmp").symlink_to(victim)
+
+        findings.write_ledger(tmp_path, [self.RECORD])
+        assert victim.read_text(encoding="utf-8") == "IMPORTANT DATA\n"
+        assert p.exists()
+
+    def test_a_failed_write_leaves_no_temp_file_behind(self, tmp_path, monkeypatch):
+        """mkstemp names are random, so nothing would ever clean one up.
+
+        The PID-derived name it replaced was at least predictable enough for a
+        later run to overwrite; an abandoned random one accumulates forever.
+        """
+        p = self._prepared(tmp_path)
+
+        def _boom(_record):
+            """Simulate a serialization failure partway through the write."""
+            raise RuntimeError("serialization failed")
+
+        monkeypatch.setattr(findings, "_ledger_line", _boom)
+        with pytest.raises(RuntimeError, match="serialization failed"):
+            findings.write_ledger(tmp_path, [self.RECORD])
+
+        assert list(p.parent.glob("*.tmp")) == []
+        assert not p.exists()
 
 
 def test_resolve_appends_ledger_and_deletes_open_file(tmp_path):
