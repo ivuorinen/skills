@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+---
+# CodeQL advanced setup.
+#
+# This replaces GitHub's *default* code-scanning setup, which cannot be
+# configured from the repository: it reads neither `.github/codeql/` nor any
+# in-repo query filter, so the one decision this repository needs to record —
+# that py/path-injection does not model a CLI whose path argument is the trust
+# anchor — had nowhere to live except a dismissal in the web UI, where the
+# reasoning is invisible to everyone reading the repository.
+#
+# ACTIVATION: default setup must be turned off before this runs, or both
+# analyses upload results and the alert set is the union of the two.
+# Settings -> Code security -> Code scanning -> CodeQL analysis -> Disable,
+# then merge this. `gh api -X PATCH repos/{owner}/{repo}/code-scanning/default-setup
+# -f state=not-configured` does the same from a shell.
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, reopened, synchronize]
+  schedule:
+    # Weekly: a query-pack update can surface a finding in code nobody touched,
+    # and neither push nor pull_request would ever run it.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to the code-scanning API
+      contents: read # read-only: checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        # `python` and `actions` are what this repository contains. The two .html
+        # files carry no script, so javascript would add a database build and
+        # analysis for nothing.
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+          # build-mode none: both languages are interpreted, so there is nothing
+          # to build and an autobuild step would only add a failure mode.
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          category: /language:${{ matrix.language }}
