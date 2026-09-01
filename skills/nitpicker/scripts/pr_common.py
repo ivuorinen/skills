@@ -182,16 +182,24 @@ def parse_remote_url(url: str) -> tuple[str, str]:
     url = url.strip()
     if not url:
         raise UsageError("empty git remote URL")
-    # The host group excludes `@` deliberately. With `[^/:]+` it admitted one,
-    # so `a@b@c:d` had two valid splits — optional userinfo plus host `b@c`, or
-    # no userinfo and host `a@b@c` — and the engine backtracked between them.
-    # That ambiguity is the polynomial blow-up CodeQL reports (py/polynomial-redos)
-    # on a remote URL, which is attacker-influenced wherever a repo is cloned
-    # from a URL someone else chose. One split is also the correct reading: a
-    # hostname cannot contain `@`, and credentials precede it.
-    scp = re.fullmatch(r"(?:[^@/]+@)?([^@/:]+):(.+)", url)
-    if scp and "://" not in url:
-        host, path = scp.group(1), scp.group(2)
+    # Scp-style (`[user@]host:path`) is split by index rather than by regex.
+    # `(?:[^@/]+@)?([^/:]+):(.+)` let the optional userinfo group and the host
+    # group both match a `:`, so an input had several valid splits and the engine
+    # backtracked between them — the polynomial blow-up CodeQL reports as
+    # py/polynomial-redos. A git remote URL is attacker-influenced wherever a
+    # repository is cloned from a URL someone else chose, so this is worth not
+    # having. Narrowing the character classes only reshuffles the ambiguity; the
+    # fix is to stop backtracking at all.
+    #
+    # Two scans, both linear: the first `@` ends any userinfo, and the first `:`
+    # after it ends the host. That ordering is what makes `user:pass@host:path`
+    # split as host `host` and path `path` rather than on the colon inside the
+    # credentials — the same answer the regex gave, arrived at without search.
+    at = url.find("@")
+    colon = url.find(":", at + 1)
+    scp_host = url[:colon].rsplit("@", 1)[-1] if colon > 0 else ""
+    if "://" not in url and colon not in (-1, len(url) - 1) and scp_host and "/" not in scp_host:
+        host, path = scp_host, url[colon + 1 :]
     else:
         split = urllib.parse.urlsplit(url)
         if not split.netloc:
