@@ -314,8 +314,23 @@ def _credential_safe(url: str, allowed_netloc: str) -> bool:
     return split.scheme == "https" and split.netloc == allowed_netloc
 
 
+# Headers that may cross an origin on a redirect. Everything else is dropped.
+#
+# An allow-list, not a deny-list of credential names, because a deny-list fails
+# open for whatever is added after it is written — and that already happened
+# here. The handler named `authorization` alone, which covers GitHub and
+# Bitbucket; GitLab authenticates with `PRIVATE-TOKEN`, so a redirect off the
+# pinned host forwarded a GitLab PAT intact while the docstring claimed the
+# credential was stripped. Listing what is safe means the next provider's header
+# is protected by default rather than by someone remembering this line exists.
+#
+# These three are the ones urllib or this module set for content negotiation,
+# never for authentication: `_UA`, and the `Accept` each provider sends.
+_SAFE_REDIRECT_HEADERS = frozenset({"user-agent", "accept", "content-type"})
+
+
 class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Strip Authorization on a redirect that leaves the pinned API host.
+    """Strip every credential header on a redirect that leaves the pinned API host.
 
     urllib follows 3xx transparently and, unlike requests, carries the header
     across hosts — so without this a cross-host redirect forwards the token
@@ -330,8 +345,8 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Drop the Authorization header unless the redirect target is still
-        https on the pinned host.
+        """Keep only `_SAFE_REDIRECT_HEADERS` unless the target is still https
+        on the pinned host.
 
         urllib copies request headers onto a redirect by default, so a server
         answering with a redirect elsewhere — or to plaintext on its own
@@ -339,10 +354,16 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         host. The handler is built per request with the netloc it may keep the
         header for, because a shared instance would have to be told which host
         applies on every call, and the one that forgot would leak silently.
+
+        Strips by complement rather than by name: every provider chooses its own
+        auth header (`Authorization` on GitHub and Bitbucket, `PRIVATE-TOKEN` on
+        GitLab), so a name list protects whichever ones its author happened to
+        know about. urllib stores header keys `.capitalize()`d, which is why the
+        comparison lowercases rather than matching the spelling a caller passed.
         """
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None and not _credential_safe(newurl, self.allowed_netloc):
-            for key in [k for k in new.headers if k.lower() == "authorization"]:
+            for key in [k for k in new.headers if k.lower() not in _SAFE_REDIRECT_HEADERS]:
                 del new.headers[key]
         return new
 
