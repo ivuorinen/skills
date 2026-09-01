@@ -292,6 +292,11 @@ def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
     harnesses that support this resolve it. A `~` path is left alone: it points
     outside the repository at the machine running the agent, so its presence here
     would say nothing about whether it resolves there.
+
+    Every resolved target is confined to `project_root` before it is opened. The
+    walk reads each imported file to follow its own imports, so an unconfined
+    resolve makes this function an arbitrary-`.md` reader driven by repository
+    content — which is attacker-controlled on any repo being audited.
     """
     findings: list[dict] = []
     edges: dict[Path, list[tuple[Path, int, str]]] = {}
@@ -309,6 +314,27 @@ def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
             if target.startswith("~"):
                 continue
             resolved = (path.parent / target).resolve()
+            # Containment first, before `is_file()` and before the read below.
+            # `resolve()` collapses `..` and follows symlinks, so this is the
+            # earliest point the real target is known — and the last point
+            # before it would be opened. Without it, `@../../outside.md` or an
+            # absolute `@/etc/x.md` is read, its own imports are followed, and
+            # its absolute path reaches a finding (`_rel_to` leaves an outside
+            # path absolute by design). Through `np_check_agent_instructions`
+            # that breaks the confinement the MCP server documents and hands the
+            # caller the server's filesystem layout.
+            if not resolved.is_relative_to(project_root):
+                findings.append(
+                    {
+                        "severity": "High",
+                        "code": "escaping_import",
+                        "file": rel,
+                        "detail": f"Line {lineno} imports @{target}, which resolves outside the "
+                        f"project — not followed. The target is absent from any checkout but "
+                        f"this machine, so every rule it holds is missing for everyone else",
+                    }
+                )
+                continue
             if not resolved.is_file():
                 findings.append(
                     {
@@ -425,12 +451,24 @@ def _import_cycles(
     return findings
 
 
+_OUTSIDE_ROOT = "<outside project root>"
+
+
 def _rel_to(path: Path, project_root: Path) -> str:
-    """`path` as a project-relative posix string, left absolute if it is outside."""
+    """`path` as a project-relative posix string; a path outside the root is elided.
+
+    The fallback used to return `str(path)`, which put the server's absolute
+    filesystem path — and the account name in it — into a finding. The import
+    walk no longer follows an escaping target, so nothing should reach it; it
+    stays as a guard because a symlinked instruction file could still resolve
+    outside, and a guard that leaks on the one path nobody predicted is worse
+    than no guard. Eliding keeps the function total without re-opening the
+    disclosure `np_check_agent_instructions` is confined to prevent.
+    """
     try:
         return path.relative_to(project_root).as_posix()
     except ValueError:
-        return str(path)
+        return _OUTSIDE_ROOT
 
 
 def _scan_file(

@@ -425,18 +425,53 @@ class TestImports:
         (tmp_path / "CLAUDE.md").write_text("# C\n\n@~/personal/rules.md\n", encoding="utf-8")
         assert self._codes(tmp_path) == []
 
-    def test_an_import_outside_the_project_keeps_its_absolute_path(self, tmp_path):
-        """A target above the root has no project-relative spelling, and inventing
-        one with `..` would name a file the reader cannot locate."""
+    def test_rel_to_elides_a_path_outside_the_root_rather_than_leaking_it(self, tmp_path):
+        """The guard behind the import walk must not re-open the disclosure.
+
+        Nothing reaches this branch through `check()` any more — escaping imports
+        are refused before they are followed — but a symlinked instruction file
+        could still resolve outside, and the fallback used to return `str(path)`,
+        putting the server's absolute path and the account name in it into a
+        finding. Exercised directly because the reachable paths no longer cover it.
+        """
+        assert _mod._rel_to(Path("/etc/hostname.md"), tmp_path) == "<outside project root>"
+        inside = tmp_path / "a" / "b.md"
+        assert _mod._rel_to(inside, tmp_path) == "a/b.md"
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["@../outside/shared.md", "@/etc/hostname.md"],
+        ids=["dot-dot", "absolute"],
+    )
+    def test_an_import_outside_the_project_is_reported_and_not_followed(self, tmp_path, spelling):
+        """An escaping import is named, never opened.
+
+        This replaces a test that asserted the opposite — that the outside file
+        was followed and the finding carried its absolute path. That behaviour
+        was the defect: the walk reads each imported file to follow its own
+        imports, so an unconfined resolve made this an arbitrary-`.md` reader
+        driven by repository content, and `_rel_to` then put the server's real
+        filesystem path into the report. Through `np_check_agent_instructions`
+        both crossed the confinement the MCP server documents.
+
+        Parametrised over both spellings because `..` and an absolute path reach
+        the same `resolve()` by different routes, and a containment check that
+        only normalises relative paths would pass one and fail the other.
+        """
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "shared.md").write_text("# S\n\n@nope.md\n", encoding="utf-8")
         root = tmp_path / "repo"
         root.mkdir()
-        (root / "CLAUDE.md").write_text("# C\n\n@../outside/shared.md\n", encoding="utf-8")
+        (root / "CLAUDE.md").write_text(f"# C\n\n{spelling}\n", encoding="utf-8")
 
-        f = next(x for x in _mod.check(root)[0]["findings"] if x["code"] == "dangling_import")
-        assert f["file"] == str(outside / "shared.md")
+        report = _mod.check(root)[0]
+        codes = [x["code"] for x in report["findings"]]
+        assert "escaping_import" in codes
+        # The outside file carries its own dangling `@nope.md`. Following it would
+        # surface that as a second finding, so its absence proves it was not read.
+        assert "dangling_import" not in codes
+        assert str(outside) not in json.dumps(report)
 
     @pytest.mark.parametrize(
         "line",
