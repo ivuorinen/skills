@@ -74,6 +74,10 @@ a direct `scripts/*.py` call only when nothing higher does. Highest first:
    - **Rule anatomy** — `np_check_rules_anatomy` instead of
      `python3 scripts/check-rules-anatomy.py`. Reads whichever rules directories
      the audited project keeps and returns `blocking` with the findings.
+   - **Instruction set** — `np_check_agent_instructions` instead of
+     `python3 scripts/check-agent-instructions.py`. Scores the always-loaded set
+     as a whole and returns `blocking` with the findings; the per-file view is
+     `np_check_rules_anatomy` above.
    - **Pull requests** — `np_pr_status` / `np_pr_comments` instead of the two
      fetcher scripts.
 

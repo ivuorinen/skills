@@ -284,6 +284,44 @@ def test_check_rules_anatomy_rules_dir_is_relative_to_the_project_root(tmp_path)
     assert str(tmp_path) not in json.dumps(data), "resolved project root leaked into the report"
 
 
+def test_check_agent_instructions_scores_the_set_without_leaking_the_root(tmp_path):
+    """The sibling of np_check_rules_anatomy: that one scores a file, this one
+    scores what every turn carries together.
+
+    Same disclosure rule as its sibling and np_process_sarif — every path in the
+    report is built from the resolved project root, so it is relativized before
+    it travels. The tool existed only as a CLI until an audit found SKILL.md
+    claiming every invoked tool had an MCP form while this one did not.
+    """
+    (tmp_path / "CLAUDE.md").write_text(
+        "# C\n\n- Never commit a credential to this repository.\n", encoding="utf-8"
+    )
+    mod = _load()
+
+    data = json.loads(_unfence(_call(mod, "np_check_agent_instructions", {}), "rule-files"))
+    assert data["harnesses"] == ["Claude Code"]
+    assert data["total_instructions"] == 1
+    assert data["blocking"] is False
+    assert data["project_root"] == "."
+    assert str(tmp_path) not in json.dumps(data), "resolved project root leaked into the report"
+
+
+def test_check_agent_instructions_errors_on_a_root_with_no_agent_config(tmp_path):
+    """A project with no instruction file for any harness is a misconfiguration
+    to report, not an empty clean result — the same call the CLI makes when a
+    root is named explicitly."""
+    mod = _load()
+    out = _call(mod, "np_check_agent_instructions", {})
+
+    assert out["isError"] is True
+    text = out["content"][0]["text"]
+    assert "no agent instruction file" in text
+    # Scrubbed at the dispatch boundary: the error interpolates the resolved
+    # root, and the caller already knows its own root.
+    assert str(tmp_path) not in text
+    assert "<project>" in text
+
+
 def test_check_rules_anatomy_missing_dir_errors_rather_than_reporting_clean(tmp_path):
     """A named root with no .claude/rules/ is a misconfiguration, not a clean result.
 

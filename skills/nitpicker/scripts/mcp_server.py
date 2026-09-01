@@ -79,6 +79,7 @@ def _load_bundled(stem: str) -> Any:
 
 sarif = _load_bundled("process-sarif")
 rules_anatomy = _load_bundled("check-rules-anatomy")
+agent_instructions = _load_bundled("check-agent-instructions")
 
 
 # The shipped modules this process imported, with the mtime each file had at
@@ -109,7 +110,7 @@ def _snapshot(modules: Any) -> dict[str, tuple[Path, float]]:
     return snapshot
 
 
-_LOADED = _snapshot((findings, pr_common, skill_catalog, sarif, rules_anatomy))
+_LOADED = _snapshot((findings, pr_common, skill_catalog, sarif, rules_anatomy, agent_instructions))
 
 # Newest first. Annotations reached the spec in 2025-03-26, so a session pinned
 # to 2024-11-05 carries them as ignorable extra fields — hence advertising a
@@ -626,6 +627,37 @@ def _check_rules_anatomy(args: dict) -> str:
     # root, so `relative_to` cannot fail. Catching it here would only hide a bug
     # in that construction behind a leaked absolute path.
     report["rules_dirs"] = [Path(d).relative_to(root).as_posix() for d in report["rules_dirs"]]
+    return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
+
+
+@tool(
+    "np_check_agent_instructions",
+    "Check the audited project's always-loaded agent instruction files as a set — "
+    "CLAUDE.md, AGENTS.md, .cursorrules, .windsurfrules, GEMINI.md and the rules "
+    "directories of whichever harnesses the project keeps: instruction budget, a "
+    "critical rule buried mid-file, one directive stated in two files, and dangling, "
+    "circular or too-deep @imports. Reports whether any finding is blocking.",
+    {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    {**_READ_ONLY, "title": "Check agent instruction set"},
+)
+def _check_agent_instructions(args: dict) -> str:
+    """Run the whole-set instruction check over the audited project.
+
+    The sibling of `np_check_rules_anatomy`: that one scores a rule file at a
+    time, this one scores what every turn carries together — a budget no
+    per-file check can see. Returns the report fenced as untrusted data with
+    `blocking` attached.
+
+    Paths are relativized before they travel, for the reason `np_process_sarif`
+    and `np_check_rules_anatomy` do it: each is built from the resolved project
+    root, so returning one as-is hands the caller the server's filesystem layout
+    and the account name in it.
+    """
+    root = _project_root(args)
+    report, blocking = agent_instructions.check(root)
+    report["project_root"] = "."
+    for entry in report["files"]:
+        entry["file"] = Path(entry["file"]).as_posix()
     return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
 
 
