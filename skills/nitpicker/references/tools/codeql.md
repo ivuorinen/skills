@@ -12,18 +12,40 @@ database each. A language with no database yields no findings and is recorded
 as **uncovered**, never as clean — the distinction the whole preflight rule
 exists for.
 
+**The database language and the query pack are two different names.** Three
+languages spell them differently, so reusing `$lang` for both builds a database
+fine and then fails the analyze step on a pack that does not exist:
+
+| `--language` | query pack |
+| --- | --- |
+| `c-cpp` | `codeql/cpp-queries` |
+| `java-kotlin` | `codeql/java-queries` |
+| `javascript-typescript` | `codeql/javascript-queries` |
+| every other language | `codeql/<lang>-queries` |
+
+`codeql resolve languages` lists the first column and `codeql resolve qlpacks`
+the second; check them rather than assuming the two agree.
+
 ```bash
+# $lang is the database language; $pack is its query pack per the table above.
+case "$lang" in
+  c-cpp)                 pack=cpp ;;
+  java-kotlin)           pack=java ;;
+  javascript-typescript) pack=javascript ;;
+  *)                     pack="$lang" ;;
+esac
+
 codeql database create "$_sa_tmp/db-$lang" --language="$lang" \
   --source-root=. --overwrite 2>"$_sa_tmp/codeql-db-$lang-err.txt"
 
 codeql database analyze "$_sa_tmp/db-$lang" \
   --format=sarif-latest --output="$_sa_tmp/codeql-$lang.sarif" --download \
-  "codeql/$lang-queries:codeql-suites/$lang-security-and-quality.qls" \
+  "codeql/$pack-queries:codeql-suites/$pack-security-and-quality.qls" \
   2>"$_sa_tmp/codeql-$lang-err.txt"
 ```
 
 **Name the suite explicitly.** Dropping the trailing
-`codeql/<lang>-queries:codeql-suites/<lang>-security-and-quality.qls` argument
+`codeql/<pack>-queries:codeql-suites/<pack>-security-and-quality.qls` argument
 runs the pack's default suite, which is security-only: on a Python tree that is
 43 rules where `security-and-quality` carries 172. The shorter run reports clean
 over a quarter of the rules and is indistinguishable from a clean run over all
