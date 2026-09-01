@@ -6,6 +6,7 @@ node_modules/
 .venv
 __pycache__
 .coverage
+*.sarif
 
 # findings.py's flock file — must stay on disk for locking, never committed
 docs/audit/findings/.lock

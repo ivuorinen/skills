@@ -95,6 +95,10 @@ def _normalize_severity(  # noqa: C901
             else:
                 candidates.append("Low")
         except (ValueError, TypeError):
+            # `security-severity` is free-form tool metadata and is routinely absent,
+            # empty, or non-numeric. An unparseable score contributes no candidate
+            # and the tool-severity and SARIF-level sources below still decide the
+            # result, so failing here would discard a finding over its metadata.
             pass
 
     # Tool-specific severity string (also free-form; may be a non-string)

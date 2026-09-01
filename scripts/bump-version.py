@@ -43,15 +43,22 @@ def bump_version(version: str, part: str) -> str:
     if not m:
         sys.exit(f"error: version {version!r} is not in MAJOR.MINOR.PATCH form")
     major, minor, patch = (int(x) for x in m.groups())
-    match part:
-        case "major":
-            return f"{major + 1}.0.0"
-        case "minor":
-            return f"{major}.{minor + 1}.0"
-        case "patch":
-            return f"{major}.{minor}.{patch + 1}"
-        case _:
-            sys.exit(f"error: unknown part {part!r} (expected major|minor|patch)")
+    # A plain if-chain rather than `match`. Every branch returns and the final
+    # `raise` terminates, so no path falls off the end returning None — which
+    # `match` also achieved through its `case _`, but only for a reader that
+    # models the statement as exhaustive. CodeQL does not, and reported the
+    # function as mixing explicit returns with an implicit one.
+    #
+    # Removing the `match` has a second effect worth having: semgrep cannot
+    # parse `match` and drops the whole file when it meets one, so this form
+    # keeps the file under that scanner too.
+    if part == "major":
+        return f"{major + 1}.0.0"
+    if part == "minor":
+        return f"{major}.{minor + 1}.0"
+    if part == "patch":
+        return f"{major}.{minor}.{patch + 1}"
+    raise SystemExit(f"error: unknown part {part!r} (expected major|minor|patch)")
 
 
 def render_json(rel_path: str, mutate, version: str) -> str:

@@ -543,7 +543,13 @@ def append_ledger(root: Path, record: dict) -> None:
     p = ledger_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = (_ledger_line(record) + "\n").encode("utf-8")
-    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
+    # 0o600, not 0o644: the ledger carries evidence quoted out of the audited
+    # repository, and redaction runs in this process rather than in the file
+    # system. A stale `redact()` once wrote an unredacted credential here and a
+    # commit hook was the only thing that caught it, so the window between the
+    # write and the review is worth narrowing. Git records only the exec bit, so
+    # this costs nothing downstream — it binds on the machine that wrote it.
+    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         if os.lseek(fd, 0, os.SEEK_END) > 0:
             os.lseek(fd, -1, os.SEEK_END)
@@ -801,6 +807,11 @@ def ensure_store_gitattributes(root: Path) -> None:
         if not store_gitattributes_present(root):
             (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
     except OSError:
+        # Store hygiene is best effort and never the caller's operation. A
+        # read-only checkout, a missing parent, or a race with another writer
+        # must not fail the finding that was actually being filed — the
+        # .gitignore and .gitattributes entries are a convenience for review,
+        # not a correctness requirement of the store.
         pass
 
 
