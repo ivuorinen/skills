@@ -182,7 +182,14 @@ def parse_remote_url(url: str) -> tuple[str, str]:
     url = url.strip()
     if not url:
         raise UsageError("empty git remote URL")
-    scp = re.fullmatch(r"(?:[^@/]+@)?([^/:]+):(.+)", url)
+    # The host group excludes `@` deliberately. With `[^/:]+` it admitted one,
+    # so `a@b@c:d` had two valid splits — optional userinfo plus host `b@c`, or
+    # no userinfo and host `a@b@c` — and the engine backtracked between them.
+    # That ambiguity is the polynomial blow-up CodeQL reports (py/polynomial-redos)
+    # on a remote URL, which is attacker-influenced wherever a repo is cloned
+    # from a URL someone else chose. One split is also the correct reading: a
+    # hostname cannot contain `@`, and credentials precede it.
+    scp = re.fullmatch(r"(?:[^@/]+@)?([^@/:]+):(.+)", url)
     if scp and "://" not in url:
         host, path = scp.group(1), scp.group(2)
     else:
