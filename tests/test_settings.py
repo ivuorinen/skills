@@ -153,3 +153,38 @@ def test_every_registered_hook_script_exists():
             continue
         rel = cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]
         assert (REPO_ROOT / rel).exists(), f"registered hook missing: {rel}"
+
+
+def test_every_pretooluse_hook_is_documented_in_claude_md():
+    """A blocking hook nobody wrote down is one an agent can only find by tripping it.
+
+    CLAUDE.md is loaded every turn and is the only description of this surface an
+    agent gets. It said "three PreToolUse hooks" while six were configured, and
+    the three it omitted — deny-unsafe-git, guard-ctx-ok, ask-destructive-restore
+    — all exit 2. An agent planning around the documented three had no basis to
+    expect a denial from the other three and no stated recovery.
+
+    Restricted to PreToolUse because only those block: a PostToolUse validator
+    that fires unannounced costs a surprising message, not a refused call.
+
+    This is `.claude/rules/counts-in-prose.md` enforced rather than asserted. The
+    rule's own note concedes "no gate parses English number words", so the count
+    drifted silently; a reference has a referent and can be checked, which is
+    what this does.
+    """
+    documented = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    undocumented = []
+    for entry in _settings()["hooks"]["PreToolUse"]:
+        for hook in entry.get("hooks", []):
+            cmd = hook.get("command", "")
+            if "$CLAUDE_PROJECT_DIR/" in cmd:
+                name = Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name
+            elif "graphify hook-guard" in cmd:
+                name = "graphify hook-guard"
+            else:  # pragma: no cover - a spelling neither branch handles
+                pytest.fail(f"cannot name this PreToolUse hook for the docs check: {cmd!r}")
+            if name not in documented:
+                undocumented.append(name)
+    assert undocumented == [], (
+        f"PreToolUse hooks configured but not named in CLAUDE.md: {sorted(set(undocumented))}"
+    )
