@@ -2893,6 +2893,13 @@ def test_ctx_ok_guard_denies_the_hatch_on_read_commands(command, monkeypatch, ca
         "rm -f stale.tmp # ctx-ok",
         "FOO=1 git push origin feature # ctx-ok",  # env prefix skipped
         "/usr/bin/git status # ctx-ok",  # path-qualified verb
+        # The shipped-tool runner. use-uv-runner.md mandates plain python3
+        # for skills/*/scripts/, and these store subcommands write files —
+        # denying them left an agent that had edited a shipped script with
+        # no sanctioned way to file a finding at all.
+        "python3 skills/nitpicker/scripts/findings.py new --auditor audit x # ctx-ok",
+        "python3 skills/nitpicker/scripts/findings.py resolve id --status fixed # ctx-ok",
+        "python skills/nitpicker/scripts/findings.py index # ctx-ok",
         "grep -rn TODO src/",  # no hatch claimed — the plugin owns this
     ],
 )
