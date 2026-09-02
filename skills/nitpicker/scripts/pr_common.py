@@ -195,10 +195,27 @@ def parse_remote_url(url: str) -> tuple[str, str]:
     # after it ends the host. That ordering is what makes `user:pass@host:path`
     # split as host `host` and path `path` rather than on the colon inside the
     # credentials — the same answer the regex gave, arrived at without search.
+    #
+    # The userinfo is validated, not merely skipped. The regex spelled it
+    # `[^@/]+`, so it rejected a prefix carrying `/` or a second `@`; splitting
+    # on the last `@` and checking only the host let `foo/bar@github.com:o/r`
+    # through as host `github.com`, turning a malformed remote into a real one.
+    # Both halves of the prefix are checked here instead.
     at = url.find("@")
     colon = url.find(":", at + 1)
-    scp_host = url[:colon].rsplit("@", 1)[-1] if colon > 0 else ""
-    if "://" not in url and colon not in (-1, len(url) - 1) and scp_host and "/" not in scp_host:
+    userinfo, sep, scp_host = (url[:colon] if colon > 0 else "").rpartition("@")
+    if (
+        "://" not in url
+        and colon not in (-1, len(url) - 1)
+        and scp_host
+        and "/" not in scp_host
+        # No `@` at all is the common case. When there is one, the prefix must be
+        # a single non-empty segment with no `/` — which also refuses `a@b@c:d`
+        # and `@host:path`. The regex accepted both by letting its *host* class
+        # swallow an `@`; neither names a host that exists, so refusing them is
+        # the stricter and more useful reading.
+        and (not sep or (userinfo and "/" not in userinfo and "@" not in userinfo))
+    ):
         host, path = scp_host, url[colon + 1 :]
     else:
         split = urllib.parse.urlsplit(url)

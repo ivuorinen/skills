@@ -68,6 +68,42 @@ class TestParseRemoteUrl:
         with pytest.raises(c.UsageError):
             c.parse_remote_url(url)
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "foo/bar@github.com:owner/repo",
+            "a@b@c:d",
+            "@github.com:owner/repo",
+            "git@:owner/repo",
+        ],
+        ids=["slash-in-userinfo", "two-at-signs", "empty-userinfo", "empty-host"],
+    )
+    def test_a_malformed_scp_prefix_is_refused(self, url):
+        """The scp userinfo is validated, not merely skipped over.
+
+        When the regex here became an index split, the host was checked for `/`
+        and the prefix before the last `@` was not — so
+        `foo/bar@github.com:owner/repo`, which the regex refused because its
+        userinfo class was `[^@/]+`, started resolving to host `github.com`.
+        A malformed remote silently became a real one pointing at a host the
+        user never named, which is the failure this module exists to prevent.
+
+        The other three are stricter than the regex was: it let its *host* class
+        swallow an `@` and so accepted `b@c`, `@github.com` and `git@` as
+        hostnames. None can exist, so refusing them loses nothing.
+        """
+        with pytest.raises(c.UsageError):
+            c.parse_remote_url(url)
+
+    def test_userinfo_may_still_carry_a_colon(self):
+        """`user:pass@host:path` splits on the colon after the credentials.
+
+        Pinned because the index split finds the first `:` *after* the first
+        `@` precisely so the one inside the userinfo is not mistaken for the
+        host/path separator.
+        """
+        assert c.parse_remote_url("user:pass@host:path") == ("host", "path")
+
 
 # ── parse_pr_url ──────────────────────────────────────────────────────────────
 
