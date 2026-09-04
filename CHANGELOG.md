@@ -35,6 +35,29 @@ each new release directly beneath the header above, and these notes stay here.
 > itself is the maintainer's decision, made in the open, and the CI guard
 > prevents a repeat.
 
+## [3.1.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v3.0.0...ivuorinen-skills-v3.1.0) (2026-09-04)
+
+
+### Features
+
+* complete the nitpicker MCP tool surface and add commit discipline ([#116](https://github.com/ivuorinen/skills/issues/116)) ([91bcb66](https://github.com/ivuorinen/skills/commit/91bcb66d0c883695864033a08ed70bbad07ed244))
+* conform every skill to the Agent Skills specification ([#117](https://github.com/ivuorinen/skills/issues/117)) ([114c102](https://github.com/ivuorinen/skills/commit/114c102b22f21194d8683dcad87136ff0237f27b))
+* fetch PR status and comments across GitHub, GitLab and Bitbucket ([#119](https://github.com/ivuorinen/skills/issues/119)) ([09ded3b](https://github.com/ivuorinen/skills/commit/09ded3bb36bf7db742182cfd047ef8cc1bdd1244))
+* gate opengrep findings and stale suppressions ([#120](https://github.com/ivuorinen/skills/issues/120)) ([326da13](https://github.com/ivuorinen/skills/commit/326da133a58e9594fffa630b2c98a98d16f9d801))
+* gate uv.lock against version drift ([#112](https://github.com/ivuorinen/skills/issues/112)) ([422ef6a](https://github.com/ivuorinen/skills/commit/422ef6a2b1eef69099f0adc0dcdadb9bec5937f1))
+* harden agent-configuration audits across every harness ([#125](https://github.com/ivuorinen/skills/issues/125)) ([cb8fba3](https://github.com/ivuorinen/skills/commit/cb8fba3a2f0e634fdceceec7f6e609a0c43200fd))
+* run every bundled nitpicker tool through an MCP tool ([#124](https://github.com/ivuorinen/skills/issues/124)) ([bc9434a](https://github.com/ivuorinen/skills/commit/bc9434a5c1f963700823501e00c89c2b2fb502e5))
+
+
+### Bug Fixes
+
+* **deps:** update ruff ([#121](https://github.com/ivuorinen/skills/issues/121)) ([bb47c92](https://github.com/ivuorinen/skills/commit/bb47c92207bc68323305eb1cbb581bc295def70d))
+* **deps:** update ruff ([#122](https://github.com/ivuorinen/skills/issues/122)) ([11c361f](https://github.com/ivuorinen/skills/commit/11c361f2de6ecd34118968e8908686eb39869307))
+* **deps:** update ruff ([#127](https://github.com/ivuorinen/skills/issues/127)) ([ddb7938](https://github.com/ivuorinen/skills/commit/ddb7938bb4ce1706329ff050212633612f09fe5c))
+* rather than docs: because SKILL.md and mcp_server.py are shipped paths, and ([bc9434a](https://github.com/ivuorinen/skills/commit/bc9434a5c1f963700823501e00c89c2b2fb502e5))
+* rather than docs:, by the clause added in [#124](https://github.com/ivuorinen/skills/issues/124): docs: covers prose under ([cb8fba3](https://github.com/ivuorinen/skills/commit/cb8fba3a2f0e634fdceceec7f6e609a0c43200fd))
+* strip credentials on a same-host scheme-downgrade redirect ([#123](https://github.com/ivuorinen/skills/issues/123)) ([675d3eb](https://github.com/ivuorinen/skills/commit/675d3eb1e5d9e2ee2b878a3bcbe87e773840b7fc))
+
 ## [3.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v2.0.0...ivuorinen-skills-v3.0.0) (2026-08-12)
 
 
