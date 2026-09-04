@@ -191,32 +191,40 @@ def parse_remote_url(url: str) -> tuple[str, str]:
     # having. Narrowing the character classes only reshuffles the ambiguity; the
     # fix is to stop backtracking at all.
     #
-    # Two scans, both linear: the first `@` ends any userinfo, and the first `:`
-    # after it ends the host. That ordering is what makes `user:pass@host:path`
-    # split as host `host` and path `path` rather than on the colon inside the
-    # credentials — the same answer the regex gave, arrived at without search.
+    # The host starts either right after a leading `user@`, or at position 0.
+    # Those are the regex's two alternatives, and they are tried in its order —
+    # greedy, so the userinfo reading first. Taking only the first `@` in the
+    # whole string instead broke `github.com:org/repo@v2.git`: the `@` there is
+    # in the *path*, the colon search started past it, no colon was found, and a
+    # valid remote raised. An `@` only opens userinfo when it precedes the first
+    # `/`, and even then the no-userinfo reading has to stay available —
+    # `myhost:~git@backup/repo.git` satisfies that guard and is still hostless
+    # under it.
     #
-    # The userinfo is validated, not merely skipped. The regex spelled it
-    # `[^@/]+`, so it rejected a prefix carrying `/` or a second `@`; splitting
-    # on the last `@` and checking only the host let `foo/bar@github.com:o/r`
-    # through as host `github.com`, turning a malformed remote into a real one.
-    # Both halves of the prefix are checked here instead.
-    at = url.find("@")
-    colon = url.find(":", at + 1)
-    userinfo, sep, scp_host = (url[:colon] if colon > 0 else "").rpartition("@")
-    if (
-        "://" not in url
-        and colon not in (-1, len(url) - 1)
-        and scp_host
-        and "/" not in scp_host
-        # No `@` at all is the common case. When there is one, the prefix must be
-        # a single non-empty segment with no `/` — which also refuses `a@b@c:d`
-        # and `@host:path`. The regex accepted both by letting its *host* class
-        # swallow an `@`; neither names a host that exists, so refusing them is
-        # the stricter and more useful reading.
-        and (not sep or (userinfo and "/" not in userinfo and "@" not in userinfo))
-    ):
-        host, path = scp_host, url[colon + 1 :]
+    # Each candidate host is checked for what the regex's `[^/:]+` and `[^@/]+`
+    # classes enforced: non-empty, no `/`, no `@`. Rejecting `@` inside the host
+    # is stricter than the regex, which accepted `a@b@c:d` as host `b@c` — not a
+    # hostname that can exist.
+    #
+    # At most two `find` calls, no backtracking: the polynomial blow-up CodeQL
+    # reports on `(?:[^@/]+@)?([^/:]+):(.+)` as py/polynomial-redos comes from
+    # the optional group and the host class both admitting a `:`, and a git
+    # remote is attacker-influenced wherever a repository is cloned from a URL
+    # someone else chose.
+    first_slash = url.find("/")
+    limit = len(url) if first_slash == -1 else first_slash
+    first_at = url.find("@")
+    scp_host = scp_path = ""
+    for start in ([first_at + 1] if 0 < first_at < limit else []) + [0]:
+        colon = url.find(":", start)
+        if colon in (-1, len(url) - 1):
+            continue
+        candidate = url[start:colon]
+        if candidate and "/" not in candidate and "@" not in candidate:
+            scp_host, scp_path = candidate, url[colon + 1 :]
+            break
+    if "://" not in url and scp_host:
+        host, path = scp_host, scp_path
     else:
         split = urllib.parse.urlsplit(url)
         if not split.netloc:

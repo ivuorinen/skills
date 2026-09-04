@@ -95,6 +95,32 @@ class TestParseRemoteUrl:
         with pytest.raises(c.UsageError):
             c.parse_remote_url(url)
 
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("github.com:org/repo@v2.git", ("github.com", "org/repo@v2")),
+            ("gitlab.com:grp/my@repo.git", ("gitlab.com", "grp/my@repo")),
+            ("myhost:~git@backup/repo.git", ("myhost", "~git@backup/repo")),
+            ("git@github.com:org/repo@v2.git", ("github.com", "org/repo@v2")),
+        ],
+        ids=["at-in-path", "at-in-repo-name", "at-after-tilde", "userinfo-and-at-in-path"],
+    )
+    def test_an_at_sign_in_the_path_does_not_hide_the_separator(self, url, expected):
+        """An `@` only opens userinfo when it precedes the first `/`.
+
+        Taking the first `@` anywhere and searching for the separator colon
+        *after* it walked past the real colon whenever the `@` was in the path:
+        no colon was found, the scp branch was skipped, and a valid remote
+        raised. `myhost:~git@backup/repo.git` is the case a
+        first-`@`-before-the-first-slash rule still gets wrong — its `@` does
+        precede the slash — so the no-userinfo reading has to stay reachable
+        rather than being replaced.
+
+        Found by a 171k-input differential sweep after two hand-written case
+        sets of fourteen and eighteen spellings each reported no difference.
+        """
+        assert c.parse_remote_url(url) == expected
+
     def test_userinfo_may_still_carry_a_colon(self):
         """`user:pass@host:path` splits on the colon after the credentials.
 
