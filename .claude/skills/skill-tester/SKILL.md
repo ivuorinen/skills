@@ -75,6 +75,50 @@ it is meant to apply:
 Scenario provenance beats scenario invention. The failures worth encoding are
 the ones this repository has already had — a wrong turn taken once is a wrong
 turn the text did not prevent, and it comes with the real artefact attached.
+The mechanism behind that preference is **authorship**: a scenario composed by
+the agent that wrote the fix telegraphs, because it is built out of the same
+understanding the fix came from. Build it from the transcript of the failure
+instead.
+
+## Pre-register the pass criterion
+
+Write down what GREEN requires **before dispatching the GREEN run**, in a form
+that can be checked against a transcript by someone who did not write it. State
+what counts as a fail, not only what counts as a pass — "names the ambiguity
+among several other caveats" is a fail where "refuses to count the signal as a
+gate" is the bar.
+
+Grading after the run is how a partial pass becomes a pass. The agent reads its
+own text back, finds the idea present somewhere in the reply, and marks it
+blocked. A criterion fixed in advance has no room for that.
+
+Also decide in advance what an *unrelated* correct catch is worth: nothing.
+A baseline that stumbles into caution on some other axis narrows the RED/GREEN
+gap without the skill contributing anything, and the GREEN run then looks better
+for a reason that is not the text.
+
+## Known limit: epistemic scenarios resist reproduction
+
+Motivational scenarios reproduce readily — an agent told it is on its tenth task
+under deadline will rationalize, and the rationalizations are recordable. The
+epistemic ones above have so far not. Four scenarios drawn from four real
+failures in this repository were each handled correctly by an unaided subagent,
+which then diagnosed the scenario's own weaknesses unprompted.
+
+The likely reason is positional, not intellectual. The agent that made those
+mistakes had built the failing check itself, had already told the user the thing
+was green, and met the contradicting field on turn forty inside output it had
+skimmed three times. A fresh subagent handed a description of that situation is
+not in it: the artefact arrives flagged as the subject of a question, which is
+the one condition under which it is easy.
+
+So a passing RED on an epistemic scenario is weak evidence either way. It does
+not show the guidance is unnecessary, and it does not license writing the
+counter-text anyway. What it does show is that the scenario failed to put the
+agent where the failure happens. Record the pass, keep the counter-text tied to
+the real incident that motivated it, and say in the write-up that the method did
+not reproduce it — an unvalidated counter honestly labelled beats a validated
+one that was graded into existence.
 
 ## GREEN phase — write and verify
 
@@ -91,6 +135,7 @@ Refactor the skill body for clarity and precision. Then dispatch the same scenar
 - [ ] RED actually failed — a scenario the unaided agent handled correctly is
       hardened or discarded, never written up as a pass
 - [ ] Skill written addressing each rationalization
+- [ ] GREEN pass criterion written down before the GREEN run, naming what fails
 - [ ] GREEN scenario confirms compliance
 - [ ] REFACTOR scenario re-run confirms no regression and no new loopholes
 - [ ] Validator passes: `uv run scripts/validate-skill.py skills/<skill-name>/SKILL.md` (for a nitpicker command: `skills/nitpicker/SKILL.md` — it validates the command files too)
