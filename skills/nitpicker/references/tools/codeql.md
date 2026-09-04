@@ -7,10 +7,32 @@ queries run against it. Budget minutes per language, so this is not a cheap
 probe like the others — run it when the depth is wanted, and record it as
 "Not run (cost)" rather than pretending it was unavailable.
 
-Precondition: `codeql` on PATH. Detect the languages present and build one
-database each. A language with no database yields no findings and is recorded
-as **uncovered**, never as clean — the distinction the whole preflight rule
-exists for.
+**Licence gate — check before running, not after.** The CodeQL CLI is not free
+software. Its terms permit analysis of open-source codebases under an
+OSI-approved licence; analysing anything else — proprietary code, source-available
+licences, an unlicensed repository — requires GitHub Advanced Security or an
+equivalent paid entitlement. `codeql` being on PATH says nothing about whether
+the operator holds one.
+
+So this tool is the one scanner whose precondition is not just the binary:
+
+1. Establish the audited project's own licence from `LICENSE`, the package
+   manifest, or an SPDX header. `/nitpicker license` resolves exactly this.
+2. Run CodeQL only when that licence is OSI-approved, **or** the user states
+   they hold the entitlement. Ask; never infer it from the binary's presence,
+   and never infer it from a public repository — public is not a licence.
+3. With neither, record CodeQL as **"Not run (licence)"** in the run summary
+   and continue with the other scanners. That is a coverage gap stated plainly,
+   which is the honest outcome; running anyway puts the *user* in breach, not
+   the agent.
+
+An agent that skips this costs its user a licence violation on their own
+codebase, and nothing in the tool's output will mention it.
+
+Precondition: `codeql` on PATH, and the licence gate above satisfied. Detect the
+languages present and build one database each. A language with no database
+yields no findings and is recorded as **uncovered**, never as clean — the
+distinction the whole preflight rule exists for.
 
 **The database language and the query pack are two different names.** Three
 languages spell them differently, so reusing `$lang` for both builds a database

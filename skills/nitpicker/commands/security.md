@@ -30,6 +30,14 @@ Before running any scan, probe for each tool with `which <tool>`. Only run tools
 
 If a tool is found but fails to run (e.g., broken Python environment), record it under "Errored" in Tool Coverage with the error message. Always capture stderr separately — never redirect to `/dev/null`.
 
+**Being on PATH is not permission to run it.** `codeql` carries a licence gate — its terms cover open-source codebases under an OSI-approved licence, and analysing anything else needs a paid entitlement the binary's presence says nothing about. Read `references/tools/codeql.md` before running it, establish the audited project's own licence first, and record **"Not run (licence)"** rather than scanning a codebase the user has no right to scan with it. A stated coverage gap costs a finding; the alternative costs the user a licence violation on their own code.
+
+**A scanner reporting nothing has to earn it.** Zero findings and a broken scanner produce the same output — an empty result set, exit 0, a well-formed report — and nothing downstream distinguishes them. This is not hypothetical: a CodeQL run in this repository reported a tree clean across every suite and threat model because one library pack was missing; the queries compiled, the rule count was correct, and the SARIF was valid and empty. So before recording any tool as clean, confirm it can still detect something:
+
+- Prefer a **known positive already in the tree** — a suppressed finding, a fixture, a deliberately-flagged line. If the scanner stops reporting the things it is known to report, it is not clean, it is off. This repository's own opengrep gate works exactly that way: 13 live `# nosemgrep` markers all read as stale the moment the ruleset goes quiet, and the gate fails.
+- Failing that, run the tool once against a **throwaway file containing a defect it is documented to catch**. A tool that misses that is recorded as **"Errored (self-check failed)"**, never as clean.
+- A tool with neither is recorded as **"Clean (unverified)"**. Say which it is; do not launder the distinction into "clean".
+
 ## Process
 
 1. Probe: run `which` for every tool in the table above.
