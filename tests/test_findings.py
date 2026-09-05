@@ -1096,6 +1096,22 @@ def test_append_ledger_creates_the_ledger_private(tmp_path):
     assert stat.S_IMODE(findings.ledger_path(tmp_path).stat().st_mode) == 0o600
 
 
+def test_append_ledger_narrows_an_existing_permissive_ledger(tmp_path):
+    """A mode argument binds only on creation, so an inherited 0o644 survived.
+
+    A store created before the 0o600 rule, or one a umask widened, kept a
+    world-readable ledger and every later append added evidence to it.
+    """
+    ledger = findings.ledger_path(tmp_path)
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text('{"id": "x"}\n', encoding="utf-8")
+    ledger.chmod(0o644)
+
+    findings.append_ledger(tmp_path, {"id": "y"})
+
+    assert stat.S_IMODE(ledger.stat().st_mode) == 0o600
+
+
 def test_append_ledger_raises_on_short_write(tmp_path, monkeypatch):
     """A short write commits half a record; resolve would then delete a live finding."""
     real_write = findings.os.write

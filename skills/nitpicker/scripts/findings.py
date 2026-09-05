@@ -543,6 +543,13 @@ def append_ledger(root: Path, record: dict) -> None:
     # this costs nothing downstream — it binds on the machine that wrote it.
     fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
     try:
+        # The mode above applies only when this call *creates* the file, which
+        # is the same trap `write_ledger` documents for its temp file: a ledger
+        # from a store created before that rule, or one a umask widened, keeps
+        # its old mode and every later append lands in a world-readable file.
+        # fchmod acts on the descriptor already open, so no other process can
+        # slip a different path in between the check and the change.
+        os.fchmod(fd, 0o600)
         if os.lseek(fd, 0, os.SEEK_END) > 0:
             os.lseek(fd, -1, os.SEEK_END)
             if os.read(fd, 1) != b"\n":
