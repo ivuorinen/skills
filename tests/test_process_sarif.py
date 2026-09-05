@@ -103,6 +103,60 @@ def test_an_empty_suppressions_array_leaves_the_result_active():
     assert len(_extract_findings(_run(results=[active]), "x.sarif")) == 1
 
 
+@pytest.mark.parametrize("status", ["rejected", "underReview"])
+def test_a_suppression_not_in_force_leaves_the_result_active(status):
+    """A rejected suppression is a decision *not* to suppress; underReview is pending.
+
+    Dropping on a non-empty array alone inverted both into suppression.
+    """
+    result = {**_result(), "suppressions": [{"kind": "external", "status": status}]}
+    assert len(_extract_findings(_run(results=[result]), "x.sarif")) == 1
+
+
+def test_a_suppression_without_a_status_still_suppresses():
+    """`status` is optional in SARIF and defaults to accepted."""
+    result = {**_result(), "suppressions": [{"kind": "external"}]}
+    assert _extract_findings(_run(results=[result]), "x.sarif") == []
+
+
+def test_a_malformed_suppression_entry_claims_nothing():
+    """Third-party JSON: an entry that is not an object asserts no status.
+
+    Reading it as suppression would let a malformed scanner output silence a
+    finding; reading it as active keeps the finding visible.
+    """
+    result = {**_result(), "suppressions": ["not-an-object", 42]}
+    assert len(_extract_findings(_run(results=[result]), "x.sarif")) == 1
+
+
+def test_a_mix_suppresses_when_any_one_is_accepted():
+    rejected_and_accepted = {
+        **_result(),
+        "suppressions": [{"status": "rejected"}, {"status": "accepted"}],
+    }
+    assert _extract_findings(_run(results=[rejected_and_accepted]), "x.sarif") == []
+
+
+def test_a_non_local_file_authority_is_kept_out_of_the_local_key():
+    """file://host/... names a file on another machine, not the local tree.
+
+    Dropping the authority folded it onto the local path and merged two
+    distinct findings under one fingerprint.
+    """
+    remote = _result(uri="file://scanner-host/repo/src/app.py")
+    local = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[remote, local]), "x.sarif")
+    assert _deduplicate(found)[1] == 0
+
+
+def test_a_localhost_authority_is_treated_as_local():
+    """ "localhost" is the SARIF spelling of "this machine"."""
+    absolute = _result(uri=f"file://localhost{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[absolute, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 1
+
+
 def test_the_same_defect_under_two_uri_spellings_dedups_to_one():
     """One scanner emits an absolute file:// URI, another a repo-relative path.
 
