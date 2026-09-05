@@ -2968,7 +2968,7 @@ def test_ctx_ok_guard_denies_the_hatch_on_read_commands(command, monkeypatch, ca
         # no sanctioned way to file a finding at all.
         "python3 skills/nitpicker/scripts/findings.py new --auditor audit x # ctx-ok",
         "python3 skills/nitpicker/scripts/findings.py resolve id --status fixed # ctx-ok",
-        "python skills/nitpicker/scripts/findings.py index # ctx-ok",
+        "python3 skills/nitpicker/scripts/findings.py index # ctx-ok",
         "grep -rn TODO src/",  # no hatch claimed — the plugin owns this
     ],
 )

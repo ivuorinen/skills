@@ -44,8 +44,10 @@ review surface the skill offers.
 
 - **Correctness & logic** — wrong results, broken invariants, bad edge
   cases, off-by-one, unsafe assumptions.
-- **Maintainability & internal architecture** — dead code, duplication,
-  tangled coupling, unclear ownership.
+- **Maintainability & internal architecture** — duplication, tangled coupling,
+  unclear ownership. Unreferenced and unreachable code belongs to `dead-code`,
+  which proves reachability before proposing a deletion this lens would only
+  suspect.
 - **Conventions** — repo, language, and framework idioms; naming; layout.
 
 ## Specialist lenses (apply each; mark N/A only when the surface is absent)
@@ -63,7 +65,8 @@ review surface the skill offers.
   data stores, unencrypted resources, overbroad IAM, unpinned base images,
   committed state/secrets. N/A when the repo has no IaC files.
 - **Performance** (`perf`) — N+1 queries, O(n²)+ hotspots,
-  sync-blocking-in-async, unbounded growth, missing pagination.
+  sync-blocking-in-async, missing pagination, and unbounded growth outside a
+  cache; a cache that grows without limit belongs to `cache`.
 - **Concurrency** (`concurrency`) — races, TOCTOU, deadlock ordering, lost
   updates, unsafe publication, state corrupted across await. N/A for
   strictly single-threaded code with no async.
@@ -78,8 +81,8 @@ review surface the skill offers.
   also a base lens until the two overlapping tasks let one case be audited
   twice and filed under two auditor keys.
 - **Cache** (`cache`) — cache correctness: stale reads, key collisions,
-  unbounded growth, stampede, serialization drift. N/A when the repo caches
-  nothing.
+  stampede, serialization drift, and unbounded growth *of a cache*, which
+  `perf` leaves to this lens. N/A when the repo caches nothing.
 - **Architecture** (`arch`) — violations against detected or declared
   patterns and layer boundaries. If `docs/audit/arch-profile.md` is absent,
   run `arch-profile` first to detect the pattern.
