@@ -248,7 +248,13 @@ def parse_remote_url(url: str) -> tuple[str, str]:
         path = path[: -len(".git")]
     if not host or not path:
         raise UsageError(f"unrecognised git remote URL: {url!r}")
-    return host, path
+    # Hostnames are case-insensitive, so fold here rather than at each caller:
+    # every downstream comparison is an equality test against a lowercase
+    # literal (`target.host == "gitlab.com"`, `== "github.com"`), and a pasted
+    # `https://GitLab.COM/...` URL made all five of them miss. The visible
+    # symptom was a token withheld from the platform's own public host, which
+    # reads as a credential problem rather than a casing one.
+    return host.lower(), path
 
 
 def git_remote_url(remote: str = "origin", cwd: str | None = None) -> str:

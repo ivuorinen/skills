@@ -40,6 +40,30 @@ def _http_resp(body, link: str = "") -> MagicMock:
 # ── parse_remote_url ──────────────────────────────────────────────────────────
 
 
+class TestRemoteHostCase:
+    """A hostname is case-insensitive; every host comparison downstream is not.
+
+    `target.host == "gitlab.com"` and its four GitHub twins are equality tests
+    against lowercase literals, so a pasted mixed-case URL made all of them miss
+    and the token was withheld from the platform's own public host.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://GitLab.COM/grp/proj",
+            "git@GitLab.COM:grp/proj.git",
+            "https://user@GitLab.COM:443/grp/proj.git",
+        ],
+    )
+    def test_host_is_folded_to_lowercase(self, url):
+        assert c.parse_remote_url(url)[0] == "gitlab.com"
+
+    def test_path_case_is_preserved(self):
+        """Only the host is case-insensitive; a repo path is not."""
+        assert c.parse_remote_url("https://GitHub.COM/Owner/RepoName")[1] == "Owner/RepoName"
+
+
 class TestParseRemoteUrl:
     @pytest.mark.parametrize(
         "url, expected",
