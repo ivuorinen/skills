@@ -45,10 +45,16 @@ class TestTokenHostGuard:
     """A gitlab.com token must never be forwarded to whatever self-hosted host the
     git remote happened to name — that is a credential leak, not a failed call."""
 
-    def test_token_used_when_no_host_is_declared(self, monkeypatch):
+    def test_token_withheld_from_an_undeclared_self_hosted_host(self, monkeypatch, capsys):
         monkeypatch.setenv("GITLAB_TOKEN", "tok")
         monkeypatch.delenv("GITLAB_HOST", raising=False)
-        assert gl._token_for(_SELF_HOSTED) == "tok"
+        assert gl._token_for(_SELF_HOSTED) == ""
+        assert "not declared for gitlab.acme.com" in capsys.readouterr().err
+
+    def test_token_used_for_gitlab_com_without_a_declaration(self, monkeypatch):
+        monkeypatch.setenv("GITLAB_TOKEN", "tok")
+        monkeypatch.delenv("GITLAB_HOST", raising=False)
+        assert gl._token_for(_TARGET) == "tok"
 
     def test_token_used_when_the_declared_host_matches(self, monkeypatch):
         monkeypatch.setenv("GITLAB_TOKEN", "tok")
@@ -74,13 +80,13 @@ class TestTokenHostGuard:
     def test_blank_declared_host_is_not_a_declaration(self, monkeypatch):
         monkeypatch.setenv("GITLAB_TOKEN", "tok")
         monkeypatch.setenv("GITLAB_HOST", "   ")
-        assert gl._token_for(_SELF_HOSTED) == "tok"
+        assert gl._token_for(_SELF_HOSTED) == ""
 
 
 class TestTransport:
     def test_token_rest_is_preferred_and_pins_the_instance_host(self, monkeypatch):
         monkeypatch.setenv("GITLAB_TOKEN", "tok")
-        monkeypatch.delenv("GITLAB_HOST", raising=False)
+        monkeypatch.setenv("GITLAB_HOST", "gitlab.acme.com")
         rest_list, rest_get, label = gl._transport(_SELF_HOSTED)
         assert label == "token-rest"
         with patch.object(c, "paginate_link", return_value=[]) as paginate:

@@ -63,26 +63,31 @@ _MR_STATES = {"opened": "open", "locked": "open", "closed": "closed", "merged": 
 def _token_for(target: pr_common.Target) -> str:
     """GITLAB_TOKEN, but only when it belongs to the instance being addressed.
 
-    GITLAB_HOST is how a user names the instance their token is for. When it is
-    set and does not match the target, the token is withheld rather than sent —
-    otherwise a gitlab.com token would be forwarded to whatever self-hosted host
-    the git remote happened to name, which is a credential leak to a third party,
-    not a failed request.
+    Withheld by default, declared by exception — the same shape as
+    pr_github._token_for. Only gitlab.com is implied; every other host must be
+    named by GITLAB_HOST before the token goes there. The reverse default leaks:
+    a gitlab.com token would be forwarded to whatever self-hosted host a git
+    remote or a pasted merge-request URL happened to name, which is a credential
+    handed to a third party, not a failed request. Gating on a *mismatch* cannot
+    express that, because the common case — GITLAB_HOST never set — declares
+    nothing and so mismatches nothing.
     """
     token = os.environ.get("GITLAB_TOKEN", "")
-    declared = os.environ.get("GITLAB_HOST", "").strip()
-    if not token or not declared:
+    if not token or target.host == "gitlab.com":
         return token
-    declared_host = urllib.parse.urlsplit(
-        declared if "://" in declared else f"https://{declared}"
-    ).netloc
-    if declared_host and declared_host.lower() != target.host.lower():
-        pr_common.warn(
-            f"GITLAB_TOKEN is declared for {declared_host} but the target is "
-            f"{target.host}; not sending it. Unset GITLAB_HOST or use glab."
-        )
-        return ""
-    return token
+    declared = os.environ.get("GITLAB_HOST", "").strip()
+    declared_host = (
+        urllib.parse.urlsplit(declared if "://" in declared else f"https://{declared}").netloc
+        if declared
+        else ""
+    )
+    if declared_host and declared_host.lower() == target.host.lower():
+        return token
+    pr_common.warn(
+        f"GITLAB_TOKEN is not declared for {target.host}; not sending it. "
+        f"Set GITLAB_HOST={target.host} if the token belongs to that instance."
+    )
+    return ""
 
 
 def _transport(
