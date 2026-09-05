@@ -176,6 +176,7 @@ flow.
 | `scripts/check-agent-instructions.py` | `agent-rules` — the always-loaded set as a whole (budget, position, cross-file duplication) |
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
+| `scripts/md_fences.py` | `findings.py`, `skill_catalog.py` and both rule analyzers — the markdown code-fence rule, defined once |
 | `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |
 | `scripts/pr_github.py`, `scripts/pr_gitlab.py`, `scripts/pr_bitbucket.py` | both PR fetchers — one provider per platform |
 

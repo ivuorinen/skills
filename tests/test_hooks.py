@@ -145,10 +145,12 @@ def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     # common.py path-loads the shipped parser, so the fake repo needs it too.
     shipped = tmp_path / "skills" / "nitpicker" / "scripts"
     shipped.mkdir(parents=True)
-    shutil.copy(
-        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
-        shipped / "findings.py",
-    )
+    # findings.py imports its sibling md_fences, so both travel or neither works.
+    for _name in ("findings.py", "md_fences.py"):
+        shutil.copy(
+            SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / _name,
+            shipped / _name,
+        )
 
     skill = tmp_path / "skills" / "foo" / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -1725,10 +1727,12 @@ def _findings_repo(tmp_path: Path) -> Path:
     """Build a tmp repo carrying a real copy of the shipped findings.py."""
     shipped = tmp_path / "skills" / "nitpicker" / "scripts"
     shipped.mkdir(parents=True)
-    shutil.copy(
-        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
-        shipped / "findings.py",
-    )
+    # findings.py imports its sibling md_fences, so both travel or neither works.
+    for _name in ("findings.py", "md_fences.py"):
+        shutil.copy(
+            SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / _name,
+            shipped / _name,
+        )
     return tmp_path
 
 

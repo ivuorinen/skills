@@ -46,6 +46,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md_fences
+
 DEFAULT_ROOT = Path("docs/audit/findings")
 LEDGER_NAME = "resolved.jsonl"
 BASELINE_NAME = "baseline.json"
@@ -268,19 +271,6 @@ def v1_auditor(filename: str) -> str:
     return V1_AUDITOR_MAP.get(stem, stem)
 
 
-def _fence_marker(stripped: str) -> str:
-    """The full fence run (``` or ~~~, 3+ chars) at the start of a line, else ''."""
-    m = re.match(r"(`{3,}|~{3,})", stripped)
-    return m.group(1) if m else ""
-
-
-def _fence_closes(marker: str, fence: str) -> bool:
-    """A closing run matches an open ``fence`` only if it is the same marker char
-    and at least as long — so a four-backtick block is not closed by a
-    three-backtick line."""
-    return bool(marker) and marker[0] == fence[0] and len(marker) >= len(fence)
-
-
 def _normalize_body(body: str) -> str:
     """Make a body markdownlint-clean outside code fences: blank lines around
     headings, blank-line runs collapsed. Fenced content is preserved verbatim,
@@ -290,12 +280,13 @@ def _normalize_body(body: str) -> str:
     fence = ""  # opening marker while inside a fence, else ""
     for line in body.strip().splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
             out.append(line)
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
-        elif marker:
+            continue
+        marker = md_fences.opener(stripped)
+        if marker:
             fence = marker
             out.append(line)
         elif not stripped:
@@ -321,11 +312,11 @@ def _strip_fenced(body: str) -> str:
     fence = ""
     for line in body.splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
+        marker = md_fences.opener(stripped)
         if marker:
             fence = marker
             continue
@@ -1478,14 +1469,14 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
 
     for line in text.splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
             # A fence inside a field value is content, not structure.
             if entry and last_field:
                 fields[last_field] += "\n" + line
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
+        marker = md_fences.opener(stripped)
         if marker:
             fence = marker
             if entry and last_field:

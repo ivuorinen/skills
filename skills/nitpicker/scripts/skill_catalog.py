@@ -16,6 +16,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md_fences
 from findings import parse_frontmatter
 
 _CMD_ROW = re.compile(r"^\|\s*`([a-z0-9][a-z0-9-]*)`\s*\|\s*(.+?)\s*\|$")
@@ -127,13 +128,14 @@ def _outside_fences(body: str) -> Iterator[str]:
     """
     fence = ""
     for line in body.splitlines():
-        opener = re.match(r"(`{3,}|~{3,})", line.lstrip())
+        stripped = line.lstrip()
         if fence:
-            if opener and opener.group(1)[0] == fence[0] and len(opener.group(1)) >= len(fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
-        if opener:
-            fence = opener.group(1)
+        opened = md_fences.opener(stripped)
+        if opened:
+            fence = opened
             continue
         yield line
 
