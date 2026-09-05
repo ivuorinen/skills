@@ -6,9 +6,13 @@ node_modules/
 .venv
 __pycache__
 .coverage
+*.sarif
 
 # findings.py's flock file — must stay on disk for locking, never committed
 docs/audit/findings/.lock
+
+# `make index-check` scratch copy — see INDEX_SNAPSHOT in the Makefile
+.index-check.before
 
 # Unignore the CLAUDE.md and the whole .claude, then do certain ignores
 !CLAUDE.md

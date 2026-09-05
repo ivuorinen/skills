@@ -10,8 +10,9 @@ on its way into a protected branch.
 
 Never pass `--no-verify` when committing changes to skill files, version
 manifests, or the findings store — it skips the pre-commit validators that guard
-them. No in-session hook enforces this: an agent *can* run `git commit
---no-verify`, so the prohibition is applied by discipline and backstopped by CI,
-not gated at commit time. Keep the `Validate` job a required status check on
+them. A PreToolUse hook (`deny-unsafe-git-hook.py`) denies the literal
+`--no-verify` and `-n`, but treat it as a backstop rather than the binding gate:
+it is bypassable through git aliases, `-c core.hooksPath=`, and stacked short
+flags, so the prohibition still rests on discipline and on CI. Keep the `Validate` job a required status check on
 every protected branch; a merge that bypasses it lands on `main` unvalidated —
 that required check, not the local pre-commit run, is the binding gate.

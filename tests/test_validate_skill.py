@@ -1,6 +1,7 @@
 """Tests for scripts/validate-skill.py — validate()."""
 
 import importlib.util
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -838,6 +839,39 @@ class TestFrontmatterBlock:
     def test_indented_line_before_any_key_is_dropped(self):
         # No preceding top-level key to attach to, so it belongs to nothing.
         assert _mod._fm_sections("  orphaned: value\nname: x\n") == [("name", "x", [])]
+
+
+def test_every_command_is_a_coverage_lens_or_an_explicit_exclusion():
+    """`audit`'s checklist must account for every command, one way or the other.
+
+    A command in neither list is one the default audit never schedules, and an
+    uncreated task cannot be closed `N/A` or `out of scope` — so the lens is
+    skipped with nothing in the run summary recording it. That is how
+    `dead-code`, `reliability`, `cache` and `contributing` went unrun while
+    `audit` still reported itself exhaustive.
+
+    Pinned here rather than in validate-skill.py because it is a claim about two
+    markdown files agreeing, not about one file's structure.
+    """
+    repo_root = Path(__file__).parent.parent
+    skill = (repo_root / "skills" / "nitpicker" / "SKILL.md").read_text(encoding="utf-8")
+    coverage = (repo_root / "skills" / "nitpicker" / "commands" / "_audit-coverage.md").read_text(
+        encoding="utf-8"
+    )
+
+    commands = {
+        m.group(1)
+        for m in re.finditer(r"^\|\s*`([a-z0-9-]+)`\s*\|", skill, re.MULTILINE)
+        # `audit` is the command running the checklist, not a lens within it.
+    } - {"audit"}
+    lenses = set(re.findall(r"^-\s+\*\*[^*]+\*\*\s+\(`([a-z0-9-]+)`\)", coverage, re.MULTILINE))
+    excluded = set(re.findall(r"`([a-z0-9-]+)`", coverage.split("## Not coverage lenses")[1]))
+
+    unaccounted = sorted(commands - lenses - excluded)
+    assert unaccounted == [], (
+        f"commands in neither the lens list nor the exclusions: {unaccounted}. "
+        f"Add each to skills/nitpicker/commands/_audit-coverage.md."
+    )
 
 
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):

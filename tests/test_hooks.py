@@ -134,6 +134,20 @@ def test_validate_json_unreadable_path_fails_open(monkeypatch, tmp_path, capsys)
 # (copied from scripts/), so replacing the hook's detection body with `pass` fails.
 
 
+def _copy_shipped_scripts(tmp_path: Path) -> Path:
+    """Copy the shipped findings.py, and what it imports, into a fake repo.
+
+    findings.py imports its sibling md_fences, so both travel or neither works.
+    Shared by the two fixtures that need it: copied separately, the next sibling
+    added would break one of them and not the other.
+    """
+    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
+    shipped.mkdir(parents=True, exist_ok=True)
+    for name in ("findings.py", "md_fences.py"):
+        shutil.copy(SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / name, shipped / name)
+    return shipped
+
+
 def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     """A malformed SKILL.md must be reported at the edit, not left for CI."""
     mod = _load("validate-skill-hook")
@@ -143,12 +157,7 @@ def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     shutil.copy(SCRIPTS_DIR / "validate-skill.py", scripts / "validate-skill.py")
     shutil.copy(SCRIPTS_DIR / "common.py", scripts / "common.py")
     # common.py path-loads the shipped parser, so the fake repo needs it too.
-    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
-    shipped.mkdir(parents=True)
-    shutil.copy(
-        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
-        shipped / "findings.py",
-    )
+    _copy_shipped_scripts(tmp_path)
 
     skill = tmp_path / "skills" / "foo" / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -1492,6 +1501,71 @@ def test_missing_validator_script_is_a_silent_noop(name, rel, monkeypatch, tmp_p
     assert out.out == "" and out.err == ""
 
 
+def test_validate_rules_hook_noops_when_its_shipped_scripts_are_absent(
+    monkeypatch, tmp_path, capsys
+):
+    """`_SHIPPED_ROOT`, not `REPO_ROOT`, is what has to be emptied to reach this.
+
+    The generic `test_missing_validator_script_is_a_silent_noop` case for this
+    hook repoints `REPO_ROOT`, which no longer decides where the validators live:
+    they are resolved from `__file__` so the hook always runs the copies that
+    ship beside it. That made the existing case stop exercising this branch
+    without failing — it still passes, just against a real validator. This one
+    empties the directory the hook actually looks in.
+    """
+    mod = _load("validate-rules-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_SHIPPED_ROOT", tmp_path / "empty")
+    target = tmp_path / ".claude" / "rules" / "a-rule.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("whatever\n", encoding="utf-8")
+
+    def _boom(*_a, **_k):
+        """Fail loudly if the hook shells out with no validator on disk."""
+        raise AssertionError("subprocess ran despite the shipped scripts being absent")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".claude/rules-evil/a.md",  # sibling whose name starts with the rules dir
+        ".claude/notrules/a.md",  # outside entirely
+        ".claude/rules/a.txt",  # inside, wrong suffix
+    ],
+    ids=["prefix-sibling", "outside", "wrong-suffix"],
+)
+def test_validate_rules_hook_ignores_paths_outside_the_rules_dir(
+    rel, monkeypatch, tmp_path, capsys
+):
+    """The containment guard, including the case a bare prefix test would miss.
+
+    The check is `realpath(path).startswith(realpath(rules_dir) + os.sep)`. The
+    trailing separator is what rejects `.claude/rules-evil/` — without it that
+    sibling passes, because its path genuinely starts with the rules directory's
+    path. A file inside the tree but not a `.md` is rejected by the same branch.
+    """
+    mod = _load("validate-rules-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    (tmp_path / ".claude" / "rules").mkdir(parents=True, exist_ok=True)
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("whatever\n", encoding="utf-8")
+
+    def _boom(*_a, **_k):
+        """Fail loudly if the hook runs a validator on a path it should ignore."""
+        raise AssertionError(f"validator ran on {rel}, which is outside .claude/rules/")
+
+    monkeypatch.setattr(mod.subprocess, "run", _boom)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
 def test_validate_json_non_existent_path_is_a_silent_noop(monkeypatch, tmp_path, capsys):
     """A deleted or renamed file is not a JSON defect."""
     mod = _load("validate-json-hook")
@@ -1658,12 +1732,7 @@ def test_shell_glob_returns_empty_when_every_spelling_fails(monkeypatch, tmp_pat
 
 def _findings_repo(tmp_path: Path) -> Path:
     """Build a tmp repo carrying a real copy of the shipped findings.py."""
-    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
-    shipped.mkdir(parents=True)
-    shutil.copy(
-        SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
-        shipped / "findings.py",
-    )
+    _copy_shipped_scripts(tmp_path)
     return tmp_path
 
 
@@ -2893,6 +2962,13 @@ def test_ctx_ok_guard_denies_the_hatch_on_read_commands(command, monkeypatch, ca
         "rm -f stale.tmp # ctx-ok",
         "FOO=1 git push origin feature # ctx-ok",  # env prefix skipped
         "/usr/bin/git status # ctx-ok",  # path-qualified verb
+        # The shipped-tool runner. use-uv-runner.md mandates plain python3
+        # for skills/*/scripts/, and these store subcommands write files —
+        # denying them left an agent that had edited a shipped script with
+        # no sanctioned way to file a finding at all.
+        "python3 skills/nitpicker/scripts/findings.py new --auditor audit x # ctx-ok",
+        "python3 skills/nitpicker/scripts/findings.py resolve id --status fixed # ctx-ok",
+        "python3 skills/nitpicker/scripts/findings.py index # ctx-ok",
         "grep -rn TODO src/",  # no hatch claimed — the plugin owns this
     ],
 )

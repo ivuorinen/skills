@@ -9,6 +9,7 @@ skill hook returns early on anything outside skills/, so a broken rule surfaced
 only at commit time. Runs the same two gates pre-commit and CI run.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,17 @@ from _hooklib import (  # type: ignore[import-not-found]
 
 REPO_ROOT = repo_root()
 
+# The two scripts this hook runs ship beside it, so their paths are derived from
+# `__file__` rather than from REPO_ROOT. REPO_ROOT comes from CLAUDE_PROJECT_DIR
+# or REPO_ROOT, and while `repo_root()` refuses a value that does not point at
+# this checkout, that is an existence test rather than a containment one — it
+# left an environment-derived string interpolated into the argv below, reported
+# as py/command-line-injection. A path built from `__file__` cannot be
+# influenced by the environment at all, which is both the stronger guarantee and
+# the simpler one to read. REPO_ROOT still supplies the subprocess `cwd`, which
+# is the tree being validated rather than the code doing the validating.
+_SHIPPED_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 def main() -> None:
     """Validate an edited rule file, and the anatomy of the whole rules tree.
@@ -34,19 +46,36 @@ def main() -> None:
     if path is None:
         return
 
-    root = REPO_ROOT.resolve()
-    if path.suffix != ".md" or not path.is_relative_to(root / ".claude" / "rules"):
+    # Containment spelled with `os.path.realpath` and `str.startswith` rather
+    # than `Path.resolve()` and `Path.is_relative_to`. Equivalent for these
+    # absolute paths, but only this form is one CodeQL recognises as a guard, so
+    # the pathlib spelling left `path` tainted all the way into the argv below.
+    # The `+ os.sep` matters: without it `.claude/rules-evil` counts as inside
+    # `.claude/rules`.
+    rules_dir = os.path.realpath(REPO_ROOT / ".claude" / "rules")
+    candidate = os.path.realpath(path)
+    if path.suffix != ".md" or not candidate.startswith(rules_dir + os.sep):
         return
 
-    validator = REPO_ROOT / "scripts" / "validate-rules.py"
-    anatomy = REPO_ROOT / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
+    validator = _SHIPPED_ROOT / "scripts" / "validate-rules.py"
+    anatomy = _SHIPPED_ROOT / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
     if not validator.exists() or not anatomy.exists():
         return
 
     output = []
     failed = False
     for cmd in (
-        ["uv", "run", "--quiet", str(validator), str(path)],
+        # `candidate`, not `path`: the argv carries the value that was checked,
+        # not the one it was derived from. Passing `path` here validated one
+        # string and used another — correct only by coincidence, and the reason
+        # the guard above did not count as a barrier.
+        # `--` terminates option parsing. Without it a rule file named
+        # `-x.md` — legal on disk and inside .claude/rules/ — reaches `uv` and
+        # the validator as a flag rather than an operand. A containment check
+        # cannot prevent that, which is why it is not a barrier for
+        # py/command-line-injection: the path is *inside* the tree and still
+        # argument-injects.
+        ["uv", "run", "--quiet", str(validator), "--", candidate],
         ["python3", str(anatomy), "."],
     ):
         try:

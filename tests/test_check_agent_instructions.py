@@ -67,6 +67,30 @@ class TestInstructionCounting:
         )
         assert _mod._count_instructions(text) == 1
 
+    def test_a_directive_in_a_table_row_or_a_quote_is_counted(self, tmp_path):
+        """Markup is not a loophole: an agent reads a quoted or tabulated rule too.
+
+        Excluding every table and blockquote line made the budget evadable by
+        reformatting — 200 directives moved into a table counted zero and passed
+        a gate the same 200 bullets blocked. Only the *first* cell is judged, and
+        only against the imperative verbs, so a reference table like the one in
+        counts-in-prose.md still counts nothing.
+        """
+        text = (
+            "# T\n\n"
+            "| Rule | Why |\n"
+            "| --- | --- |\n"
+            "| Always run the tests. | reason |\n"
+            "| Never skip the gate. | reason |\n"
+            "> Use the shipped CLI.\n"
+        )
+        assert _mod._count_instructions(text) == 3
+
+    def test_a_table_header_is_not_counted_as_its_own_directive(self, tmp_path):
+        """The header names the columns; the delimiter row proves it was a header."""
+        text = "# T\n\n| Use | When |\n| --- | --- |\n| Run the gate. | before a commit |\n"
+        assert _mod._count_instructions(text) == 1
+
     def test_unclosed_fence_swallows_the_rest(self, tmp_path):
         """An unterminated fence must not silently re-enable counting.
 
@@ -76,6 +100,76 @@ class TestInstructionCounting:
         """
         text = "# T\n\n- counted\n```\n- inside an unclosed fence\nNever counted\n"
         assert _mod._count_instructions(text) == 1
+
+
+class TestSymlinkConfinement:
+    """A rules directory that links outside the project is not ours to read.
+
+    check-rules-anatomy.py refuses the same shape under `contain`; these two
+    analyzers scan the same directories and must answer the same way, or the
+    hardened one is bypassed by calling the other.
+    """
+
+    def _escaping_workspace(self, tmp_path) -> tuple[Path, Path]:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "leaked.md").write_text("# Leaked\n\n- Never read me.\n", encoding="utf-8")
+        proj = tmp_path / "proj"
+        (proj / ".claude").mkdir(parents=True)
+        (proj / "CLAUDE.md").write_text("# C\n\n- One real rule.\n", encoding="utf-8")
+        (proj / ".claude" / "rules").symlink_to(outside, target_is_directory=True)
+        return proj, outside
+
+    def test_contained_run_reports_the_escape_and_does_not_read_it(self, tmp_path, monkeypatch):
+        """Absence from the report is not proof the file was left unread.
+
+        The disclosure this guards is the read itself, so the read is what the
+        test watches: a report could omit the content while the scan had already
+        pulled it into memory.
+        """
+        proj, outside = self._escaping_workspace(tmp_path)
+        read: list[Path] = []
+        real = _mod.Path.read_text
+        monkeypatch.setattr(
+            _mod.Path,
+            "read_text",
+            lambda self, *a, **k: (read.append(self), real(self, *a, **k))[1],
+        )
+
+        report, _ = _mod.check(proj, contain=proj.resolve())
+
+        assert (outside / "leaked.md").resolve() not in [p.resolve() for p in read]
+        escapes = [f for f in report["findings"] if f["code"] == "symlink_escapes_root"]
+        # The link is named; the files behind it are neither read nor enumerated.
+        assert [f["file"] for f in escapes] == [".claude/rules"]
+        assert "leaked.md" not in json.dumps(report)
+
+    def test_an_uncontained_run_still_follows_a_shared_rules_symlink(self, tmp_path):
+        proj, _ = self._escaping_workspace(tmp_path)
+        report, _ = _mod.check(proj)
+        assert any("leaked.md" in f["file"] for f in report["files"])
+
+    def test_no_boundary_means_nothing_escapes(self, tmp_path):
+        assert _mod._escaping([tmp_path / "a.md"], None) == []
+
+    def test_a_path_that_cannot_be_resolved_counts_as_escaping(self, tmp_path, monkeypatch):
+        """An unreadable link is one this check cannot vouch for, so it is refused.
+
+        Admitting it would make the boundary depend on the filesystem answering.
+        """
+        monkeypatch.setattr(
+            _mod.Path, "resolve", lambda self: (_ for _ in ()).throw(OSError("nope"))
+        )
+        target = tmp_path / "a.md"
+        assert _mod._escaping([target], tmp_path) == [target]
+
+    def test_the_label_names_the_file_when_no_ancestor_is_a_link(self, tmp_path):
+        """Reached only when the boundary is narrower than the project root.
+
+        The label exists to name the link that carried a path out; with no link
+        in the path there is nothing to name but the file itself.
+        """
+        assert _mod._escape_label(tmp_path / "a" / "b.md", tmp_path) == "a/b.md"
 
 
 class TestLoadedFiles:
@@ -425,18 +519,53 @@ class TestImports:
         (tmp_path / "CLAUDE.md").write_text("# C\n\n@~/personal/rules.md\n", encoding="utf-8")
         assert self._codes(tmp_path) == []
 
-    def test_an_import_outside_the_project_keeps_its_absolute_path(self, tmp_path):
-        """A target above the root has no project-relative spelling, and inventing
-        one with `..` would name a file the reader cannot locate."""
+    def test_rel_to_elides_a_path_outside_the_root_rather_than_leaking_it(self, tmp_path):
+        """The guard behind the import walk must not re-open the disclosure.
+
+        Nothing reaches this branch through `check()` any more — escaping imports
+        are refused before they are followed — but a symlinked instruction file
+        could still resolve outside, and the fallback used to return `str(path)`,
+        putting the server's absolute path and the account name in it into a
+        finding. Exercised directly because the reachable paths no longer cover it.
+        """
+        assert _mod._rel_to(Path("/etc/hostname.md"), tmp_path) == "<outside project root>"
+        inside = tmp_path / "a" / "b.md"
+        assert _mod._rel_to(inside, tmp_path) == "a/b.md"
+
+    @pytest.mark.parametrize(
+        "spelling",
+        ["@../outside/shared.md", "@/etc/hostname.md"],
+        ids=["dot-dot", "absolute"],
+    )
+    def test_an_import_outside_the_project_is_reported_and_not_followed(self, tmp_path, spelling):
+        """An escaping import is named, never opened.
+
+        This replaces a test that asserted the opposite — that the outside file
+        was followed and the finding carried its absolute path. That behaviour
+        was the defect: the walk reads each imported file to follow its own
+        imports, so an unconfined resolve made this an arbitrary-`.md` reader
+        driven by repository content, and `_rel_to` then put the server's real
+        filesystem path into the report. Through `np_check_agent_instructions`
+        both crossed the confinement the MCP server documents.
+
+        Parametrised over both spellings because `..` and an absolute path reach
+        the same `resolve()` by different routes, and a containment check that
+        only normalises relative paths would pass one and fail the other.
+        """
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "shared.md").write_text("# S\n\n@nope.md\n", encoding="utf-8")
         root = tmp_path / "repo"
         root.mkdir()
-        (root / "CLAUDE.md").write_text("# C\n\n@../outside/shared.md\n", encoding="utf-8")
+        (root / "CLAUDE.md").write_text(f"# C\n\n{spelling}\n", encoding="utf-8")
 
-        f = next(x for x in _mod.check(root)[0]["findings"] if x["code"] == "dangling_import")
-        assert f["file"] == str(outside / "shared.md")
+        report = _mod.check(root)[0]
+        codes = [x["code"] for x in report["findings"]]
+        assert "escaping_import" in codes
+        # The outside file carries its own dangling `@nope.md`. Following it would
+        # surface that as a second finding, so its absence proves it was not read.
+        assert "dangling_import" not in codes
+        assert str(outside) not in json.dumps(report)
 
     @pytest.mark.parametrize(
         "line",

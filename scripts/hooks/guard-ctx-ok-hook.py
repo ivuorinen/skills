@@ -47,6 +47,22 @@ _CTX_OK = re.compile(r"(?:^|\s)#\s*ctx-ok\s*$")
 # reason `mkdir` does — the sandbox cannot carry the effect back. `cd` matters
 # most: it prefixes a huge share of real commands, and because classification is
 # per stage, `cd repo && git push` is judged on `cd` as well as on `git push`.
+#
+# BOTH script-runner classes belong here, per use-uv-runner.md. `uv` runs the
+# internal dev tooling; `python3` runs the shipped stdlib-only tools under
+# `skills/*/scripts/`, whose findings-store subcommands (`new`, `resolve`,
+# `index`, `baseline`, `migrate`) are exactly the state mutations this hatch
+# exists to permit. Omitting it deadlocked the two rules: once a session edits a
+# shipped script, _conventions.md forbids the `np_*` MCP tools — the server
+# holds the pre-edit modules in memory — leaving the CLI as the only sanctioned
+# interface, and this guard denied it. An agent that hit that had no sanctioned
+# way to file a finding at all, and nothing recorded the drop.
+#
+# This does widen the hatch to `python3 -c "print(open(f).read())"`. Accepted and
+# consistent: `uv`, `make` and `npm` below already run arbitrary code under the
+# same allowance, and this hook's docstring states it does NOT re-implement
+# routing. Blocking the repo's own mandated mutation path to catch a
+# hypothetical read trades a real failure for a speculative one.
 _ALLOWED = frozenset(
     {
         "cd",
@@ -72,6 +88,8 @@ _ALLOWED = frozenset(
         "uv",
         "pip",
         "pipx",
+        "python3",
+        "python",
         "make",
         "pytest",
         "tox",

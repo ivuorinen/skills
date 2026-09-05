@@ -29,9 +29,11 @@ Severity normalization:
 Exit codes: 0 = success, 1 = parse/IO error, 2 = usage error.
 """
 
+import contextlib
 import hashlib
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 _SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Advisory"]
@@ -95,6 +97,10 @@ def _normalize_severity(  # noqa: C901
             else:
                 candidates.append("Low")
         except (ValueError, TypeError):
+            # `security-severity` is free-form tool metadata and is routinely absent,
+            # empty, or non-numeric. An unparseable score contributes no candidate
+            # and the tool-severity and SARIF-level sources below still decide the
+            # result, so failing here would discard a finding over its metadata.
             pass
 
     # Tool-specific severity string (also free-form; may be a non-string)
@@ -155,6 +161,61 @@ def _extract_rules(run: dict) -> dict[str, dict]:
     return rules
 
 
+def _is_suppressed(suppressions: object) -> bool:
+    """True when at least one suppression is actually in force.
+
+    SARIF 2.1.0 gives each suppression a `status` of accepted, underReview or
+    rejected, and the field is optional with accepted as its default. Treating
+    any non-empty array as suppression hid results whose only suppression had
+    been *rejected* — a reviewer's decision not to suppress, inverted into one
+    that does. underReview is likewise not yet in force.
+    """
+    if not isinstance(suppressions, list):
+        return False
+    for s in suppressions:
+        if not isinstance(s, dict):
+            continue  # a malformed entry claims nothing
+        if str(s.get("status", "accepted")).lower() == "accepted":
+            return True
+    return False
+
+
+def _normalize_uri(uri: str) -> str:
+    """A URI reduced to the form two scanners would agree on, for fingerprinting.
+
+    One tool reports `file:///repo/src/app.py` where another reports
+    `src/app.py`. Keyed raw, the same defect survives dedup twice and
+    `duplicates_removed` stays at zero, so consolidating scanners inflates the
+    severity counts it exists to collapse. Only the fingerprint uses this; the
+    reported finding keeps the tool's own spelling, which is what points at the
+    file on disk.
+    """
+    path = uri
+    # RFC 3986 makes the scheme case-insensitive, and a `FILE://` URI reaching a
+    # `startswith("file://")` test skipped normalisation entirely — producing a
+    # different fingerprint from the identical path spelled in lowercase.
+    split = urllib.parse.urlsplit(path)
+    if split.scheme.lower() == "file":
+        # A non-local authority names a file on another machine. Dropping it
+        # would fold file://scanner-host/repo/src/app.py onto the local
+        # src/app.py and merge two distinct findings, so keep it in the key and
+        # relativise nothing. "localhost" is the spec's spelling of "here".
+        if split.netloc and split.netloc.lower() != "localhost":
+            return f"//{split.netloc.lower()}{urllib.parse.unquote(split.path)}"
+        path = urllib.parse.unquote(split.path)
+    path = path.replace("\\", "/")
+    # Only an absolute path *inside the tree being scanned* can be reconciled
+    # with a repo-relative one — a path under some other root names a file this
+    # run cannot see, and folding the two would merge unrelated findings. The
+    # working directory is that tree: scanners are run from the repo root, which
+    # is also where this tool is invoked.
+    if path.startswith("/"):
+        # ValueError = outside the scanned tree, so left as the tool spelled it.
+        with contextlib.suppress(ValueError):
+            path = Path(path).relative_to(Path.cwd()).as_posix()
+    return path
+
+
 def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C901
     """Findings from one SARIF `runs` entry, tolerating a schema tools bend.
 
@@ -179,6 +240,15 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
     for result in run.get("results") or []:
         if not isinstance(result, dict):
+            continue
+        # SARIF's "already triaged away", but only when a suppression is in
+        # force: `status` is one of accepted / underReview / rejected, and a
+        # rejected suppression is a decision *not* to suppress. Dropping on a
+        # non-empty array alone hid a result whose only suppression had been
+        # rejected — the opposite of what the reviewer recorded. `status` is
+        # optional and defaults to accepted, so an absent one still suppresses.
+        # The empty array is the separate claim "considered, not suppressed".
+        if _is_suppressed(result.get("suppressions")):
             continue
         rule_id = result.get("ruleId", "")
         # SARIF allows referencing the rule by ruleIndex into driver.rules[]
@@ -229,7 +299,7 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
         # location-less findings (e.g. different CVEs from grype with an empty
         # message) don't collapse into one fingerprint.
         location_key = (
-            f"{uri}:{start_line}:{start_col}"
+            f"{_normalize_uri(uri)}:{start_line}:{start_col}"
             if uri
             else f"{cve_or_rule}:{start_line}:{start_col}:{message}"
         )
@@ -292,11 +362,19 @@ def _parse_sarif(path: Path) -> list[dict]:
 def _deduplicate(findings: list[dict]) -> tuple[list[dict], int]:
     """Collapse findings sharing a fingerprint, keeping the most severe.
 
-    Scanners overlap, so the same defect arrives from several tools — and they
-    rank it differently. Keeping the highest severity means an overlap can only
-    raise the reported risk, never lower it by whichever duplicate happened to
-    be seen last. The count of dropped duplicates is returned so the summary can
-    say what was collapsed rather than silently reporting fewer findings.
+    The fingerprint includes the tool name (see `_extract_findings`), so this
+    collapses repeats *within* one scanner — the same rule at the same location
+    across runs or overlapping configs — and never merges two scanners' reports
+    of one defect. That is deliberate and is what `security.md` documents;
+    cross-tool consolidation would need a rule-identity map between scanners,
+    which does not exist here, since `rule_id` differs per tool for the same
+    defect.
+
+    Where duplicates do collide, keeping the highest severity means the
+    collapse can only raise the reported risk, never lower it by whichever copy
+    happened to be seen last. The count of dropped duplicates is returned so the
+    summary can say what was collapsed rather than silently reporting fewer
+    findings.
     """
 
     def _rank(finding: dict) -> int:

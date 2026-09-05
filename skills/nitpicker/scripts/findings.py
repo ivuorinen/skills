@@ -43,7 +43,11 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md_fences
 
 DEFAULT_ROOT = Path("docs/audit/findings")
 LEDGER_NAME = "resolved.jsonl"
@@ -267,19 +271,6 @@ def v1_auditor(filename: str) -> str:
     return V1_AUDITOR_MAP.get(stem, stem)
 
 
-def _fence_marker(stripped: str) -> str:
-    """The full fence run (``` or ~~~, 3+ chars) at the start of a line, else ''."""
-    m = re.match(r"(`{3,}|~{3,})", stripped)
-    return m.group(1) if m else ""
-
-
-def _fence_closes(marker: str, fence: str) -> bool:
-    """A closing run matches an open ``fence`` only if it is the same marker char
-    and at least as long — so a four-backtick block is not closed by a
-    three-backtick line."""
-    return bool(marker) and marker[0] == fence[0] and len(marker) >= len(fence)
-
-
 def _normalize_body(body: str) -> str:
     """Make a body markdownlint-clean outside code fences: blank lines around
     headings, blank-line runs collapsed. Fenced content is preserved verbatim,
@@ -289,12 +280,13 @@ def _normalize_body(body: str) -> str:
     fence = ""  # opening marker while inside a fence, else ""
     for line in body.strip().splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
             out.append(line)
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
-        elif marker:
+            continue
+        marker = md_fences.opener(stripped)
+        if marker:
             fence = marker
             out.append(line)
         elif not stripped:
@@ -320,11 +312,11 @@ def _strip_fenced(body: str) -> str:
     fence = ""
     for line in body.splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
+        marker = md_fences.opener(stripped)
         if marker:
             fence = marker
             continue
@@ -543,8 +535,21 @@ def append_ledger(root: Path, record: dict) -> None:
     p = ledger_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = (_ledger_line(record) + "\n").encode("utf-8")
-    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
+    # 0o600, not 0o644: the ledger carries evidence quoted out of the audited
+    # repository, and redaction runs in this process rather than in the file
+    # system. A stale `redact()` once wrote an unredacted credential here and a
+    # commit hook was the only thing that caught it, so the window between the
+    # write and the review is worth narrowing. Git records only the exec bit, so
+    # this costs nothing downstream — it binds on the machine that wrote it.
+    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
     try:
+        # The mode above applies only when this call *creates* the file, which
+        # is the same trap `write_ledger` documents for its temp file: a ledger
+        # from a store created before that rule, or one a umask widened, keeps
+        # its old mode and every later append lands in a world-readable file.
+        # fchmod acts on the descriptor already open, so no other process can
+        # slip a different path in between the check and the change.
+        os.fchmod(fd, 0o600)
         if os.lseek(fd, 0, os.SEEK_END) > 0:
             os.lseek(fd, -1, os.SEEK_END)
             if os.read(fd, 1) != b"\n":
@@ -582,15 +587,52 @@ def write_ledger(root: Path, records: list[dict]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     # PID-suffixed: a fixed tmp name is shared mutable state, so two concurrent
     # writers interleave into it and both then rename it over the real ledger.
-    tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
-    # fsync before the rename: resolve deletes the open finding file after this
-    # returns, so the rename reaching disk ahead of the data would lose the whole
-    # ledger on a crash. append_ledger already provides this durability.
-    with tmp.open("w", encoding="utf-8") as f:
-        f.write("".join(_ledger_line(r) + "\n" for r in records))
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.replace(p)
+    # mkstemp, not a PID-named `os.open`. Three properties, each of which a
+    # hand-rolled name got wrong in turn:
+    #
+    # - It creates with O_CREAT|O_EXCL, so the 0o600 always applies. A mode
+    #   argument is honoured only when `os.open` *creates* the file, so a stale
+    #   `resolved.jsonl.<pid>.tmp` left by a crashed run kept its old mode and
+    #   `replace` carried that onto the ledger — measured at 0o666.
+    # - O_EXCL also refuses to follow a symlink at that path. Plain
+    #   O_CREAT|O_TRUNC follows one and truncates its target, so anyone able to
+    #   pre-create the temp name in this directory got an arbitrary-file write:
+    #   the victim file was measured overwritten with ledger content.
+    # - The name is random rather than PID-derived, so a recycled PID cannot
+    #   collide with a concurrent writer's temp file either.
+    fd, tmp_name = tempfile.mkstemp(dir=p.parent, prefix=p.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        # fsync before the rename: resolve deletes the open finding file after
+        # this returns, so the rename reaching disk ahead of the data would lose
+        # the whole ledger on a crash. append_ledger provides the same durability.
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("".join(_ledger_line(r) + "\n" for r in records))
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(p)
+        # The rename is a directory entry, and fsyncing the file does not commit
+        # it. resolve_finding deletes the open finding once this returns, so a
+        # crash between the two could lose the rename while the deletion stood —
+        # the finding gone from both halves of the store. Directory fsync is the
+        # POSIX way to make the rename durable; not every filesystem requires it,
+        # and where it is unsupported the error is not worth failing a write over.
+        # Suppression covers the open as well as the fsync. The rename has
+        # already happened by this point, so the write succeeded; letting an
+        # OSError escape here would raise out of a completed write, and the
+        # force re-resolve path would then leave the ledger holding the record
+        # while the open finding it replaces still sits on disk.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(p.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    except BaseException:
+        # A failure before the rename leaves the temp file behind, and mkstemp
+        # names are unpredictable, so nothing would ever clean it up.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _record_from_finding(
@@ -801,6 +843,11 @@ def ensure_store_gitattributes(root: Path) -> None:
         if not store_gitattributes_present(root):
             (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
     except OSError:
+        # Store hygiene is best effort and never the caller's operation. A
+        # read-only checkout, a missing parent, or a race with another writer
+        # must not fail the finding that was actually being filed — the
+        # .gitignore and .gitattributes entries are a convenience for review,
+        # not a correctness requirement of the store.
         pass
 
 
@@ -1446,14 +1493,14 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
 
     for line in text.splitlines():
         stripped = line.rstrip()
-        marker = _fence_marker(stripped)
         if fence:
             # A fence inside a field value is content, not structure.
             if entry and last_field:
                 fields[last_field] += "\n" + line
-            if _fence_closes(marker, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
+        marker = md_fences.opener(stripped)
         if marker:
             fence = marker
             if entry and last_field:

@@ -241,8 +241,14 @@ def main() -> None:
 
     repo_root = Path(__file__).parent.parent
 
-    if sys.argv[1:]:
-        targets = [Path(a) for a in sys.argv[1:]]
+    # A leading `--` is the option terminator the callers pass so a path
+    # beginning with `-` cannot be read as a flag; it is a separator, never a
+    # target.
+    args = sys.argv[1:]
+    if args and args[0] == "--":
+        args = args[1:]
+    if args:
+        targets = [Path(a) for a in args]
     else:
         check_repo_rules(repo_root, errors)
         rules_dir = repo_root / ".claude" / "rules"

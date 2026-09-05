@@ -44,10 +44,10 @@ review surface the skill offers.
 
 - **Correctness & logic** — wrong results, broken invariants, bad edge
   cases, off-by-one, unsafe assumptions.
-- **Reliability & operational safety** — failure modes, retries, timeouts,
-  idempotence, data-loss paths.
-- **Maintainability & internal architecture** — dead code, duplication,
-  tangled coupling, unclear ownership.
+- **Maintainability & internal architecture** — duplication, tangled coupling,
+  unclear ownership. Unreferenced and unreachable code belongs to `dead-code`,
+  which proves reachability before proposing a deletion this lens would only
+  suspect.
 - **Conventions** — repo, language, and framework idioms; naming; layout.
 
 ## Specialist lenses (apply each; mark N/A only when the surface is absent)
@@ -65,7 +65,8 @@ review surface the skill offers.
   data stores, unencrypted resources, overbroad IAM, unpinned base images,
   committed state/secrets. N/A when the repo has no IaC files.
 - **Performance** (`perf`) — N+1 queries, O(n²)+ hotspots,
-  sync-blocking-in-async, unbounded growth, missing pagination.
+  sync-blocking-in-async, missing pagination, and unbounded growth outside a
+  cache; a cache that grows without limit belongs to `cache`.
 - **Concurrency** (`concurrency`) — races, TOCTOU, deadlock ordering, lost
   updates, unsafe publication, state corrupted across await. N/A for
   strictly single-threaded code with no async.
@@ -73,6 +74,15 @@ review surface the skill offers.
   overbroad catches, masking fallbacks, silent retries.
 - **Resource leaks** (`leaks`) — acquire-without-guaranteed-release:
   handles, pools, listeners, tasks, temp artifacts.
+- **Reliability** (`reliability`) — resilience under failure: failure modes,
+  non-idempotent retries under redelivery, missing timeouts, retry storms,
+  crash-window duplication, dropped work, data-loss paths. Never N/A: every
+  repository has failure modes. This lens owns reliability outright — it was
+  also a base lens until the two overlapping tasks let one case be audited
+  twice and filed under two auditor keys.
+- **Cache** (`cache`) — cache correctness: stale reads, key collisions,
+  stampede, serialization drift, and unbounded growth *of a cache*, which
+  `perf` leaves to this lens. N/A when the repo caches nothing.
 - **Architecture** (`arch`) — violations against detected or declared
   patterns and layer boundaries. If `docs/audit/arch-profile.md` is absent,
   run `arch-profile` first to detect the pattern.
@@ -99,6 +109,8 @@ review surface the skill offers.
   system (untyped, by declared scope).
 - **Docs** (`docs`) — documentation accuracy against the code: stale,
   missing, or wrong behavior descriptions.
+- **Contributing** (`contributing`) — `CONTRIBUTING.md` against the repo's real
+  tooling. N/A when the repo has no contributor-facing documentation.
 - **CI/CD** (`ci`) — unpinned actions, over-broad token scope, script
   injection, privileged-trigger misuse, non-gating checks, masked failures.
   N/A when the repo has no CI/CD pipeline definitions.
@@ -130,6 +142,9 @@ review surface the skill offers.
   dependencies.
 - **Unwired code** (`unwired`) — unwired and incomplete implementations that
   are defined but never reached.
+- **Dead code** (`dead-code`) — unreferenced or unreachable code: unused
+  exports, dead branches, orphaned files, each proven dead through every
+  reachability channel before deletion is proposed.
 
 ## Agent-enforcement lenses (only when an agent project — `.claude/` exists)
 
@@ -143,5 +158,14 @@ review surface the skill offers.
 ## Not coverage lenses
 
 `review` (the diff-scoped form of this same read), `pr`, `cr`, `plan`,
-`baseline`, `release-gate`, `help`, and `x-findings-migrator` are workflow or
-meta commands, not quality lenses — they are not tasks in this checklist.
+`execute-plan`, `teach`, `triage`, `reverify`, `baseline`, `release-gate`,
+`help`, and `x-findings-migrator` are workflow or meta commands, not quality
+lenses — they are not tasks in this checklist. `arch-profile` is not one either:
+it detects the pattern the **Architecture** lens then audits against, and that
+lens runs it when `docs/audit/arch-profile.md` is absent.
+
+Every command in SKILL.md's tables appears either above as a lens or here as an
+exclusion. `tests/test_validate_skill.py` asserts that, because a command in
+neither list is one `audit` never schedules: an uncreated task cannot be closed
+`N/A` or `out of scope`, so it is skipped with nothing in the run summary
+recording it. Four commands were missing when that test was written.

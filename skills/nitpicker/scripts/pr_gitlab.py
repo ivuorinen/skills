@@ -39,7 +39,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_common
-from pr_common import Target, TransportError
 
 # GitLab job status -> (shared `status`, shared `conclusion`).
 _JOB_STATES = {
@@ -61,32 +60,39 @@ _JOB_STATES = {
 _MR_STATES = {"opened": "open", "locked": "open", "closed": "closed", "merged": "merged"}
 
 
-def _token_for(target: Target) -> str:
+def _token_for(target: pr_common.Target) -> str:
     """GITLAB_TOKEN, but only when it belongs to the instance being addressed.
 
-    GITLAB_HOST is how a user names the instance their token is for. When it is
-    set and does not match the target, the token is withheld rather than sent —
-    otherwise a gitlab.com token would be forwarded to whatever self-hosted host
-    the git remote happened to name, which is a credential leak to a third party,
-    not a failed request.
+    Withheld by default, declared by exception — the same shape as
+    pr_github._token_for. Only gitlab.com is implied; every other host must be
+    named by GITLAB_HOST before the token goes there. The reverse default leaks:
+    a gitlab.com token would be forwarded to whatever self-hosted host a git
+    remote or a pasted merge-request URL happened to name, which is a credential
+    handed to a third party, not a failed request. Gating on a *mismatch* cannot
+    express that, because the common case — GITLAB_HOST never set — declares
+    nothing and so mismatches nothing.
     """
     token = os.environ.get("GITLAB_TOKEN", "")
-    declared = os.environ.get("GITLAB_HOST", "").strip()
-    if not token or not declared:
+    if not token or target.host == "gitlab.com":
         return token
-    declared_host = urllib.parse.urlsplit(
-        declared if "://" in declared else f"https://{declared}"
-    ).netloc
-    if declared_host and declared_host.lower() != target.host.lower():
-        pr_common.warn(
-            f"GITLAB_TOKEN is declared for {declared_host} but the target is "
-            f"{target.host}; not sending it. Unset GITLAB_HOST or use glab."
-        )
-        return ""
-    return token
+    declared = os.environ.get("GITLAB_HOST", "").strip()
+    declared_host = (
+        urllib.parse.urlsplit(declared if "://" in declared else f"https://{declared}").netloc
+        if declared
+        else ""
+    )
+    if declared_host and declared_host.lower() == target.host.lower():
+        return token
+    pr_common.warn(
+        f"GITLAB_TOKEN is not declared for {target.host}; not sending it. "
+        f"Set GITLAB_HOST={target.host} if the token belongs to that instance."
+    )
+    return ""
 
 
-def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[str], Any], str]:
+def _transport(
+    target: pr_common.Target,
+) -> tuple[Callable[[str], list[Any]], Callable[[str], Any], str]:
     """(paginating list transport, single-object transport, label) — or raise."""
     token = _token_for(target)
     if token:
@@ -120,17 +126,17 @@ def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[st
 
         return glab_list, lambda path: pr_common.cli_json([*base, path]), "glab"
 
-    raise TransportError(
+    raise pr_common.TransportError(
         "No auth available. Set GITLAB_TOKEN (and GITLAB_HOST for a self-hosted "
         "instance), or install and authenticate the glab CLI."
     )
 
 
-def _mr_path(target: Target, iid: int) -> str:
+def _mr_path(target: pr_common.Target, iid: int) -> str:
     return f"projects/{target.encoded_path}/merge_requests/{iid}"
 
 
-def _note_url(target: Target, iid: int, note_id: Any) -> str:
+def _note_url(target: pr_common.Target, iid: int, note_id: Any) -> str:
     return f"https://{target.host}/{target.path}/-/merge_requests/{iid}#note_{note_id}"
 
 
@@ -144,7 +150,7 @@ def _position(note: dict[str, Any]) -> dict[str, Any]:
 
 
 def _split_discussions(
-    target: Target, iid: int, discussions: list[Any]
+    target: pr_common.Target, iid: int, discussions: list[Any]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(threads, summary_comments) from GitLab's one discussions endpoint.
 
@@ -201,7 +207,7 @@ def _split_discussions(
     return threads, summary
 
 
-def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """GitLab's half of the shared comment contract.
 
     One endpoint answers both sections: a discussion whose notes carry a
@@ -225,7 +231,7 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
 
 
 # ── status ───────────────────────────────────────────────────────────────────
-def _checks(target: Target, iid: int, rest_list: Callable[[str], list[Any]]):
+def _checks(target: pr_common.Target, iid: int, rest_list: Callable[[str], list[Any]]):
     """Jobs of the MR's most recent pipeline.
 
     The MR pipelines endpoint returns newest first, so index 0 is the head
@@ -253,7 +259,9 @@ def _checks(target: Target, iid: int, rest_list: Callable[[str], list[Any]]):
     return checks
 
 
-def _reviews(mr: dict[str, Any], target: Target, iid: int, rest_get: Callable[[str], Any]):
+def _reviews(
+    mr: dict[str, Any], target: pr_common.Target, iid: int, rest_get: Callable[[str], Any]
+):
     """Approvals plus any reviewer who has requested changes.
 
     Two sources because GitLab splits them: approvals live on their own endpoint,
@@ -286,7 +294,7 @@ def _mergeable(detailed: str) -> bool | None:
     return detailed == "mergeable"
 
 
-def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_status(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """GitLab's half of the shared status contract.
 
     GitLab's own vocabulary differs from the shared one at both ends — merge
@@ -298,7 +306,7 @@ def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
     rest_list, rest_get, _label = _transport(target)
     mr = rest_get(_mr_path(target, pr_number))
     if not isinstance(mr, dict) or "iid" not in mr:
-        raise TransportError(f"MR !{pr_number} not found in {target.path}")
+        raise pr_common.TransportError(f"MR !{pr_number} not found in {target.path}")
 
     detailed = mr.get("detailed_merge_status") or ""
     diffs = pr_common.best_effort(

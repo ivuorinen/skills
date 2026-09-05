@@ -66,9 +66,8 @@ Auth, per platform:
     GitHub    gh CLI (GraphQL, the only source of `is_resolved`) -> gh REST ->
               GITHUB_TOKEN. A token is sent to a non-github.com host only when
               GH_HOST names that host.
-    GitLab    GITLAB_TOKEN -> glab CLI. The instance comes from the git remote,
-              so self-hosted needs no extra setting. GITLAB_HOST only pins which
-              instance the token belongs to; naming a different host withholds it.
+    GitLab    GITLAB_TOKEN -> glab CLI. A token is sent to a non-gitlab.com host
+              only when GITLAB_HOST names that host.
     Bitbucket BITBUCKET_TOKEN, or BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD.
 
 Exit codes: 0 = success, 1 = API/auth error, 2 = usage error.

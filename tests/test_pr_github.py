@@ -97,10 +97,16 @@ class TestGhTransports:
             gh._gh_graphql("query", {})
 
     def test_graphql_passes_hostname_for_enterprise(self):
+        """The host must be the value of `--hostname`, not merely present in argv.
+
+        Asserting membership alone passes if the host reaches argv by any route
+        — as part of a URL, or after some other flag — which is the case that
+        would actually send a token somewhere unintended.
+        """
         with patch.object(subprocess, "run", return_value=_proc(stdout=b"{}")) as run:
             gh._gh_graphql("query", {}, "ghe.acme.com")
-        assert "--hostname" in run.call_args[0][0]
-        assert "ghe.acme.com" in run.call_args[0][0]
+        argv = run.call_args[0][0]
+        assert argv[argv.index("--hostname") + 1] == "ghe.acme.com"
 
     def test_rest_paginate_flattens_slurped_pages(self):
         with patch.object(subprocess, "run", return_value=_proc(stdout=b"[[1,2],[3]]")) as run:
@@ -109,9 +115,11 @@ class TestGhTransports:
         assert "--paginate" in run.call_args[0][0]
 
     def test_rest_paginate_hostname_for_enterprise(self):
+        """Same contract as the GraphQL path: the host is `--hostname`'s value."""
         with patch.object(subprocess, "run", return_value=_proc(stdout=b"[[]]")) as run:
             gh._gh_rest_paginate("repos/o/r/x", "ghe.acme.com")
-        assert "ghe.acme.com" in run.call_args[0][0]
+        argv = run.call_args[0][0]
+        assert argv[argv.index("--hostname") + 1] == "ghe.acme.com"
 
     def test_rest_paginate_keeps_object_pages_whole(self):
         """`--slurp` page shape follows the endpoint, and flattening a dict

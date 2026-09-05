@@ -237,6 +237,25 @@ def _report_stale(suppressed: set[tuple[str, int]]) -> int:
     misplaced or left over, and both are invisible without this check: the
     misplaced one lets a finding return unannounced, the leftover one implies a
     rule is being waived when it is not.
+
+    This also carries a second, load-bearing job that is easy to delete by
+    accident. Every live marker is a place a rule is KNOWN to fire, so the set
+    of them is this gate's known-positive control: if the ruleset ever stops
+    matching — a bad `CONFIG`, a registry change, a dependency that failed to
+    load — every marker goes stale at once and the gate fails, instead of
+    reporting a clean scan over rules that never ran. Verified by calling this
+    with an empty `suppressed`: all 13 markers report stale and main() returns 1.
+
+    That failure mode is real. A CodeQL run in this repository reported the tree
+    clean across every suite and threat model because one library pack was
+    absent; the queries compiled, the rule count was right, and the SARIF was
+    valid and empty. A scanner that cannot match anything looks exactly like a
+    scanner with nothing to report.
+
+    So the markers are not only debt to be paid down. Removing the last one, or
+    weakening this check to a warning, silently removes the only thing standing
+    between a dead ruleset and a green gate. If they ever do all go away, put a
+    deliberate probe in their place.
     """
     stale = [
         marker

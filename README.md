@@ -186,7 +186,8 @@ server (`nitpicker`) that exposes skill introspection (`np_list_skills`,
 category of the command table), findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
-scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`), and
+scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`,
+`np_check_agent_instructions`), and
 pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
 Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
 reachable this way, so a command runs its analysis without a shell; the

@@ -41,7 +41,8 @@ tests/                     # pytest suite for the tooling
 
 ## The Commands
 
-The authoritative command listing (categorized; each command keeps its 1.x skill-name alias) is the
+The authoritative command listing (categorized; each 1.x-era command keeps its skill-name alias,
+while commands added since 2.0 have none) is the
 `## Commands` section of `skills/nitpicker/SKILL.md` — do not duplicate it here. Nitpicker in one
 line: adversarial, exhaustive auditing across code, security, tests, docs, architecture,
 performance, dependencies, error handling, CI, commits, migrations, observability, contracts,
@@ -150,7 +151,7 @@ a stopgap: the next `uv lock` overwrites the value.
 | `feat:`                               | Minor bump (new command or feature)       |
 | `fix:`                                | Patch bump (command improvement, bug fix) |
 | `feat!:` or `BREAKING CHANGE:` footer | Major bump                                |
-| `chore:`, `docs:`, `refactor:`        | No bump                                   |
+| `chore:`, `docs:`, `refactor:`, `ci:` | No bump                                   |
 
 release-please derives releases from these prefixes; a wrong prefix mis-versions the release.
 

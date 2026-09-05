@@ -29,7 +29,11 @@ help:
 	@echo "  bump-minor   — bump minor version"
 	@echo "  bump-major   — bump major version"
 
-check: validate validate-evals validate-rules version-sync make-help lock-check audit-consistency index-check lint format-check security opengrep typecheck test pre-commit
+# Order is deliberate: the broad correctness and security gates run before the
+# narrow store-consistency ones. make stops at the first failing prerequisite,
+# so anything ordered ahead of `test` and `security` can cost their entire
+# signal — which is exactly what `index-check` did from this position.
+check: validate validate-evals validate-rules version-sync make-help lock-check lint format-check security opengrep typecheck test audit-consistency index-check pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -86,9 +90,27 @@ lock-check:
 audit-consistency:
 	python3 skills/nitpicker/scripts/findings.py validate
 
+# Compares INDEX.md against ITSELF across the regeneration, not against the git
+# index. `git diff --exit-code` was the old test and answered a different
+# question: it fails whenever the file has any uncommitted change, including one
+# the regeneration did not make. That is the normal state during every audit —
+# the run protocol files findings first and asks to commit last — so the gate
+# failed on a byte-identical file, and because make stops at the first failing
+# prerequisite it took lint, format-check, security, opengrep, typecheck, test
+# and pre-commit down with it. A store-consistency check silently disabling the
+# security scanners and the test suite is the expensive half of that bug.
 index-check:
-	python3 skills/nitpicker/scripts/findings.py index
-	git diff --exit-code docs/audit/findings/INDEX.md
+	@set -eu; \
+	snap="$$(mktemp)"; \
+	trap 'rm -f "$$snap"' EXIT INT TERM; \
+	cp docs/audit/findings/INDEX.md "$$snap"; \
+	python3 skills/nitpicker/scripts/findings.py index >/dev/null; \
+	cmp -s "$$snap" docs/audit/findings/INDEX.md || { \
+		echo "INDEX.md was stale; it has been regenerated. Commit the result." >&2; \
+		diff -u "$$snap" docs/audit/findings/INDEX.md >&2 || true; \
+		exit 1; \
+	}; \
+	echo "OK  INDEX.md current."
 
 pre-commit:
 	uv run --with pre-commit==4.6.2 pre-commit run --all-files --show-diff-on-failure

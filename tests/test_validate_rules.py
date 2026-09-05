@@ -95,6 +95,26 @@ def test_main_exits_zero_and_prints_ok_when_clean(monkeypatch, tmp_path, capsys)
     assert "OK" in capsys.readouterr().out
 
 
+def test_main_treats_a_leading_double_dash_as_a_separator(monkeypatch, tmp_path, capsys):
+    """`--` is the option terminator the hook passes, never a target.
+
+    validate-rules-hook.py sends `-- <path>` so a rule file named `-x.md` — legal
+    on disk and inside .claude/rules/ — cannot be read as a flag by `uv` or by
+    this script. This reads `sys.argv[1:]` directly rather than through argparse,
+    so nothing strips the separator for it; without this branch the `--` would be
+    validated as a path and reported as a missing file.
+    """
+    target = tmp_path / "r.md"
+    target.write_text("x\n", encoding="utf-8")
+    seen: list[Path] = []
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", "--", str(target)])
+    monkeypatch.setattr(_mod, "validate", lambda p, *_a, **_k: seen.append(p))
+    _mod.main()
+
+    assert seen == [target], "the separator must not reach validate() as a target"
+    assert "OK" in capsys.readouterr().out
+
+
 def test_main_exits_one_when_validate_reports_errors(monkeypatch, tmp_path, capsys):
     target = tmp_path / "r.md"
     target.write_text("x\n", encoding="utf-8")
