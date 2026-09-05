@@ -44,8 +44,6 @@ review surface the skill offers.
 
 - **Correctness & logic** — wrong results, broken invariants, bad edge
   cases, off-by-one, unsafe assumptions.
-- **Reliability & operational safety** — failure modes, retries, timeouts,
-  idempotence, data-loss paths.
 - **Maintainability & internal architecture** — dead code, duplication,
   tangled coupling, unclear ownership.
 - **Conventions** — repo, language, and framework idioms; naming; layout.
@@ -73,9 +71,12 @@ review surface the skill offers.
   overbroad catches, masking fallbacks, silent retries.
 - **Resource leaks** (`leaks`) — acquire-without-guaranteed-release:
   handles, pools, listeners, tasks, temp artifacts.
-- **Reliability** (`reliability`) — resilience under failure: non-idempotent
-  retries, missing timeouts, retry storms, crash-window duplication, dropped
-  work.
+- **Reliability** (`reliability`) — resilience under failure: failure modes,
+  non-idempotent retries under redelivery, missing timeouts, retry storms,
+  crash-window duplication, dropped work, data-loss paths. Never N/A: every
+  repository has failure modes. This lens owns reliability outright — it was
+  also a base lens until the two overlapping tasks let one case be audited
+  twice and filed under two auditor keys.
 - **Cache** (`cache`) — cache correctness: stale reads, key collisions,
   unbounded growth, stampede, serialization drift. N/A when the repo caches
   nothing.
