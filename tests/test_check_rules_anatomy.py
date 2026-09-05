@@ -108,6 +108,25 @@ class TestCheckFile:
         assert not _has(findings, "stale_glob")
         assert not _has(findings, "malformed_frontmatter")
 
+    def test_undecodable_file_is_reported_and_the_rest_still_scan(self, tmp_path):
+        """One stray byte must cost its own file, not the whole run.
+
+        `read_text` raises UnicodeDecodeError, a ValueError — the neighbouring
+        `except OSError` never saw it, so a single bad byte aborted the scan and
+        no rule in the project was checked at all.
+        """
+        d = tmp_path / ".claude" / "rules"
+        d.mkdir(parents=True)
+        (tmp_path / "CLAUDE.md").write_text("# C\n", encoding="utf-8")
+        (d / "bad.md").write_bytes(b"# Rule\n\ntext \xff\xfe more\n")
+        (d / "good.md").write_text("# Good Rule\n\nAlways do the thing.\n", encoding="utf-8")
+
+        report = _mod.check(tmp_path)[0]
+        by_file = {f["file"]: f["findings"] for f in report["files"]}
+        assert any("good.md" in name for name in by_file)
+        bad = next(v for k, v in by_file.items() if "bad.md" in k)
+        assert any(f["code"] == "unreadable" for f in bad)
+
     def test_unsupported_extension(self, tmp_path):
         """A suffix outside the discovery table is a real finding; the supported ones are covered
         separately.

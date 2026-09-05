@@ -263,7 +263,11 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
 
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
+        # UnicodeDecodeError is a ValueError, so the OSError clause alone let one
+        # stray byte abort the whole scan: no rule in the project got checked and
+        # the run reported a bare error instead of a report. Same treatment as an
+        # unreadable file — the file is named, the rest still scan.
         issue("High", "unreadable", f"Cannot read file: {e}")
         return findings
 
