@@ -611,6 +611,19 @@ def write_ledger(root: Path, records: list[dict]) -> None:
             f.flush()
             os.fsync(f.fileno())
         tmp.replace(p)
+        # The rename is a directory entry, and fsyncing the file does not commit
+        # it. resolve_finding deletes the open finding once this returns, so a
+        # crash between the two could lose the rename while the deletion stood —
+        # the finding gone from both halves of the store. Directory fsync is the
+        # POSIX way to make the rename durable; not every filesystem requires it,
+        # and where it is unsupported the error is not worth failing a write over.
+        dir_fd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass  # filesystem does not support directory fsync
+        finally:
+            os.close(dir_fd)
     except BaseException:
         # A failure before the rename leaves the temp file behind, and mkstemp
         # names are unpredictable, so nothing would ever clean it up.

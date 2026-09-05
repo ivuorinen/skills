@@ -1096,6 +1096,24 @@ def test_append_ledger_creates_the_ledger_private(tmp_path):
     assert stat.S_IMODE(findings.ledger_path(tmp_path).stat().st_mode) == 0o600
 
 
+def test_write_ledger_survives_a_filesystem_without_directory_fsync(tmp_path, monkeypatch):
+    """Not every filesystem commits a rename this way; a rewrite must not fail.
+
+    The directory fsync makes the rename durable where it is supported. Where it
+    is not, the write is still correct — losing it is not worth failing on.
+    """
+    real_fsync = findings.os.fsync
+
+    def _fsync(fd):
+        if stat.S_ISDIR(findings.os.fstat(fd).st_mode):
+            raise OSError("directory fsync unsupported")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(findings.os, "fsync", _fsync)
+    findings.write_ledger(tmp_path, [{"id": "a"}])
+    assert findings.read_ledger(tmp_path) == [{"id": "a"}]
+
+
 def test_append_ledger_narrows_an_existing_permissive_ledger(tmp_path):
     """A mode argument binds only on creation, so an inherited 0o644 survived.
 

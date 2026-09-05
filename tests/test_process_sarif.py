@@ -149,6 +149,14 @@ def test_a_non_local_file_authority_is_kept_out_of_the_local_key():
     assert _deduplicate(found)[1] == 0
 
 
+def test_an_uppercase_file_scheme_normalizes_like_a_lowercase_one():
+    """RFC 3986 makes the scheme case-insensitive; a startswith test did not."""
+    upper = _result(uri=f"FILE://{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[upper, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 1
+
+
 def test_a_localhost_authority_is_treated_as_local():
     """ "localhost" is the SARIF spelling of "this machine"."""
     absolute = _result(uri=f"file://localhost{Path.cwd().as_posix()}/src/app.py")

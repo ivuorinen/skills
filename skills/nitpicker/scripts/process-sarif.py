@@ -191,8 +191,11 @@ def _normalize_uri(uri: str) -> str:
     file on disk.
     """
     path = uri
-    if path.startswith("file://"):
-        split = urllib.parse.urlsplit(path)
+    # RFC 3986 makes the scheme case-insensitive, and a `FILE://` URI reaching a
+    # `startswith("file://")` test skipped normalisation entirely — producing a
+    # different fingerprint from the identical path spelled in lowercase.
+    split = urllib.parse.urlsplit(path)
+    if split.scheme.lower() == "file":
         # A non-local authority names a file on another machine. Dropping it
         # would fold file://scanner-host/repo/src/app.py onto the local
         # src/app.py and merge two distinct findings, so keep it in the key and
