@@ -101,11 +101,12 @@ existence to learn which platform answered. And a credential is only ever sent
 to the host it was declared for:
 the redirect handler is built per-request with that host, every paginated URL is
 re-validated before it is followed (both `Link` headers and body `next` fields
-are server-controlled), and a token reaches only its platform's own public host
-unless `GH_HOST`/`GITLAB_HOST` names the self-hosted one. Withheld by default,
-declared by exception — the reverse, gating on a *mismatch*, cannot express it,
-because the common case never sets the variable and so mismatches nothing. Platform detection refuses an unrecognised host rather
-than guessing, since a wrong guess is a credential handed to a third party.
+are server-controlled), and a token reaches only its platform's own public
+host unless `GH_HOST`/`GITLAB_HOST` names the self-hosted one. Withheld by
+default, declared by exception: gating on a *mismatch* instead would let the
+unconfigured case through, since it declares no host to mismatch against.
+Platform detection refuses an unrecognised host rather than guessing, since a
+wrong guess is a credential handed to a third party.
 
 The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
 the same providers. They are the only tools on the server carrying

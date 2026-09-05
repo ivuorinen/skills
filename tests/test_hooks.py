@@ -134,6 +134,20 @@ def test_validate_json_unreadable_path_fails_open(monkeypatch, tmp_path, capsys)
 # (copied from scripts/), so replacing the hook's detection body with `pass` fails.
 
 
+def _copy_shipped_scripts(tmp_path: Path) -> Path:
+    """Copy the shipped findings.py, and what it imports, into a fake repo.
+
+    findings.py imports its sibling md_fences, so both travel or neither works.
+    Shared by the two fixtures that need it: copied separately, the next sibling
+    added would break one of them and not the other.
+    """
+    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
+    shipped.mkdir(parents=True, exist_ok=True)
+    for name in ("findings.py", "md_fences.py"):
+        shutil.copy(SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / name, shipped / name)
+    return shipped
+
+
 def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     """A malformed SKILL.md must be reported at the edit, not left for CI."""
     mod = _load("validate-skill-hook")
@@ -143,14 +157,7 @@ def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     shutil.copy(SCRIPTS_DIR / "validate-skill.py", scripts / "validate-skill.py")
     shutil.copy(SCRIPTS_DIR / "common.py", scripts / "common.py")
     # common.py path-loads the shipped parser, so the fake repo needs it too.
-    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
-    shipped.mkdir(parents=True)
-    # findings.py imports its sibling md_fences, so both travel or neither works.
-    for _name in ("findings.py", "md_fences.py"):
-        shutil.copy(
-            SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / _name,
-            shipped / _name,
-        )
+    _copy_shipped_scripts(tmp_path)
 
     skill = tmp_path / "skills" / "foo" / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -1725,14 +1732,7 @@ def test_shell_glob_returns_empty_when_every_spelling_fails(monkeypatch, tmp_pat
 
 def _findings_repo(tmp_path: Path) -> Path:
     """Build a tmp repo carrying a real copy of the shipped findings.py."""
-    shipped = tmp_path / "skills" / "nitpicker" / "scripts"
-    shipped.mkdir(parents=True)
-    # findings.py imports its sibling md_fences, so both travel or neither works.
-    for _name in ("findings.py", "md_fences.py"):
-        shutil.copy(
-            SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / _name,
-            shipped / _name,
-        )
+    _copy_shipped_scripts(tmp_path)
     return tmp_path
 
 
