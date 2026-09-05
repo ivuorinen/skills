@@ -639,15 +639,18 @@ def test_notification_gets_no_response():
     assert _rpc(mod, {"jsonrpc": "2.0", "method": "notifications/initialized"}) == []
 
 
-def test_non_dict_frame_is_ignored_not_fatal():
-    # A batch (list) or scalar frame must not crash the serve loop; the
-    # following valid request still gets answered.
+def test_non_dict_frame_is_refused_not_fatal():
+    # A batch (list) or scalar frame must not crash the serve loop, and is now
+    # refused out loud rather than dropped: silence blocked the caller on every
+    # id in the frame until its own timeout. The following valid request is
+    # still answered.
     mod = _load()
     inp = io.StringIO('[1, 2, 3]\n42\n{"jsonrpc": "2.0", "id": 7, "method": "initialize"}\n')
     out = io.StringIO()
     mod.serve(inp, out)
     responses = [json.loads(line) for line in out.getvalue().splitlines() if line]
-    assert len(responses) == 1 and responses[0]["id"] == 7
+    assert [r["error"]["code"] for r in responses[:2]] == [-32600, -32600]
+    assert responses[2]["id"] == 7
 
 
 def test_non_dict_params_does_not_kill_loop():
@@ -676,6 +679,40 @@ def test_unparseable_frame_gets_a_parse_error_reply():
     assert responses[0]["id"] is None
     assert responses[0]["error"]["code"] == -32700
     assert responses[1]["id"] == 8  # the loop keeps serving
+
+
+def test_batch_frame_gets_an_invalid_request_reply():
+    """Batching is unsupported, but silence blocks the caller on every id in it.
+
+    Same reasoning as the parse-error reply above: an unanswerable frame is
+    refused out loud rather than dropped.
+    """
+    mod = _load()
+    inp = io.StringIO('[{"jsonrpc": "2.0", "id": 1, "method": "ping"}]\n')
+    out = io.StringIO()
+    mod.serve(inp, out)
+    (resp,) = [json.loads(line) for line in out.getvalue().splitlines() if line]
+    assert resp["error"]["code"] == -32600
+
+
+def test_an_explicit_null_id_is_answered_not_treated_as_a_notification():
+    """A notification omits `id`; naming it null is a request that gave an id."""
+    mod = _load()
+    inp = io.StringIO('{"jsonrpc": "2.0", "id": null, "method": "ping"}\n')
+    out = io.StringIO()
+    mod.serve(inp, out)
+    (resp,) = [json.loads(line) for line in out.getvalue().splitlines() if line]
+    assert resp["result"] == {}
+
+
+def test_project_dir_naming_a_file_is_an_error_not_an_empty_result(tmp_path):
+    """An empty-but-valid answer reads as a clean store, not as a bad argument."""
+    mod = _load()
+    target = tmp_path / "notadir.md"
+    target.write_text("x", encoding="utf-8")
+    result = _call(mod, "np_list_findings", {"project_dir": str(target)})
+    assert result["isError"] is True
+    assert "not a directory" in result["content"][0]["text"]
 
 
 def test_ping_returns_empty_result():

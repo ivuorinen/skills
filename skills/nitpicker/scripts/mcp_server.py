@@ -321,6 +321,12 @@ def _project_root(args: dict) -> Path:
             f"[nitpicker] project_dir {pd!r} resolved to {root}, outside {allowed}", file=sys.stderr
         )
         raise ValueError("project_dir is outside the allowed project root")
+    if not root.is_dir():
+        # A file passes containment, and the store path built from it globs
+        # nothing — so every read tool answered "no findings" for what was
+        # really a bad argument. An empty-but-valid result reads to an agent as
+        # a clean store, which is the one answer a typo must not produce.
+        raise ValueError(f"project_dir is not a directory: {pd!r}")
     return root
 
 
@@ -1054,9 +1060,27 @@ def serve(stdin, stdout) -> None:
             stdout.flush()
             continue
         if not isinstance(req, dict):
-            continue  # ignore batches/scalars — MCP stdio sends one object per line
+            # MCP stdio sends one object per line, so a batch is unsupported —
+            # but dropping it in silence leaves the client blocked on every id
+            # in it until its own timeout, the same stall the parse-error branch
+            # above answers rather than causes.
+            stdout.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32600, "message": "Batch requests are not supported"},
+                    }
+                )
+                + "\n"
+            )
+            stdout.flush()
+            continue
+        # `"id": null` present is a request that named a null id, not a
+        # notification: a notification omits the key entirely. Answering it costs
+        # one frame; dropping it blocks the caller.
         rid = req.get("id")
-        if rid is None:
+        if rid is None and "id" not in req:
             continue  # a notification needs no response
         params = req.get("params")
         if not isinstance(params, dict):
