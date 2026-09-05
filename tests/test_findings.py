@@ -1096,6 +1096,25 @@ def test_append_ledger_creates_the_ledger_private(tmp_path):
     assert stat.S_IMODE(findings.ledger_path(tmp_path).stat().st_mode) == 0o600
 
 
+def test_write_ledger_survives_a_directory_that_cannot_be_opened(tmp_path, monkeypatch):
+    """The rename already happened, so the write succeeded; opening is best-effort.
+
+    Letting the open failure escape would raise out of a completed write, and
+    the force re-resolve path would leave the ledger holding the record while
+    the open finding it replaces still sat on disk.
+    """
+    real_open = findings.os.open
+
+    def _open(path, flags, *a, **k):
+        if Path(path).is_dir():
+            raise OSError("cannot open directory")
+        return real_open(path, flags, *a, **k)
+
+    monkeypatch.setattr(findings.os, "open", _open)
+    findings.write_ledger(tmp_path, [{"id": "a"}])
+    assert findings.read_ledger(tmp_path) == [{"id": "a"}]
+
+
 def test_write_ledger_survives_a_filesystem_without_directory_fsync(tmp_path, monkeypatch):
     """Not every filesystem commits a rename this way; a rewrite must not fail.
 

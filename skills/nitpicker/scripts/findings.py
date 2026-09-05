@@ -617,13 +617,17 @@ def write_ledger(root: Path, records: list[dict]) -> None:
         # the finding gone from both halves of the store. Directory fsync is the
         # POSIX way to make the rename durable; not every filesystem requires it,
         # and where it is unsupported the error is not worth failing a write over.
-        dir_fd = os.open(p.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            pass  # filesystem does not support directory fsync
-        finally:
-            os.close(dir_fd)
+        # Suppression covers the open as well as the fsync. The rename has
+        # already happened by this point, so the write succeeded; letting an
+        # OSError escape here would raise out of a completed write, and the
+        # force re-resolve path would then leave the ledger holding the record
+        # while the open finding it replaces still sits on disk.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(p.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     except BaseException:
         # A failure before the rename leaves the temp file behind, and mkstemp
         # names are unpredictable, so nothing would ever clean it up.
