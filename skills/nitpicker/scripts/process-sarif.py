@@ -29,9 +29,11 @@ Severity normalization:
 Exit codes: 0 = success, 1 = parse/IO error, 2 = usage error.
 """
 
+import contextlib
 import hashlib
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 _SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Advisory"]
@@ -159,6 +161,32 @@ def _extract_rules(run: dict) -> dict[str, dict]:
     return rules
 
 
+def _normalize_uri(uri: str) -> str:
+    """A URI reduced to the form two scanners would agree on, for fingerprinting.
+
+    One tool reports `file:///repo/src/app.py` where another reports
+    `src/app.py`. Keyed raw, the same defect survives dedup twice and
+    `duplicates_removed` stays at zero, so consolidating scanners inflates the
+    severity counts it exists to collapse. Only the fingerprint uses this; the
+    reported finding keeps the tool's own spelling, which is what points at the
+    file on disk.
+    """
+    path = uri
+    if path.startswith("file://"):
+        path = urllib.parse.unquote(urllib.parse.urlsplit(path).path)
+    path = path.replace("\\", "/")
+    # Only an absolute path *inside the tree being scanned* can be reconciled
+    # with a repo-relative one — a path under some other root names a file this
+    # run cannot see, and folding the two would merge unrelated findings. The
+    # working directory is that tree: scanners are run from the repo root, which
+    # is also where this tool is invoked.
+    if path.startswith("/"):
+        # ValueError = outside the scanned tree, so left as the tool spelled it.
+        with contextlib.suppress(ValueError):
+            path = Path(path).relative_to(Path.cwd()).as_posix()
+    return path
+
+
 def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C901
     """Findings from one SARIF `runs` entry, tolerating a schema tools bend.
 
@@ -183,6 +211,13 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
     for result in run.get("results") or []:
         if not isinstance(result, dict):
+            continue
+        # A non-empty `suppressions` array is SARIF's "already triaged away".
+        # Reporting it anyway re-raises a decided defect at full severity on
+        # every scan. The empty array is the opposite claim — considered and
+        # not suppressed — so only a populated one drops the result.
+        suppressions = result.get("suppressions")
+        if isinstance(suppressions, list) and suppressions:
             continue
         rule_id = result.get("ruleId", "")
         # SARIF allows referencing the rule by ruleIndex into driver.rules[]
@@ -233,7 +268,7 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
         # location-less findings (e.g. different CVEs from grype with an empty
         # message) don't collapse into one fingerprint.
         location_key = (
-            f"{uri}:{start_line}:{start_col}"
+            f"{_normalize_uri(uri)}:{start_line}:{start_col}"
             if uri
             else f"{cve_or_rule}:{start_line}:{start_col}:{message}"
         )

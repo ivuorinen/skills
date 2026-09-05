@@ -84,6 +84,47 @@ def _result(
     }
 
 
+# ── suppressions and location normalization ───────────────────────────────────
+
+
+def test_a_suppressed_result_is_not_reported_as_active():
+    """SARIF marks a triaged result with a non-empty `suppressions` array.
+
+    Reporting it anyway re-raises defects the team already decided about, at
+    full severity, on every scan.
+    """
+    suppressed = {**_result(), "suppressions": [{"kind": "external", "status": "accepted"}]}
+    assert _extract_findings(_run(results=[suppressed]), "x.sarif") == []
+
+
+def test_an_empty_suppressions_array_leaves_the_result_active():
+    """SARIF uses the empty array to mean "considered and not suppressed"."""
+    active = {**_result(), "suppressions": []}
+    assert len(_extract_findings(_run(results=[active]), "x.sarif")) == 1
+
+
+def test_the_same_defect_under_two_uri_spellings_dedups_to_one():
+    """One scanner emits an absolute file:// URI, another a repo-relative path.
+
+    Keying the fingerprint on the raw string let the same defect survive twice
+    while `duplicates_removed` stayed at zero, so the overlap inflated severity
+    counts instead of collapsing.
+    """
+    absolute = _result(uri=f"file://{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[absolute, relative]), "x.sarif")
+    unique, removed = _deduplicate(found)
+    assert (len(unique), removed) == (1, 1)
+
+
+def test_an_absolute_uri_outside_the_scanned_tree_is_left_alone():
+    """Two roots name two files; folding them would merge unrelated findings."""
+    outside = _result(uri="file:///elsewhere/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[outside, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 0
+
+
 # ── _normalize_severity ────────────────────────────────────────────────────────
 
 
