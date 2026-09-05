@@ -1085,6 +1085,17 @@ def test_append_ledger_refuses_truncated_last_line(tmp_path):
         findings.append_ledger(tmp_path, {"id": "y"})
 
 
+def test_append_ledger_creates_the_ledger_private(tmp_path):
+    """0o600, because the ledger quotes evidence out of the audited repository.
+
+    Pinned separately from the write_ledger temp-file check: that one covers the
+    mkstemp path, so a mutation of this `os.open` mode passed the whole file
+    green. Line coverage cannot catch it — the line runs either way.
+    """
+    findings.append_ledger(tmp_path, {"id": "y"})
+    assert stat.S_IMODE(findings.ledger_path(tmp_path).stat().st_mode) == 0o600
+
+
 def test_append_ledger_raises_on_short_write(tmp_path, monkeypatch):
     """A short write commits half a record; resolve would then delete a live finding."""
     real_write = findings.os.write
