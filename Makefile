@@ -2,11 +2,6 @@
 
 UV := uv run --quiet
 
-# Scratch copy for index-check's before/after comparison. Under $(CURDIR) rather
-# than /tmp so a shared runner cannot have two checkouts race on one path, and
-# .gitignore excludes it.
-INDEX_SNAPSHOT := $(CURDIR)/.index-check.before
-
 all: check
 
 help:
@@ -105,16 +100,17 @@ audit-consistency:
 # and pre-commit down with it. A store-consistency check silently disabling the
 # security scanners and the test suite is the expensive half of that bug.
 index-check:
-	@cp docs/audit/findings/INDEX.md $(INDEX_SNAPSHOT)
-	@python3 skills/nitpicker/scripts/findings.py index >/dev/null
-	@cmp -s $(INDEX_SNAPSHOT) docs/audit/findings/INDEX.md || { \
+	@set -eu; \
+	snap="$$(mktemp)"; \
+	trap 'rm -f "$$snap"' EXIT INT TERM; \
+	cp docs/audit/findings/INDEX.md "$$snap"; \
+	python3 skills/nitpicker/scripts/findings.py index >/dev/null; \
+	cmp -s "$$snap" docs/audit/findings/INDEX.md || { \
 		echo "INDEX.md was stale; it has been regenerated. Commit the result." >&2; \
-		diff -u $(INDEX_SNAPSHOT) docs/audit/findings/INDEX.md >&2 || true; \
-		rm -f $(INDEX_SNAPSHOT); \
+		diff -u "$$snap" docs/audit/findings/INDEX.md >&2 || true; \
 		exit 1; \
-	}
-	@rm -f $(INDEX_SNAPSHOT)
-	@echo "OK  INDEX.md current."
+	}; \
+	echo "OK  INDEX.md current."
 
 pre-commit:
 	uv run --with pre-commit==4.6.2 pre-commit run --all-files --show-diff-on-failure
