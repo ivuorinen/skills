@@ -50,6 +50,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md_fences
+
 # Instruction surfaces per harness. This tool audits somebody else's repository,
 # and which agent they run is not ours to assume: a set hardcoded to Claude Code
 # answered "not an agent workspace" for Cursor, Copilot, Gemini, Windsurf, Cline
@@ -118,11 +121,19 @@ _IMPERATIVE_RE = re.compile(
     r"^(Never|Always|Do not|Don't|Must|Use|Run|Keep|Add|Write|Prefer|Treat|Read|Check|Ensure)\b"
 )
 
+_TABLE_DELIM_RE = re.compile(r"^\|[\s:|-]+\|$")
+
 _MIN_DUPLICATE_LEN = 40
 
 
-def _content_lines(text: str):
+def _content_lines(text: str, markup: bool = False):
     """Yield (lineno, stripped) for lines outside fenced code, tables and quotes.
+
+    `markup=True` keeps table and blockquote lines, for the one caller that
+    judges their content rather than treating the markup as decoration:
+    dropping them here is what let a directive evade the budget by being
+    reformatted into a table. The import and duplicate scans keep the default,
+    where a tabulated example is noise.
 
     A fence is closed only by a run at least as long as its opener, matching
     `check-rules-anatomy.py`. Getting this wrong in the other direction — treating
@@ -148,15 +159,14 @@ def _content_lines(text: str):
             continue
         s = raw.strip()
         if fence:
-            close = re.fullmatch(r"(`{3,}|~{3,})\s*", s)
-            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
+            if md_fences.closes(s, fence):
                 fence = ""
             continue
-        opener = re.match(r"(`{3,}|~{3,})", s)
-        if opener:
-            fence = opener.group(1)
+        opened = md_fences.opener(s)
+        if opened:
+            fence = opened
             continue
-        if not s or s.startswith(("|", ">")):
+        if not s or (not markup and s.startswith(("|", ">"))):
             continue
         yield i, s
 
@@ -206,11 +216,36 @@ def is_path_scoped(text: str) -> bool:
 
 
 def _count_instructions(text: str) -> int:
-    """Directives in one file, by the shape a reader would count them."""
+    """Directives in one file, by the shape a reader would count them.
+
+    Table cells and blockquotes are judged too, but a table cell only against
+    the imperative verbs. Excluding both wholesale made the budget evadable by
+    reformatting: 200 directives moved into a table counted zero and passed the
+    gate the same 200 bullets blocked. Counting every table row instead would
+    charge a reference table — counts-in-prose.md's "Instead of / Write" — as
+    instruction load, which is the over-count the exclusion existed to prevent.
+    Judging the first cell alone keeps both out.
+    """
     n = 0
-    for _, s in _content_lines(text):
+    header = False
+    for _, s in _content_lines(text, markup=True):
         if s.startswith("#"):
+            header = False
             continue
+        if _TABLE_DELIM_RE.match(s):
+            # The delimiter proves the row above named columns rather than directing.
+            if header:
+                n -= 1
+            header = False
+            continue
+        if s.startswith("|"):
+            cell = s.strip("|").split("|")[0].strip()
+            header = bool(_IMPERATIVE_RE.match(cell))
+            n += header
+            continue
+        header = False
+        if s.startswith(">"):
+            s = s.lstrip(">").strip()
         if _LIST_RE.match(s) or _IMPERATIVE_RE.match(s):
             n += 1
     return n
@@ -248,6 +283,42 @@ def _co_loaded(a: set[str], b: set[str]) -> bool:
     co-loads with all of them.
     """
     return bool(a & b) or "cross-agent" in a | b
+
+
+def _escape_label(p: Path, project_root: Path) -> str:
+    """The symlink that carried the path out, not the file behind it.
+
+    Naming the file would enumerate the linked directory's contents — a smaller
+    disclosure than reading them, and still one this refusal exists to prevent.
+    check-rules-anatomy.py reports the directory for the same reason.
+    """
+    rel = p.relative_to(project_root)
+    cur = project_root
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return cur.relative_to(project_root).as_posix()
+    return rel.as_posix()
+
+
+def _escaping(files: list[Path], contain: Path | None) -> list[Path]:
+    """The files resolving outside `contain`; empty when no boundary was given.
+
+    A path that cannot be resolved counts as escaping: an unreadable link is one
+    this check cannot vouch for, and admitting it would make the boundary depend
+    on the filesystem answering.
+    """
+    if contain is None:
+        return []
+    out = []
+    for p in files:
+        try:
+            outside = not p.resolve().is_relative_to(contain)
+        except OSError:
+            outside = True
+        if outside:
+            out.append(p)
+    return out
 
 
 def loaded_files(project_root: Path) -> list[Path]:
@@ -536,12 +607,20 @@ def _scan_file(
     return findings
 
 
-def check(project_root: Path) -> tuple[dict, bool]:
+def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     """The report for `project_root`, and whether it blocks; (report, blocking).
 
     Raises ValueError when the root holds no instruction file for any known
     harness — a repo with none is not one this check has anything to say about,
     and an empty clean report would present "nothing to check" as "nothing wrong".
+
+    `contain` refuses an instruction file resolving outside it, mirroring
+    check-rules-anatomy.py's parameter of the same name — these two scan the
+    same directories, so a boundary only one of them enforces is bypassed by
+    calling the other. Left None by the CLI, where a rules directory symlinked
+    into a shared repo is a legitimate local layout; passed by the MCP server,
+    where the caller is confined to one project and every file read is returned
+    over the wire.
     """
     # Canonicalised once, here, because the import walk compares a resolved
     # target against this value. `resolve()` on one side and not the other made
@@ -553,6 +632,11 @@ def check(project_root: Path) -> tuple[dict, bool]:
     project_root = project_root.resolve()
     harnesses = detect(project_root)
     files = loaded_files(project_root)
+    escaping = _escaping(files, contain)
+    if escaping:
+        files = [f for f in files if f not in escaping]
+        harnesses = {h: [f for f in fs if f not in escaping] for h, fs in harnesses.items()}
+        harnesses = {h: fs for h, fs in harnesses.items() if fs}
     if not files:
         raise ValueError(
             f"{project_root} holds no agent instruction file for any known harness "
@@ -566,7 +650,18 @@ def check(project_root: Path) -> tuple[dict, bool]:
         for f in found:
             owners.setdefault(f.relative_to(project_root).as_posix(), set()).add(harness)
 
-    findings: list[dict] = []
+    findings: list[dict] = [
+        {
+            "severity": "High",
+            "code": "symlink_escapes_root",
+            # The resolved target is deliberately absent: naming it would
+            # disclose the path this branch exists to refuse to read.
+            "file": label,
+            "detail": "Symlink resolves outside the project root — not read",
+        }
+        # One finding per link, not per file behind it.
+        for label in dict.fromkeys(_escape_label(p, project_root) for p in escaping)
+    ]
     per_file: list[dict] = []
     seen_lines: dict[str, tuple[str, int]] = {}
     total = 0

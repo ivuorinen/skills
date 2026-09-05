@@ -656,7 +656,7 @@ def _check_agent_instructions(args: dict) -> str:
     and the account name in it.
     """
     root = _project_root(args)
-    report, blocking = agent_instructions.check(root)
+    report, blocking = agent_instructions.check(root, contain=root)
     report["project_root"] = "."
     for entry in report["files"]:
         entry["file"] = Path(entry["file"]).as_posix()
