@@ -73,6 +73,12 @@ review surface the skill offers.
   overbroad catches, masking fallbacks, silent retries.
 - **Resource leaks** (`leaks`) — acquire-without-guaranteed-release:
   handles, pools, listeners, tasks, temp artifacts.
+- **Reliability** (`reliability`) — resilience under failure: non-idempotent
+  retries, missing timeouts, retry storms, crash-window duplication, dropped
+  work.
+- **Cache** (`cache`) — cache correctness: stale reads, key collisions,
+  unbounded growth, stampede, serialization drift. N/A when the repo caches
+  nothing.
 - **Architecture** (`arch`) — violations against detected or declared
   patterns and layer boundaries. If `docs/audit/arch-profile.md` is absent,
   run `arch-profile` first to detect the pattern.
@@ -99,6 +105,8 @@ review surface the skill offers.
   system (untyped, by declared scope).
 - **Docs** (`docs`) — documentation accuracy against the code: stale,
   missing, or wrong behavior descriptions.
+- **Contributing** (`contributing`) — `CONTRIBUTING.md` against the repo's real
+  tooling. N/A when the repo has no contributor-facing documentation.
 - **CI/CD** (`ci`) — unpinned actions, over-broad token scope, script
   injection, privileged-trigger misuse, non-gating checks, masked failures.
   N/A when the repo has no CI/CD pipeline definitions.
@@ -130,6 +138,9 @@ review surface the skill offers.
   dependencies.
 - **Unwired code** (`unwired`) — unwired and incomplete implementations that
   are defined but never reached.
+- **Dead code** (`dead-code`) — unreferenced or unreachable code: unused
+  exports, dead branches, orphaned files, each proven dead through every
+  reachability channel before deletion is proposed.
 
 ## Agent-enforcement lenses (only when an agent project — `.claude/` exists)
 
@@ -143,5 +154,14 @@ review surface the skill offers.
 ## Not coverage lenses
 
 `review` (the diff-scoped form of this same read), `pr`, `cr`, `plan`,
-`baseline`, `release-gate`, `help`, and `x-findings-migrator` are workflow or
-meta commands, not quality lenses — they are not tasks in this checklist.
+`execute-plan`, `teach`, `triage`, `reverify`, `baseline`, `release-gate`,
+`help`, and `x-findings-migrator` are workflow or meta commands, not quality
+lenses — they are not tasks in this checklist. `arch-profile` is not one either:
+it detects the pattern the **Architecture** lens then audits against, and that
+lens runs it when `docs/audit/arch-profile.md` is absent.
+
+Every command in SKILL.md's tables appears either above as a lens or here as an
+exclusion. `tests/test_validate_skill.py` asserts that, because a command in
+neither list is one `audit` never schedules: an uncreated task cannot be closed
+`N/A` or `out of scope`, so it is skipped with nothing in the run summary
+recording it. Four commands were missing when that test was written.
