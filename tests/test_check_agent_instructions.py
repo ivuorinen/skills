@@ -120,9 +120,25 @@ class TestSymlinkConfinement:
         (proj / ".claude" / "rules").symlink_to(outside, target_is_directory=True)
         return proj, outside
 
-    def test_contained_run_reports_the_escape_and_does_not_read_it(self, tmp_path):
-        proj, _ = self._escaping_workspace(tmp_path)
+    def test_contained_run_reports_the_escape_and_does_not_read_it(self, tmp_path, monkeypatch):
+        """Absence from the report is not proof the file was left unread.
+
+        The disclosure this guards is the read itself, so the read is what the
+        test watches: a report could omit the content while the scan had already
+        pulled it into memory.
+        """
+        proj, outside = self._escaping_workspace(tmp_path)
+        read: list[Path] = []
+        real = _mod.Path.read_text
+        monkeypatch.setattr(
+            _mod.Path,
+            "read_text",
+            lambda self, *a, **k: (read.append(self), real(self, *a, **k))[1],
+        )
+
         report, _ = _mod.check(proj, contain=proj.resolve())
+
+        assert (outside / "leaked.md").resolve() not in [p.resolve() for p in read]
         escapes = [f for f in report["findings"] if f["code"] == "symlink_escapes_root"]
         # The link is named; the files behind it are neither read nor enumerated.
         assert [f["file"] for f in escapes] == [".claude/rules"]
