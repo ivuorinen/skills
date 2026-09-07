@@ -38,8 +38,9 @@ Severity reflects actual risk, never preference.
   or as part of the default `audit` flow; a command file states scope only
   where it differs from this.
 - **Preflight every external tool.** Before invoking any external binary the
-  skill does not itself ship — a scanner (`semgrep`, `opengrep`, `grype`,
-  `trivy`, `gitleaks`, …), `gh`, a package manager, a linter or analyzer —
+  skill does not itself ship — a scanner (`semgrep`, `opengrep`, `codeql`,
+  `grype`, `trivy`, `gitleaks`, …), `gh`, a package manager, a linter or
+  analyzer —
   probe its availability with `command -v` / `which`. Never install it. Run
   only the tools found. Record a missing tool as "not available" and a tool
   that ran but failed as "errored: <message>" in the run summary; capture
@@ -73,6 +74,10 @@ a direct `scripts/*.py` call only when nothing higher does. Highest first:
    - **Rule anatomy** — `np_check_rules_anatomy` instead of
      `python3 scripts/check-rules-anatomy.py`. Reads whichever rules directories
      the audited project keeps and returns `blocking` with the findings.
+   - **Instruction set** — `np_check_agent_instructions` instead of
+     `python3 scripts/check-agent-instructions.py`. Scores the always-loaded set
+     as a whole and returns `blocking` with the findings; the per-file view is
+     `np_check_rules_anatomy` above.
    - **Pull requests** — `np_pr_status` / `np_pr_comments` instead of the two
      fetcher scripts.
 

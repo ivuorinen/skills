@@ -133,6 +133,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/check-rules-anatomy.py" [<project_root>]
 Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, valid `paths:` frontmatter, no hedged language ("try to", "prefer", "consider"), dangling symlinks, symlinks escaping the project root, stale paths, unfilled placeholders, stale dates, duplicate lines, dead same-file anchors, and a directive buried mid-file. The tool adds `blocking` — true when any finding is High or Critical, the CLI's exit-1 condition. Use in step 2 for a programmatic report before filing findings.
 
 A second tool covers what no per-file check can see — the always-loaded **set**:
+`np_check_agent_instructions`, no arguments. Without the nitpicker MCP tools, the
+same code runs through the bundled CLI:
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-agent-instructions.py" [<project_root>]

@@ -12,9 +12,11 @@ A number stays in prose only when one of these holds:
 - **It is structural.** The number cannot change without redesigning the thing
   it describes: "one file per open finding", "two script classes", "one command
   per invocation". These state shape, not a tally.
-- **A gate pins it.** SKILL.md keeps "exposes 16 tools" because
+- **A gate pins it.** SKILL.md states the MCP server's tool count because
   `test_skill_md_documents_every_tool_the_server_exposes` asserts it against
-  `TOOLS` and fails the commit when it drifts.
+  `TOOLS` and fails the commit when it drifts. The number is not repeated here:
+  this rule is about counts going stale in prose, and a copy of that one would
+  demonstrate the failure rather than the exception.
 
 Delete every other count and name the set instead.
 

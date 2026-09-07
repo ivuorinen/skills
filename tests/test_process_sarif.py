@@ -84,6 +84,109 @@ def _result(
     }
 
 
+# ── suppressions and location normalization ───────────────────────────────────
+
+
+def test_a_suppressed_result_is_not_reported_as_active():
+    """SARIF marks a triaged result with a non-empty `suppressions` array.
+
+    Reporting it anyway re-raises defects the team already decided about, at
+    full severity, on every scan.
+    """
+    suppressed = {**_result(), "suppressions": [{"kind": "external", "status": "accepted"}]}
+    assert _extract_findings(_run(results=[suppressed]), "x.sarif") == []
+
+
+def test_an_empty_suppressions_array_leaves_the_result_active():
+    """SARIF uses the empty array to mean "considered and not suppressed"."""
+    active = {**_result(), "suppressions": []}
+    assert len(_extract_findings(_run(results=[active]), "x.sarif")) == 1
+
+
+@pytest.mark.parametrize("status", ["rejected", "underReview"])
+def test_a_suppression_not_in_force_leaves_the_result_active(status):
+    """A rejected suppression is a decision *not* to suppress; underReview is pending.
+
+    Dropping on a non-empty array alone inverted both into suppression.
+    """
+    result = {**_result(), "suppressions": [{"kind": "external", "status": status}]}
+    assert len(_extract_findings(_run(results=[result]), "x.sarif")) == 1
+
+
+def test_a_suppression_without_a_status_still_suppresses():
+    """`status` is optional in SARIF and defaults to accepted."""
+    result = {**_result(), "suppressions": [{"kind": "external"}]}
+    assert _extract_findings(_run(results=[result]), "x.sarif") == []
+
+
+def test_a_malformed_suppression_entry_claims_nothing():
+    """Third-party JSON: an entry that is not an object asserts no status.
+
+    Reading it as suppression would let a malformed scanner output silence a
+    finding; reading it as active keeps the finding visible.
+    """
+    result = {**_result(), "suppressions": ["not-an-object", 42]}
+    assert len(_extract_findings(_run(results=[result]), "x.sarif")) == 1
+
+
+def test_a_mix_suppresses_when_any_one_is_accepted():
+    rejected_and_accepted = {
+        **_result(),
+        "suppressions": [{"status": "rejected"}, {"status": "accepted"}],
+    }
+    assert _extract_findings(_run(results=[rejected_and_accepted]), "x.sarif") == []
+
+
+def test_a_non_local_file_authority_is_kept_out_of_the_local_key():
+    """file://host/... names a file on another machine, not the local tree.
+
+    Dropping the authority folded it onto the local path and merged two
+    distinct findings under one fingerprint.
+    """
+    remote = _result(uri="file://scanner-host/repo/src/app.py")
+    local = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[remote, local]), "x.sarif")
+    assert _deduplicate(found)[1] == 0
+
+
+def test_an_uppercase_file_scheme_normalizes_like_a_lowercase_one():
+    """RFC 3986 makes the scheme case-insensitive; a startswith test did not."""
+    upper = _result(uri=f"FILE://{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[upper, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 1
+
+
+def test_a_localhost_authority_is_treated_as_local():
+    """ "localhost" is the SARIF spelling of "this machine"."""
+    absolute = _result(uri=f"file://localhost{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[absolute, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 1
+
+
+def test_the_same_defect_under_two_uri_spellings_dedups_to_one():
+    """One scanner emits an absolute file:// URI, another a repo-relative path.
+
+    Keying the fingerprint on the raw string let the same defect survive twice
+    while `duplicates_removed` stayed at zero, so the overlap inflated severity
+    counts instead of collapsing.
+    """
+    absolute = _result(uri=f"file://{Path.cwd().as_posix()}/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[absolute, relative]), "x.sarif")
+    unique, removed = _deduplicate(found)
+    assert (len(unique), removed) == (1, 1)
+
+
+def test_an_absolute_uri_outside_the_scanned_tree_is_left_alone():
+    """Two roots name two files; folding them would merge unrelated findings."""
+    outside = _result(uri="file:///elsewhere/src/app.py")
+    relative = _result(uri="src/app.py")
+    found = _extract_findings(_run(results=[outside, relative]), "x.sarif")
+    assert _deduplicate(found)[1] == 0
+
+
 # ── _normalize_severity ────────────────────────────────────────────────────────
 
 

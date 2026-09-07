@@ -30,7 +30,7 @@ Bitbucket **Data Center** (self-hosted) serves a different API and is not suppor
 | Platform | Auth, in the order the tools try it |
 | --- | --- |
 | GitHub | `gh` CLI (GraphQL, the only source of resolved state) → `gh` REST → `GITHUB_TOKEN`. A token reaches a non-`github.com` host only when `GH_HOST` names that host. |
-| GitLab | `GITLAB_TOKEN` → `glab` CLI. The instance comes from the git remote, so a self-hosted host needs no extra setting. Set `GITLAB_HOST` only to pin which instance the token belongs to — when it names a different host the token is withheld, not sent. |
+| GitLab | `GITLAB_TOKEN` → `glab` CLI. The instance comes from the git remote. The token is sent to `gitlab.com` alone unless `GITLAB_HOST` names the target host, so a self-hosted instance needs that variable set before the token reaches it. |
 | Bitbucket | `BITBUCKET_TOKEN`, or `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` |
 
 If none is available the fetch exits 1 naming what to set; stop and report that message verbatim rather than paraphrasing it.
@@ -217,7 +217,9 @@ CodeRabbit (`coderabbitai[bot]`) is an **asynchronous** reviewer: it posts a rev
 4. **Handle the new batch** — back to step 1.
 5. **Terminate** when either the summary comment shows **`No actionable comments were generated in the recent review`** for a review whose reviewed commit range **includes your latest fix**, **or** CodeRabbit submits an `APPROVED` review. Report the outcome; never keep triggering after a clean pass.
 
-The termination signals come from **direct API polling**, not from the fetch batch alone: read the summary text and its `updated_at` (the fetcher returns `summary_comments[].updated_at`, the baseline for the rate-limit wait in step 3), and read a review's `state`/`commit_id` from the PR **reviews API** (or `gh pr view --json reviewDecision,statusCheckRollup`). An empty `APPROVED` review carries no body, so it is absent from `review_bodies` — detect approval from the reviews API state, never by expecting it in the fetch output.
+The termination signals come from **direct API polling**, not from the fetch batch alone: read the summary text and its `updated_at` (the fetcher returns `summary_comments[].updated_at`, the baseline for the rate-limit wait in step 3), and read a review's `state` and reviewed commit from the PR **reviews API**. The two transports spell that commit differently — `gh pr view --json reviews` exposes it as **`.commit.oid`**, while REST `repos/{owner}/{repo}/pulls/{n}/reviews` spells it **`commit_id`**. Asking the `gh` form for `commit_id` returns `null`, and null compares unequal to every SHA, so the loop reads "no review has seen my fix" forever and never terminates. An empty `APPROVED` review carries no body, so it is absent from `review_bodies` — detect approval from the reviews API state, never by expecting it in the fetch output.
+
+**The `CodeRabbit` status check is not a result.** It reports success — and shows as `null` or neutral in `statusCheckRollup` — the moment CodeRabbit *starts* processing, so it says "received, working on it" and never "passed". Reading it as a verdict turns a mid-flight review into a green PR, and the whole batch it is about to post goes unhandled. Judge the run by the two signals above and by the summary comment's own `Reviewing files that changed … between <base> and <sha>` range, which names what it has actually looked at. While that summary says `Currently processing new changes in this PR`, the review is still running whatever the checks show.
 
 Loop rules:
 
@@ -254,6 +256,7 @@ Loop rules:
 - **Scope creep**: fixing identical instances of the same defect is in scope; fixing different defects noticed nearby is not.
 - **Marking already-resolved code as Implemented**: if the flagged code was fixed in a prior commit, the verdict is Skipped.
 - **Treating CodeRabbit's `Review finished` as a result**: it is an acknowledgement that the command was received. Wait for the actual review whose commit range includes your fix.
+- **Reading the `CodeRabbit` status check as a verdict**: it goes green the moment processing starts, so a mid-flight review looks like a passing one. Reporting "all checks green" with a `CodeRabbit` entry present is a false all-clear — the summary comment's reviewed range is the signal.
 - **Ignoring the fetcher's `review_bodies` / `summary_comments`**: outside-diff-range comments and bot summaries are returned in those two sections, not in `threads`. Evaluate all three — skipping them silently drops the notices this fetch exists to surface.
 - **Assuming the fetcher output is a JSON array**: it is a JSON object (`threads`, `review_bodies`, `summary_comments`). Index `data["threads"]`, not `data[0]`.
 - **Manually triggering `@coderabbitai review` when auto-review is active**: it wastes a review. The manual trigger is only for when no automatic review will come — a rate-limited account, or one whose auto-reviews are paused/ignored/disabled (which a *paid* account can also be); an account with auto-review active re-reviews every push on its own.

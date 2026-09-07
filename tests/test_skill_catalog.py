@@ -195,6 +195,128 @@ def test_read_reference_description_names_every_shared_file():
     assert not missing, f"np_read_reference's description does not name: {sorted(missing)}"
 
 
+def test_read_reference_resolves_a_scanner_reference():
+    """`references/tools/*.md` had no MCP route at all when it was introduced.
+
+    The tool-preference rule ranks a raw filesystem read last for "any command
+    file, shared reference, or this router", and these are shared references by
+    that description — so every other bundled text had a tool and these did not.
+    """
+    body = sc.read_reference("codeql")
+    assert "codeql" in body.lower()
+    # The underscore is optional here exactly as it is for a command reference.
+    assert sc.read_reference("_codeql") == body
+
+
+def test_every_scanner_reference_is_reachable_by_name():
+    """One file left unreachable is the `_teach-formats` failure again: present,
+    resolvable in principle, and invisible to the caller."""
+    root = sc.plugin_root()
+    for path in sorted((root / "skills/nitpicker/references/tools").glob("*.md")):
+        assert sc.read_reference(path.stem), f"{path.stem} did not resolve"
+
+
+def test_a_command_reference_wins_a_name_collision(tmp_path):
+    """`commands/_*.md` is the older contract, so a new scanner file sharing a
+    stem must not change what an existing caller already resolves.
+
+    Built under `tmp_path` rather than by writing the colliding file into the
+    checked-out tree. The earlier version created
+    `references/tools/conventions.md` in the real skill directory and unlinked it
+    in a `finally` — which destroys the original if that name is ever taken, and
+    leaves the working tree mutated if the process dies between the two. Per
+    `.claude/rules/snapshot-before-mutating.md`, a check that mutates a file
+    restores it from a snapshot; not mutating the real tree at all is strictly
+    better than restoring it.
+    """
+    nit = tmp_path / "skills" / "nitpicker"
+    (nit / "commands").mkdir(parents=True)
+    (nit / "references" / "tools").mkdir(parents=True)
+    (nit / "commands" / "_conventions.md").write_text(
+        "# Shared Conventions — binding for every /nitpicker command\n", encoding="utf-8"
+    )
+    (nit / "references" / "tools" / "conventions.md").write_text(
+        "# not the conventions file\n", encoding="utf-8"
+    )
+
+    assert "Shared Conventions" in sc.read_reference("conventions", root=tmp_path)
+    # The scanner file is still reachable under a name of its own, so the
+    # precedence rule shadows the collision rather than dropping the file.
+    (nit / "references" / "tools" / "codeql.md").write_text("# codeql\n", encoding="utf-8")
+    assert "codeql" in sc.read_reference("codeql", root=tmp_path)
+
+
+def test_unknown_reference_names_both_roots():
+    """The error is the caller's only vocabulary, so it must list what is
+    reachable — including the scanner references, or they stay invisible."""
+    import pytest as _pytest
+
+    with _pytest.raises(KeyError) as exc:
+        sc.read_reference("no-such-reference")
+    msg = str(exc.value)
+    assert "conventions" in msg and "codeql" in msg
+
+
+def _skill_body_outside_fences() -> str:
+    """The nitpicker router's text with fenced blocks removed.
+
+    Reuses the validator's own `strip_fences` rather than reimplementing it, so
+    the two cannot disagree about what counts as a live mention. A name inside a
+    fence is an example, not an instruction to load the file.
+    """
+    import importlib.util
+
+    root = sc.plugin_root()
+    spec = importlib.util.spec_from_file_location(
+        "validate_skill", root / "scripts" / "validate-skill.py"
+    )
+    vs = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(vs)  # type: ignore[union-attr]
+    body = (root / "skills/nitpicker/SKILL.md").read_text(encoding="utf-8")
+    return "\n".join(vs.strip_fences(body.splitlines()))
+
+
+def test_skill_md_names_every_external_scanner_reference():
+    """`references/tools/*.md` sits outside every gate that gets this for free.
+
+    `validate-skill.py` enforces the same rule for `commands/_*.md` and globs
+    only that directory, so these files are reachable, unnamed, and invisible to
+    the validator all at once — the shape that already shipped once as
+    `_teach-formats`, which resolved from the day it landed while nothing named
+    it. Without this test a tenth scanner added under `references/tools/` never
+    gets mentioned in SKILL.md and is found only by whoever goes looking.
+    """
+    import re
+
+    root = sc.plugin_root()
+    on_disk = {p.stem for p in (root / "skills/nitpicker/references/tools").glob("*.md")}
+    assert on_disk, "no scanner reference files found — the glob or the directory moved"
+
+    named = _skill_body_outside_fences()
+    missing = {n for n in on_disk if not re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", named)}
+    assert not missing, f"SKILL.md does not name these scanner references: {sorted(missing)}"
+
+
+def test_every_cited_scanner_reference_resolves():
+    """The reverse drift: a routing row pointing at a file that is not there.
+
+    `security.md`'s table is what an agent follows after detection, so a stale
+    row sends it to a missing file mid-run. Checked across every command file
+    rather than just that one, since any command may cite a scanner later.
+    """
+    import re
+
+    root = sc.plugin_root()
+    tools_dir = root / "skills/nitpicker/references/tools"
+    dangling: list[str] = []
+    for md in sorted((root / "skills/nitpicker/commands").glob("*.md")):
+        text = md.read_text(encoding="utf-8")
+        for cited in re.findall(r"references/tools/([\w-]+)\.md", text):
+            if not (tools_dir / f"{cited}.md").is_file():
+                dangling.append(f"{md.name} -> references/tools/{cited}.md")
+    assert not dangling, f"cited scanner reference files do not exist: {dangling}"
+
+
 def test_unknown_name_errors_name_the_valid_set():
     """A bare `KeyError(name)` renders as `KeyError: 'loopholes'` — no recovery path.
 

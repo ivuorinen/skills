@@ -79,6 +79,7 @@ def _load_bundled(stem: str) -> Any:
 
 sarif = _load_bundled("process-sarif")
 rules_anatomy = _load_bundled("check-rules-anatomy")
+agent_instructions = _load_bundled("check-agent-instructions")
 
 
 # The shipped modules this process imported, with the mtime each file had at
@@ -109,7 +110,7 @@ def _snapshot(modules: Any) -> dict[str, tuple[Path, float]]:
     return snapshot
 
 
-_LOADED = _snapshot((findings, pr_common, skill_catalog, sarif, rules_anatomy))
+_LOADED = _snapshot((findings, pr_common, skill_catalog, sarif, rules_anatomy, agent_instructions))
 
 # Newest first. Annotations reached the spec in 2025-03-26, so a session pinned
 # to 2024-11-05 carries them as ignorable extra fields — hence advertising a
@@ -221,7 +222,11 @@ def _read_command(args: dict) -> str:
 @tool(
     "np_read_reference",
     "Return a shared nitpicker reference file: _conventions, _audit-coverage or "
-    "_teach-formats. The leading underscore is optional.",
+    "_teach-formats, or a scanner reference from references/tools/ by reference "
+    "name (semgrep, codeql, grype, trivy, gitleaks, checkov, gosec, snyk, "
+    "npm-audit). The reference name is the file stem, not the detected binary: "
+    "opengrep resolves through semgrep, and npm/yarn/pnpm through npm-audit. "
+    "The leading underscore is optional.",
     {
         "type": "object",
         "properties": {"name": {"type": "string"}},
@@ -316,6 +321,12 @@ def _project_root(args: dict) -> Path:
             f"[nitpicker] project_dir {pd!r} resolved to {root}, outside {allowed}", file=sys.stderr
         )
         raise ValueError("project_dir is outside the allowed project root")
+    if not root.is_dir():
+        # A file passes containment, and the store path built from it globs
+        # nothing — so every read tool answered "no findings" for what was
+        # really a bad argument. An empty-but-valid result reads to an agent as
+        # a clean store, which is the one answer a typo must not produce.
+        raise ValueError(f"project_dir is not a directory: {pd!r}")
     return root
 
 
@@ -624,6 +635,37 @@ def _check_rules_anatomy(args: dict) -> str:
     # root, so `relative_to` cannot fail. Catching it here would only hide a bug
     # in that construction behind a leaked absolute path.
     report["rules_dirs"] = [Path(d).relative_to(root).as_posix() for d in report["rules_dirs"]]
+    return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
+
+
+@tool(
+    "np_check_agent_instructions",
+    "Check the audited project's always-loaded agent instruction files as a set — "
+    "CLAUDE.md, AGENTS.md, .cursorrules, .windsurfrules, GEMINI.md and the rules "
+    "directories of whichever harnesses the project keeps: instruction budget, a "
+    "critical rule buried mid-file, one directive stated in two files, and dangling, "
+    "circular or too-deep @imports. Reports whether any finding is blocking.",
+    {"type": "object", "properties": {**_PROJECT_DIR_PROP}, "additionalProperties": False},
+    {**_READ_ONLY, "title": "Check agent instruction set"},
+)
+def _check_agent_instructions(args: dict) -> str:
+    """Run the whole-set instruction check over the audited project.
+
+    The sibling of `np_check_rules_anatomy`: that one scores a rule file at a
+    time, this one scores what every turn carries together — a budget no
+    per-file check can see. Returns the report fenced as untrusted data with
+    `blocking` attached.
+
+    Paths are relativized before they travel, for the reason `np_process_sarif`
+    and `np_check_rules_anatomy` do it: each is built from the resolved project
+    root, so returning one as-is hands the caller the server's filesystem layout
+    and the account name in it.
+    """
+    root = _project_root(args)
+    report, blocking = agent_instructions.check(root, contain=root)
+    report["project_root"] = "."
+    for entry in report["files"]:
+        entry["file"] = Path(entry["file"]).as_posix()
     return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
 
 
@@ -1018,9 +1060,27 @@ def serve(stdin, stdout) -> None:
             stdout.flush()
             continue
         if not isinstance(req, dict):
-            continue  # ignore batches/scalars — MCP stdio sends one object per line
+            # MCP stdio sends one object per line, so a batch is unsupported —
+            # but dropping it in silence leaves the client blocked on every id
+            # in it until its own timeout, the same stall the parse-error branch
+            # above answers rather than causes.
+            stdout.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32600, "message": "Batch requests are not supported"},
+                    }
+                )
+                + "\n"
+            )
+            stdout.flush()
+            continue
+        # `"id": null` present is a request that named a null id, not a
+        # notification: a notification omits the key entirely. Answering it costs
+        # one frame; dropping it blocks the caller.
         rid = req.get("id")
-        if rid is None:
+        if rid is None and "id" not in req:
             continue  # a notification needs no response
         params = req.get("params")
         if not isinstance(params, dict):

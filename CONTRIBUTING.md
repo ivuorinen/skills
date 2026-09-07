@@ -10,7 +10,8 @@ of it is aspirational.
 make check
 ```
 
-`check` runs thirteen targets in this order (see `Makefile`):
+`check` runs these targets in this order (`make help` prints the current list;
+the `Makefile` is authoritative):
 
 | Step                | What it does                                                              |
 | ------------------- | ------------------------------------------------------------------------- |
@@ -18,14 +19,16 @@ make check
 | `validate-evals`    | `scripts/validate-evals.py` — the `evals/` sets bundled with each skill   |
 | `validate-rules`    | `scripts/validate-rules.py` — `.claude/rules/` structure + path freshness |
 | `version-sync`      | `scripts/check-version-sync.py` — version equal across every manifest     |
+| `make-help`         | `scripts/check-make-help.py` — every target documented in `make help`     |
 | `lock-check`        | `uv lock --check` — `uv.lock` not stale against `pyproject.toml`          |
-| `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
-| `index-check`       | regenerates `INDEX.md`, fails if it was stale (`git diff --exit-code`)    |
 | `lint`              | `ruff check scripts/ tests/ skills/`                                      |
 | `format-check`      | `ruff format --check` (no writes)                                         |
 | `security`          | `bandit` over `skills/` + `scripts/`; config in `[tool.bandit]`           |
+| `opengrep`          | `scripts/check-opengrep.py` — the rules Codacy reports + stale markers    |
 | `typecheck`         | `pyright` — zero floor: any error fails the gate                          |
 | `test`              | `pytest tests/`                                                           |
+| `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
+| `index-check`       | regenerates `INDEX.md`, fails if it was stale                             |
 | `pre-commit`        | full pre-commit suite (markdownlint, yamllint, gitleaks, zizmor, …)       |
 
 `index-check` and `pre-commit` are the slow ones. The CI `Validate` job is the
@@ -84,9 +87,11 @@ text after the invocation so the skill behaves identically in Copilot and pi.
 
 Commit as `feat: add /nitpicker <name> command`.
 
-## The findings store is CLI-only
+## The findings store has two interfaces
 
-`docs/audit/findings/` is managed exclusively through the shipped CLI:
+`docs/audit/findings/` is managed through the `np_*` MCP tools where the session
+exposes them, else the shipped CLI. `baseline`, `migrate` and `migrate-resolved`
+are CLI-only, each sitting behind a consent gate a tool call would skip:
 
 ```bash
 python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
@@ -99,6 +104,8 @@ IDs are content-hashed — never hand-assigned, never reused. Never hand-edit
 
 Do not pass `--no-verify` when committing skill files, version manifests, or the
 findings store (`.claude/rules/commit-gate-integrity.md`). It skips the
-pre-commit validators that guard them, and PostToolUse hooks never fire on Bash
-edits (`sed -i`, redirection, `git mv`), so CI `Validate` is the only check that
-binds every change on its way into a protected branch.
+pre-commit validators that guard them. PostToolUse hooks cover both surfaces —
+`Write|Edit` validators on edited files, and `post-bash-revalidate.py` on
+Bash-mediated edits (`sed -i`, redirection, `git mv`) — but a hook runs only
+inside an agent session and pre-commit is skippable, so CI `Validate` is still
+the only check that binds every change on its way into a protected branch.

@@ -18,9 +18,21 @@ _STAGE_SPLIT = re.compile(r"\|\||&&|[|;\n]|(?<![<>])&(?!>)")
 # A comment runs to end of LINE, not end of string: without re.MULTILINE only the
 # final line's comment is stripped, and an earlier `#` survives to become a stage
 # whose first token is `#`.
-_COMMENT = re.compile(r"#.*$", re.MULTILINE)
+# `#[^\n]*` rather than `#.*$` with re.MULTILINE. Identical meaning — `.` never
+# matches a newline, so `.*$` already stopped at the line end — but `$` is an
+# anchor the engine can retry, and `re.sub` restarts a match attempt at every
+# position, which is the polynomial blow-up CodeQL reports (py/polynomial-redos)
+# on a hook payload. The character class cannot retry.
+_COMMENT = re.compile(r"#[^\n]*")
 # Single-quoted spans are literal; double-quoted spans honour backslash escapes.
-_QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+# Possessive quantifiers (`*+`, Python 3.11+). The two inner alternatives are
+# already disjoint, so a *terminated* quote never backtracks — but an
+# unterminated one makes the engine unwind the whole span one character at a
+# time, once per starting position. A hook payload is attacker-influenced, and
+# an unterminated quote is exactly what a hostile one would carry. Possessive
+# matching forbids that unwind; the match simply fails, which is the correct
+# answer for an unterminated span.
+_QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
 _MASK = re.compile("\x00(\\d+)\x00")
 # A backslash-newline is a line continuation, not a stage boundary. Splitting on
 # it made `git push \<newline> origin main` parse as ('push', ['\\']) — no second

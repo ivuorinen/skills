@@ -71,7 +71,7 @@ Three install traps, each hit once already:
 
 ## Findings Store
 
-One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed exclusively through the shipped, stdlib-only CLI:
+One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed through the `np_*` MCP tools where the session exposes them, else the shipped, stdlib-only CLI; `baseline`, `migrate` and `migrate-resolved` are CLI-only:
 
 ```bash
 python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
@@ -101,9 +101,12 @@ existence to learn which platform answered. And a credential is only ever sent
 to the host it was declared for:
 the redirect handler is built per-request with that host, every paginated URL is
 re-validated before it is followed (both `Link` headers and body `next` fields
-are server-controlled), and `GH_HOST`/`GITLAB_HOST` gate a token against a
-self-hosted instance. Platform detection refuses an unrecognised host rather
-than guessing, since a wrong guess is a credential handed to a third party.
+are server-controlled), and a token reaches only its platform's own public
+host unless `GH_HOST`/`GITLAB_HOST` names the self-hosted one. Withheld by
+default, declared by exception: gating on a *mismatch* instead would let the
+unconfigured case through, since it declares no host to mismatch against.
+Platform detection refuses an unrecognised host rather than guessing, since a
+wrong guess is a credential handed to a third party.
 
 The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
 the same providers. They are the only tools on the server carrying
@@ -291,8 +294,10 @@ Plus a **Bash** PostToolUse hook, `post-bash-revalidate.py`: Write/Edit matchers
 never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so this one
 re-runs the whole-tree gates when `git status` shows a governed path dirty.
 
-Plus three **PreToolUse** hooks, which can *block* a tool call before it runs —
-the most behaviour-changing entries in the file:
+Plus the **PreToolUse** hooks below, which can *block* a tool call before it
+runs — the most behaviour-changing entries in the file. `.claude/settings.json`
+holds the authoritative list; `tests/test_settings.py` fails when one of them is
+configured and unnamed here:
 
 - matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
   text names `.claude/agents/` **or a full protected agent filename** —
@@ -308,7 +313,24 @@ the most behaviour-changing entries in the file:
   token and passes — the one token it does carry, `review`, is a nitpicker
   command name that appears in ordinary commands constantly, so matching it
   would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
-  the binding control, not this hook.
+  the binding control, not this hook. The same hook also blocks a Bash **write**
+  to `scripts/hooks/` or `.claude/settings.json` (`PROTECTED_WRITE`), where
+  reading stays allowed — so the enforcement surface cannot be edited around via
+  `sed -i` or a redirect. Hand those edits to the owner rather than reaching for
+  another spelling.
+- matcher `Bash` — `deny-unsafe-git-hook.py`, which blocks `git` with
+  `--no-verify` and a push to a protected branch. Per
+  `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
+  optional; commit without the flag and fix what fails.
+- matcher `Bash` — `guard-ctx-ok-hook.py`, which validates the `# ctx-ok`
+  escape hatch from `.claude/rules/use-context-mode.md` and denies it on any
+  verb outside its allowlist, including every read verb. Fails closed on an
+  unrecognised verb, so a denial usually means route the command through
+  context-mode instead — not that the marker was spelled wrong.
+- matcher `Bash` — `ask-destructive-restore-hook.py`, which asks before a
+  `git checkout --` or `git restore` that would discard uncommitted tracked
+  changes. See `.claude/rules/snapshot-before-mutating.md`: snapshot with `cp`
+  instead.
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 

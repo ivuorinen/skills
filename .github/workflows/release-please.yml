@@ -48,22 +48,54 @@ jobs:
     # `make lock-check` fails on that drift, so without this job every release
     # PR would arrive red.
     needs: release-please
-    if: needs.release-please.outputs.prs_created == 'true'
+    # The branch name is asserted, not assumed. This workflow triggers on
+    # `push` to main rather than on a pull-request event, so no fork PR reaches
+    # it — but the checkout ref below still comes from another job's output, and
+    # this job holds `contents: write` plus a token that may be the PAT. Pinning
+    # the ref to the shape release-please itself produces means a ref that is
+    # anything else never gets checked out, rather than being trusted because of
+    # where it came from.
+    if: >-
+      needs.release-please.outputs.prs_created == 'true' &&
+      startsWith(fromJSON(needs.release-please.outputs.pr).headBranchName,
+                 'release-please--branches--main--')
     runs-on: ubuntu-latest
     permissions:
       contents: write # commit the regenerated lockfile onto the release PR branch
+    env:
+      # Read once, through the environment rather than interpolated into a
+      # command, so the value is data to every step that uses it.
+      RELEASE_BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-          # The same expression the release step uses. checkout persists
-          # `github.token` when `token` is omitted, so the push below would go
-          # out as GITHUB_TOKEN even on a repo that has the PAT configured — and
-          # a GITHUB_TOKEN push does not start the release PR's Validate run.
+          # No `ref:`. This checks out the push event's own commit on main,
+          # which is the trusted ref for a `push` workflow; the release branch is
+          # fetched in the next step, after its name is checked. Passing a
+          # branch name that came from another job's output straight into this
+          # action's `ref:` is the shape CodeQL's untrusted-checkout query
+          # matches, and the validation is easier to read where it is used.
+          # The security delta is small — the same commit is checked out either
+          # way — but the check is now in the job rather than in an expression.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Credentials are persisted deliberately: this job's whole purpose is
           # to push one commit back to the release branch.
           persist-credentials: true
+
+      - name: Check out the release branch
+        # The `if:` above already gates the job on this prefix. Repeated here
+        # because that expression decides whether the job runs, while this
+        # decides what it operates on, and only this one fails loudly.
+        run: |
+          case "$RELEASE_BRANCH" in
+            release-please--branches--main--*) ;;
+            *)
+              echo "refusing to check out unexpected branch: $RELEASE_BRANCH" >&2
+              exit 1
+              ;;
+          esac
+          git fetch --depth=1 origin "$RELEASE_BRANCH"
+          git switch --force-create "$RELEASE_BRANCH" FETCH_HEAD
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -84,4 +116,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add uv.lock
           git commit -m 'chore: sync uv.lock to the release version'
-          git push
+          # Explicit refspec: the branch was created locally from FETCH_HEAD, so
+          # it has no upstream and a bare `git push` would fail.
+          git push origin "HEAD:$RELEASE_BRANCH"

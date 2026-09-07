@@ -1,0 +1,62 @@
+---
+# CodeQL configuration. Read by .github/workflows/codeql.yml (advanced setup);
+# GitHub's *default* setup does not read this file, which is why the workflow
+# exists at all.
+
+name: nitpicker CodeQL
+
+# `security-and-quality` over the default `security` suite. Measured on this
+# repository: the default suite runs 43 Python rules, security-and-quality runs
+# 172. The narrower run reports clean over three quarters of the rules and is
+# indistinguishable from a clean run over all of them — the same trap
+# skills/nitpicker/references/tools/codeql.md documents.
+queries:
+  - uses: security-and-quality
+
+# Default setup ran with `threat_model: remote_and_local` (confirmed via
+# `gh api repos/{owner}/{repo}/code-scanning/default-setup`). Advanced setup
+# defaults to remote sources only, so omitting this would silently narrow
+# coverage on the migration — argv, environment and stdin would stop being taint
+# sources, and every finding that depends on them would vanish without anyone
+# choosing that. `remote` is always active; `local` is the half that has to be
+# asked for.
+threat-models:
+  - local
+
+query-filters:
+  # py/path-injection is excluded for this repository, deliberately and with
+  # evidence. Do not re-enable without reading this through.
+  #
+  # Every shipped tool here is a CLI that takes a filesystem path as its
+  # argument — `findings.py --root <store>`, `check-agent-instructions.py
+  # <project_root>`, `process-sarif.py <paths...>` — or an MCP server that takes
+  # one from CLAUDE_PROJECT_DIR. The path *is* the trust anchor: there is no
+  # outer directory to contain it against, because the argument names the
+  # directory the operator is asking the tool to work on. The query models a web
+  # server reading a file under a fixed document root; that shape does not exist
+  # in this repository.
+  #
+  # The traversal-capable input that does exist is validated. `findings.py`
+  # gates its auditor key with `_AUDITOR = ^[a-z0-9][a-z0-9-]*$` at all three
+  # write sites, so `--auditor '../../../tmp/evil'` exits with an error rather
+  # than escaping the store. The MCP server confines `project_dir` to
+  # `_allowed_root()`, and `np_process_sarif` re-resolves every caller-named
+  # path under that root before opening it.
+  #
+  # Five remediations were tried against a local reproduction and measured;
+  # none reached zero:
+  #
+  #   inline `# lgtm[py/path-injection]`            95 -> 95
+  #   inline `# codeql[py/path-injection]`          95 -> 95
+  #   `Path.resolve()` (already present on 2 sites) 95 -> 95
+  #   containment via realpath + startswith         95 -> 94
+  #   regex disambiguation (the redos site)          1 ->  1
+  #
+  # Only `os.path.realpath` plus an explicit `startswith` guard against a known
+  # root clears an alert, and supplying that root would mean refusing the
+  # directory the user asked the tool to audit.
+  #
+  # This exclusion is scoped to one query. Every other security query, including
+  # the rest of CWE-22, still runs.
+  - exclude:
+      id: py/path-injection

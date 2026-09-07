@@ -31,7 +31,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pr_common
-from pr_common import Target, TransportError
 
 # Bitbucket PR state -> the shared open|closed|merged vocabulary. SUPERSEDED is
 # what Bitbucket calls a PR replaced by another; it is closed from a reviewer's
@@ -59,12 +58,12 @@ def _headers() -> dict[str, str]:
     if user and app_password:
         basic = base64.b64encode(f"{user}:{app_password}".encode()).decode()
         return {"Authorization": f"Basic {basic}", "Accept": "application/json"}
-    raise TransportError(
+    raise pr_common.TransportError(
         "No auth available. Set BITBUCKET_TOKEN, or BITBUCKET_USERNAME with BITBUCKET_APP_PASSWORD."
     )
 
 
-def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[str], Any]]:
+def _transport(target: pr_common.Target) -> tuple[Callable[[str], list[Any]], Callable[[str], Any]]:
     """Both accessors, closed over one set of credentials and one pinned host.
 
     Bound together so the header set and the host a redirect may keep it for
@@ -87,7 +86,7 @@ def _transport(target: Target) -> tuple[Callable[[str], list[Any]], Callable[[st
     return list_all, get_one
 
 
-def _pr_path(target: Target, pr_number: int) -> str:
+def _pr_path(target: pr_common.Target, pr_number: int) -> str:
     return f"repositories/{target.path}/pullrequests/{pr_number}"
 
 
@@ -197,7 +196,7 @@ def _split_comments(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str
     return list(threads.values()), summary
 
 
-def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """Bitbucket's half of the shared comment contract.
 
     One endpoint answers both sections, split on whether a comment carries an
@@ -224,7 +223,7 @@ def fetch_comments(target: Target, pr_number: int) -> dict[str, Any]:
 
 
 # ── status ───────────────────────────────────────────────────────────────────
-def _checks(target: Target, sha: str, list_all: Callable[[str], list[Any]]):
+def _checks(target: pr_common.Target, sha: str, list_all: Callable[[str], list[Any]]):
     """Commit build statuses, mapped into the shared status/conclusion pair.
 
     Bitbucket reports one field where the shared shape carries two, so the
@@ -282,7 +281,7 @@ def _reviews(pr: dict[str, Any]):
     return reviews
 
 
-def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
+def fetch_status(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     """Bitbucket's half of the shared status contract.
 
     Checks come from the commit's build statuses rather than from the PR, since
@@ -294,7 +293,7 @@ def fetch_status(target: Target, pr_number: int) -> dict[str, Any]:
     list_all, get_one = _transport(target)
     pr = get_one(_pr_path(target, pr_number))
     if not isinstance(pr, dict) or "id" not in pr:
-        raise TransportError(f"PR #{pr_number} not found in {target.path}")
+        raise pr_common.TransportError(f"PR #{pr_number} not found in {target.path}")
 
     source = pr.get("source") or {}
     head_sha = (source.get("commit") or {}).get("hash", "")

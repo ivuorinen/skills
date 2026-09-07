@@ -182,9 +182,60 @@ def parse_remote_url(url: str) -> tuple[str, str]:
     url = url.strip()
     if not url:
         raise UsageError("empty git remote URL")
-    scp = re.fullmatch(r"(?:[^@/]+@)?([^/:]+):(.+)", url)
-    if scp and "://" not in url:
-        host, path = scp.group(1), scp.group(2)
+    # Scp-style (`[user@]host:path`) is split by index rather than by regex.
+    # `(?:[^@/]+@)?([^/:]+):(.+)` let the optional userinfo group and the host
+    # group both match a `:`, so an input had several valid splits and the engine
+    # backtracked between them — the polynomial blow-up CodeQL reports as
+    # py/polynomial-redos. A git remote URL is attacker-influenced wherever a
+    # repository is cloned from a URL someone else chose, so this is worth not
+    # having. Narrowing the character classes only reshuffles the ambiguity; the
+    # fix is to stop backtracking at all.
+    #
+    # The host starts either right after a leading `user@`, or at position 0.
+    # Those are the regex's two alternatives, and they are tried in its order —
+    # greedy, so the userinfo reading first. Taking only the first `@` in the
+    # whole string instead broke `github.com:org/repo@v2.git`: the `@` there is
+    # in the *path*, the colon search started past it, no colon was found, and a
+    # valid remote raised. An `@` only opens userinfo when it precedes the first
+    # `/`, and even then the no-userinfo reading has to stay available —
+    # `myhost:~git@backup/repo.git` satisfies that guard and is still hostless
+    # under it.
+    #
+    # Each candidate host is checked for what the regex's `[^/:]+` and `[^@/]+`
+    # classes enforced: non-empty, no `/`, no `@`. Rejecting `@` inside the host
+    # is stricter than the regex, which accepted `a@b@c:d` as host `b@c` — not a
+    # hostname that can exist.
+    #
+    # At most two `find` calls, and no backtracking to reason about.
+    #
+    # The regex this replaced was reported by CodeQL as py/polynomial-redos.
+    # That finding does not survive measurement: benchmarked under `fullmatch`
+    # across seven adversarial shapes at n = 2k…32k — including CodeQL's own
+    # stated witness, a run of `.` — every one scaled linearly (ratio ~2.0 per
+    # doubling) and stayed under 2.3 ms at 32 KB, against a known-quadratic
+    # control that hit 665 ms and ratio ~4 on the same harness. Anchoring gives
+    # one start position, `[^@/]+` cannot cross an `@`, and `[^/:]+` cannot
+    # cross a `:`, so there is no ambiguity to compound.
+    #
+    # The index split therefore stands on the host reading, not on performance:
+    # the regex's `[^/:]+` admitted an `@`, so it answered `a@b@c:d` with host
+    # `b@c` and `@host:path` with host `@host`. Neither is a hostname. Keeping
+    # the rule green is the other reason — py/polynomial-redos is not among the
+    # queries `.github/codeql/codeql-config.yml` excludes.
+    first_slash = url.find("/")
+    limit = len(url) if first_slash == -1 else first_slash
+    first_at = url.find("@")
+    scp_host = scp_path = ""
+    for start in ([first_at + 1] if 0 < first_at < limit else []) + [0]:
+        colon = url.find(":", start)
+        if colon in (-1, len(url) - 1):
+            continue
+        candidate = url[start:colon]
+        if candidate and "/" not in candidate and "@" not in candidate:
+            scp_host, scp_path = candidate, url[colon + 1 :]
+            break
+    if "://" not in url and scp_host:
+        host, path = scp_host, scp_path
     else:
         split = urllib.parse.urlsplit(url)
         if not split.netloc:
@@ -197,7 +248,13 @@ def parse_remote_url(url: str) -> tuple[str, str]:
         path = path[: -len(".git")]
     if not host or not path:
         raise UsageError(f"unrecognised git remote URL: {url!r}")
-    return host, path
+    # Hostnames are case-insensitive, so fold here rather than at each caller:
+    # every downstream comparison is an equality test against a lowercase
+    # literal (`target.host == "gitlab.com"`, `== "github.com"`), and a pasted
+    # `https://GitLab.COM/...` URL made all five of them miss. The visible
+    # symptom was a token withheld from the platform's own public host, which
+    # reads as a credential problem rather than a casing one.
+    return host.lower(), path
 
 
 def git_remote_url(remote: str = "origin", cwd: str | None = None) -> str:
@@ -314,8 +371,23 @@ def _credential_safe(url: str, allowed_netloc: str) -> bool:
     return split.scheme == "https" and split.netloc == allowed_netloc
 
 
+# Headers that may cross an origin on a redirect. Everything else is dropped.
+#
+# An allow-list, not a deny-list of credential names, because a deny-list fails
+# open for whatever is added after it is written — and that already happened
+# here. The handler named `authorization` alone, which covers GitHub and
+# Bitbucket; GitLab authenticates with `PRIVATE-TOKEN`, so a redirect off the
+# pinned host forwarded a GitLab PAT intact while the docstring claimed the
+# credential was stripped. Listing what is safe means the next provider's header
+# is protected by default rather than by someone remembering this line exists.
+#
+# These three are the ones urllib or this module set for content negotiation,
+# never for authentication: `_UA`, and the `Accept` each provider sends.
+_SAFE_REDIRECT_HEADERS = frozenset({"user-agent", "accept", "content-type"})
+
+
 class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Strip Authorization on a redirect that leaves the pinned API host.
+    """Strip every credential header on a redirect that leaves the pinned API host.
 
     urllib follows 3xx transparently and, unlike requests, carries the header
     across hosts — so without this a cross-host redirect forwards the token
@@ -330,8 +402,8 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Drop the Authorization header unless the redirect target is still
-        https on the pinned host.
+        """Keep only `_SAFE_REDIRECT_HEADERS` unless the target is still https
+        on the pinned host.
 
         urllib copies request headers onto a redirect by default, so a server
         answering with a redirect elsewhere — or to plaintext on its own
@@ -339,10 +411,16 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         host. The handler is built per request with the netloc it may keep the
         header for, because a shared instance would have to be told which host
         applies on every call, and the one that forgot would leak silently.
+
+        Strips by complement rather than by name: every provider chooses its own
+        auth header (`Authorization` on GitHub and Bitbucket, `PRIVATE-TOKEN` on
+        GitLab), so a name list protects whichever ones its author happened to
+        know about. urllib stores header keys `.capitalize()`d, which is why the
+        comparison lowercases rather than matching the spelling a caller passed.
         """
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None and not _credential_safe(newurl, self.allowed_netloc):
-            for key in [k for k in new.headers if k.lower() == "authorization"]:
+            for key in [k for k in new.headers if k.lower() not in _SAFE_REDIRECT_HEADERS]:
                 del new.headers[key]
         return new
 

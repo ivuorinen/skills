@@ -259,6 +259,33 @@ def test_a_marker_two_lines_above_its_finding_is_stale(tool, tmp_path, capsys):
     assert "pkg/a.py:1" in capsys.readouterr().out
 
 
+def test_a_ruleset_matching_nothing_fails_the_gate(tool, tmp_path, capsys):
+    """The markers double as this gate's known-positive control — pin that.
+
+    A scanner whose rules never loaded and a codebase with nothing to report
+    emit the same thing: zero results, exit 0, a well-formed report. Here the
+    live markers are what separates them. Each one is a position a rule is known
+    to fire at, so an empty `suppressed` — what both passes return when the
+    ruleset matches nothing — makes every marker stale at once and fails the
+    gate rather than printing "clean".
+
+    Asserts the property, not a count: the number of markers changes as
+    suppressions come and go, and a test pinned to today's total would fail for
+    the wrong reason. What must hold is that *all* of them go stale and the
+    result is non-zero.
+
+    Not hypothetical. A CodeQL run in this repository reported the tree clean
+    across every suite and threat model because one library pack was absent.
+    """
+    for name, body in (("a.py", "x = 1  # nosemgrep: r\n"), ("b.py", "# nosemgrep: r\ny = 2\n")):
+        (tmp_path / "pkg" / name).write_text(body, encoding="utf-8")
+
+    live = len(tool._markers_in(tool._scanned_sources()))
+    assert live, "fixture must provide markers, or the control proves nothing"
+    assert tool._report_stale(set()) == live
+    assert "suppress nothing" in capsys.readouterr().out
+
+
 # --------------------------------------------------------------------------
 # main, end to end
 # --------------------------------------------------------------------------

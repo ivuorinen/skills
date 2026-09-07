@@ -176,6 +176,7 @@ flow.
 | `scripts/check-agent-instructions.py` | `agent-rules` — the always-loaded set as a whole (budget, position, cross-file duplication) |
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
+| `scripts/md_fences.py` | `findings.py`, `skill_catalog.py` and both rule analyzers — the markdown code-fence rule, defined once |
 | `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |
 | `scripts/pr_github.py`, `scripts/pr_gitlab.py`, `scripts/pr_bitbucket.py` | both PR fetchers — one provider per platform |
 
@@ -189,8 +190,8 @@ refuses to guess rather than sending a credential to the wrong API;
 `--platform` names it for a self-hosted instance. Bitbucket Data Center serves
 a different API and is out of scope.
 
-Every tool a command *invokes* — the findings store, both PR fetchers, and both
-analyzers — is also reachable as an MCP tool (see below), and that is the way a
+Every tool a command *invokes* — the findings store, both PR fetchers, and all
+three analyzers — is also reachable as an MCP tool (see below), and that is the way a
 command runs it when the session has the server. The rest of the table is
 support code with no tool of its own and none needed: `mcp_server.py` is the
 server, and `skill_catalog.py`, `pr_common.py` and the three provider modules
@@ -201,13 +202,29 @@ and run with plain `python3 <path>` — no uv or package installs required on th
 host. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
 resolve the path relative to this file.
 
+## External scanner reference
+
+`references/tools/<tool>.md` holds the invocation detail for each external
+scanner `security` drives — flags, output shape, preconditions, exit-code rules
+— one file per tool. The **reference name is the file stem, not the binary**:
+`semgrep` (covering `opengrep`), `codeql`, `grype`, `trivy`, `gitleaks`,
+`checkov`, `gosec`, `snyk`, and `npm-audit` (covering `npm`, `yarn` and
+`pnpm`). Two of those stems name no binary at all, so a detected binary is not
+always the name to ask for — `opengrep` resolves through `semgrep`, and all
+three package managers through `npm-audit`.
+
+Read one only after detection finds that binary. They are split for exactly that
+reason: a host with two scanners installed loads two files rather than the ~160
+lines all of them come to. The path is named here so each is reachable directly
+from this file, not only through the command that uses it.
+
 ## MCP server
 
 Installing this plugin registers a stdio MCP server (`nitpicker`) from the
 `mcpServers` block in `.claude-plugin/plugin.json` (plugin scope, resolved via
 `${CLAUDE_PLUGIN_ROOT}`); this repo additionally registers the same server for
 project scope from `.mcp.json`. It is stdlib-only Python 3.11+
-(`scripts/mcp_server.py`), starts automatically, and exposes 16 tools:
+(`scripts/mcp_server.py`), starts automatically, and exposes 17 tools:
 
 Every tool name carries the `np_` prefix, so a nitpicker tool stays
 recognizable wherever a name appears without its server qualifier.
@@ -217,7 +234,7 @@ recognizable wherever a name appears without its server qualifier.
 | Plugin skills (introspection) | `np_list_skills`, `np_read_skill`, `np_read_command`, `np_read_reference`, `np_list_commands` |
 | Findings — read | `np_list_findings`, `np_show_finding`, `np_findings_index`, `np_validate_store` |
 | Findings — mutate | `np_new_finding`, `np_resolve_finding`, `np_write_index` |
-| Scanners and rules — read | `np_process_sarif`, `np_check_rules_anatomy` |
+| Scanners and rules — read | `np_process_sarif`, `np_check_rules_anatomy`, `np_check_agent_instructions` |
 | Pull requests — read (network) | `np_pr_comments`, `np_pr_status` |
 
 Skill tools read the plugin's own bundled skills — `np_read_command` resolves a
@@ -232,7 +249,7 @@ audited project's store — pass `project_dir`, or the server falls back to
 `CLAUDE_PROJECT_DIR` then the working directory's repo root. `project_dir` may
 only narrow that root, never escape it.
 
-Scanner and rule tools wrap the two remaining bundled analyzers, so every
+Scanner and rule tools wrap the three remaining bundled analyzers, so every
 shipped tool is reachable without a shell. `np_process_sarif` takes `paths` —
 relative to the project root, or absolute inside it; a path resolving outside
 that root is refused, since scanner output is the one input named by the caller

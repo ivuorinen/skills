@@ -40,6 +40,30 @@ def _http_resp(body, link: str = "") -> MagicMock:
 # ── parse_remote_url ──────────────────────────────────────────────────────────
 
 
+class TestRemoteHostCase:
+    """A hostname is case-insensitive; every host comparison downstream is not.
+
+    `target.host == "gitlab.com"` and its four GitHub twins are equality tests
+    against lowercase literals, so a pasted mixed-case URL made all of them miss
+    and the token was withheld from the platform's own public host.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://GitLab.COM/grp/proj",
+            "git@GitLab.COM:grp/proj.git",
+            "https://user@GitLab.COM:443/grp/proj.git",
+        ],
+    )
+    def test_host_is_folded_to_lowercase(self, url):
+        assert c.parse_remote_url(url)[0] == "gitlab.com"
+
+    def test_path_case_is_preserved(self):
+        """Only the host is case-insensitive; a repo path is not."""
+        assert c.parse_remote_url("https://GitHub.COM/Owner/RepoName")[1] == "Owner/RepoName"
+
+
 class TestParseRemoteUrl:
     @pytest.mark.parametrize(
         "url, expected",
@@ -67,6 +91,68 @@ class TestParseRemoteUrl:
     def test_unparseable_raises_usage_error(self, url):
         with pytest.raises(c.UsageError):
             c.parse_remote_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "foo/bar@github.com:owner/repo",
+            "a@b@c:d",
+            "@github.com:owner/repo",
+            "git@:owner/repo",
+        ],
+        ids=["slash-in-userinfo", "two-at-signs", "empty-userinfo", "empty-host"],
+    )
+    def test_a_malformed_scp_prefix_is_refused(self, url):
+        """The scp userinfo is validated, not merely skipped over.
+
+        When the regex here became an index split, the host was checked for `/`
+        and the prefix before the last `@` was not — so
+        `foo/bar@github.com:owner/repo`, which the regex refused because its
+        userinfo class was `[^@/]+`, started resolving to host `github.com`.
+        A malformed remote silently became a real one pointing at a host the
+        user never named, which is the failure this module exists to prevent.
+
+        The other three are stricter than the regex was: it let its *host* class
+        swallow an `@` and so accepted `b@c`, `@github.com` and `git@` as
+        hostnames. None can exist, so refusing them loses nothing.
+        """
+        with pytest.raises(c.UsageError):
+            c.parse_remote_url(url)
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("github.com:org/repo@v2.git", ("github.com", "org/repo@v2")),
+            ("gitlab.com:grp/my@repo.git", ("gitlab.com", "grp/my@repo")),
+            ("myhost:~git@backup/repo.git", ("myhost", "~git@backup/repo")),
+            ("git@github.com:org/repo@v2.git", ("github.com", "org/repo@v2")),
+        ],
+        ids=["at-in-path", "at-in-repo-name", "at-after-tilde", "userinfo-and-at-in-path"],
+    )
+    def test_an_at_sign_in_the_path_does_not_hide_the_separator(self, url, expected):
+        """An `@` only opens userinfo when it precedes the first `/`.
+
+        Taking the first `@` anywhere and searching for the separator colon
+        *after* it walked past the real colon whenever the `@` was in the path:
+        no colon was found, the scp branch was skipped, and a valid remote
+        raised. `myhost:~git@backup/repo.git` is the case a
+        first-`@`-before-the-first-slash rule still gets wrong — its `@` does
+        precede the slash — so the no-userinfo reading has to stay reachable
+        rather than being replaced.
+
+        Found by a 171k-input differential sweep after two hand-written case
+        sets of fourteen and eighteen spellings each reported no difference.
+        """
+        assert c.parse_remote_url(url) == expected
+
+    def test_userinfo_may_still_carry_a_colon(self):
+        """`user:pass@host:path` splits on the colon after the credentials.
+
+        Pinned because the index split finds the first `:` *after* the first
+        `@` precisely so the one inside the userinfo is not mistaken for the
+        host/path separator.
+        """
+        assert c.parse_remote_url("user:pass@host:path") == ("host", "path")
 
 
 # ── parse_pr_url ──────────────────────────────────────────────────────────────
@@ -385,17 +471,42 @@ class TestCheckUrl:
             c._check_url("https://evil.example/x", "api.github.com")
 
 
+# Every auth header the three providers actually send, as (name, value) pairs.
+# Parametrising on this rather than on `Authorization` alone is the point: the
+# handler once stripped that one name, so GitLab's PRIVATE-TOKEN survived a
+# redirect off the pinned host and no test noticed. A provider added later must
+# land here too — or, better, be covered for free by the allow-list the handler
+# now strips against.
+_PROVIDER_AUTH_HEADERS = [
+    pytest.param(("Authorization", "token secret"), id="github-bitbucket"),
+    pytest.param(("PRIVATE-TOKEN", "glpat-secret"), id="gitlab"),
+]
+
+# Redirect targets that must never carry a credential, and why each is unsafe.
+_UNSAFE_REDIRECTS = [
+    pytest.param("https://evil.example/b", id="off-host"),
+    pytest.param("http://api.github.com/b", id="same-host-scheme-downgrade"),
+]
+
+
 class TestTokenSafeRedirectHandler:
-    def _redirect(self, allowed: str, new_url: str) -> urllib.request.Request:
-        """Drive one 3xx hop through the handler.
+    def _redirect(
+        self,
+        allowed: str,
+        new_url: str,
+        auth: tuple[str, str] = ("Authorization", "token secret"),
+    ) -> urllib.request.Request:
+        """Drive one 3xx hop through the handler carrying `auth`.
 
         `fp` and `headers` are typed for a live HTTP response; the base
         implementation reads neither on this path, so a stub is what the test
         can supply.
+
+        The auth header is a parameter rather than a constant because the
+        handler's job is to strip whichever one the provider chose, and pinning
+        it to GitHub's spelling is what hid the GitLab leak.
         """
-        req = urllib.request.Request(
-            "https://api.github.com/a", headers={"Authorization": "token secret"}
-        )
+        req = urllib.request.Request("https://api.github.com/a", headers=dict([auth]))
         handler = c._TokenSafeRedirectHandler(allowed)
         new = handler.redirect_request(
             req,
@@ -408,23 +519,53 @@ class TestTokenSafeRedirectHandler:
         assert new is not None
         return new
 
-    def test_authorization_stripped_when_leaving_the_pinned_host(self):
-        new = self._redirect("api.github.com", "https://evil.example/b")
-        assert not any(k.lower() == "authorization" for k in new.headers)
+    @pytest.mark.parametrize("auth", _PROVIDER_AUTH_HEADERS)
+    @pytest.mark.parametrize("new_url", _UNSAFE_REDIRECTS)
+    def test_credential_stripped_on_every_unsafe_redirect(self, auth, new_url):
+        """No provider's auth header survives a redirect the guard calls unsafe.
 
-    def test_authorization_kept_on_a_same_host_redirect(self):
-        new = self._redirect("api.github.com", "https://api.github.com/b")
-        assert any(k.lower() == "authorization" for k in new.headers)
-
-    def test_authorization_stripped_on_a_same_host_scheme_downgrade(self):
-        """A matching hostname over plaintext still puts the token on the wire.
-
-        The handler compared netloc alone, so `https` -> `http` on the *same*
-        host kept the header — while `_check_url` would have refused the
-        identical URL on the next paginated hop. Same intent, two places, one of
-        them missing the scheme check.
+        Two independent failures, one assertion. Off-host hands the credential
+        to a third party. Same-host `https` -> `http` keeps the hostname and puts
+        the token on the wire in cleartext — `_check_url` refuses that URL on the
+        next paginated hop, so the handler agreeing is what keeps one predicate
+        from disagreeing with itself.
         """
-        new = self._redirect("api.github.com", "http://api.github.com/b")
+        new = self._redirect("api.github.com", new_url, auth)
+        assert not any(k.lower() == auth[0].lower() for k in new.headers)
+
+    @pytest.mark.parametrize("auth", _PROVIDER_AUTH_HEADERS)
+    def test_credential_kept_on_a_same_host_redirect(self, auth):
+        """The stripping is conditional, not unconditional.
+
+        Without this the handler could pass every test above by deleting the
+        header on every hop, which would break same-host pagination instead of
+        securing it.
+        """
+        new = self._redirect("api.github.com", "https://api.github.com/b", auth)
+        assert any(k.lower() == auth[0].lower() for k in new.headers)
+
+    def test_content_negotiation_headers_survive_an_unsafe_redirect(self):
+        """Stripping by complement must not take the non-credential headers.
+
+        `Accept` and `User-Agent` carry no secret and every provider sets them,
+        so dropping them would turn a security fix into a protocol bug — the
+        failure mode an allow-list invites and a deny-list does not.
+        """
+        req = urllib.request.Request(
+            "https://api.github.com/a",
+            headers={"Authorization": "token secret", "Accept": "application/json"},
+        )
+        handler = c._TokenSafeRedirectHandler("api.github.com")
+        new = handler.redirect_request(
+            req,
+            None,  # type: ignore[arg-type]
+            302,
+            "Found",
+            email.message.Message(),  # type: ignore[arg-type]
+            "https://evil.example/b",
+        )
+        assert new is not None
+        assert any(k.lower() == "accept" for k in new.headers)
         assert not any(k.lower() == "authorization" for k in new.headers)
 
     def test_the_handler_and_the_url_check_agree(self):

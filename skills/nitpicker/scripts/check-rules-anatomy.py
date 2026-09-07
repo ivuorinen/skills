@@ -27,6 +27,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md_fences
+
 _KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # A backticked repo-relative path: it has a directory separator or a known
@@ -260,7 +263,11 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
 
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
+        # UnicodeDecodeError is a ValueError, so the OSError clause alone let one
+        # stray byte abort the whole scan: no rule in the project got checked and
+        # the run reported a bare error instead of a report. Same treatment as an
+        # unreadable file — the file is named, the rest still scan.
         issue("High", "unreadable", f"Cannot read file: {e}")
         return findings
 
@@ -326,13 +333,12 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
         lineno = fm_line_count + body_lineno
         stripped = line.strip()
         if fence:
-            close = re.fullmatch(r"(`{3,}|~{3,})\s*", stripped)
-            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= len(fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
-        opener = re.match(r"(`{3,}|~{3,})", stripped)
-        if opener:
-            fence = opener.group(1)
+        opened = md_fences.opener(stripped)
+        if opened:
+            fence = opened
             continue
         # Position risk is judged on *section openers* only — a heading or a
         # bolded lead-in — never on every line. This repo's style guide requires
