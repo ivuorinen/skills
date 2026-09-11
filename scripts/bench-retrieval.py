@@ -77,6 +77,15 @@ class BenchError(Exception):
 # name attached.
 _REQUIRED_KEYS = frozenset({"id", "lens", "class", "severity_floor", "goal", "file", "lines"})
 
+# Every required key except `lines` is consumed as a string by one of the two
+# scorers, so every one of them is checked as a string. Naming only the keys
+# that happen to crash today would close two of six: `file` raises TypeError at
+# the path join and `goal` AttributeError at `.lower()`, both here — but
+# `class` reaches `.replace()` in bench-recall.py with the identical exposure,
+# and it is only invisible from this file. The set is derived rather than
+# written out so a key added to _REQUIRED_KEYS is validated by default.
+_STRING_KEYS = _REQUIRED_KEYS - {"lines"}
+
 
 def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] <= b[1] and b[0] <= a[1]
@@ -108,6 +117,17 @@ def _case_meta(path: Path) -> dict:
     missing = _REQUIRED_KEYS - set(meta)
     if missing:
         raise BenchError(f"{path.parent.name}: expected.json lacks {', '.join(sorted(missing))}")
+    # Present is not the same as usable. A key check alone let `"file": 42`
+    # through to `path.parent / meta["file"]` (TypeError) and `"goal": null`
+    # through to `meta["goal"].lower()` (AttributeError), both outside the
+    # BenchError contract — the same escape as the checks either side of this
+    # one, through the values rather than the keys.
+    mistyped = sorted(k for k in _STRING_KEYS if not isinstance(meta[k], str))
+    if mistyped:
+        raise BenchError(
+            f"{path.parent.name}: expected.json needs a string for "
+            f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped)}"
+        )
     # Element types too, not just the shape. `["1", "2"]` is a two-element list,
     # so a shape-only check passes it through to `1 <= start`, which raises
     # TypeError — outside the BenchError contract again, one line further down

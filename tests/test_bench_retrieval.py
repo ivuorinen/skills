@@ -162,6 +162,38 @@ def test_non_object_metadata_is_a_named_bench_error(tmp_path, monkeypatch, paylo
         _mod.load_cases()
 
 
+@pytest.mark.parametrize("key", sorted(_mod._STRING_KEYS))
+@pytest.mark.parametrize(
+    "value", [42, None, ["a"], {"a": 1}], ids=["int", "null", "list", "object"]
+)
+def test_a_mistyped_string_field_is_a_named_bench_error(tmp_path, monkeypatch, key, value):
+    """Present is not usable: the key check passed a value of any type through.
+
+    `file` then reached `path.parent / meta["file"]` as a TypeError and `goal`
+    reached `meta["goal"].lower()` as an AttributeError — neither caught by
+    `main`. Every key is covered rather than those two, because `class` carries
+    the identical exposure at `.replace()` in bench-recall.py and is simply not
+    visible from this module.
+    """
+    meta = {
+        "id": "bad",
+        "lens": "x",
+        "class": "y",
+        "severity_floor": "medium",
+        "goal": "one two",
+        "file": "a.py",
+        "lines": [1, 2],
+        key: value,
+    }
+    corpus = tmp_path / "corpus"
+    (corpus / "bad").mkdir(parents=True)
+    (corpus / "bad" / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+    (corpus / "bad" / "expected.json").write_text(json.dumps(meta), encoding="utf-8")
+    monkeypatch.setattr(_mod, "CORPUS", corpus)
+    with pytest.raises(_mod.BenchError, match=rf"bad: expected\.json needs a string for {key} "):
+        _mod.load_cases()
+
+
 @pytest.mark.parametrize(
     "lines",
     [[16], [1, 2, 3], "1-2", ["1", "2"], [True, 2]],
