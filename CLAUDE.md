@@ -6,6 +6,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as `/nitpicker <command> [extra instructions]`. The router is `skills/nitpicker/SKILL.md`; each command's instructions live in `skills/nitpicker/commands/<command>.md`, with shared conventions in `commands/_conventions.md`. The repo is installable as a Claude Code plugin via `/plugins`, and into Copilot/pi/other agents via `npx skills add ivuorinen/skills` (open Agent Skills format). Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are not shipped to consumers.
 
+## Context Discipline
+
+`_conventions.md` carries only what binds every command. Four protocols load on a
+trigger instead — `_findings-store` before the first store operation,
+`_committing` before a commit, `_documentation` before a fix or a `docs` finding,
+`_audit-coverage` for `audit`. Each trigger is stated in `_conventions.md` and in
+SKILL.md's execution order, and both are binding: a protocol not loaded is a
+protocol not followed. Rules that must hold in *every* run — the finding
+contract, redaction, the migration consent gate, the run protocol's shape — stay
+in the core file rather than moving with their protocol.
+
+`scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
+firewall. It answers with coordinates — path, line range, enclosing symbol, why
+it matched — and never with file bodies. Its modes are the acquisition ladder:
+`inventory` (A), `symbols` and `diff` (B), `evidence` (C). Level D is a direct
+read the caller performs after the pack narrows it. The invariant the callers
+are held to: **compression may decide what to inspect next; only original source
+may prove a finding.** `--self-test` runs the known-positive controls, because a
+retriever returning nothing is otherwise indistinguishable from a repository
+containing nothing.
+
+`scripts/check-context-tokens.py` reports the size of the always-loaded set and
+of one invocation. It is CLI-only and **never fails**: its numbers are
+four-characters-per-token estimates, and gating on an estimate turns an
+approximation into a rule nobody can reproduce. Read the `--baseline` delta, not
+the absolute. `check-agent-instructions.py` remains the directive-count gate;
+the two measure different halves of the same budget.
+
 ## Development Commands
 
 ```bash
@@ -120,9 +148,12 @@ wrong guess is a credential handed to a third party.
 
 The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
 the same providers. They are the only tools on the server carrying
-`openWorldHint: true`, and the only ones whose results are wrapped in an
+`openWorldHint: true`, and their results are wrapped in an
 `<untrusted-data source="pull-request">` envelope — PR bodies are written by
-anyone who can comment on the PR.
+anyone who can comment on the PR. They are not the only enveloped tools:
+`np_context_pack` and the findings readers carry their own `source` tags, since
+repository paths and stored finding bodies are written by whoever wrote the
+audited tree. SKILL.md's **Untrusted results** paragraph is the full list.
 
 ## Editing a shipped tool mid-session
 

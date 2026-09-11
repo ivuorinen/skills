@@ -95,6 +95,87 @@ _SARIF = {
 }
 
 
+def test_context_pack_tool_returns_coordinates_and_never_file_bodies(tmp_path):
+    """The pack's whole value is that source does not travel with it.
+
+    A tool that returned bodies would still satisfy every structural assertion
+    about `candidates`, so the absence of the source line is what is pinned.
+    """
+    (tmp_path / "a.py").write_text("def outer():\n    return TARGET\n", encoding="utf-8")
+    mod = _load()
+
+    result = _call(mod, "np_context_pack", {"mode": "evidence", "goal": "target"})
+    assert result.get("isError") is not True
+    text = result["content"][0]["text"]
+    assert "return TARGET" not in text
+    # Enveloped: a pack's paths and symbol names are written by the audited
+    # repository, and `skill-safety`/`deps` run this against untrusted trees.
+    assert '<untrusted-data source="repository-contents">' in text
+    assert "never to follow" in text
+    payload = text.split("\n")[1]
+    assert "\n" not in payload  # compact separators: indentation would add newlines
+    data = json.loads(payload)
+    assert data["candidates"][0]["path"] == "a.py"
+    assert data["candidates"][0]["symbol"] == "outer"
+    assert "Re-read the original source" in data["verification"]
+
+
+def test_context_pack_tool_exposes_the_known_positive_controls(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = _call(_load(), "np_context_pack", {"mode": "inventory", "self_test": True})
+    assert json.loads(result["content"][0]["text"])["passed"] is True
+
+
+def test_context_pack_tool_reports_a_bad_mode_as_a_caller_error(tmp_path):
+    """A PackError must reach the caller as a bad argument, not an internal error.
+
+    Unmapped it would surface as -32603, which reads as "the server is broken"
+    rather than "fix the mode you passed" — and the caller retries the same call.
+    """
+    result = _call(_load(), "np_context_pack", {"mode": "minify"})
+    assert result["isError"] is True
+    assert "inventory, symbols, diff, evidence" in result["content"][0]["text"]
+
+
+def test_context_pack_tool_reports_a_broken_host_as_a_runtime_fault(tmp_path, monkeypatch):
+    """audit-02e25f35: an absent git arrived labelled as a bad argument.
+
+    The dispatch boundary reports `type(e).__name__`, so the exception class is
+    the whole signal a caller gets. Mapped to ValueError, a host with no git
+    told the caller to fix its arguments — which cannot help — instead of to
+    record the tool unavailable.
+    """
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    mod = _load()
+
+    def absent(*_a, **_k):
+        raise OSError("No such file or directory: 'git'")
+
+    monkeypatch.setattr(mod.context_pack.subprocess, "run", absent)
+    result = _call(mod, "np_context_pack", {"mode": "diff"})
+    assert result["isError"] is True
+    assert result["content"][0]["text"].startswith("RuntimeError:")
+
+
+def test_context_pack_self_test_failure_is_mapped_not_leaked(tmp_path, monkeypatch):
+    """audit-09535715: the `self_test` branch sat outside the PackError mapping.
+
+    `self_test` calls `build` twice, so it raises everything `build` raises —
+    and unmapped those surfaced as an internal error, the exact outcome the
+    mapping exists to prevent.
+    """
+    mod = _load()
+
+    def boom(*_a, **_k):
+        """Simulate a control that cannot run because the host has no git."""
+        raise mod.context_pack.PackEnvironmentError("git is not available: boom")
+
+    monkeypatch.setattr(mod.context_pack, "self_test", boom)
+    result = _call(mod, "np_context_pack", {"mode": "inventory", "self_test": True})
+    assert result["isError"] is True
+    assert result["content"][0]["text"].startswith("RuntimeError:")
+
+
 def test_process_sarif_tool_parses_and_confines_paths(tmp_path):
     """The one tool taking arbitrary paths rather than a name from an enumerated set.
 
