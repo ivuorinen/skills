@@ -80,13 +80,19 @@ Severity reflects actual risk, never preference.
 
 Reach for the most specific tool that covers the operation. Highest first:
 
-1. **A purpose-built MCP tool, whenever the session exposes it.** Every bundled
-   tool a command invokes has an `np_*` tool, and that tool is the default way
-   to run it — the `python3 scripts/…` form in a command file is the fallback
-   spelling, never the first reach. The tool's own description names its
-   arguments; do not restate them here or in a command file. Also available: a
-   GitHub MCP for pull-request, issue and repository operations, and a
-   documentation MCP for library and API references.
+1. **A purpose-built MCP tool, whenever the session exposes it.** Most bundled
+   tools a command invokes have an `np_*` tool, and where one exists it is the
+   default way to run it — the `python3 scripts/…` form in a command file is the
+   fallback spelling, never the first reach. Some operations are CLI-only by
+   design and have no tool to prefer: `findings.py export` writes a file for
+   another system to ingest, `check-context-tokens.py` answers with a table read
+   as-is, and the store operations `_findings-store` names each sit behind a
+   consent gate a tool call would skip. SKILL.md's **Bundled tools** section is
+   the authoritative split; reach for the CLI there without treating it as a
+   fallback. The tool's own description names its arguments; do not restate them
+   here or in a command file. Also available: a GitHub MCP for pull-request,
+   issue and repository operations, and a documentation MCP for library and API
+   references.
 2. **`np_context_pack`, else context-mode, for anything you read rather than act
    on** — deciding what to open, listing files, `grep`, `git status`/`log`/`diff`,
    test and build output, parsing data, fetching a URL. `np_context_pack` is
