@@ -525,15 +525,22 @@ def append_ledger(root: Path, record: dict) -> None:
     that. The fsync makes the append the durable commit point, so `resolve` can
     delete the open file knowing the ledger record survived.
 
-    That commit point only holds if the append lands whole and at a line start,
-    so both are checked: appending onto a newline-less last line would merge two
-    records into one unparseable line, and a short write would commit half a
-    record. Either way `resolve` would then delete an open file whose ledger
-    record does not exist. Raise instead — like write_ledger, the damaged bytes
-    are the only surviving evidence.
+    That commit point only holds if the append lands whole, at a line start, and
+    — on the call that CREATES the ledger — with the directory entry committed
+    too. All three are handled: appending onto a newline-less last line would
+    merge two records into one unparseable line, a short write would commit half
+    a record, and fsyncing the file does not commit a name that did not exist
+    before. Any of the three would leave `resolve` deleting an open file whose
+    ledger record does not exist. Raise on the first two — like write_ledger,
+    the damaged bytes are the only surviving evidence — and fsync the parent for
+    the third, which write_ledger already does for its rename.
     """
     p = ledger_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
+    # Read before the open, since O_CREAT makes the file exist either way. Racy
+    # in isolation and not here: every caller holds `store_lock`, and guessing
+    # wrong costs one unnecessary fsync rather than a lost record.
+    created = not p.exists()
     data = (_ledger_line(record) + "\n").encode("utf-8")
     # 0o600, not 0o644: the ledger carries evidence quoted out of the audited
     # repository, and redaction runs in this process rather than in the file
@@ -566,6 +573,20 @@ def append_ledger(root: Path, record: dict) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+    if created:
+        # A new name is a directory entry, and fsyncing the file does not commit
+        # it — same reason write_ledger fsyncs the parent after its rename. On
+        # the first resolve in a store, a crash here would leave no ledger at
+        # all while the open finding's unlink stood, so the finding survives in
+        # neither half. Suppressed like write_ledger's: not every filesystem
+        # supports a directory fsync, and the append has already succeeded, so
+        # raising would unwind out of a completed write.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(p.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
 
 
 def write_ledger(root: Path, records: list[dict]) -> None:

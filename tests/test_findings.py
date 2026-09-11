@@ -1096,6 +1096,45 @@ def test_append_ledger_creates_the_ledger_private(tmp_path):
     assert stat.S_IMODE(findings.ledger_path(tmp_path).stat().st_mode) == 0o600
 
 
+def test_append_ledger_commits_the_directory_entry_when_it_creates_the_ledger(
+    tmp_path, monkeypatch
+):
+    """The create is a new NAME, and fsyncing the file does not commit a name.
+
+    `resolve_finding` deletes the open finding as soon as this returns, calling
+    the append "the commit point". On the first resolve in a store, a crash
+    between the file fsync and the directory being committed would leave no
+    ledger while the unlink stood — the finding gone from both halves, and
+    unrecoverable, since the open file was deleted in the same critical section.
+
+    Asserted by recording what is fsynced rather than by inducing a crash: the
+    property is which descriptors reach the disk barrier, and that is directly
+    observable. `write_ledger` already does this for its rename; the two were
+    asymmetric, not the ordering.
+    """
+    synced: list[str] = []
+    real_fsync = os.fsync
+
+    def spy(fd):
+        try:
+            synced.append(str(Path(f"/proc/self/fd/{fd}").readlink()))
+        except OSError:  # pragma: no cover - Linux-only introspection
+            synced.append(str(fd))
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+
+    findings.append_ledger(tmp_path, {"id": "y"})
+    assert str(tmp_path) in synced, "the ledger's own creation was not committed"
+
+    # And not on every append after that — the entry already exists, so a second
+    # directory fsync would be cost with nothing bought.
+    synced.clear()
+    findings.append_ledger(tmp_path, {"id": "z"})
+    assert str(tmp_path) not in synced
+    assert str(findings.ledger_path(tmp_path)) in synced
+
+
 def test_write_ledger_survives_a_directory_that_cannot_be_opened(tmp_path, monkeypatch):
     """The rename already happened, so the write succeeded; opening is best-effort.
 
