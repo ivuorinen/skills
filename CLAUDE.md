@@ -12,6 +12,7 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
 make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
+make ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
 make test         # run pytest unit tests
 make list         # list the skill and its commands
 make lint         # ruff check on scripts/, tests/, skills/

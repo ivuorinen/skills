@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-evals spec-check validate-rules version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major make-help
+.PHONY: all check validate validate-evals spec-check validate-rules ring-deps version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major make-help
 
 UV := uv run --quiet
 
@@ -11,6 +11,7 @@ help:
 	@echo "  validate-evals — validate the evals/ sets bundled with each skill"
 	@echo "  spec-check   — cross-check skills against the Agent Skills reference validator (network)"
 	@echo "  validate-rules — validate .claude/rules/ files (structure + path freshness)"
+	@echo "  ring-deps    — print the module dependency graph and enforce the ring rule"
 	@echo "  version-sync — check version consistency across manifests"
 	@echo "  lock-check   — fail if uv.lock is stale against pyproject.toml"
 	@echo "  audit-consistency — validate the docs/audit/findings/ store (findings.py validate)"
@@ -33,7 +34,7 @@ help:
 # narrow store-consistency ones. make stops at the first failing prerequisite,
 # so anything ordered ahead of `test` and `security` can cost their entire
 # signal — which is exactly what `index-check` did from this position.
-check: validate validate-evals validate-rules version-sync make-help lock-check lint format-check security opengrep typecheck test audit-consistency index-check pre-commit
+check: validate validate-evals validate-rules ring-deps version-sync make-help lock-check lint format-check security opengrep typecheck test audit-consistency index-check pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -75,6 +76,15 @@ version-sync:
 
 # `make help` is a hand-maintained copy of the target list, so it drifts like any
 # second copy. This is the gate that keeps the two in step, in both directions.
+# The ring rule (shipped <- internal <- hooks) is only half enforced by
+# check-stdlib-only, which reads `import` statements. Several modules here are
+# reached instead through spec_from_file_location, because a hyphen-named file
+# cannot be imported at all — those edges exist at runtime and in no import
+# graph. This resolves both kinds and prints them together, so a cross-ring
+# dependency cannot hide in the spelling used to create it.
+ring-deps:
+	$(UV) scripts/check-ring-deps.py --check .
+
 make-help:
 	$(UV) scripts/check-make-help.py
 
