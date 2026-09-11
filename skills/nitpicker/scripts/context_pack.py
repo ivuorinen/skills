@@ -37,7 +37,13 @@ import argparse
 import ast
 import json
 import re
-import subprocess  # nosec B404 - git plumbing only, argv lists, never shell=True
+
+# git plumbing only, argv lists, never shell=True. The reason sits above the
+# suppression, never after it: bandit reads whatever trails the marker as a list
+# of test ids, so a prose clause there becomes one bogus "not a test name"
+# warning per word. That applies to prose *about* the marker too — spelling it
+# out in a comment is itself picked up, which is why this note does not.
+import subprocess  # nosec B404
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -273,7 +279,9 @@ def _git(root: Path, *args: str) -> str:
     git that *hangs* unbounded was the one shape nothing covered.
     """
     try:
-        proc = subprocess.run(  # nosec B603 - fixed argv, no shell, git only
+        # fixed argv, no shell, git only — reason above the marker, see the
+        # `import subprocess` note on why nothing may trail it.
+        proc = subprocess.run(  # nosec B603
             ["git", *args],
             cwd=root,
             text=True,
