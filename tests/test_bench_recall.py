@@ -26,7 +26,6 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"))
 import findings  # noqa: E402
 
-_BODY = "## Problem\n\nx\n\n## Evidence\n\nx\n\n## Impact\n\nx\n\n## Fix\n\nx\n"
 _BODY_NO_CLASS_WORDS = (
     "## Problem\n\nno class words\n\n## Evidence\n\nx\n\n## Impact\n\nx\n\n## Fix\n\nx\n"
 )

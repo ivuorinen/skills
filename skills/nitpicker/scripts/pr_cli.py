@@ -28,8 +28,12 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# One spelling only. Importing the module *and* names out of it gives the same
+# objects two paths into this namespace, which is what CodeQL's
+# "imported with 'import' and 'import from'" alert names: a reader cannot tell
+# from a use site whether it tracks the port's current binding. The module form
+# wins because every other reference here is already qualified.
 import pr_common
-from pr_common import Target, UsageError
 
 
 def emit(payload: Any) -> None:
@@ -51,7 +55,7 @@ def _split_flags(argv: list[str]) -> tuple[list[str], str, str]:
             try:
                 value = next(it)
             except StopIteration:
-                raise UsageError(f"{arg} needs a value") from None
+                raise pr_common.UsageError(f"{arg} needs a value") from None
             if arg == "--platform":
                 platform = value
             else:
@@ -61,13 +65,13 @@ def _split_flags(argv: list[str]) -> tuple[list[str], str, str]:
         elif arg.startswith("--remote="):
             remote = arg.split("=", 1)[1]
         elif arg.startswith("-"):
-            raise UsageError(f"unknown flag: {arg!r}")
+            raise pr_common.UsageError(f"unknown flag: {arg!r}")
         else:
             positional.append(arg)
     return positional, platform, remote
 
 
-def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
+def parse_cli_args(argv: list[str]) -> tuple[pr_common.Target, int]:
     """Resolve (target, pr_number) from the argument forms both CLIs accept.
 
     Accepted, in the order they are tried:
@@ -97,7 +101,7 @@ def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
             pr_common.resolve_target(f"{positional[0]}/{positional[1]}", platform),
             pr_common.parse_pr_number(positional[2]),
         )
-    raise UsageError(
+    raise pr_common.UsageError(
         "expected a PR URL, a PR number, or <repo> <pr_number>. "
         "Run with --help for the accepted forms."
     )
@@ -120,12 +124,12 @@ def run_cli(doc: str, operation: str, argv: list[str]) -> int:
         return 0
     try:
         target, pr_number = parse_cli_args(argv)
-    except UsageError as err:
+    except pr_common.UsageError as err:
         print(f"[error] {err}", file=sys.stderr)
         return 2
     try:
         emit(getattr(pr_common.provider_for(target), operation)(target, pr_number))
-    except UsageError as err:
+    except pr_common.UsageError as err:
         print(f"[error] {err}", file=sys.stderr)
         return 2
     except Exception as err:

@@ -224,6 +224,27 @@ class TestScoping:
         assert [e.kind for e in g.edges] == ["path-sibling"]
         assert rd.violations(g) == []
 
+    def test_one_target_reached_two_ways_is_a_single_edge(self, tmp_path):
+        """`import x` beside `from x import name` is one dependency, not two.
+
+        The graph is read as a dependency set, so a duplicate would show the
+        same arrow twice and inflate the edge count the tool prints. Covered
+        here rather than by a shipped module doing both: CodeQL flags that
+        double import as an alert, so no module in this repo should carry one
+        for a scanner to trip over.
+        """
+        _tree(
+            tmp_path,
+            {
+                "scripts/outer.py": "import helper\nfrom helper import thing\n",
+                "scripts/helper.py": "thing = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert [(e.src, e.dst, e.kind) for e in g.edges] == [
+            ("scripts/outer.py", "scripts/helper.py", "import")
+        ]
+
     def test_the_same_name_in_two_functions_does_not_read_as_ambiguous(self, tmp_path):
         """A module-flat scan of `mcp_server.py` reports `path` as assigned twice
         and resolves neither. Scopes are what keep both readable."""
