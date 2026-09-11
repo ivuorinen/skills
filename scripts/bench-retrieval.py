@@ -82,6 +82,48 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] <= b[1] and b[0] <= a[1]
 
 
+def _case_meta(path: Path) -> dict:
+    """One case's `expected.json`, decoded and shape-checked.
+
+    Every shape rejected here would otherwise end in a traceback that does not
+    name the case, which is the outcome the out-of-range check in `load_cases`
+    was written to prevent — a broken corpus reading as a broken retriever. The
+    case directory is the identifier throughout, because `id` is one of the keys
+    that may be missing.
+    """
+    try:
+        meta = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise BenchError(f"{path.parent.name}: expected.json is not valid JSON ({exc})") from exc
+    # An object, before the keys. `json.loads` returns whatever the file holds,
+    # and `null`, `42` and `[[]]` all reach `set(meta)` as a TypeError naming no
+    # case — the same escape from the BenchError contract the element-type check
+    # below exists to close. A string is worse than a traceback: it *is*
+    # iterable, so `set("x")` succeeds and the run reports a case that "lacks"
+    # every required key rather than saying the file is not an object at all.
+    if not isinstance(meta, dict):
+        raise BenchError(
+            f"{path.parent.name}: expected.json is not a JSON object (got {type(meta).__name__})"
+        )
+    missing = _REQUIRED_KEYS - set(meta)
+    if missing:
+        raise BenchError(f"{path.parent.name}: expected.json lacks {', '.join(sorted(missing))}")
+    # Element types too, not just the shape. `["1", "2"]` is a two-element list,
+    # so a shape-only check passes it through to `1 <= start`, which raises
+    # TypeError — outside the BenchError contract again, one line further down
+    # than the JSON and key checks above. `bool` is excluded because it is an
+    # `int` subclass: `[true, 2]` would otherwise score line 1 silently, which is
+    # worse than the traceback.
+    bounds = meta["lines"]
+    if not (
+        isinstance(bounds, list)
+        and len(bounds) == 2
+        and all(isinstance(n, int) and not isinstance(n, bool) for n in bounds)
+    ):
+        raise BenchError(f"{meta['id']}: 'lines' must be a two-element [start, end] of integers")
+    return meta
+
+
 def load_cases(case_id: str = "") -> list[dict]:
     """Every case's expected.json, or the one named.
 
@@ -91,37 +133,7 @@ def load_cases(case_id: str = "") -> list[dict]:
     """
     found = []
     for path in sorted(CORPUS.glob("*/expected.json")):
-        # Every shape below ends in a traceback that does not name the case,
-        # which is the outcome the out-of-range check further down was written
-        # to prevent — a broken corpus reading as a broken retriever. The case
-        # directory is the identifier here because `id` is one of the keys that
-        # may be missing.
-        try:
-            meta = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise BenchError(
-                f"{path.parent.name}: expected.json is not valid JSON ({exc})"
-            ) from exc
-        missing = _REQUIRED_KEYS - set(meta)
-        if missing:
-            raise BenchError(
-                f"{path.parent.name}: expected.json lacks {', '.join(sorted(missing))}"
-            )
-        # Element types too, not just the shape. `["1", "2"]` is a two-element
-        # list, so a shape-only check passes it through to `1 <= start`, which
-        # raises TypeError — outside the BenchError contract again, one line
-        # further down than the JSON and key checks above. `bool` is excluded
-        # because it is an `int` subclass: `[true, 2]` would otherwise score
-        # line 1 silently, which is worse than the traceback.
-        bounds = meta["lines"]
-        if not (
-            isinstance(bounds, list)
-            and len(bounds) == 2
-            and all(isinstance(n, int) and not isinstance(n, bool) for n in bounds)
-        ):
-            raise BenchError(
-                f"{meta['id']}: 'lines' must be a two-element [start, end] of integers"
-            )
+        meta = _case_meta(path)
         meta["dir"] = path.parent
         target = path.parent / meta["file"]
         if not target.is_file():

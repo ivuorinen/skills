@@ -139,6 +139,30 @@ def test_a_case_missing_a_required_key_is_named(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "payload",
+    ["null", "42", "true", "[[]]", '"x"'],
+    ids=["null", "int", "bool", "nested-list", "string"],
+)
+def test_non_object_metadata_is_a_named_bench_error(tmp_path, monkeypatch, payload):
+    """`json.loads` returns whatever the file holds, not necessarily an object.
+
+    Every payload here reached `set(meta)` as a TypeError naming no case, which
+    `main` does not catch — the same escape from the BenchError contract the
+    key and element-type checks around it already close.
+
+    The string is the one worth spelling out: it is iterable, so it raised
+    nothing and was reported as a case "lacking" every required key, which sends
+    a reader looking for absent keys in a file that is not an object at all.
+    """
+    corpus = tmp_path / "corpus"
+    (corpus / "bad").mkdir(parents=True)
+    (corpus / "bad" / "expected.json").write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(_mod, "CORPUS", corpus)
+    with pytest.raises(_mod.BenchError, match=r"bad: expected\.json is not a JSON object"):
+        _mod.load_cases()
+
+
+@pytest.mark.parametrize(
     "lines",
     [[16], [1, 2, 3], "1-2", ["1", "2"], [True, 2]],
     ids=["short", "long", "string", "string-bounds", "bool-bound"],
