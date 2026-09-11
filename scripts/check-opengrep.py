@@ -87,6 +87,21 @@ SCAN_ROOTS = ("skills", "scripts")
 
 TIMEOUT = 600
 
+# opengrep's own per-rule-per-file limit, distinct from TIMEOUT above: that one
+# bounds the whole subprocess, this one bounds a single rule against a single
+# file. Its default is 5s, and a rule exceeding it is reported in the scan's
+# `errors` — which `_report_errors` treats as fatal, correctly, since a rule
+# that did not finish leaves that file unscanned by it.
+#
+# Raised because widening CONFIG to the parent namespace roughly doubled the
+# rule count, and `insecure-transport…request-with-http` began intermittently
+# exceeding 5s on mcp_server.py and pr_common.py under load — a flaky gate,
+# where the flake reports as "not a clean bill" rather than as a finding. CI
+# runners are slower than the machine this was measured on, so the headroom is
+# deliberate: the cost of a too-high value is a slow failure, the cost of a
+# too-low one is a gate nobody trusts.
+RULE_TIMEOUT = 30
+
 # `nosem` is opengrep's other accepted spelling of the same marker.
 _MARKER = re.compile(r"#\s*nosem(?:grep)?\b")
 
@@ -126,6 +141,8 @@ def _scan(opengrep: str, *, disable_nosem: bool) -> dict:
                 "--json",
                 "--config",
                 CONFIG,
+                "--timeout",
+                str(RULE_TIMEOUT),
                 *(["--disable-nosem"] if disable_nosem else []),
                 *SCAN_ROOTS,
             ],

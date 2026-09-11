@@ -128,6 +128,35 @@ def test_scan_passes_disable_nosem_only_when_asked(monkeypatch):
     assert seen[0][:2] == ["opengrep", "scan"]
 
 
+def test_scan_sets_the_per_rule_timeout_above_opengreps_default(monkeypatch):
+    """Both passes carry `--timeout`, as an integer above the 5s default.
+
+    opengrep reports a rule that exceeds this in the scan's `errors`, which
+    `_report_errors` treats as fatal — so at the default, a rule running long
+    under load fails the gate as "not a clean bill" rather than as a finding.
+    Measured under 3x CPU saturation: 10 timeouts at 1s, none at 30s.
+
+    The value is asserted as a string because opengrep rejects a fractional
+    one (`--timeout 0.5` exits 2, "not a valid integer"), despite its own
+    `--help` declaring the option a DOUBLE.
+    """
+    seen = []
+
+    def fake(argv, **kwargs):
+        seen.append(argv)
+        return _result(_scan_json())
+
+    monkeypatch.setattr(_mod.subprocess, "run", fake)
+    _mod._scan("opengrep", disable_nosem=False)
+    _mod._scan("opengrep", disable_nosem=True)
+    for argv in seen:
+        assert "--timeout" in argv
+        value = argv[argv.index("--timeout") + 1]
+        assert value == str(_mod.RULE_TIMEOUT)
+        assert value.isdigit(), "opengrep rejects a fractional --timeout"
+    assert _mod.RULE_TIMEOUT > 5, "at or below the default this buys no headroom"
+
+
 @pytest.mark.parametrize(
     ("exc", "fragment"),
     [
