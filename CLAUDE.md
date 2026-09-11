@@ -23,13 +23,13 @@ trigger instead — `_findings-store` before the first store operation,
 `_committing` before a commit, `_documentation` before a fix or a `docs` finding,
 `_audit-coverage` for `audit`. Each trigger is stated in `_conventions.md` and in
 SKILL.md's execution order, and both are binding: a protocol not loaded is a
-protocol not followed. Rules that must hold in *every* run — the finding
-contract, redaction, the migration consent gate, the run protocol's shape — stay
-in the core file rather than moving with their protocol.
+protocol not followed. Rules that hold in *every* run — the finding contract,
+redaction, the migration consent gate, the run protocol's shape — stay in the
+core file rather than moving with their protocol.
 
 `scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
 firewall. It answers with coordinates — path, line range, enclosing symbol, why
-it matched — and never with file bodies. Its modes are the acquisition ladder:
+it matched — not with file bodies. Its modes are the acquisition ladder:
 `inventory` (A), `symbols` and `diff` (B), `evidence` (C). Level D is a direct
 read the caller performs after the pack narrows it. The invariant the callers
 are held to: **compression may decide what to inspect next; only original source
@@ -37,11 +37,11 @@ may prove a finding.** `--self-test` runs the known-positive controls, because a
 retriever returning nothing is otherwise indistinguishable from a repository
 containing nothing.
 
-`scripts/check-context-tokens.py` reports the size of the always-loaded set and
-of one invocation. It is CLI-only and **never fails**: its numbers are
-four-characters-per-token estimates, and gating on an estimate turns an
-approximation into a rule nobody can reproduce. Read the `--baseline` delta, not
-the absolute. `check-agent-instructions.py` remains the directive-count gate;
+`scripts/check-context-tokens.py` reports the size of the set loaded on every
+turn and of one invocation. It is CLI-only and **cannot fail a build**: its
+numbers are four-characters-per-token estimates, and gating on an estimate turns
+an approximation into a rule nobody can reproduce. Read the `--baseline` delta,
+not the absolute. `check-agent-instructions.py` remains the directive-count gate;
 the two measure different halves of the same budget.
 
 ## Development Commands
@@ -104,11 +104,11 @@ Three install traps, each hit once already:
 
 - Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ", plus `license` and `compatibility`).
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
-- Every command file in `commands/` whose name does not begin with `_` must
-  have a row in one of SKILL.md's command tables (`## Commands` or
+- Every command file in `commands/` whose name does not begin with `_` needs a
+  row in one of SKILL.md's command tables (`## Commands` or
   `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
-  Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are
-  exempt from that cross-check.
+  Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are the
+  exception, and carry no row.
 - Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
 - No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
@@ -117,11 +117,12 @@ Three install traps, each hit once already:
 One file per **open** finding under
 `docs/audit/findings/<auditor>/open/<id>.md`. Resolving one appends a record to
 the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open
-file, so the tree never accumulates hundreds of resolved files.
+file, so the tree does not accumulate hundreds of resolved files.
 
-`INDEX.md` is generated. An in-store `.gitattributes`, self-written by
-findings.py, marks the store `linguist-generated` so audit runs don't flood PR
-diffs.
+`INDEX.md` is generated: the index (rebuilt by findings.py and by the
+PostToolUse hook below) is tool output, not a file to hand-edit. An in-store
+`.gitattributes`, self-written by findings.py, marks the store
+`linguist-generated` so audit runs don't flood PR diffs.
 
 The store is managed through the `np_*` MCP tools where the session exposes
 them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps
@@ -133,25 +134,25 @@ to name three of the five.
 python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed — never hand-assigned, never reused.
+IDs are content-hashed, so they are neither hand-assigned nor reused.
 
 `migrate` converts 1.x `docs/audit/*-findings.md` documents. `migrate-resolved`
 folds a legacy `<auditor>/resolved/*.md` tree into the ledger.
 
 `export --format sarif|json|junit` (in `findings_export.py`) renders the store
-for another system. SARIF — the Static Analysis Results Interchange Format a
-code-scanning UI ingests — omits resolved findings, since an alert on a fixed
-defect is indistinguishable from a live one. JUnit maps open to failure and
-resolved to pass, so a CI panel shows unfixed findings beside failing tests.
+for another system. The Static Analysis Results Interchange Format (SARIF) —
+what a code-scanning UI ingests — omits resolved findings, since an alert on a
+fixed defect is indistinguishable from a live one. JUnit maps open to failure
+and resolved to pass, so a CI panel shows unfixed findings beside failing tests.
 
-`new --location path:START-END` records where the evidence was read, plus a
-fingerprint of that source. `recheck` re-computes every one, so `reverify` can
-skip a finding whose cited bytes are unchanged rather than spend a model pass
-on it.
+`new --location path:START-END` records where the evidence was read — START (the
+first cited line) and END (the last) — plus a fingerprint of that source.
+`recheck` re-computes every one, so `reverify` can skip a finding whose cited
+bytes are unchanged rather than spend a model pass on it.
 
 The fingerprint covers the cited line range, so an unrelated edit *above* it
-reads as `changed`. That is the safe direction: it costs a re-check, never a
-missed change. `location` is deliberately outside the content-hashed id.
+reads as `changed`. That is the safe direction: it costs a re-check rather than
+a missed change. `location` is deliberately outside the content-hashed id.
 
 The PostToolUse hook `validate-audit-findings-hook.py` validates edited open
 findings and the ledger, and regenerates the index.
