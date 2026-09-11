@@ -522,6 +522,47 @@ class TestAdditionalCoverage:
         assert "pkg/thing.py" in rel
         assert "thing.py" in base
 
+    def test_a_second_check_in_one_process_sees_a_deleted_file(self, tmp_path):
+        """The MCP server's shape: import once, call `check()` for the whole session.
+
+        `_tracked` is `lru_cache`d on the root, and the tree is its input rather
+        than part of its key — so before `check()` cleared it, the second call
+        answered from the first call's file listing. Deleting a path a rule
+        cites left `stale_path` unreported, which is the one direction that
+        matters: a detector for stale references reporting clean.
+
+        Deliberately driven through `check()` twice rather than through
+        `_check_file`, because every other case in this file builds a fresh tree
+        and calls once — so the whole suite passed with the cache stale. No
+        `cache_clear()` here on purpose; that is what is under test.
+        """
+        (tmp_path / ".claude" / "rules").mkdir(parents=True)
+        (tmp_path / "scripts").mkdir()
+        cited = tmp_path / "scripts" / "cited-tool.py"
+        cited.write_text("x\n", encoding="utf-8")
+        (tmp_path / ".claude" / "rules" / "demo.md").write_text(
+            "# Demo Rule\n\nAlways run `scripts/cited-tool.py` before committing.\n\n"
+            "## Enforcement\n\nGated by `scripts/cited-tool.py`.\n",
+            encoding="utf-8",
+        )
+
+        def stale_paths() -> int:
+            report, _ = _mod.check(tmp_path, explicit=True, contain=tmp_path)
+            return len(
+                [
+                    f
+                    for entry in report["files"]
+                    for f in entry["findings"]
+                    if f["code"] == "stale_path"
+                ]
+            )
+
+        # The known-positive control: with the file present the detector is
+        # silent for the right reason, not because it never fires on this input.
+        assert stale_paths() == 0
+        cited.unlink()
+        assert stale_paths() == 2, "second call in the same process answered from a stale listing"
+
     def test_stale_path_flags_only_what_is_actually_absent(self, tmp_path):
         """The check earns its place only if it separates a real miss from a real hit."""
         (tmp_path / "real.py").write_text("x\n", encoding="utf-8")
