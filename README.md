@@ -158,7 +158,19 @@ python3 skills/nitpicker/scripts/findings.py list --status open
 python3 skills/nitpicker/scripts/findings.py resolve <id> --status fixed --notes "…"
 python3 skills/nitpicker/scripts/findings.py validate
 python3 skills/nitpicker/scripts/findings.py index
+python3 skills/nitpicker/scripts/findings.py recheck
+python3 skills/nitpicker/scripts/findings.py export --format sarif > nitpicker.sarif
 ```
+
+`export` renders the store for another system — `sarif` for a code-scanning
+interface, `json` for another agent, `junit` for a CI reporter, which maps open
+findings to failures so they show beside failing tests. The markdown stays
+canonical.
+
+A finding filed with `--location src/auth.py:73-106` also records a fingerprint
+of the source there. `recheck` re-computes every one in a single pass, so
+`/nitpicker reverify` can skip a finding whose cited bytes have not moved
+instead of re-reasoning over it.
 
 ### Migrating from 1.x
 

@@ -335,6 +335,178 @@ def test_v1_auditor_mapping(filename, auditor):
     assert findings.v1_auditor(filename) == auditor
 
 
+def _repo_with_store(tmp_path: Path, source: str) -> tuple[Path, Path]:
+    """(repo_root, store_root) with `source` at src/auth.py.
+
+    A real `.git` marker: `find_repo_root` walks up for it, and without one the
+    fingerprint resolves paths against the store directory instead of the repo.
+    """
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "auth.py").write_text(source, encoding="utf-8")
+    return tmp_path, tmp_path / "docs" / "audit" / "findings"
+
+
+SOURCE = "one\ntwo\nthree\nfour\nfive\n"
+
+
+def test_location_fingerprint_covers_only_the_cited_range(tmp_path):
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    two_to_three = findings.location_fingerprint(repo, "src/auth.py:2-3")
+    assert two_to_three == findings.location_fingerprint(repo, "src/auth.py:2-3")
+    assert two_to_three != findings.location_fingerprint(repo, "src/auth.py:2-4")
+    assert findings.location_fingerprint(repo, "src/auth.py:2") is not None
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "src/auth.py",  # no line
+        "the CI pipeline",  # prose, not a path
+        "src/gone.py:1",  # file absent
+        "src/auth.py:99",  # start past EOF
+        "src/auth.py:0",  # lines are 1-indexed
+        "src/auth.py:4-2",  # inverted range
+        "../../etc/passwd:1",  # escapes the repo
+    ],
+)
+def test_location_fingerprint_returns_none_rather_than_raising(tmp_path, spec):
+    """Provenance is an optimization; a finding must never fail to file over it."""
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    assert findings.location_fingerprint(repo, spec) is None
+
+
+def test_location_fingerprint_skips_a_binary_file(tmp_path):
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    (repo / "src" / "blob.bin").write_bytes(b"\xff\xfe\x00")
+    assert findings.location_fingerprint(repo, "src/blob.bin:1") is None
+
+
+def test_new_finding_records_location_and_its_fingerprint(tmp_path):
+    repo, store = _repo_with_store(tmp_path, SOURCE)
+    path = findings.new_finding(
+        store, "security", "high", "security", "src/auth.py", "Bad", location="src/auth.py:2-3"
+    )
+    fm, _, _ = findings.parse_finding(path.read_text(encoding="utf-8"))
+    assert fm["location"] == "src/auth.py:2-3"
+    assert fm["location_sha"] == findings.location_fingerprint(repo, "src/auth.py:2-3")
+
+
+def test_location_is_not_part_of_the_content_hashed_id(tmp_path):
+    """Folding a line range into the id would rehash the same defect after any
+    unrelated edit above it, and a re-file would land as a second finding."""
+    _, store = _repo_with_store(tmp_path, SOURCE)
+    with_loc = findings.new_finding(
+        store, "security", "high", "security", "src/auth.py", "Bad", location="src/auth.py:2-3"
+    )
+    assert with_loc.stem == findings.finding_id("security", "src/auth.py", "Bad")
+
+
+def test_a_location_that_cannot_be_fingerprinted_still_files_the_finding(tmp_path):
+    _, store = _repo_with_store(tmp_path, SOURCE)
+    path = findings.new_finding(
+        store, "security", "high", "security", "the CI pipeline", "Bad", location="the CI pipeline"
+    )
+    fm, _, _ = findings.parse_finding(path.read_text(encoding="utf-8"))
+    assert fm["location"] == "the CI pipeline"
+    assert "location_sha" not in fm
+
+
+def test_recheck_reports_each_provenance_state(tmp_path):
+    _, store = _repo_with_store(tmp_path, SOURCE)
+    findings.new_finding(
+        store, "security", "high", "security", "a", "Stable", location="src/auth.py:2-3"
+    )
+    findings.new_finding(
+        store, "security", "high", "security", "b", "Moving", location="src/auth.py:4-5"
+    )
+    findings.new_finding(
+        store, "security", "high", "security", "c", "Vanishing", location="src/auth.py:5"
+    )
+    findings.new_finding(store, "security", "high", "security", "d", "Bare")
+
+    (tmp_path / "src" / "auth.py").write_text("one\ntwo\nthree\nFOUR\n", encoding="utf-8")
+    states = {r["title"]: r["state"] for r in findings.recheck_locations(store)}
+    assert states == {
+        "Stable": "unchanged",
+        "Moving": "changed",
+        "Vanishing": "missing",
+        "Bare": "unfingerprinted",
+    }
+
+
+def test_cli_recheck_prints_rows_and_a_tally(tmp_path, capsys):
+    _, store = _repo_with_store(tmp_path, SOURCE)
+    findings.new_finding(
+        store, "security", "high", "security", "a", "Stable", location="src/auth.py:2-3"
+    )
+    assert findings.main(["recheck", "--root", str(store)]) == 0
+    out = capsys.readouterr().out
+    assert "unchanged" in out
+    assert "1 open; 1 unchanged" in out
+
+    assert findings.main(["recheck", "--root", str(store), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)[0]["state"] == "unchanged"
+
+
+def test_cli_new_accepts_a_location(tmp_path, capsys):
+    _, store = _repo_with_store(tmp_path, SOURCE)
+    rc = findings.main(
+        [
+            "new",
+            "--root",
+            str(store),
+            "--auditor",
+            "security",
+            "--severity",
+            "high",
+            "--category",
+            "security",
+            "--area",
+            "src/auth.py",
+            "--location",
+            "src/auth.py:2-3",
+            "--body",
+            BODY,
+            "Bad",
+        ]
+    )
+    assert rc == 0
+    written = Path(capsys.readouterr().out.strip())
+    assert "location_sha:" in written.read_text(encoding="utf-8")
+
+
+def test_cli_export_renders_the_store_without_mutating_it(tmp_path, capsys):
+    """Export is a pure read, so a CI step can run it against the tree it reports on."""
+    _new(tmp_path, auditor="security", area="src/auth.py:42", title="Token compared with ==")
+    before = sorted(p.name for p in tmp_path.rglob("*"))
+
+    assert findings.main(["export", "--root", str(tmp_path), "--format", "sarif"]) == 0
+    sarif = json.loads(capsys.readouterr().out)
+    result = sarif["runs"][0]["results"][0]
+    assert result["level"] == "error"
+    assert result["locations"][0]["physicalLocation"]["region"]["startLine"] == 42
+
+    assert findings.main(["export", "--root", str(tmp_path), "--format", "junit"]) == 0
+    assert '<testsuites name="nitpicker"' in capsys.readouterr().out
+
+    assert findings.main(["export", "--root", str(tmp_path), "--format", "json"]) == 0
+    assert json.loads(capsys.readouterr().out)["summary"]["open"] == 1
+
+    assert sorted(p.name for p in tmp_path.rglob("*")) == before
+
+
+def test_cli_export_honours_the_same_filters_as_list(tmp_path, capsys):
+    _new(tmp_path, auditor="security", area="a.py", title="One")
+    _new(tmp_path, auditor="tests", area="b.py", title="Two")
+    assert (
+        findings.main(["export", "--root", str(tmp_path), "--format", "json", "--auditor", "tests"])
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert [f["auditor"] for f in data["findings"]] == ["tests"]
+
+
 def test_cli_new_list_resolve_index(tmp_path, capsys):
     rc = findings.main(
         [

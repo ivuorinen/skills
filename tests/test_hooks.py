@@ -137,13 +137,14 @@ def test_validate_json_unreadable_path_fails_open(monkeypatch, tmp_path, capsys)
 def _copy_shipped_scripts(tmp_path: Path) -> Path:
     """Copy the shipped findings.py, and what it imports, into a fake repo.
 
-    findings.py imports its sibling md_fences, so both travel or neither works.
-    Shared by the two fixtures that need it: copied separately, the next sibling
-    added would break one of them and not the other.
+    findings.py imports its siblings md_fences and findings_export, so all three
+    travel or none works. Shared by the two fixtures that need it: copied
+    separately, the next sibling added would break one of them and not the
+    other — which is exactly what happened when findings_export arrived.
     """
     shipped = tmp_path / "skills" / "nitpicker" / "scripts"
     shipped.mkdir(parents=True, exist_ok=True)
-    for name in ("findings.py", "md_fences.py"):
+    for name in ("findings.py", "md_fences.py", "findings_export.py"):
         shutil.copy(SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / name, shipped / name)
     return shipped
 

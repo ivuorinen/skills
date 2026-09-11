@@ -185,6 +185,7 @@ flow.
 | Tool | Used by |
 | --- | --- |
 | `scripts/findings.py` | every file-writing command (findings store CLI) |
+| `scripts/findings_export.py` | `findings.py export` — SARIF, JSON and JUnit renderings of the store |
 | `scripts/fetch-pr-comments.py` | `cr` — PR/MR review threads and out-of-thread notices |
 | `scripts/fetch-pr-status.py` | `cr` — PR/MR state, CI checks, review verdicts, changed files |
 | `scripts/process-sarif.py` | `security` |

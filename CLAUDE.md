@@ -72,13 +72,15 @@ Three install traps, each hit once already:
 
 ## Findings Store
 
-One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed through the `np_*` MCP tools where the session exposes them, else the shipped, stdlib-only CLI; `baseline`, `migrate` and `migrate-resolved` are CLI-only:
+One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed through the `np_*` MCP tools where the session exposes them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps every operation to its interface and names the ones no tool wraps — read it there rather than keeping a second list here, which is how this paragraph came to name three of the five.
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
+python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
+IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. `export --format sarif|json|junit` (in `findings_export.py`) renders the store for another system: SARIF omits resolved findings, since an alert on a fixed defect is indistinguishable from a live one; JUnit maps open to failure and resolved to pass, so a CI panel shows unfixed findings beside failing tests.
+
+`new --location path:START-END` records where the evidence was read plus a fingerprint of that source; `recheck` re-computes every one so `reverify` can skip a finding whose cited bytes are unchanged rather than spending a model pass on it. The fingerprint covers the cited line range, so an unrelated edit *above* it reads as `changed` — the safe direction: it costs a re-check, never a missed change. `location` is deliberately outside the content-hashed id. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
 
 ## PR Fetchers
 

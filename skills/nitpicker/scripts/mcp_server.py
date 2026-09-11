@@ -861,7 +861,10 @@ def _assemble_body(args: dict) -> str:
 
 @tool(
     "np_new_finding",
-    "Create an open finding. Body is assembled from problem/evidence/impact/fix.",
+    "Create an open finding. Body is assembled from problem/evidence/impact/fix. "
+    "`location` is the coordinate the evidence was read at ('src/auth.py:73-106'); "
+    "pass it whenever it is known — a fingerprint of that source is stored, and "
+    "reverify skips the finding cheaply for as long as it matches.",
     {
         "type": "object",
         "properties": {
@@ -875,6 +878,7 @@ def _assemble_body(args: dict) -> str:
             "evidence": {"type": "string"},
             "impact": {"type": "string"},
             "fix": {"type": "string"},
+            "location": {"type": "string"},
         },
         "required": ["auditor", "severity", "category", "area", "title"],
         "additionalProperties": False,
@@ -901,6 +905,7 @@ def _new_finding(args: dict) -> str:
         area=args["area"],
         title=args["title"],
         body=_assemble_body(args),
+        location=args.get("location", ""),
     )
     findings.write_index(store)
     return _code_warning(_project_root(args)) + json.dumps({"id": path.stem, "path": str(path)})

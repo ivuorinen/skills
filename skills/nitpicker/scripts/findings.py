@@ -905,6 +905,117 @@ def iter_open(
     return out
 
 
+_LOCATION_SPEC = re.compile(r"^(?P<path>.+?):(?P<start>\d+)(?:-(?P<end>\d+))?$")
+
+
+def location_fingerprint(repo_root: Path, spec: str) -> str | None:
+    """A short digest of the source at `spec` (`path:12` or `path:12-40`), or None.
+
+    `reverify` costs a full model pass per open finding, and most of that spend
+    is provably wasted: the code the finding cites usually has not moved. A
+    fingerprint recorded at filing time lets that command answer "did the
+    evidence change?" by reading a few lines instead of re-reasoning over the
+    whole finding.
+
+    Returns None rather than raising for every input it cannot fingerprint — an
+    `area` naming a directory, a subsystem, or a file that is gone. Provenance
+    is an optimization; refusing to file a finding because its location could
+    not be hashed would trade a real defect for a missing cache key.
+
+    ponytail: the digest is over the cited line range, so an unrelated edit
+    *above* it shifts the lines and invalidates the fingerprint even though the
+    evidence text is unchanged. That direction is the safe one — it costs a
+    re-check, never a missed change. Anchoring to the enclosing symbol
+    (`context_pack.symbols_of`) would survive line drift, if the wasted
+    re-checks ever measure.
+    """
+    match = _LOCATION_SPEC.match(spec.strip())
+    if not match:
+        return None
+    target = (repo_root / match.group("path")).resolve()
+    if not target.is_relative_to(repo_root.resolve()) or not target.is_file():
+        return None
+    try:
+        lines = target.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    start = int(match.group("start"))
+    end = int(match.group("end") or start)
+    if start < 1 or end < start or start > len(lines):
+        return None
+    excerpt = "\n".join(lines[start - 1 : end])
+    return hashlib.sha256(excerpt.encode("utf-8")).hexdigest()[:16]
+
+
+def recheck_locations(root: Path) -> list[dict]:
+    """Every open finding's provenance state, in one pass over the store.
+
+    `reverify` costs a full model pass per open finding, and on a store with
+    dozens of them most of that spend is provably wasted: the cited bytes have
+    not moved. This answers "which ones can be skipped?" by reading a few lines
+    per finding instead.
+
+    Four states, and only `unchanged` licenses a skip:
+
+        unchanged        the fingerprint still matches; the source is identical
+        changed          the fingerprint differs; adjudicate it
+        missing          the file or the line range is gone; adjudicate it
+        unfingerprinted  the finding recorded no usable location; adjudicate it
+
+    The three non-`unchanged` states are deliberately not distinguished by the
+    caller's behaviour — all three mean "look at it". Reporting them apart is
+    for the run summary, so a store full of `unfingerprinted` rows is visible as
+    a gap in provenance rather than as a screen that mysteriously never fires.
+    """
+    repo = find_repo_root(root) or root
+    out: list[dict] = []
+    for path, fm, title in iter_open(root):
+        row = {"id": fm.get("id", path.stem), "title": title, "location": fm.get("location", "")}
+        stored = fm.get("location_sha", "")
+        if not row["location"] or not stored:
+            out.append({**row, "state": "unfingerprinted"})
+            continue
+        current = location_fingerprint(repo, row["location"])
+        if current is None:
+            out.append({**row, "state": "missing"})
+        else:
+            out.append({**row, "state": "unchanged" if current == stored else "changed"})
+    return sorted(out, key=lambda r: r["id"])
+
+
+def _open_frontmatter(
+    root: Path,
+    fid: str,
+    auditor: str,
+    severity: str,
+    category: str,
+    area: str,
+    found: str | None,
+    location: str,
+) -> dict[str, str]:
+    """The frontmatter block for a new open finding, provenance included when known.
+
+    Split from `new_finding` so that function stays under the repo's cyclomatic
+    ceiling; building the block and serializing it under the store lock are
+    independent concerns.
+    """
+    fm = {
+        "id": fid,
+        "auditor": auditor,
+        "severity": severity,
+        "category": category,
+        "area": area,
+        "status": "open",
+        "found": found or _today(),
+    }
+    if location:
+        fm["location"] = redact(location).strip()
+        repo = find_repo_root(root) or root
+        if digest := location_fingerprint(repo, fm["location"]):
+            fm["location_sha"] = digest
+    return fm
+
+
 def new_finding(
     root: Path,
     auditor: str,
@@ -915,6 +1026,7 @@ def new_finding(
     body: str = "",
     found: str | None = None,
     force: bool = False,
+    location: str = "",
 ) -> Path:
     """File a new open finding and return the path written.
 
@@ -923,6 +1035,13 @@ def new_finding(
     not absorbed: an id already open — or already in the ledger — raises and
     names `--force`, so a duplicate is reported rather than silently
     overwriting a body that may have been edited since.
+
+    `location` (`path:12-40`) is optional provenance — named for the coordinate,
+    not for the `## Evidence` body section, which is prose. It is recorded
+    alongside a fingerprint of the source there so `reverify` can skip a finding
+    whose evidence has not moved. It is deliberately *not* part of the id: the
+    id hashes auditor, area and title, and folding a line range into it would
+    make the same defect hash differently after an unrelated edit above it.
     """
     _check_auditor(auditor)
     # Redact and strip before hashing: the id is derived from title+area, so
@@ -936,15 +1055,7 @@ def new_finding(
     if not body.strip():
         body = "\n\n".join(f"## {s}\n" for s in OPEN_SECTIONS)
     body = redact(body)
-    fm = {
-        "id": fid,
-        "auditor": auditor,
-        "severity": severity,
-        "category": category,
-        "area": area,
-        "status": "open",
-        "found": found or _today(),
-    }
+    fm = _open_frontmatter(root, fid, auditor, severity, category, area, found, location)
     path = root / auditor / "open" / f"{fid}.md"
     with store_lock(root):
         # One parse, reused: read_ledger is the expensive call, and re-reading it
@@ -1661,6 +1772,13 @@ def gather_findings(
                     "auditor": fm.get("auditor", ""),
                     "severity": fm.get("severity", ""),
                     "area": fm.get("area", ""),
+                    # Carried so `export` can place a SARIF result on the line
+                    # the evidence was actually read at. `area` is free text by
+                    # design — a file, a directory, a glob, a subsystem name —
+                    # so a SARIF artifact URI derived from it often resolves to
+                    # nothing in the repository, and a code-scanning consumer
+                    # drops such a result rather than showing it imprecisely.
+                    "location": fm.get("location", ""),
                     "title": title,
                 }
             )
@@ -1675,6 +1793,7 @@ def gather_findings(
                     "auditor": rec.get("auditor", ""),
                     "severity": rec.get("severity") or "",
                     "area": rec.get("area", ""),
+                    "location": rec.get("location", ""),
                     "title": rec.get("title", ""),
                 }
             )
@@ -1704,6 +1823,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     p_new.add_argument("--category", required=True, choices=CATEGORIES)
     p_new.add_argument("--area", required=True)
     p_new.add_argument("--body", default="", help="markdown body; '-' reads stdin")
+    p_new.add_argument(
+        "--location",
+        default="",
+        help="provenance as path:LINE or path:START-END; a fingerprint of that "
+        "source is recorded so reverify can skip the finding while it is unchanged",
+    )
     p_new.add_argument("--force", action="store_true", help="overwrite an existing finding")
     p_new.add_argument("title")
 
@@ -1732,6 +1857,27 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         action="store_true",
         help="omit findings whose id is in the release-gate baseline",
     )
+
+    p_exp = sub.add_parser("export", help="render the store as SARIF, JSON or JUnit XML")
+    add_root(p_exp)
+    # No `choices=`: it would have to read `findings_export.FORMATS` here, and
+    # this parser is built on *every* invocation — so `findings.py validate`,
+    # which the PostToolUse hook shells out to on every findings edit, would
+    # import the renderer to populate a subcommand it is not running. The
+    # accepted set is validated in the export branch instead, by
+    # `findings_export.export`, whose error names it.
+    p_exp.add_argument("--format", required=True, metavar="{sarif,json,junit}")
+    p_exp.add_argument("--auditor", default=None)
+    p_exp.add_argument("--severity", default=None, choices=SEVERITIES)
+    p_exp.add_argument(
+        "--exclude-baseline",
+        action="store_true",
+        help="omit findings whose id is in the release-gate baseline",
+    )
+
+    p_rc = sub.add_parser("recheck", help="re-fingerprint every open finding's recorded location")
+    add_root(p_rc)
+    p_rc.add_argument("--json", action="store_true", help="emit rows as JSON")
 
     p_show = sub.add_parser("show", help="print one finding (open file or resolved ledger)")
     add_root(p_show)
@@ -1780,6 +1926,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 args.title,
                 body,
                 force=args.force,
+                location=args.location,
             )
         except FindingError as e:
             print(f"ERROR  {e}", file=sys.stderr)
@@ -1801,6 +1948,48 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             return 1
         write_index(args.root)
         print(path)
+        return 0
+
+    if args.cmd == "recheck":
+        rows = recheck_locations(args.root)
+        if args.json:
+            print(json.dumps(rows, separators=(",", ":")))
+        else:
+            for row in rows:
+                print(f"{row['id']:<24} {row['state']:<16} {row['location'] or '-'}")
+            counts: dict[str, int] = {}
+            for row in rows:
+                counts[row["state"]] = counts.get(row["state"], 0) + 1
+            print(f"{len(rows)} open; " + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())))
+        return 0
+
+    if args.cmd == "export":
+        rows = gather_findings(
+            args.root,
+            auditor=args.auditor or "",
+            severity=args.severity or "",
+            exclude_baseline=args.exclude_baseline,
+        )
+        # Imported here, not at module scope and not at parser-build time. This
+        # module is the store's read/write core — `mcp_server` imports it as a
+        # library and the PostToolUse hook shells out to it — while
+        # `findings_export` is an output renderer over its row shape. Pointing
+        # the core at its own adapter made every one of those callers pay for
+        # the renderer and fail without it. This branch is the only place that
+        # renders anything.
+        import findings_export
+
+        # No store lock and no write: export is a pure read, so it is safe to run
+        # at any point in a run, including from a CI step that must not mutate
+        # the working tree it is reporting on.
+        try:
+            print(findings_export.export(rows, args.format))
+        except findings_export.ExportError as e:
+            # Exit 2: an unsupported --format is a usage error, and `export`'s
+            # own message names the accepted set — which is why dropping
+            # argparse's `choices=` costs the caller nothing.
+            print(f"ERROR  {e}", file=sys.stderr)
+            return 2
         return 0
 
     if args.cmd == "list":
