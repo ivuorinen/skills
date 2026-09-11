@@ -266,6 +266,20 @@ def test_run_case_rejects_an_empty_template(tmp_path):
         _mod.run_case(case, "   ", tmp_path / "work")
 
 
+def test_run_case_names_the_case_when_substitution_breaks_the_quoting(tmp_path):
+    """A goal with an apostrophe leaves an unbalanced quote for `shlex.split`.
+
+    Goals come out of a corpus `expected.json` and are substituted before the
+    split, so this is ordinary corpus prose, not a malformed template. Unmapped,
+    `ValueError` escapes `run_case`, `_run_all` and `main`'s except clause, and
+    the run ends in a traceback naming no case.
+    """
+    case = CASE | {"dir": tmp_path / "src", "goal": "the retry isn't idempotent"}
+    (tmp_path / "src").mkdir()
+    with pytest.raises(_mod.RecallError, match="not parseable after substitution"):
+        _mod.run_case(case, "agent -p '{goal}'", tmp_path / "work")
+
+
 def test_run_case_reports_a_command_that_cannot_start(tmp_path, monkeypatch):
     case = CASE | {"dir": tmp_path / "src"}
     (tmp_path / "src").mkdir()

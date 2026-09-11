@@ -71,6 +71,13 @@ class BenchError(Exception):
     """A malformed case or a bad argument."""
 
 
+# The `expected.json` schema benchmarks/README.md documents. `note` is prose for
+# a reader and is not required; every key here is read by one of the two
+# scorers, so a case missing any of them fails somewhere further on with no case
+# name attached.
+_REQUIRED_KEYS = frozenset({"id", "lens", "class", "severity_floor", "goal", "file", "lines"})
+
+
 def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] <= b[1] and b[0] <= a[1]
 
@@ -84,7 +91,24 @@ def load_cases(case_id: str = "") -> list[dict]:
     """
     found = []
     for path in sorted(CORPUS.glob("*/expected.json")):
-        meta = json.loads(path.read_text(encoding="utf-8"))
+        # Every shape below ends in a traceback that does not name the case,
+        # which is the outcome the out-of-range check further down was written
+        # to prevent — a broken corpus reading as a broken retriever. The case
+        # directory is the identifier here because `id` is one of the keys that
+        # may be missing.
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise BenchError(
+                f"{path.parent.name}: expected.json is not valid JSON ({exc})"
+            ) from exc
+        missing = _REQUIRED_KEYS - set(meta)
+        if missing:
+            raise BenchError(
+                f"{path.parent.name}: expected.json lacks {', '.join(sorted(missing))}"
+            )
+        if not (isinstance(meta["lines"], list) and len(meta["lines"]) == 2):
+            raise BenchError(f"{meta['id']}: 'lines' must be a two-element [start, end]")
         meta["dir"] = path.parent
         target = path.parent / meta["file"]
         if not target.is_file():

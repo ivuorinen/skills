@@ -206,7 +206,17 @@ def run_case(case: dict, agent_cmd: str, workdir: Path) -> Path:
     # the quoting an agent CLI actually needs (`-p '/nitpicker security'`) and
     # leaves nothing to escape into. A template that genuinely needs a pipeline
     # belongs in a script the template then names.
-    argv = shlex.split(command)
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        # `goal` comes out of a corpus `expected.json` and is substituted into
+        # the template before the split, so an apostrophe in a goal sentence
+        # ("the retry isn't idempotent") leaves an unbalanced quote and
+        # `shlex.split` refuses the whole string. Unmapped, that ends the run in
+        # a traceback where every other failure in this module names its case.
+        raise RecallError(
+            f"{case['id']}: --agent-cmd is not parseable after substitution ({exc})"
+        ) from exc
     if not argv:
         raise RecallError(f"{case['id']}: --agent-cmd is empty after substitution")
     try:

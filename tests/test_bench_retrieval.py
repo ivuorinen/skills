@@ -75,6 +75,7 @@ def test_a_range_outside_the_file_is_rejected(tmp_path, monkeypatch):
                 "id": "bad",
                 "lens": "x",
                 "class": "y",
+                "severity_floor": "medium",
                 "goal": "one two",
                 "file": "a.py",
                 "lines": [1, 99],
@@ -96,6 +97,7 @@ def test_a_missing_expected_file_is_rejected(tmp_path, monkeypatch):
                 "id": "bad",
                 "lens": "x",
                 "class": "y",
+                "severity_floor": "medium",
                 "goal": "g",
                 "file": "gone.py",
                 "lines": [1, 1],
@@ -108,6 +110,59 @@ def test_a_missing_expected_file_is_rejected(tmp_path, monkeypatch):
         _mod.load_cases()
 
 
+def test_invalid_json_in_a_case_is_a_named_bench_error(tmp_path, monkeypatch):
+    """`main` catches BenchError and PackError; JSONDecodeError is neither.
+
+    It ended the run in a traceback that names no case — the same failure the
+    out-of-range check exists to prevent, arriving one line earlier.
+    """
+    corpus = tmp_path / "corpus"
+    (corpus / "bad").mkdir(parents=True)
+    (corpus / "bad" / "expected.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(_mod, "CORPUS", corpus)
+    with pytest.raises(_mod.BenchError, match=r"bad: expected\.json is not valid JSON"):
+        _mod.load_cases()
+
+
+def test_a_case_missing_a_required_key_is_named(tmp_path, monkeypatch):
+    """A missing `file` or `lines` raised KeyError, which no handler catches.
+
+    Reported against the directory, not `id`: `id` is one of the keys that can
+    be the missing one.
+    """
+    corpus = tmp_path / "corpus"
+    (corpus / "bad").mkdir(parents=True)
+    (corpus / "bad" / "expected.json").write_text(json.dumps({"id": "bad"}), encoding="utf-8")
+    monkeypatch.setattr(_mod, "CORPUS", corpus)
+    with pytest.raises(_mod.BenchError, match=r"bad: expected.json lacks class, file"):
+        _mod.load_cases()
+
+
+@pytest.mark.parametrize("lines", [[16], [1, 2, 3], "1-2"], ids=["short", "long", "string"])
+def test_a_lines_value_that_is_not_a_pair_is_named(tmp_path, monkeypatch, lines):
+    """`start, end = meta["lines"]` raised ValueError before it could be checked."""
+    corpus = tmp_path / "corpus"
+    (corpus / "bad").mkdir(parents=True)
+    (corpus / "bad" / "a.py").write_text("one\ntwo\n", encoding="utf-8")
+    (corpus / "bad" / "expected.json").write_text(
+        json.dumps(
+            {
+                "id": "bad",
+                "lens": "x",
+                "class": "y",
+                "severity_floor": "medium",
+                "goal": "one two",
+                "file": "a.py",
+                "lines": lines,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(_mod, "CORPUS", corpus)
+    with pytest.raises(_mod.BenchError, match="two-element"):
+        _mod.load_cases()
+
+
 # ── the honesty guard ────────────────────────────────────────────────────────
 
 
@@ -117,7 +172,15 @@ def _one_case(
     corpus = tmp_path / "corpus"
     (corpus / "c").mkdir(parents=True)
     (corpus / "c" / "a.py").write_text(source, encoding="utf-8")
-    meta = {"id": "c", "lens": "x", "class": "y", "goal": goal, "file": "a.py", "lines": lines}
+    meta = {
+        "id": "c",
+        "lens": "x",
+        "class": "y",
+        "severity_floor": "medium",
+        "goal": goal,
+        "file": "a.py",
+        "lines": lines,
+    }
     if known_limitation:
         meta["known_limitation"] = known_limitation
     (corpus / "c" / "expected.json").write_text(json.dumps(meta), encoding="utf-8")
