@@ -1,0 +1,13 @@
+{
+  "id": "python-command-injection",
+  "lens": "security",
+  "class": "command-injection",
+  "severity_floor": "high",
+  "goal": "subprocess shell command injection untrusted argument",
+  "file": "src/deploy.py",
+  "note": "shell=True on an f-string built from an argv value",
+  "lines": [
+    15,
+    16
+  ]
+}

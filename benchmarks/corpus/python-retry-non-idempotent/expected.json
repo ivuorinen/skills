@@ -1,0 +1,13 @@
+{
+  "id": "python-retry-non-idempotent",
+  "lens": "reliability",
+  "class": "non-idempotent-retry",
+  "severity_floor": "high",
+  "goal": "retry payment charge idempotency duplicate on redelivery",
+  "file": "src/billing.py",
+  "note": "charge() is retried three times with no idempotency key",
+  "lines": [
+    26,
+    26
+  ]
+}

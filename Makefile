@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-evals spec-check validate-rules ring-deps version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck help bump-patch bump-minor bump-major make-help
+.PHONY: all check validate validate-evals spec-check validate-rules ring-deps version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck bench bench-recall help bump-patch bump-minor bump-major make-help
 
 UV := uv run --quiet
 
@@ -25,6 +25,8 @@ help:
 	@echo "  list         — list all skills with descriptions"
 	@echo "  typecheck    — pyright over the repo (0 errors required)"
 	@echo "  test         — run pytest unit tests"
+	@echo "  bench        — score context_pack retrieval against the seeded defect corpus"
+	@echo "  bench-recall — score whether a lens RECOGNISES a seeded defect (needs an agent; not in check)"
 	@echo "  make-help    — Makefile targets, \`make help\` and .PHONY agree"
 	@echo "  bump-patch   — bump patch version"
 	@echo "  bump-minor   — bump minor version"
@@ -34,7 +36,7 @@ help:
 # narrow store-consistency ones. make stops at the first failing prerequisite,
 # so anything ordered ahead of `test` and `security` can cost their entire
 # signal — which is exactly what `index-check` did from this position.
-check: validate validate-evals validate-rules ring-deps version-sync make-help lock-check lint format-check security opengrep typecheck test audit-consistency index-check pre-commit
+check: validate validate-evals validate-rules ring-deps version-sync make-help lock-check lint format-check security opengrep typecheck test bench audit-consistency index-check pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -130,6 +132,26 @@ list:
 
 test:
 	uv run --extra dev pytest tests/
+
+# Scores context_pack's retrieval against benchmarks/corpus/, the seeded defect
+# repositories. Fails on a recall or precision regression — the one gate that
+# catches a context-reduction change quietly making a lens blind, which no test
+# and no scanner would report.
+bench:
+	uv run --quiet scripts/bench-retrieval.py --verbose
+
+# The other half: does a lens RECOGNISE the defect once retrieval has shown it?
+#
+# Deliberately absent from `check:` and it must stay absent. It invokes an agent
+# per case, so it needs credentials, takes minutes, and grades differently twice
+# on the same input. A nondeterministic gate on a commit is a gate people learn
+# to re-run until it passes, which is worse than not having one.
+#
+# Run it by hand, or from a scheduled job, when a lens or a command file changes.
+# `--grade <dir>` scores an already-audited tree and is pure — that half is
+# covered by tests/test_bench_recall.py and needs no agent.
+bench-recall:
+	uv run --quiet scripts/bench-recall.py --run
 
 # Zero floor: any pyright error fails the gate. A count threshold could mask a
 # new error by fixing an old one, so the tolerated set must stay empty. Mirrors

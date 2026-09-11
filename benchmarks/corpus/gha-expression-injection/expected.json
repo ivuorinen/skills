@@ -1,0 +1,13 @@
+{
+  "id": "gha-expression-injection",
+  "lens": "ci",
+  "class": "script-injection",
+  "severity_floor": "critical",
+  "goal": "workflow run step interpolates untrusted pull request title into shell",
+  "file": ".github/workflows/greet.yml",
+  "note": "github.event.pull_request.title interpolated directly into run:",
+  "lines": [
+    17,
+    17
+  ]
+}

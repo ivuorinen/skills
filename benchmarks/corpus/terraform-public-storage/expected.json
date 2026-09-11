@@ -1,0 +1,13 @@
+{
+  "id": "terraform-public-storage",
+  "lens": "iac",
+  "class": "public-data-store",
+  "severity_floor": "critical",
+  "goal": "storage bucket public read access control list exposed",
+  "file": "infra/storage.tf",
+  "note": "acl = public-read on the archive bucket",
+  "lines": [
+    16,
+    16
+  ]
+}
