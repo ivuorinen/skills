@@ -138,9 +138,19 @@ def test_a_case_missing_a_required_key_is_named(tmp_path, monkeypatch):
         _mod.load_cases()
 
 
-@pytest.mark.parametrize("lines", [[16], [1, 2, 3], "1-2"], ids=["short", "long", "string"])
-def test_a_lines_value_that_is_not_a_pair_is_named(tmp_path, monkeypatch, lines):
-    """`start, end = meta["lines"]` raised ValueError before it could be checked."""
+@pytest.mark.parametrize(
+    "lines",
+    [[16], [1, 2, 3], "1-2", ["1", "2"], [True, 2]],
+    ids=["short", "long", "string", "string-bounds", "bool-bound"],
+)
+def test_a_lines_value_that_is_not_a_pair_of_ints_is_named(tmp_path, monkeypatch, lines):
+    """`start, end = meta["lines"]` raised ValueError before it could be checked.
+
+    The last two are why the shape check alone was not enough: `["1", "2"]` has
+    the right shape and then raises TypeError at `1 <= start`, and `[true, 2]`
+    passes every check — `bool` being an `int` subclass — to score line 1
+    silently, which is worse than either traceback.
+    """
     corpus = tmp_path / "corpus"
     (corpus / "bad").mkdir(parents=True)
     (corpus / "bad" / "a.py").write_text("one\ntwo\n", encoding="utf-8")

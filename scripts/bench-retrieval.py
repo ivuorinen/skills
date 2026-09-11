@@ -107,8 +107,21 @@ def load_cases(case_id: str = "") -> list[dict]:
             raise BenchError(
                 f"{path.parent.name}: expected.json lacks {', '.join(sorted(missing))}"
             )
-        if not (isinstance(meta["lines"], list) and len(meta["lines"]) == 2):
-            raise BenchError(f"{meta['id']}: 'lines' must be a two-element [start, end]")
+        # Element types too, not just the shape. `["1", "2"]` is a two-element
+        # list, so a shape-only check passes it through to `1 <= start`, which
+        # raises TypeError — outside the BenchError contract again, one line
+        # further down than the JSON and key checks above. `bool` is excluded
+        # because it is an `int` subclass: `[true, 2]` would otherwise score
+        # line 1 silently, which is worse than the traceback.
+        bounds = meta["lines"]
+        if not (
+            isinstance(bounds, list)
+            and len(bounds) == 2
+            and all(isinstance(n, int) and not isinstance(n, bool) for n in bounds)
+        ):
+            raise BenchError(
+                f"{meta['id']}: 'lines' must be a two-element [start, end] of integers"
+            )
         meta["dir"] = path.parent
         target = path.parent / meta["file"]
         if not target.is_file():
