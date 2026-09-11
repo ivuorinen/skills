@@ -53,11 +53,22 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # The regex is read out of .pre-commit-config.yaml at runtime rather than
         # copied, so this gate and the commit-msg hook cannot drift apart.
+        #
+        # Read from the BASE revision, never the working tree. `actions/checkout`
+        # on `pull_request` checks out the merge result, so the tree carries the
+        # PR's own changes — a PR could set `entry: '.*'` and every one of its
+        # commit subjects would then pass the gate it just rewrote. The policy
+        # has to come from the revision being merged INTO. A PR that genuinely
+        # changes the regex is still linted against the old one; that is the
+        # correct order, and the new regex governs from the merge onward.
         run: |
           python3 - <<'PY'
           import os, re, subprocess, sys
 
-          config = open(".pre-commit-config.yaml").read()
+          config = subprocess.run(
+              ["git", "show", f"{os.environ['BASE_SHA']}:.pre-commit-config.yaml"],
+              check=True, capture_output=True, text=True,
+          ).stdout
           m = re.search(
               r"id: conventional-commit-msg[\s\S]*?^\s*entry: '([^']+)'$", config, re.M
           )
