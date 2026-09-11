@@ -144,6 +144,19 @@ _MUTATES = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": Fal
 TOOLS: list[dict] = []
 
 
+def _compact(payload: Any) -> str:
+    """Serialize a tool result or protocol frame without indentation.
+
+    Everything this server emits is JSON a parser consumes — a model reading a
+    tool result, a client reading a JSON-RPC frame. Neither recovers anything
+    from indentation, and both pay for it: a single `audit` run makes dozens of
+    tool calls, and the whitespace on every one is context spent on structure
+    the parse already recovers. The CLIs keep their readable output; those are
+    read by a person.
+    """
+    return json.dumps(payload, separators=(",", ":"))
+
+
 class MethodError(Exception):
     """Raised for an unknown JSON-RPC method (mapped to error code -32601)."""
 
@@ -186,7 +199,7 @@ _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
     {**_READ_ONLY, "title": "List bundled skills"},
 )
 def _list_skills(args: dict) -> str:
-    return json.dumps(skill_catalog.list_skills(), indent=2)
+    return _compact(skill_catalog.list_skills())
 
 
 @tool(
@@ -254,7 +267,7 @@ def _read_reference(args: dict) -> str:
     {**_READ_ONLY, "title": "List nitpicker commands"},
 )
 def _list_commands(args: dict) -> str:
-    return json.dumps(skill_catalog.list_commands(category=args.get("category") or ""), indent=2)
+    return _compact(skill_catalog.list_commands(category=args.get("category") or ""))
 
 
 # ── project-root resolution (findings tools) ─────────────────────────────────
@@ -519,7 +532,7 @@ def _list_findings(args: dict) -> str:
         exclude_baseline=args.get("exclude_baseline", False),
         limit=args.get("limit"),
     )
-    return _fenced(json.dumps(rows, indent=2))
+    return _fenced(_compact(rows))
 
 
 @tool(
@@ -594,7 +607,7 @@ def _process_sarif(args: dict) -> tuple[str, bool]:
     # a clean one — the reading `meta.errors` alone has to be opted into. The CLI
     # exits 1 in the same case; isError is that signal here. The report still
     # travels, so the findings the readable files yielded are not lost.
-    return json.dumps(report, indent=2), bool(errors)
+    return _compact(report), bool(errors)
 
 
 @tool(
@@ -636,7 +649,7 @@ def _check_rules_anatomy(args: dict) -> str:
     # root, so `relative_to` cannot fail. Catching it here would only hide a bug
     # in that construction behind a leaked absolute path.
     report["rules_dirs"] = [Path(d).relative_to(root).as_posix() for d in report["rules_dirs"]]
-    return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
+    return _rules_fenced(_compact({**report, "blocking": blocking}))
 
 
 @tool(
@@ -667,7 +680,7 @@ def _check_agent_instructions(args: dict) -> str:
     report["project_root"] = "."
     for entry in report["files"]:
         entry["file"] = Path(entry["file"]).as_posix()
-    return _rules_fenced(json.dumps({**report, "blocking": blocking}, indent=2))
+    return _rules_fenced(_compact({**report, "blocking": blocking}))
 
 
 # ── PR tools (network; GitHub / GitLab / Bitbucket) ──────────────────────────
@@ -746,7 +759,7 @@ def _pr_comments(args: dict) -> str:
     """
     target, pr_number = _pr_target(args)
     provider = pr_common.provider_for(target)
-    return _pr_fenced(json.dumps(provider.fetch_comments(target, pr_number), indent=2))
+    return _pr_fenced(_compact(provider.fetch_comments(target, pr_number)))
 
 
 @tool(
@@ -763,7 +776,7 @@ def _pr_status(args: dict) -> str:
     provider = pr_common.provider_for(target)
     # Fenced like the comments tool: `title` and the CI check names are also
     # third-party text, written by whoever opened the PR or configured the job.
-    return _pr_fenced(json.dumps(provider.fetch_status(target, pr_number), indent=2))
+    return _pr_fenced(_compact(provider.fetch_status(target, pr_number)))
 
 
 # ── code-provenance warning (see the _LOADED comment at the top) ─────────────
@@ -908,7 +921,7 @@ def _new_finding(args: dict) -> str:
         location=args.get("location", ""),
     )
     findings.write_index(store)
-    return _code_warning(_project_root(args)) + json.dumps({"id": path.stem, "path": str(path)})
+    return _code_warning(_project_root(args)) + _compact({"id": path.stem, "path": str(path)})
 
 
 @tool(
@@ -937,7 +950,7 @@ def _resolve_finding(args: dict) -> str:
     store = _store(args)
     findings.resolve_finding(store, args["id"], args["status"], args["notes"])
     findings.write_index(store)
-    return _code_warning(_project_root(args)) + json.dumps(
+    return _code_warning(_project_root(args)) + _compact(
         {"id": args["id"], "status": args["status"]}
     )
 
@@ -1054,7 +1067,7 @@ def serve(stdin, stdout) -> None:
             # id is unrecoverable from a broken frame, so silence would leave a
             # client with an outstanding request blocked until its own timeout.
             stdout.write(
-                json.dumps(
+                _compact(
                     {
                         "jsonrpc": "2.0",
                         "id": None,
@@ -1071,7 +1084,7 @@ def serve(stdin, stdout) -> None:
             # in it until its own timeout, the same stall the parse-error branch
             # above answers rather than causes.
             stdout.write(
-                json.dumps(
+                _compact(
                     {
                         "jsonrpc": "2.0",
                         "id": None,
@@ -1102,7 +1115,7 @@ def serve(stdin, stdout) -> None:
                 "id": rid,
                 "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"},
             }
-        stdout.write(json.dumps(resp) + "\n")
+        stdout.write(_compact(resp) + "\n")
         stdout.flush()
 
 
