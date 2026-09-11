@@ -94,11 +94,16 @@ Evidence, never by the stale line number — and assign exactly one:
 
    Each row comes back `unchanged`, `changed`, `missing` (the cited file or
    range is gone) or `unfingerprinted` (the finding recorded no location).
-   **`unchanged` means the cited bytes are byte-identical**, so re-deriving the
-   same conclusion from the same source buys nothing: record it as still live,
-   evidence unchanged, and move on. Every other state falls through to step 3.
-   This makes a cheap case cheap and never turns a changed finding into an
-   unexamined one. State the screened count in the run summary.
+   **`unchanged` means the cited bytes are byte-identical — nothing more.** It
+   is a screen, not an adjudication: a fix landing *outside* the cited range can
+   remove the defect while those bytes stay identical, which is what global
+   authorization middleware does to an unchanged route handler. Leave such a
+   finding open and record it as **screened, not re-adjudicated** — never as
+   re-proven still live. Every other state falls through to step 3. This keeps a
+   cheap case cheap without promoting an unexamined finding to a verified one.
+   Report the screened count separately from the adjudicated one in the run
+   summary, and say plainly that the screened set was not re-proven; a user who
+   needs proof for all of them asks for a full pass.
 3. **Adjudicate the rest, in id order.** Read the finding's Evidence; locate the
    cited code in the current tree by its quoted snippet; assign one of the four
    dispositions with current-code evidence. Record the current location of a
