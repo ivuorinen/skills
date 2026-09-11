@@ -3,13 +3,14 @@ From: Ismo Vuorinen <ismo@ivuorinen.net>
 Date: Thu, 11 Sep 2026 05:40:00 +0000
 Subject: [PATCH] fix(hooks): close the env-wrapper and --config-env bypasses
 
-Two shapes reached real git with every rule in the guard unreachable. Both
-were reproduced against the live hook before and after the change; their bare
-equivalents were already denied, so the guard disagreed with itself depending
-on how the same request was spelled.
+Three shapes reached real git with every rule in the guard unreachable. Each
+was reproduced against the live hook before and after the change; their
+unwrapped equivalents were already denied, so the guard disagreed with itself
+depending on how the same request was spelled.
 
     env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
         GIT_CONFIG_VALUE_0=/dev/null git commit -m x          rc 0 -> 2
+    env -S "GIT_CONFIG_COUNT=1 … git commit -m x"             rc 0 -> 2
     ALIAS_BODY=push git --config-env=alias.z=ALIAS_BODY z origin main
                                                               rc 0 -> 2
 
@@ -20,6 +21,17 @@ paired with an empty environment map, and _global_denial never saw the
 hook-disabling variables. Variants now carry the assignments found in the
 prefix they skipped, layered over the stage's own — `A=1 env A=2 git` resolves
 to 2, which is what real env does.
+
+`env -S` is the same wrapper hiding more: it carries a whole command in one
+shell word and splits it at execution time, so the scan saw no `git` token at
+all and emitted no inner stage. _split_string_payload expands the payload
+before the scan, covering `-S X`, `-SX`, `--split-string X` and
+`--split-string=X`. A payload that does not tokenize falls back to whitespace
+splitting rather than being dropped: refusing to look is how the operand
+became invisible to begin with, and an over-split payload can only add
+candidate stages, never remove one. The original stage is kept unexpanded
+alongside the variants, since that is what the ctx-ok guard and the
+unrecognised-verb path must still judge.
 
 deny-unsafe-git-hook._global_config recorded `--config-env=<key>=<var>` with
 the variable NAME as the value. _alias_denial then inspected the literal
@@ -34,23 +46,69 @@ the hooksPath rule matches on the key, so the unresolved value never mattered
 there. It is pinned so resolving --config-env cannot regress the one shape
 that already worked.
 
-Verified: the three genuine cases fail against the unpatched hooks and pass
-against the patched ones; all 497 tests in tests/test_hooks.py pass with the
-patch applied; `git status`, `env FOO=1 git log` and an ordinary `git commit`
-stay allowed, so the narrowing does not over-block.
+Verified: the seven genuine cases fail against the unpatched hooks and pass
+against the patched ones; all 501 tests in tests/test_hooks.py pass with the
+patch applied; `git status`, `env FOO=1 git log`, `env -S "echo hello world"`,
+`env -S "git status"` and an ordinary `git commit` stay allowed, so the
+narrowing does not over-block.
 
-Raised by CodeRabbit on PR #131 (threads on _hooklib.py:226 and
-deny-unsafe-git-hook.py:225) and handed over as a patch rather than applied:
-scripts/hooks/ is owner-only on every write path in this repository.
+Raised by CodeRabbit on PR #131 (threads on _hooklib.py:226,
+deny-unsafe-git-hook.py:225, and the `env -S` gap in this patch's first
+revision) and handed over as a patch rather than applied: scripts/hooks/ is
+owner-only on every write path in this repository.
 ---
 --- a/scripts/hooks/_hooklib.py
 +++ b/scripts/hooks/_hooklib.py
-@@ -171,8 +171,34 @@
+@@ -8,6 +8,7 @@
+ import json
+ import os
+ import re
++import shlex
+ import sys
+ from pathlib import Path
+ 
+@@ -171,8 +172,70 @@
      return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
  
  
 -def _wrapper_variants(tokens: list[str]) -> list[list[str]]:
 -    """The stage, plus every git call a leading wrapper hides.
++def _split_string_payload(tokens: list[str]) -> list[str]:
++    """`tokens` with every `env -S` payload expanded into the tokens it carries.
++
++    `env -S 'GIT_CONFIG_COUNT=1 … git commit -m x'` is one shell word, so the
++    scan below saw no `git` token and emitted no inner variant — the whole
++    command the guard exists to judge sat inside a single operand. GNU `env`
++    splits that payload itself at execution time, so the guard has to split it
++    too or the wrapper it already knows about becomes a way through it.
++
++    All four spellings `env` accepts are handled: `-S X`, `-SX`,
++    `--split-string X` and `--split-string=X`. A payload that does not tokenize
++    falls back to whitespace splitting rather than being dropped — refusing to
++    look is how the operand became invisible in the first place, and an
++    over-split payload can only add candidate stages, never remove one.
++    """
++    out: list[str] = []
++    i = 0
++    while i < len(tokens):
++        token, payload = tokens[i], None
++        if token in ("-S", "--split-string") and i + 1 < len(tokens):
++            payload, i = tokens[i + 1], i + 2
++        elif token.startswith("-S") and len(token) > 2:
++            payload, i = token[2:], i + 1
++        elif token.startswith("--split-string="):
++            payload, i = token.split("=", 1)[1], i + 1
++        else:
++            out.append(token)
++            i += 1
++            continue
++        try:
++            out.extend(shlex.split(payload))
++        except ValueError:
++            out.extend(payload.split())
++    return out
++
++
 +def _assignments(tokens: list[str]) -> dict[str, str]:
 +    """Every `NAME=value` operand in `tokens`, in order.
 +
@@ -82,22 +140,26 @@ scripts/hooks/ is owner-only on every write path in this repository.
  
      Each wrapper has its own option grammar — `nice -n 10 git push` puts two
      tokens between the wrapper and the command, `env -u FOO git push` two more —
-@@ -191,8 +217,12 @@
+@@ -191,8 +254,16 @@
      guard should err in.
      """
      if Path(tokens[0]).name not in _WRAPPERS:
 -        return [tokens]
 -    return [tokens] + [tokens[i:] for i in range(1, len(tokens)) if Path(tokens[i]).name == "git"]
 +        return [({}, tokens)]
++    # The scan runs over the `-S`-expanded form so a payload-carried git call is
++    # reachable, while the original stage is kept unexpanded: it is what the
++    # ctx-ok guard and the unrecognised-verb path must still judge.
++    expanded = _split_string_payload(tokens)
 +    return [({}, tokens)] + [
-+        (_assignments(tokens[:i]), tokens[i:])
-+        for i in range(1, len(tokens))
-+        if Path(tokens[i]).name == "git"
++        (_assignments(expanded[:i]), expanded[i:])
++        for i in range(1, len(expanded))
++        if Path(expanded[i]).name == "git"
 +    ]
  
  
  def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]]:
-@@ -223,7 +253,12 @@
+@@ -223,7 +294,12 @@
              env[name] = value
              i += 1
          if i < len(tokens):
@@ -159,7 +221,7 @@ scripts/hooks/ is owner-only on every write path in this repository.
              return _HOOKSPATH_DENIAL.format(key=key, value=value)
 --- a/tests/test_hooks.py
 +++ b/tests/test_hooks.py
-@@ -2995,6 +2995,38 @@
+@@ -2995,6 +2995,63 @@
          "protected branch",
          id="alias-shell-wrapped",
      ),
@@ -178,6 +240,31 @@ scripts/hooks/ is owner-only on every write path in this repository.
 +        "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
 +        "disables the repository's hooks",
 +        id="env-wrapper-with-its-own-option",
++    ),
++    # `env -S` carries a whole command in one shell word. GNU env splits it at
++    # execution time; until the guard split it too, the scan saw no `git` token
++    # and emitted no inner stage, so every rule was unreachable behind a
++    # wrapper the guard already knew about.
++    pytest.param(
++        'env -S "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath '
++        'GIT_CONFIG_VALUE_0=/dev/null git commit -m x"',
++        "disables the repository's hooks",
++        id="env-split-string-spaced",
++    ),
++    pytest.param(
++        'env -S"git commit --no-verify -m x"',
++        "skips the pre-commit",
++        id="env-split-string-attached",
++    ),
++    pytest.param(
++        'env --split-string="git commit --no-verify -m x"',
++        "skips the pre-commit",
++        id="env-split-string-long-equals",
++    ),
++    pytest.param(
++        'env --split-string "git push origin main"',
++        "protected branch",
++        id="env-split-string-long-spaced",
 +    ),
 +    # `--config-env` names a variable, not a value. Recording the NAME meant the
 +    # alias body read as the literal string `ALIAS_BODY`, which matches no
