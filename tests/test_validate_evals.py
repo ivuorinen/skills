@@ -54,6 +54,55 @@ def _evals(tmp_path: Path, data, name: str = "my-skill") -> list[str]:
     return errors
 
 
+def _with(tmp_path: Path, **blocks) -> list[str]:
+    """Run one case carrying the given optional resource blocks."""
+    return _evals(tmp_path, {"skill_name": "my-skill", "evals": [VALID_CASE | blocks]})
+
+
+def test_resource_blocks_are_optional(tmp_path):
+    """A case without counters still grades; the blocks are for a harness to fill."""
+    assert _evals(tmp_path, {"skill_name": "my-skill", "evals": [VALID_CASE]}) == []
+
+
+def test_valid_usage_and_execution_blocks_pass(tmp_path):
+    assert (
+        _with(
+            tmp_path,
+            usage={"logical_input_tokens": 38142, "uncached_input_tokens": 9277},
+            execution={"full_file_reads": 2, "range_reads": 17},
+        )
+        == []
+    )
+
+
+def test_a_non_object_resource_block_is_rejected(tmp_path):
+    assert _has(_with(tmp_path, usage=[1, 2]), "'usage' must be an object")
+
+
+def test_an_unknown_counter_is_an_error_not_a_warning(tmp_path):
+    """A typo'd counter reads as a zero in every aggregate expecting the real name."""
+    errors = _with(tmp_path, usage={"tokens": 100})
+    assert _has(errors, "unknown counter 'tokens'")
+    assert _has(errors, "logical_input_tokens")
+
+
+def test_a_counter_must_be_a_non_negative_integer(tmp_path):
+    assert _has(_with(tmp_path, usage={"output_tokens": -1}), "non-negative integer")
+    assert _has(_with(tmp_path, usage={"output_tokens": "9277"}), "non-negative integer")
+    assert _has(_with(tmp_path, usage={"output_tokens": 1.5}), "non-negative integer")
+
+
+def test_a_boolean_is_not_accepted_as_a_counter(tmp_path):
+    """`True` is an int in Python; a dashboard plotting it gets a silent 1."""
+    assert _has(_with(tmp_path, execution={"model_calls": True}), "non-negative integer")
+
+
+def test_execution_counters_are_validated_against_their_own_vocabulary(tmp_path):
+    """The two blocks answer different questions and must not share a namespace."""
+    assert _has(_with(tmp_path, execution={"output_tokens": 1}), "unknown counter 'output_tokens'")
+    assert _has(_with(tmp_path, usage={"model_calls": 1}), "unknown counter 'model_calls'")
+
+
 def _triggers(tmp_path: Path, data, name: str = "my-skill") -> list[str]:
     skill = _skill(tmp_path, name)
     path = _write(skill, "trigger-queries.json", data)

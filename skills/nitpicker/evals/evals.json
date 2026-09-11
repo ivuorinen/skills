@@ -66,6 +66,18 @@
         "No finding is filed without a cited file, line, and reproduction",
         "An empty result is reported as empty, not padded with advisory-severity filler"
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "audit the security of this repo but keep the token spend down — it's a big codebase and I don't want you reading every file",
+      "expected_output": "Evidence is acquired progressively: a context pack narrows the surface to candidate ranges and only those ranges are opened. Every filed finding was re-read from the original source at its cited range before it was written. Coverage is still reported across the whole attack surface, not only the files that were opened.",
+      "assertions": [
+        "A context pack (np_context_pack, else scripts/context_pack.py) is built before any full-file read",
+        "No finding is filed from pack output alone — the original source is re-read at the cited range first",
+        "Every finding names a file and a line range",
+        "A scanner that returns zero findings is reported as unverified unless a known-positive control is named",
+        "The run summary states what was not read and why, rather than implying whole-repo coverage"
+      ]
     }
   ]
 }

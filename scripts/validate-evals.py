@@ -30,6 +30,35 @@ from pathlib import Path
 
 _SPLITS = ("train", "validation")
 
+# Optional per-case resource counters. Their names are the schema: an eval
+# harness fills them, a dashboard reads them, and nothing else in the repo
+# defines what "tokens" means for a run.
+#
+# The split into two blocks is load-bearing, not tidiness. A single `tokens`
+# number cannot answer either question that matters — logical context size and
+# provider cost diverge once a prompt cache is in play, and the two are billed
+# and rate-limited differently. `usage` is what the provider counted;
+# `execution` is what the agent did, which is where a retrieval regression shows
+# up first: `full_file_reads` climbing while `range_reads` falls is a retriever
+# that stopped working, visible long before the token totals move.
+USAGE_KEYS = (
+    "logical_input_tokens",
+    "uncached_input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+    "output_tokens",
+    "tool_result_tokens",
+    "repository_source_tokens",
+)
+EXECUTION_KEYS = (
+    "model_calls",
+    "tool_calls",
+    "full_file_reads",
+    "range_reads",
+    "latency_ms",
+)
+
 
 def _load(path: Path, errors: list[str]) -> dict | None:
     """Parse a JSON object, recording a diagnostic instead of raising."""
@@ -63,6 +92,31 @@ def _check_files(
             err(f"eval {label} references missing input file {ref!r}")
 
 
+def _check_resources(
+    block: object, label: str | int, err: Callable[[str], None], keys: tuple[str, ...], field: str
+) -> None:
+    """Validate an optional non-negative-integer counter block.
+
+    `usage` and `execution` record what a case cost. Both are optional — a case
+    without them still grades — but a malformed one is worse than an absent one:
+    a dashboard reading `uncached_input_tokens` from a string, or from a
+    negative, plots a token trend that is silently wrong and stays that way
+    until someone re-derives the number by hand.
+
+    An unknown key is an error rather than a warning. The whole point of
+    recording cost is comparing runs, and a typo'd counter reads as a zero in
+    every aggregate that expects the real name.
+    """
+    if not isinstance(block, dict):
+        err(f"eval {label} '{field}' must be an object; got {type(block).__name__}")
+        return
+    for key, value in block.items():
+        if key not in keys:
+            err(f"eval {label} '{field}' has unknown counter {key!r}; known: {', '.join(keys)}")
+        elif not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            err(f"eval {label} '{field}.{key}' must be a non-negative integer; got {value!r}")
+
+
 def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[str], None]) -> None:
     """Check one evals.json test case (id uniqueness handled by the caller)."""
     for field in ("prompt", "expected_output"):
@@ -78,6 +132,10 @@ def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[st
         err(f"eval {label} has an empty assertion")
 
     _check_files(case.get("files", []), label, skill_dir, err)
+    if "usage" in case:
+        _check_resources(case["usage"], label, err, USAGE_KEYS, "usage")
+    if "execution" in case:
+        _check_resources(case["execution"], label, err, EXECUTION_KEYS, "execution")
 
 
 def _check_id(raw_id: object, index: int, seen: set, err: Callable[[str], None]) -> str | int:
