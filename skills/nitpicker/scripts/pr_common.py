@@ -20,6 +20,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
@@ -371,30 +372,23 @@ def _credential_safe(url: str, allowed_netloc: str) -> bool:
     return split.scheme == "https" and split.netloc == allowed_netloc
 
 
-# Headers that may cross an origin on a redirect. Everything else is dropped.
-#
-# An allow-list, not a deny-list of credential names, because a deny-list fails
-# open for whatever is added after it is written — and that already happened
-# here. The handler named `authorization` alone, which covers GitHub and
-# Bitbucket; GitLab authenticates with `PRIVATE-TOKEN`, so a redirect off the
-# pinned host forwarded a GitLab PAT intact while the docstring claimed the
-# credential was stripped. Listing what is safe means the next provider's header
-# is protected by default rather than by someone remembering this line exists.
-#
-# These three are the ones urllib or this module set for content negotiation,
-# never for authentication: `_UA`, and the `Accept` each provider sends.
-_SAFE_REDIRECT_HEADERS = frozenset({"user-agent", "accept", "content-type"})
-
-
 class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Strip every credential header on a redirect that leaves the pinned API host.
+    """Refuse any redirect that leaves https-on-the-pinned-API-host.
 
-    urllib follows 3xx transparently and, unlike requests, carries the header
-    across hosts — so without this a cross-host redirect forwards the token
-    off-host, defeating the same-host guard in `_open`. The allowed netloc is
-    per-opener rather than global: three platforms mean three different hosts,
-    and a process-wide handler pinned to one of them would silently stop
-    protecting the other two.
+    urllib follows 3xx transparently and, unlike requests, carries request
+    headers across hosts — so without this a cross-host redirect forwards the
+    token off-host, defeating the same-host guard in `http_json`. The allowed
+    netloc is per-opener rather than global: three platforms mean three
+    different hosts, and a process-wide handler pinned to one of them would
+    silently stop protecting the other two.
+
+    This handler used to *strip* the credential and follow the hop anyway. That
+    kept the token safe and left the reach: the redirect target is chosen
+    wholly by the server, so a repository whose remote points at an
+    attacker-run instance turned `cr` into an SSRF probe from the developer's
+    machine, and whatever answered came back as the PR's review surface.
+    Refusing is the only reading under which `_credential_safe` means the same
+    thing here as it does in `_check_url`.
     """
 
     def __init__(self, allowed_netloc: str):
@@ -402,27 +396,27 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Keep only `_SAFE_REDIRECT_HEADERS` unless the target is still https
-        on the pinned host.
+        """Raise on a redirect the pinned-host predicate rejects; else proceed.
 
-        urllib copies request headers onto a redirect by default, so a server
-        answering with a redirect elsewhere — or to plaintext on its own
-        hostname — would be handed the credential the caller declared for this
-        host. The handler is built per request with the netloc it may keep the
-        header for, because a shared instance would have to be told which host
-        applies on every call, and the one that forgot would leak silently.
+        Raising rather than returning `None`: `None` makes urllib stop and hand
+        the 3xx back as the response, so the caller would parse an empty body
+        and read it as a PR with no comments. A refused hop must be a failure,
+        not a quietly short answer.
 
-        Strips by complement rather than by name: every provider chooses its own
-        auth header (`Authorization` on GitHub and Bitbucket, `PRIVATE-TOKEN` on
-        GitLab), so a name list protects whichever ones its author happened to
-        know about. urllib stores header keys `.capitalize()`d, which is why the
-        comparison lowercases rather than matching the spelling a caller passed.
+        `_credential_safe` is the same predicate `_check_url` applies to the
+        first URL and to every paginated successor, so every server-chosen URL
+        in this module is now judged by one function — which is the property
+        that function's docstring already claimed.
         """
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and not _credential_safe(newurl, self.allowed_netloc):
-            for key in [k for k in new.headers if k.lower() not in _SAFE_REDIRECT_HEADERS]:
-                del new.headers[key]
-        return new
+        if not _credential_safe(newurl, self.allowed_netloc):
+            raise urllib.error.HTTPError(
+                newurl,
+                code,
+                f"refusing to follow a redirect off https://{self.allowed_netloc}: {newurl!r}",
+                headers,
+                fp,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _check_url(url: str, allowed_netloc: str) -> None:

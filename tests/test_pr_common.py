@@ -7,11 +7,14 @@ loosened host check still returns data, and a dropped envelope key still parses.
 """
 
 import email.message
+import http.server
 import importlib.util
 import json
 import runpy
 import subprocess
 import sys
+import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -482,10 +485,64 @@ _PROVIDER_AUTH_HEADERS = [
     pytest.param(("PRIVATE-TOKEN", "glpat-secret"), id="gitlab"),
 ]
 
-# Redirect targets that must never carry a credential, and why each is unsafe.
+
+def _serve(handler: type) -> tuple[http.server.HTTPServer, int]:
+    """A throwaway loopback HTTP server on an ephemeral port, plus that port.
+
+    Port 0 so concurrent test runs cannot collide, and a daemon thread so a
+    failed assertion cannot leave the suite hanging on a live server.
+    """
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+def _constant_body(body: bytes) -> type:
+    """A handler answering every GET with `body`. Stands in for the host a
+    redirect would reach — if its content ever comes back, the hop was followed."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        # Signature matches BaseHTTPRequestHandler's exactly — `format` is a
+        # keyword parameter there, so collapsing it into *args is an
+        # incompatible override. Silences the per-request line on stderr.
+        def log_message(self, format, *args):
+            pass  # keep the suite's output clean
+
+    return Handler
+
+
+def _redirect_to(location: str) -> type:
+    """A handler answering every GET with a 302 to `location`. Stands in for the
+    pinned API host, which is where a hostile or compromised instance decides
+    where the client goes next."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.end_headers()
+
+        # Signature matches BaseHTTPRequestHandler's exactly — `format` is a
+        # keyword parameter there, so collapsing it into *args is an
+        # incompatible override. Silences the per-request line on stderr.
+        def log_message(self, format, *args):
+            pass
+
+    return Handler
+
+
+# Redirect targets that must never be followed, and why each is unsafe.
 _UNSAFE_REDIRECTS = [
     pytest.param("https://evil.example/b", id="off-host"),
     pytest.param("http://api.github.com/b", id="same-host-scheme-downgrade"),
+    pytest.param("http://127.0.0.1:8080/latest/meta-data/", id="loopback-ssrf"),
 ]
 
 
@@ -521,35 +578,39 @@ class TestTokenSafeRedirectHandler:
 
     @pytest.mark.parametrize("auth", _PROVIDER_AUTH_HEADERS)
     @pytest.mark.parametrize("new_url", _UNSAFE_REDIRECTS)
-    def test_credential_stripped_on_every_unsafe_redirect(self, auth, new_url):
-        """No provider's auth header survives a redirect the guard calls unsafe.
+    def test_unsafe_redirect_is_refused_not_followed(self, auth, new_url):
+        """An unsafe hop raises, whichever provider's credential is in flight.
 
-        Two independent failures, one assertion. Off-host hands the credential
-        to a third party. Same-host `https` -> `http` keeps the hostname and puts
-        the token on the wire in cleartext — `_check_url` refuses that URL on the
-        next paginated hop, so the handler agreeing is what keeps one predicate
-        from disagreeing with itself.
+        Three independent failures, one assertion. Off-host hands the request to
+        a third party. Same-host `https` -> `http` keeps the hostname and puts
+        the token on the wire in cleartext. Loopback is the SSRF shape: the
+        redirect target is chosen entirely by the server, so an attacker-run
+        instance could aim the fetch at anything the developer's machine can
+        reach.
+
+        This used to strip the credential and follow the hop. Stripping kept the
+        token safe and left the reach — and returned the other host's body to
+        the caller as if the pinned API had answered it.
         """
-        new = self._redirect("api.github.com", new_url, auth)
-        assert not any(k.lower() == auth[0].lower() for k in new.headers)
+        with pytest.raises(urllib.error.HTTPError):
+            self._redirect("api.github.com", new_url, auth)
 
     @pytest.mark.parametrize("auth", _PROVIDER_AUTH_HEADERS)
     def test_credential_kept_on_a_same_host_redirect(self, auth):
-        """The stripping is conditional, not unconditional.
+        """The refusal is conditional, not unconditional.
 
-        Without this the handler could pass every test above by deleting the
-        header on every hop, which would break same-host pagination instead of
-        securing it.
+        Without this the handler could pass every test above by raising on every
+        hop, which would break same-host pagination instead of securing it.
         """
         new = self._redirect("api.github.com", "https://api.github.com/b", auth)
         assert any(k.lower() == auth[0].lower() for k in new.headers)
 
-    def test_content_negotiation_headers_survive_an_unsafe_redirect(self):
-        """Stripping by complement must not take the non-credential headers.
+    def test_content_negotiation_headers_survive_a_safe_redirect(self):
+        """A permitted hop carries the whole request, not a reduced one.
 
         `Accept` and `User-Agent` carry no secret and every provider sets them,
-        so dropping them would turn a security fix into a protocol bug — the
-        failure mode an allow-list invites and a deny-list does not.
+        so losing them on a legitimate same-host redirect would turn a security
+        fix into a protocol bug.
         """
         req = urllib.request.Request(
             "https://api.github.com/a",
@@ -562,17 +623,18 @@ class TestTokenSafeRedirectHandler:
             302,
             "Found",
             email.message.Message(),  # type: ignore[arg-type]
-            "https://evil.example/b",
+            "https://api.github.com/b",
         )
         assert new is not None
         assert any(k.lower() == "accept" for k in new.headers)
-        assert not any(k.lower() == "authorization" for k in new.headers)
+        assert any(k.lower() == "authorization" for k in new.headers)
 
     def test_the_handler_and_the_url_check_agree(self):
         """Both guard the same thing, so they share one predicate.
 
-        Pinned because the bug above was not a wrong rule — it was the right
-        rule written down twice and implemented once.
+        Pinned because the bug this replaced was not a wrong rule — it was the
+        right rule written down twice and implemented once. `_check_url` refused
+        the URL; the handler disarmed it and went anyway.
         """
         for url in (
             "https://api.github.com/b",
@@ -580,16 +642,48 @@ class TestTokenSafeRedirectHandler:
             "https://evil.example/b",
         ):
             safe = c._credential_safe(url, "api.github.com")
-            kept = any(
-                k.lower() == "authorization" for k in self._redirect("api.github.com", url).headers
-            )
-            assert safe is kept, f"{url}: predicate says {safe}, handler says {kept}"
+            try:
+                self._redirect("api.github.com", url)
+                followed = True
+            except urllib.error.HTTPError:
+                followed = False
+            assert safe is followed, f"{url}: predicate says {safe}, handler says {followed}"
 
     def test_pinned_host_is_per_instance_not_global(self):
         # Three platforms mean three hosts; a handler pinned to one of them must
         # not silently accept another's.
-        new = self._redirect("gitlab.acme.com", "https://api.github.com/b")
-        assert not any(k.lower() == "authorization" for k in new.headers)
+        with pytest.raises(urllib.error.HTTPError):
+            self._redirect("gitlab.acme.com", "https://api.github.com/b")
+
+    def test_a_real_opener_never_returns_the_redirected_hosts_body(self):
+        """Through the opener `http_json` builds: the reach is closed, not just the header.
+
+        The tests above prove the handler's verdict in isolation. This proves
+        the consequence the fix was about — that a server which redirects
+        elsewhere cannot get its body returned as the pinned API's answer.
+
+        Driven against two throwaway loopback servers rather than through
+        `http_json` itself: `_check_url` refuses a plaintext URL before any
+        request is made, so reaching the redirect path through the public
+        function would need TLS. The opener is the object under test either way
+        — `http_json` builds exactly this one and does nothing else to the
+        response.
+        """
+        internal, iport = _serve(_constant_body(b'{"secret": "INTERNAL"}'))
+        api, aport = _serve(_redirect_to(f"http://127.0.0.1:{iport}/latest/meta-data/"))
+        try:
+            pinned = f"127.0.0.1:{aport}"
+            opener = urllib.request.build_opener(c._TokenSafeRedirectHandler(pinned))
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{aport}/api/v4/x",
+                headers={"Authorization": "token secret"},
+            )
+            with pytest.raises(urllib.error.HTTPError) as excinfo:
+                opener.open(req, timeout=10)
+            assert "refusing to follow a redirect" in str(excinfo.value)
+        finally:
+            internal.shutdown()
+            api.shutdown()
 
 
 # ── pagination ────────────────────────────────────────────────────────────────
