@@ -332,7 +332,16 @@ def _tracked_files(root: Path) -> list[Path]:
 
 
 def _walk(root: Path) -> list[Path]:
-    """Filtered recursive walk, used only when git cannot enumerate the tree."""
+    """Filtered recursive walk, used only when git cannot enumerate the tree.
+
+    Symlinked entries are skipped outright. `is_dir()` follows a link, so
+    `sub/link -> ..` would push its own ancestor back on the stack and the walk
+    would never terminate — and this is the non-git path, so the tree is exactly
+    the kind nobody vetted. `GIT_TIMEOUT` does not bound it (no git runs here),
+    and `mcp_server` serves stdio single-threaded, so one such call would stall
+    every later tool call in the session. The containment test in `_read`
+    guards the read, not the traversal.
+    """
     out: list[Path] = []
     stack = [root]
     while stack:
@@ -342,6 +351,8 @@ def _walk(root: Path) -> list[Path]:
         except OSError:
             continue
         for entry in entries:
+            if entry.is_symlink():
+                continue
             if entry.is_dir():
                 if entry.name not in _SKIP_DIRS:
                     stack.append(entry)

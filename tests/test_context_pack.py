@@ -8,6 +8,7 @@ to make visible.
 """
 
 import json
+import os
 import runpy
 import subprocess
 import sys
@@ -126,10 +127,43 @@ def test_walk_skips_a_directory_it_cannot_read(tmp_path, monkeypatch):
     assert {p.name for p in cp._walk(tmp_path)} == {"a.py"}
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX-only special file")
 def test_walk_ignores_an_entry_that_is_neither_file_nor_directory(tmp_path):
+    """A FIFO, not a dangling symlink: the symlink skip now runs first.
+
+    Using a link here would exercise that skip instead and leave the
+    neither-file-nor-directory fall-through untested — which is what happened,
+    and coverage caught it.
+    """
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    os.mkfifo(tmp_path / "pipe")
+    assert {p.name for p in cp._walk(tmp_path)} == {"a.py"}
+
+
+def test_walk_skips_a_dangling_symlink(tmp_path):
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "dangling").symlink_to(tmp_path / "gone")
     assert {p.name for p in cp._walk(tmp_path)} == {"a.py"}
+
+
+def test_walk_does_not_follow_a_self_referential_directory_symlink(tmp_path):
+    """`is_dir()` follows a link, so `sub/link -> ..` re-enters its own ancestor.
+
+    The walk would push that ancestor back on the stack forever. Nothing bounds
+    it — no git runs on this path, so `GIT_TIMEOUT` does not apply — and
+    `mcp_server` serves stdio single-threaded, so the hang would take every
+    later tool call in the session with it.
+
+    A timeout would make this test flaky and would still hang the suite on a
+    regression; asserting the returned set is exact catches the same defect the
+    moment the link is traversed even once.
+    """
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.py").write_text("y = 2\n", encoding="utf-8")
+    (sub / "loop").symlink_to(tmp_path, target_is_directory=True)
+    assert {p.name for p in cp._walk(tmp_path)} == {"a.py", "b.py"}
 
 
 def test_scoped_refuses_a_path_escaping_the_root(tmp_path):
