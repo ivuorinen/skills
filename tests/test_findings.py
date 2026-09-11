@@ -1301,28 +1301,41 @@ def test_append_ledger_commits_the_directory_entry_when_it_creates_the_ledger(
     property is which descriptors reach the disk barrier, and that is directly
     observable. `write_ledger` already does this for its rename; the two were
     asymmetric, not the ordering.
+
+    Identity is `(st_dev, st_ino)` from `os.fstat`, not a path resolved through
+    `/proc/self/fd/<fd>`: that directory is Linux-only, so on macOS the readlink
+    raised, the descriptor fell back to its number, and the assertion below
+    blamed `append_ledger` for a platform difference.
     """
-    synced: list[str] = []
+    synced: list[tuple[int, int]] = []
     real_fsync = os.fsync
 
     def spy(fd):
-        try:
-            synced.append(str(Path(f"/proc/self/fd/{fd}").readlink()))
-        except OSError:  # pragma: no cover - Linux-only introspection
-            synced.append(str(fd))
+        """Record which object each fsynced descriptor refers to, then sync it.
+
+        Wraps rather than replaces: the durability being asserted has to still
+        happen, or the test would pass against a build that syncs nothing.
+        """
+        st = os.fstat(fd)
+        synced.append((st.st_dev, st.st_ino))
         return real_fsync(fd)
+
+    def ident(path: Path) -> tuple[int, int]:
+        """The same `(st_dev, st_ino)` identity for a path, to compare against."""
+        st = path.stat()
+        return (st.st_dev, st.st_ino)
 
     monkeypatch.setattr(os, "fsync", spy)
 
     findings.append_ledger(tmp_path, {"id": "y"})
-    assert str(tmp_path) in synced, "the ledger's own creation was not committed"
+    assert ident(tmp_path) in synced, "the ledger's own creation was not committed"
 
     # And not on every append after that — the entry already exists, so a second
     # directory fsync would be cost with nothing bought.
     synced.clear()
     findings.append_ledger(tmp_path, {"id": "z"})
-    assert str(tmp_path) not in synced
-    assert str(findings.ledger_path(tmp_path)) in synced
+    assert ident(tmp_path) not in synced
+    assert ident(findings.ledger_path(tmp_path)) in synced
 
 
 def test_write_ledger_survives_a_directory_that_cannot_be_opened(tmp_path, monkeypatch):
