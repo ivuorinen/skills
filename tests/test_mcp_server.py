@@ -239,6 +239,20 @@ def test_process_sarif_rejects_an_empty_paths_array(tmp_path):
     assert "non-empty array" in result["content"][0]["text"]
 
 
+def test_context_pack_rejects_a_paths_string(tmp_path):
+    """A string would be iterated character by character, and answer "empty".
+
+    `_scoped` takes `paths` as prefixes. Every single character resolves inside
+    the root, so nothing raises and nothing matches — the tool returns an empty
+    pack, which an agent reads as a repository containing nothing. The server
+    does not validate against `inputSchema`, so the type check has to be here.
+    """
+    mod = _load()
+    result = _call(mod, "np_context_pack", {"mode": "inventory", "paths": "skills"})
+    assert result["isError"] is True
+    assert "array of path prefixes" in result["content"][0]["text"]
+
+
 def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
     """The tool must return the gate verdict, not just the per-file findings.
 

@@ -638,6 +638,17 @@ def _context_pack(args: dict) -> str:
     `ValueError` says fix the arguments.
     """
     root = _project_root(args)
+    # Checked here, not left to `inputSchema` — this server does not validate
+    # arguments against it, as `_new_finding` states. A `paths` string would be
+    # iterated character by character in `_scoped`, and each single-character
+    # prefix resolves inside the root, so nothing raises and no tracked file
+    # matches any of them. The tool would answer with an empty pack, which reads
+    # to an agent as a repository containing nothing — the exact misreading
+    # `Pack.omitted` exists to prevent. `_process_sarif` guards its own `paths`
+    # the same way.
+    paths = args.get("paths", [])
+    if not isinstance(paths, list):
+        raise ValueError(f"paths must be an array of path prefixes, got {paths!r}")
     try:
         if args.get("self_test"):
             return _compact(context_pack.self_test(root))
@@ -648,7 +659,7 @@ def _context_pack(args: dict) -> str:
                     goal=args.get("goal", ""),
                     mode=args["mode"],
                     budget_tokens=args.get("budget_tokens", 6000),
-                    paths=args.get("paths", []),
+                    paths=paths,
                     changed_only=args.get("changed_only", False),
                     base=args.get("base", "HEAD"),
                 )
