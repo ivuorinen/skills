@@ -35,6 +35,13 @@ def _repo(tmp_path: Path, files: dict[str, str], commit: bool = True) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
+    # Pin the two global settings that can break a fixture commit on a
+    # contributor's machine and nowhere else: `commit.gpgsign=true` with no key
+    # available fails `check=True` and takes most of this module with it, and a
+    # global `core.hooksPath` would run that machine's hooks inside every
+    # throwaway repository here.
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "core.hooksPath", "/dev/null"], cwd=tmp_path, check=True)
     if commit:
         subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
         subprocess.run(["git", "commit", "-qm", "init"], cwd=tmp_path, check=True)
