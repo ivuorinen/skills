@@ -16,5 +16,9 @@ export async function fetchUser(url: string): Promise<User> {
 
 export function isUser(value: unknown): value is User {
   const v = value as Record<string, unknown>;
-  return typeof v?.id === "string" && typeof v?.email === "string";
+  return (
+    typeof v?.id === "string" &&
+    typeof v?.email === "string" &&
+    typeof v?.admin === "boolean"
+  );
 }
