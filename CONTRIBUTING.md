@@ -10,26 +10,15 @@ of it is aspirational.
 make check
 ```
 
-`check` runs these targets in this order (`make help` prints the current list;
-the `Makefile` is authoritative):
+```bash
+make help    # every target `check` runs, in order, with what each one does
+```
 
-| Step                | What it does                                                              |
-| ------------------- | ------------------------------------------------------------------------- |
-| `validate`          | `scripts/validate-skill.py` on the router, command files, internal skills |
-| `validate-evals`    | `scripts/validate-evals.py` — the `evals/` sets bundled with each skill   |
-| `validate-rules`    | `scripts/validate-rules.py` — `.claude/rules/` structure + path freshness |
-| `version-sync`      | `scripts/check-version-sync.py` — version equal across every manifest     |
-| `make-help`         | `scripts/check-make-help.py` — every target documented in `make help`     |
-| `lock-check`        | `uv lock --check` — `uv.lock` not stale against `pyproject.toml`          |
-| `lint`              | `ruff check scripts/ tests/ skills/`                                      |
-| `format-check`      | `ruff format --check` (no writes)                                         |
-| `security`          | `bandit` over `skills/` + `scripts/`; config in `[tool.bandit]`           |
-| `opengrep`          | `scripts/check-opengrep.py` — the rules Codacy reports + stale markers    |
-| `typecheck`         | `pyright` — zero floor: any error fails the gate                          |
-| `test`              | `pytest tests/`                                                           |
-| `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
-| `index-check`       | regenerates `INDEX.md`, fails if it was stale                             |
-| `pre-commit`        | full pre-commit suite (markdownlint, yamllint, gitleaks, zizmor, …)       |
+`make help` is not a convenience here, it is the list: `check-make-help.py`
+gates it against the `Makefile`'s targets and `.PHONY` in both directions, so it
+cannot drift. A table transcribed into this file has no such gate — the one that
+used to sit here was missing `ring-deps` and `bench`, both of which `check` runs
+and neither of which anything else enforces.
 
 `index-check` and `pre-commit` are the slow ones. The CI `Validate` job is the
 authoritative gate — a green `make check` locally is the fast path to it, not a
