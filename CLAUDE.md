@@ -84,15 +84,22 @@ IDs are content-hashed — never hand-assigned, never reused. `migrate` converts
 `cr` reads a PR's review surface through two entry points —
 `fetch-pr-comments.py` and `fetch-pr-status.py` — that cover GitHub, GitLab and
 Bitbucket Cloud behind **one** JSON format. Both are thin: they resolve their
-sibling directory and delegate to `pr_common.run_cli`, which parses the argument
-forms, dispatches on platform, and maps exceptions to the 0/1/2 exit contract.
+sibling directory and delegate to `pr_cli.run_cli`, which parses the argument
+forms and maps exceptions to the 0/1/2 exit contract.
 
-`pr_common.py` owns everything shared — git-remote parsing, platform detection,
-the `Target` (platform + git host + project path, from which the API base is
-derived), the credential-pinned HTTP layer, both pagination styles, and the
-output envelopes. One provider module per platform (`pr_github.py`,
-`pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly `fetch_comments(target, n)`
-and `fetch_status(target, n)`.
+`pr_common.py` is the **port**, and owns everything shared — git-remote parsing,
+platform detection, the `Target` (platform + git host + project path, from which
+the API base is derived), the credential-pinned HTTP layer, both pagination
+styles, the output envelopes, and `provider_for` dispatch. One provider module
+per platform (`pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly
+`fetch_comments(target, n)` and `fetch_status(target, n)`.
+
+`pr_cli.py` is the CLI **driving adapter** and is deliberately not part of that
+port: argv parsing, stdout rendering and exit codes are facts about running as a
+command, and `pr_common` is imported by all three providers and by
+`mcp_server.py` — the other driving adapter — none of which run as this CLI.
+Keeping the two apart is what lets `pr_common` stay the library its docstring
+claims. `make ring-deps` prints the resulting graph.
 
 Two invariants make the shared format worth having, and both are pinned by
 tests. A field a platform cannot supply is present and empty or null rather than

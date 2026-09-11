@@ -281,9 +281,11 @@ class TestResolveTarget:
         assert c._looks_like_host("git.acme.com") is False
 
     def test_custom_self_hosted_host_still_reachable_through_the_url_form(self):
-        target, number = c.parse_cli_args(
-            ["https://git.acme.com/g/p/-/merge_requests/4", "--platform", "gitlab"]
-        )
+        # The port's half of the URL form: a host no platform claims is carried
+        # through as long as --platform names one. `pr_cli` pairs these two calls;
+        # tested here without it so the port keeps its own proof.
+        host, path, number = c.parse_pr_url("https://git.acme.com/g/p/-/merge_requests/4")
+        target = c.make_target(host, path, "gitlab")
         assert (target.host, target.path, number) == ("git.acme.com", "g/p", 4)
 
     def test_gitlab_accepts_nested_groups(self):
@@ -881,99 +883,7 @@ class TestSummaries:
         }
 
 
-# ── CLI argument forms ────────────────────────────────────────────────────────
-
-
-class TestParseCliArgs:
-    def test_pr_url_alone(self):
-        target, number = c.parse_cli_args(["https://gitlab.com/g/p/-/merge_requests/7"])
-        assert (target.platform, target.path, number) == ("gitlab", "g/p", 7)
-
-    def test_repo_and_number(self):
-        target, number = c.parse_cli_args(["owner/repo", "42"])
-        assert (target.path, number) == ("owner/repo", 42)
-
-    def test_legacy_owner_repo_number_form_still_accepted(self):
-        target, number = c.parse_cli_args(["owner", "repo", "42"])
-        assert (target.path, number) == ("owner/repo", 42)
-
-    def test_number_alone_reads_the_git_remote(self):
-        with patch.object(c, "git_remote_url", return_value="git@github.com:o/r.git"):
-            target, number = c.parse_cli_args(["5"])
-        assert (target.path, number) == ("o/r", 5)
-
-    @pytest.mark.parametrize("argv", [["5", "--remote", "upstream"], ["--remote=upstream", "5"]])
-    def test_remote_flag_selects_which_remote_is_read(self, argv):
-        with patch.object(c, "git_remote_url", return_value="git@github.com:o/r.git") as remote:
-            c.parse_cli_args(argv)
-        assert remote.call_args[0][0] == "upstream"
-
-    @pytest.mark.parametrize(
-        "argv", [["--platform", "gitlab", "g/p", "1"], ["--platform=gitlab", "g/p", "1"]]
-    )
-    def test_both_flag_spellings(self, argv):
-        assert c.parse_cli_args(argv)[0].platform == "gitlab"
-
-    def test_flag_without_value_is_a_usage_error(self):
-        with pytest.raises(c.UsageError):
-            c.parse_cli_args(["g/p", "1", "--platform"])
-
-    def test_unknown_flag_is_not_treated_as_a_repository(self):
-        # Otherwise a typo'd flag is read as a repo name and reported as a bad path.
-        with pytest.raises(c.UsageError, match="unknown flag"):
-            c.parse_cli_args(["--platfrom=gitlab", "g/p", "1"])
-
-    @pytest.mark.parametrize("argv", [[], ["a", "b", "c", "d"]])
-    def test_wrong_arity(self, argv):
-        with pytest.raises(c.UsageError):
-            c.parse_cli_args(argv)
-
-
-# ── run_cli exit contract ─────────────────────────────────────────────────────
-
-
-class TestRunCli:
-    def test_help_prints_the_doc_and_exits_zero(self, capsys):
-        assert c.run_cli("USAGE DOC", "fetch_comments", ["--help"]) == 0
-        assert "USAGE DOC" in capsys.readouterr().out
-
-    def test_help_wins_over_a_positional_argument(self, capsys):
-        # --help must never be resolved as a repository and answered with a path
-        # error instead of usage text.
-        assert c.run_cli("USAGE DOC", "fetch_comments", ["owner/repo", "--help"]) == 0
-        assert "USAGE DOC" in capsys.readouterr().out
-
-    def test_usage_error_is_exit_2(self, capsys):
-        assert c.run_cli("doc", "fetch_comments", []) == 2
-        assert "[error]" in capsys.readouterr().err
-
-    def test_runtime_error_is_exit_1(self, capsys):
-        provider = MagicMock()
-        provider.fetch_comments.side_effect = c.TransportError("no auth")
-        with patch.object(c, "provider_for", return_value=provider):
-            assert c.run_cli("doc", "fetch_comments", ["o/r", "1"]) == 1
-        assert "no auth" in capsys.readouterr().err
-
-    def test_success_prints_json_to_stdout_and_exits_zero(self, capsys):
-        provider = MagicMock()
-        provider.fetch_comments.return_value = {"threads": []}
-        with patch.object(c, "provider_for", return_value=provider):
-            assert c.run_cli("doc", "fetch_comments", ["o/r", "1"]) == 0
-        assert json.loads(capsys.readouterr().out) == {"threads": []}
-
-    def test_dispatches_to_the_targets_platform(self):
-        with patch.object(c, "provider_for") as provider_for:
-            c.run_cli("doc", "fetch_status", ["https://bitbucket.org/ws/repo/pull-requests/3"])
-        assert provider_for.call_args[0][0].platform == "bitbucket"
-
-    def test_a_usage_error_raised_by_the_provider_is_still_exit_2(self, capsys):
-        # A provider can reject its input after the target parses — that is bad
-        # usage, not a runtime failure, and the exit code has to say so.
-        provider = MagicMock()
-        provider.fetch_status.side_effect = c.UsageError("unsupported host")
-        with patch.object(c, "provider_for", return_value=provider):
-            assert c.run_cli("doc", "fetch_status", ["o/r", "1"]) == 2
-        assert "unsupported host" in capsys.readouterr().err
+# ── provider dispatch ─────────────────────────────────────────────────────────────
 
 
 class TestProviderFor:
@@ -1085,5 +995,5 @@ def test_entry_points_delegate_rather_than_reimplement():
     entry point would break the one-format guarantee, so the thinness is pinned."""
     for script in (_COMMENTS_CLI, _STATUS_CLI):
         source = script.read_text()
-        assert "pr_common.run_cli" in source
+        assert "pr_cli.run_cli" in source
         assert "urllib" not in source and "subprocess" not in source

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Shared plumbing for the PR fetchers: target resolution, HTTP, output envelopes.
 
-Imported by `pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py` and the two CLI
-entry points (`fetch-pr-comments.py`, `fetch-pr-status.py`). Stdlib-only, per
-`.claude/rules/use-uv-runner.md`; it is a library, not a CLI, so it has no
-`main()` and no `--help`.
+This is the provider *port*: the `Target` every adapter is handed, the envelope
+every adapter returns, and the transport they share. Imported by `pr_github.py`,
+`pr_gitlab.py`, `pr_bitbucket.py`, and by both driving adapters — `pr_cli.py`
+for the two CLI entry points, `mcp_server.py` for `np_pr_comments`/`np_pr_status`.
+Stdlib-only, per `.claude/rules/use-uv-runner.md`; it is a library, not a CLI, so
+it has no `main()` and no `--help`.
+
+Nothing about running as a command lives here — argv parsing, stdout rendering
+and exit codes are `pr_cli.py`'s, so that a provider and the MCP server never
+carry a delivery mechanism neither of them uses.
 
 The output envelopes below are the *contract*: every provider returns the same
 JSON shape, so `cr` reads one format regardless of platform. A field a platform
@@ -790,12 +796,7 @@ def summarize_reviews(reviews: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-def emit(payload: Any) -> None:
-    """Structured data to stdout — the only thing that ever goes there."""
-    print(json.dumps(payload, indent=2))
-
-
-# ── CLI plumbing shared by both entry points ─────────────────────────────────
+# ── provider dispatch ────────────────────────────────────────────────────────
 _PROVIDER_MODULES = {
     "github": "pr_github",
     "gitlab": "pr_gitlab",
@@ -822,64 +823,14 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
     return host, path, int(match.group(1))
 
 
-def _split_flags(argv: list[str]) -> tuple[list[str], str, str]:
-    """(positional args, --platform value, --remote value). Both spellings of a
-    flag are accepted (`--platform x` and `--platform=x`), and an unknown flag is
-    a usage error rather than a positional — otherwise a typo'd flag would be read
-    as a repository name and reported as a bad path."""
-    platform = ""
-    remote = "origin"
-    positional: list[str] = []
-    it = iter(argv)
-    for arg in it:
-        if arg in ("--platform", "--remote"):
-            try:
-                value = next(it)
-            except StopIteration:
-                raise UsageError(f"{arg} needs a value") from None
-            if arg == "--platform":
-                platform = value
-            else:
-                remote = value
-        elif arg.startswith("--platform="):
-            platform = arg.split("=", 1)[1]
-        elif arg.startswith("--remote="):
-            remote = arg.split("=", 1)[1]
-        elif arg.startswith("-"):
-            raise UsageError(f"unknown flag: {arg!r}")
-        else:
-            positional.append(arg)
-    return positional, platform, remote
+def looks_like_pr_url(spec: str) -> bool:
+    """Whether `spec` carries a PR/MR number in a web-URL path.
 
-
-def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
-    """Resolve (target, pr_number) from the argument forms both CLIs accept.
-
-    Accepted, in the order they are tried:
-        <pr-url>                          — everything comes from the URL
-        <pr_number>                       — repo comes from the git remote
-        <owner>/<repo> <pr_number>        — also group/sub/project, or host/owner/repo
-        <owner> <repo> <pr_number>        — the 1.x GitHub form, still accepted
-    Plus `--platform github|gitlab|bitbucket` and `--remote <name>` anywhere.
+    What a PR URL looks like is domain knowledge, so it lives beside
+    `parse_pr_url` rather than in the CLI adapter that branches on it — which
+    would otherwise have to reach for the private `_URL_PR_RE`.
     """
-    positional, platform, remote = _split_flags(argv)
-
-    if len(positional) == 1 and _URL_PR_RE.search(positional[0]):
-        host, path, number = parse_pr_url(positional[0])
-        return make_target(host, path, platform), number
-    if len(positional) == 1:
-        return resolve_target_from_remote(platform, remote), parse_pr_number(positional[0])
-    if len(positional) == 2:
-        return resolve_target(positional[0], platform), parse_pr_number(positional[1])
-    if len(positional) == 3:
-        return (
-            resolve_target(f"{positional[0]}/{positional[1]}", platform),
-            parse_pr_number(positional[2]),
-        )
-    raise UsageError(
-        "expected a PR URL, a PR number, or <repo> <pr_number>. "
-        "Run with --help for the accepted forms."
-    )
+    return _URL_PR_RE.search(spec) is not None
 
 
 def resolve_target_from_remote(platform: str = "", remote: str = "origin") -> Target:
@@ -904,33 +855,3 @@ def provider_for(target: Target) -> Any:
     # it even one line further up, silently.
     # nosemgrep: non-literal-import
     return importlib.import_module(_PROVIDER_MODULES[target.platform])
-
-
-def run_cli(doc: str, operation: str, argv: list[str]) -> int:
-    """Shared main() for both entry points. Returns the process exit code.
-
-    Both CLIs differ only in which provider function they call, so the argument
-    parsing, `--help` handling, provider dispatch and exit-code mapping live here
-    once. Exit codes: 0 success, 1 runtime/API error, 2 usage error — the contract
-    every shipped tool in this repo publishes.
-
-    `--help` is handled before any argument is resolved as a repository, so the
-    flag never gets read as input and answered with a path error instead of usage.
-    """
-    if "--help" in argv or "-h" in argv:
-        print(doc)
-        return 0
-    try:
-        target, pr_number = parse_cli_args(argv)
-    except UsageError as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 2
-    try:
-        emit(getattr(provider_for(target), operation)(target, pr_number))
-    except UsageError as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 2
-    except Exception as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 1
-    return 0

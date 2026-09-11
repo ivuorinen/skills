@@ -193,7 +193,8 @@ flow.
 | `scripts/mcp_server.py` | the bundled stdio MCP server (see below) |
 | `scripts/skill_catalog.py` | `mcp_server.py` — skill/command enumeration |
 | `scripts/md_fences.py` | `findings.py`, `skill_catalog.py` and both rule analyzers — the markdown code-fence rule, defined once |
-| `scripts/pr_common.py` | both PR fetchers — targets, HTTP, shared output envelope |
+| `scripts/pr_common.py` | both PR fetchers and `mcp_server.py` — the provider port: targets, HTTP, shared output envelope |
+| `scripts/pr_cli.py` | both PR fetchers — argument forms, stdout rendering, the 0/1/2 exit contract |
 | `scripts/pr_github.py`, `scripts/pr_gitlab.py`, `scripts/pr_bitbucket.py` | both PR fetchers — one provider per platform |
 
 The two PR fetchers cover GitHub, GitLab and Bitbucket Cloud behind a single
