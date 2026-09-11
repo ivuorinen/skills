@@ -523,12 +523,60 @@ def _duplicate_table_commands(skill_body: str) -> list[str]:
     return dups
 
 
+_ALIAS_DECL = re.compile(r"\(alias(?:es)?:\s*([^)]*)\)")
+_BACKTICKED = re.compile(r"`([a-z0-9][a-z0-9-]*)`")
+
+
+def table_aliases(skill_body: str) -> list[tuple[str, str]]:
+    """(alias, command) for every alias declared in a Commands-table row.
+
+    The router has no alias map in code: the dispatcher resolves an alias by
+    reading these cells, so the cells *are* the dispatch table. That makes an
+    alias colliding with a canonical command name, or claimed by two commands,
+    a genuine ambiguity — the agent has no tiebreak to apply — rather than a
+    cosmetic slip. Nothing else checks this half of the registry; the 1:1 file
+    sync covers canonical names only.
+    """
+    found: list[tuple[str, str]] = []
+    for line in strip_fences(skill_body.splitlines()):
+        stripped = line.strip()
+        m = _CMD_ROW.match(stripped)
+        if not m or m.group(1) == "command":
+            continue
+        for decl in _ALIAS_DECL.findall(stripped):
+            found.extend((alias, m.group(1)) for alias in _BACKTICKED.findall(decl))
+    return found
+
+
+def _alias_errors(skill_md: Path, skill_body: str, table_cmds: set[str]) -> list[str]:
+    errors: list[str] = []
+    claimed: dict[str, str] = {}
+    for alias, cmd in table_aliases(skill_body):
+        if alias in table_cmds:
+            errors.append(
+                f"  ERROR  {skill_md}: `{alias}` is declared as an alias of `{cmd}` but is "
+                "also a command in its own right — the dispatcher cannot resolve it"
+            )
+        elif alias == cmd:
+            errors.append(f"  ERROR  {skill_md}: `{cmd}` is listed as an alias of itself")
+        elif alias in claimed and claimed[alias] != cmd:
+            errors.append(
+                f"  ERROR  {skill_md}: alias `{alias}` is claimed by both "
+                f"`{claimed[alias]}` and `{cmd}`"
+            )
+        elif alias in claimed:
+            errors.append(f"  ERROR  {skill_md}: alias `{alias}` is listed twice for `{cmd}`")
+        claimed.setdefault(alias, cmd)
+    return errors
+
+
 def validate_commands(  # noqa: C901
     commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
 ) -> None:
     """Cross-check the SKILL.md Commands table against commands/*.md files."""
 
     table_cmds = table_commands(skill_body)
+    errors.extend(_alias_errors(commands_dir.parent / "SKILL.md", skill_body, table_cmds))
 
     for dup in _duplicate_table_commands(skill_body):
         errors.append(

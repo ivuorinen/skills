@@ -58,6 +58,73 @@ def test_four_backtick_fence_not_closed_by_three(tmp_path):
     assert _has(_errors(tmp_path, content), "unterminated code fence")
 
 
+class TestTableAliases:
+    """Aliases are the half of the dispatch table that lives only in prose.
+
+    `table_commands` is cross-checked against `commands/*.md`; an alias has no
+    file to check against, so before this gate a duplicated or shadowing alias
+    reached users unflagged.
+    """
+
+    _ROWS = "| Command | Purpose |\n| --- | --- |\n"
+
+    def _aliases(self, rows: str):
+        return _mod.table_aliases(self._ROWS + rows)
+
+    def test_single_and_plural_declarations_both_parse(self):
+        assert self._aliases("| `a` | does a (alias: `a1`) |\n") == [("a1", "a")]
+        assert self._aliases("| `b` | does b (aliases: `b1`, `b2`) |\n") == [
+            ("b1", "b"),
+            ("b2", "b"),
+        ]
+
+    def test_a_row_without_an_alias_contributes_nothing(self):
+        assert self._aliases("| `a` | plain purpose text |\n") == []
+
+    def test_the_real_router_declares_aliases_for_several_commands(self):
+        """A control: if the parser silently stopped matching, every negative
+        test below would still pass while checking nothing."""
+        body = (Path(__file__).parent.parent / "skills/nitpicker/SKILL.md").read_text()
+        found = _mod.table_aliases(body)
+        assert len(found) > 20
+        assert ("test-auditor", "tests") in found
+        assert ("loopholes", "agent-loopholes") in found
+
+
+class TestAliasCollisions:
+    _HEAD = "| Command | Purpose |\n| --- | --- |\n"
+
+    def _errors(self, rows: str, commands: set[str]) -> list[str]:
+        return _mod._alias_errors(Path("SKILL.md"), self._HEAD + rows, commands)
+
+    def test_clean_aliases_pass(self):
+        assert (
+            self._errors("| `a` | x (alias: `a1`) |\n| `b` | y (alias: `b1`) |\n", {"a", "b"}) == []
+        )
+
+    def test_an_alias_that_is_also_a_command_is_an_error(self):
+        errors = self._errors("| `a` | x (alias: `b`) |\n| `b` | y |\n", {"a", "b"})
+        assert len(errors) == 1
+        assert "cannot resolve it" in errors[0]
+
+    def test_one_alias_claimed_by_two_commands_is_an_error(self):
+        errors = self._errors("| `a` | x (alias: `z`) |\n| `b` | y (alias: `z`) |\n", {"a", "b"})
+        assert len(errors) == 1
+        assert "claimed by both" in errors[0]
+
+    def test_an_alias_of_itself_is_an_error(self):
+        errors = self._errors("| `a` | x (alias: `a`) |\n", set())
+        assert len(errors) == 1 and "alias of itself" in errors[0]
+
+    def test_the_same_alias_listed_twice_for_one_command_is_an_error(self):
+        errors = self._errors("| `a` | x (aliases: `z`, `z`) |\n", {"a"})
+        assert len(errors) == 1 and "listed twice" in errors[0]
+
+    def test_the_shipped_router_has_no_alias_collisions(self):
+        body = (Path(__file__).parent.parent / "skills/nitpicker/SKILL.md").read_text()
+        assert _mod._alias_errors(Path("SKILL.md"), body, _mod.table_commands(body)) == []
+
+
 def test_duplicate_table_commands_detected():
     body = "| `foo` | a |\n| `foo` | dup |\n| `bar` | b |\n"
     assert _mod._duplicate_table_commands(body) == ["foo"]
