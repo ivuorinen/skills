@@ -26,6 +26,19 @@ exclude_paths:
   # Vendored: redistributed under its upstream license, not authored here.
   # See .claude/rules/vendored-skills.md and NOTICE.
   - ".claude/skills/graphify/**"
+  # Seeded-defect fixtures. Each directory holds exactly one deliberately
+  # planted defect — SQL injection, command injection, an expression-injection
+  # workflow, a public storage bucket — and `expected.json` names the line.
+  # `make bench` scores whether retrieval surfaces it. Analysing them reports
+  # the fixtures as findings about this repository's own security, which is
+  # what produced the "7 critical" count on PR #131. Nothing here is executed;
+  # the scorer only reads it.
+  #
+  # Scoped to the corpus alone: benchmarks/README.md and the scorers under
+  # scripts/ stay analysed. Matches the exclusions yamllint and zizmor already
+  # carry in .pre-commit-config.yaml and CodeQL carries in
+  # .github/codeql/codeql-config.yml.
+  - "benchmarks/corpus/**"
 
 engines:
   # Lizard reports all three shapes seen on this repository: "cyclomatic
