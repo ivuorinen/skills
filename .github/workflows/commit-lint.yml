@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+---
+name: Commit Lint
+
+# Lives in its own workflow for the same reason pr-title.yml does, and it is the
+# same defect: `Lint commit messages` is a required check, and a job skipped by
+# an `if:` reports as SUCCESS to required-status-check evaluation. This job used
+# to sit in validate-skills.yml behind `if: github.event_name == 'pull_request'`,
+# in a workflow that also declares `workflow_dispatch` — so dispatching Validate
+# on a PR's head branch posted a green `Lint commit messages` on that head SHA
+# and overwrote whatever the real pull_request run had concluded.
+#
+# The fix is structural, not a smarter `if:`. A workflow that triggers on
+# `pull_request` alone has no event on which the job could be skipped, so there
+# is no skipped-equals-success state to reach. Never add `workflow_dispatch`,
+# `push`, or a job-level `if:` here.
+#
+# The required-check context is the JOB name, not the workflow name — which is
+# why moving the job between workflows keeps the ruleset entry resolving.
+# `Lint PR title` already demonstrates this: it lives in pr-title.yml and the
+# ruleset names it bare. See .claude/rules/github-actions-security.md.
+on:
+  pull_request:
+    # No `edited`: a title edit changes no commit, so re-running this gate on it
+    # buys nothing and adds an event on which it could be mis-skipped.
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commit-lint:
+    name: Lint commit messages
+    # The pre-commit `conventional-commit-msg` hook runs at the commit-msg stage,
+    # which `pre-commit run --all-files` never executes — so without this job CI
+    # validates only the PR title, and that is a complete gate only under
+    # squash-merge. release-please silently ignores unparseable commits.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read-only: reads the PR commit range to lint subjects
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: the base..head range must be walkable
+          persist-credentials: false
+
+      - name: Validate commit subjects
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The regex is read out of .pre-commit-config.yaml at runtime rather than
+        # copied, so this gate and the commit-msg hook cannot drift apart.
+        #
+        # Read from the BASE revision, never the working tree. `actions/checkout`
+        # on `pull_request` checks out the merge result, so the tree carries the
+        # PR's own changes — a PR could set `entry: '.*'` and every one of its
+        # commit subjects would then pass the gate it just rewrote. The policy
+        # has to come from the revision being merged INTO. A PR that genuinely
+        # changes the regex is still linted against the old one; that is the
+        # correct order, and the new regex governs from the merge onward.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          config = subprocess.run(
+              ["git", "show", f"{os.environ['BASE_SHA']}:.pre-commit-config.yaml"],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          m = re.search(
+              r"id: conventional-commit-msg[\s\S]*?^\s*entry: '([^']+)'$", config, re.M
+          )
+          if not m:
+              sys.exit("could not read conventional-commit-msg regex from .pre-commit-config.yaml")
+          pattern = re.compile(m.group(1))
+
+          subjects = subprocess.run(
+              ["git", "log", "--format=%s", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              check=True, capture_output=True, text=True,
+          ).stdout.splitlines()
+
+          bad = [s for s in subjects if not pattern.search(s)]
+          for s in bad:
+              print(f"::error::non-conventional commit subject: {s}")
+          print(f"checked {len(subjects)} commit(s), {len(bad)} invalid")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Reject breaking markers on CI-only commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # `!` and a BREAKING CHANGE footer both make release-please cut a MAJOR
+        # release. .claude/rules/commit-types.md: "A workflow-only or CI-only
+        # dependency bump is never breaking: it touches no published surface, so
+        # it carries no `!`." The conventional-commit check above accepts `!` as
+        # valid syntax, so nothing caught it — two Renovate commits carrying `!`
+        # on a one-line CI bump would have published a spurious major version.
+        # Deliberately narrow: only commits whose ENTIRE diff is CI config are
+        # rejected, so a genuinely breaking change anywhere else still passes.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          CI_ONLY = lambda p: p.startswith(".github/") or p == ".pre-commit-config.yaml"
+
+          def git(*args):
+              return subprocess.run(
+                  ["git", *args], check=True, capture_output=True, text=True
+              ).stdout
+
+          rng = f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"
+          bad = []
+          for sha in git("log", "--format=%H", rng).split():
+              subject = git("log", "-1", "--format=%s", sha).strip()
+              body = git("log", "-1", "--format=%b", sha)
+              # Conventional Commits treats `BREAKING CHANGE` and `BREAKING-CHANGE`
+              # as synonymous footer tokens and release-please honours both, so
+              # matching only the space form would miss half the spellings.
+              marked = bool(re.match(r"^[a-z]+(\([^)]*\))?!:", subject)) or re.search(
+                  r"^BREAKING[ -]CHANGE:", body, re.M
+              )
+              if not marked:
+                  continue
+              files = [f for f in git("show", "--name-only", "--format=", sha).split("\n") if f]
+              if files and all(CI_ONLY(f) for f in files):
+                  bad.append((sha[:8], subject))
+
+          for sha, subject in bad:
+              print(
+                  f"::error::{sha} marks a breaking change but its diff is CI-only "
+                  f"(see .claude/rules/commit-types.md): {subject}"
+              )
+          sys.exit(1 if bad else 0)
+          PY

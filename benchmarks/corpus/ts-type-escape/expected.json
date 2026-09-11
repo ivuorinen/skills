@@ -1,0 +1,13 @@
+{
+  "id": "ts-type-escape",
+  "lens": "types",
+  "class": "unsound-cast",
+  "severity_floor": "medium",
+  "goal": "unchecked cast any assertion crosses an untyped boundary",
+  "file": "src/api.ts",
+  "note": "response body cast straight to User with no validation",
+  "lines": [
+    14,
+    14
+  ]
+}

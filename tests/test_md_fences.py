@@ -57,8 +57,14 @@ class TestPredicates:
 class TestConsumersAgree:
     """Every tool that walks fences must draw the same boundaries."""
 
+    # staticmethod, not an instance method: pytest deprecated class-scoped
+    # fixtures defined as instance methods, because the fixture runs once per
+    # class while each test gets a fresh instance, so anything set on `self`
+    # would be invisible to the tests. This one only returns a value, so
+    # dropping `self` satisfies it without changing what the fixture does.
     @pytest.fixture(scope="class")
-    def mods(self):
+    @staticmethod
+    def mods():
         return {
             "findings": _load("f_", _SCRIPTS / "findings.py"),
             "skill_catalog": _load("sc_", _SCRIPTS / "skill_catalog.py"),

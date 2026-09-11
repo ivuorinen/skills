@@ -23,6 +23,21 @@ queries:
 threat-models:
   - local
 
+# benchmarks/corpus/ holds seeded-defect fixtures: each directory is a miniature
+# repository containing exactly one deliberately planted defect, and
+# `expected.json` names the line it sits on. `make bench` scores whether
+# retrieval surfaces that line. Reporting the planted defects as alerts inverts
+# the point — the alert is the fixture working — and it fails a required check
+# on code that is never executed, only read by the scorer.
+#
+# Scoped to the corpus alone. `benchmarks/README.md` and the scorers under
+# scripts/ stay analysed; so does every path outside this directory. The same
+# exclusion already exists for yamllint and zizmor in .pre-commit-config.yaml,
+# each with the same reasoning beside it — this is the third scanner to need it,
+# and .codacy.yml is the fourth.
+paths-ignore:
+  - benchmarks/corpus
+
 query-filters:
   # py/path-injection is excluded for this repository, deliberately and with
   # evidence. Do not re-enable without reading this through.

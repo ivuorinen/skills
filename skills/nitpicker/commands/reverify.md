@@ -84,14 +84,34 @@ Evidence, never by the stale line number — and assign exactly one:
 1. **List every open finding** (`status: open`; all auditors — narrow by
    `auditor` or area only if the extra instructions scope it). Copy the list
    into the task tracker, one entry per finding.
-2. **Adjudicate each, in id order.** Read the finding's Evidence; locate the
+2. **Screen out the unmoved ones first.** A finding whose frontmatter carries
+   `location` and `location_sha` records where its evidence was read and a
+   fingerprint of the source there. Re-check every one of them in a single call:
+
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" recheck
+   ```
+
+   Each row comes back `unchanged`, `changed`, `missing` (the cited file or
+   range is gone) or `unfingerprinted` (the finding recorded no location).
+   **`unchanged` means the cited bytes are byte-identical — nothing more.** It
+   is a screen, not an adjudication: a fix landing *outside* the cited range can
+   remove the defect while those bytes stay identical, which is what global
+   authorization middleware does to an unchanged route handler. Leave such a
+   finding open and record it as **screened, not re-adjudicated** — never as
+   re-proven still live. Every other state falls through to step 3. This keeps a
+   cheap case cheap without promoting an unexamined finding to a verified one.
+   Report the screened count separately from the adjudicated one in the run
+   summary, and say plainly that the screened set was not re-proven; a user who
+   needs proof for all of them asks for a full pass.
+3. **Adjudicate the rest, in id order.** Read the finding's Evidence; locate the
    cited code in the current tree by its quoted snippet; assign one of the four
    dispositions with current-code evidence. Record the current location of a
    moved still-live defect.
-3. **Resolve the settled ones** — resolve each `fixed` / `invalid` with `--notes`
+4. **Resolve the settled ones** — resolve each `fixed` / `invalid` with `--notes`
    citing the current-code evidence. Leave still-live and unverifiable open.
-4. **Refresh the index.**
-5. **Report, then run the commit gate** — "Commit findings to git? (y/n)".
+5. **Refresh the index.**
+6. **Report, then run the commit gate** — "Commit findings to git? (y/n)".
 
 The store operations (list, resolve, index) and their MCP/CLI interface are
 defined in `_conventions.md`; this command does not restate them.

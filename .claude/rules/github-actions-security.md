@@ -12,6 +12,22 @@ Give every job a `name:`, and set a `concurrency:` group on each workflow.
 
 zizmor (pre-commit + CI) enforces the SHA-pin, least-privilege-permissions, and injection clauses automatically. The `name:`/`concurrency:` clause is not in zizmor's check set — it is verified in review, so state it explicitly whenever adding or editing a job.
 
+## Which checks actually gate
+
+A workflow that runs on every pull request blocks nothing unless the `main`
+ruleset names its check. That ruleset is server-side GitHub configuration and is
+invisible from a checkout, so the required set is recorded here: `Validate`,
+`Lint PR title`, `Lint commit messages`, `Analyze (python)`, `Analyze (actions)`.
+
+The two `Analyze` legs are CodeQL. They are named per matrix leg because the
+matrix expands the job name — requiring the bare `Analyze` matches no check run
+and silently gates nothing, which is the failure the pair was added to fix.
+Adding a language to the CodeQL matrix therefore adds a required check that does
+not exist yet, and every PR blocks until the ruleset names it too.
+
+Read the live set with `gh api repos/<owner>/<repo>/rulesets/<id>` rather than
+trusting this paragraph; a copy in prose is a copy that can go stale.
+
 ## Pre-commit revs
 
 The same SHA-pinning discipline covers every `rev:` in `.pre-commit-config.yaml`. Those repositories execute arbitrary code inside the authoritative `Validate` job, and a `rev:` naming a tag is mutable — the tag can be repointed at new code without the pin changing. Pin each `rev:` to the tag's full 40-character commit SHA with a trailing `# <tag>` comment, exactly as the workflows pin actions. Write the tag **verbatim as upstream publishes it**, not a normalised version string: `PyCQA/bandit` and `python-jsonschema/check-jsonschema` tag `1.9.4` and `0.37.4` with no `v` prefix, and `v1.9.4` does not exist. That comment is what `renovate.json`'s custom manager hands the `github-tags` datasource as `currentValue`, so a comment naming a tag that does not exist upstream silently stops updates for that repo. Resolve a SHA with `git ls-remote <repo-url> refs/tags/<tag>^{}` (fall back to `refs/tags/<tag>` when the dereferenced form is absent) and confirm it is 40 hex characters before writing it — that same lookup proves the tag name going into the comment is real.

@@ -224,6 +224,35 @@ def _redirects_into_protected(c: str) -> bool:
     return any(_token_writes_protected(m.group(1), c) for m in _REDIR_RE.finditer(c))
 
 
+# Verbs whose LEADING operands are sources and whose last one is the
+# destination. Scanning every operand as a destination denied `cp
+# scripts/hooks/_hooklib.py /tmp/x` — a read, refused by a guard whose own
+# message says "Reading these paths is allowed". `cat` of the same file was
+# always allowed, so the asymmetry was in the verb, not in the policy.
+_DEST_LAST = frozenset({"cp", "mv", "install"})
+
+
+def _written_operands(tokens: list[str]) -> list[str]:
+    """The operands this stage actually WRITES.
+
+    For most verbs that is all of them — `rm a b`, `chmod +x a b`, `truncate a`
+    each write every path they name. For the copy-shaped verbs the leading
+    operands are sources, so only the last is written.
+
+    `-t DIR` / `--target-directory=DIR` inverts the position, putting the
+    destination first. Rather than model that, seeing one falls back to scanning
+    every operand: over-blocking one unusual spelling costs a blocked command,
+    and getting it wrong the other way is a write to the enforcement surface
+    that nothing sees.
+    """
+    if PurePosixPath(tokens[0]).name not in _DEST_LAST:
+        return tokens[1:]
+    if any(a.startswith(("-t", "--target-directory")) for a in tokens[1:]):
+        return tokens[1:]
+    operands = [a for a in tokens[1:] if not a.startswith("-")]
+    return operands[-1:] if len(operands) > 1 else tokens[1:]
+
+
 def _stage_writes_protected(tokens: list[str], c: str) -> bool:
     """True if this one mutating stage writes a protected path.
 
@@ -232,7 +261,7 @@ def _stage_writes_protected(tokens: list[str], c: str) -> bool:
     """
     if PurePosixPath(tokens[0]).name == "git" and _git_rewrites_worktree(tokens):
         return True
-    return any(_token_writes_protected(a, c) for a in tokens[1:])
+    return any(_token_writes_protected(a, c) for a in _written_operands(tokens))
 
 
 def _writes_protected(command: str) -> bool:

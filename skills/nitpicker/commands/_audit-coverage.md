@@ -18,7 +18,13 @@ review surface the skill offers.
 ## How audit uses this file
 
 - Copy each task into your task list before reviewing anything, in the order
-  listed.
+  listed. **A task entry is the lens id and its name — `AUD:S0 Security` — and
+  nothing else.** Not its description, not its defect classes, not its N/A
+  condition: all of that is in this file, already loaded, and restating it in
+  the tracker pays for it a second time for no coverage gained. The ids are
+  stable handles: cite `AUD:S0` in the run summary, in a `## Coverage` section,
+  and when reporting what a scoped run excluded. An id is assigned once and
+  never renumbered, so a citation stays resolvable.
 - Apply each lens using its specialist command as the authority. Deep-run
   that command file when the lens is high-risk or the user named it as the
   focus — loaded through whichever interface `_conventions.md` puts first
@@ -42,117 +48,117 @@ review surface the skill offers.
 
 ## Base lenses (always applicable)
 
-- **Correctness & logic** — wrong results, broken invariants, bad edge
+- **AUD:B0 Correctness & logic** — wrong results, broken invariants, bad edge
   cases, off-by-one, unsafe assumptions.
-- **Maintainability & internal architecture** — duplication, tangled coupling,
+- **AUD:B1 Maintainability & internal architecture** — duplication, tangled coupling,
   unclear ownership. Unreferenced and unreachable code belongs to `dead-code`,
   which proves reachability before proposing a deletion this lens would only
   suspect.
-- **Conventions** — repo, language, and framework idioms; naming; layout.
+- **AUD:B2 Conventions** — repo, language, and framework idioms; naming; layout.
 
 ## Specialist lenses (apply each; mark N/A only when the surface is absent)
 
-- **Security** (`security`) — trust boundaries, injection, authn/z, secrets,
+- **AUD:S0 Security** (`security`) — trust boundaries, injection, authn/z, secrets,
   unsafe deserialization. Run scanners where available.
-- **Privacy** (`privacy`) — personal data stored or transmitted without the
+- **AUD:S1 Privacy** (`privacy`) — personal data stored or transmitted without the
   control its class requires. N/A when no identifiable personal-data surface
   exists.
-- **Config** (`config`) — undocumented env vars, unsafe prod defaults,
+- **AUD:S2 Config** (`config`) — undocumented env vars, unsafe prod defaults,
   config drift, committed secrets, type-coercion traps.
-- **Infrastructure-as-code** (`iac`) — container images, orchestration
+- **AUD:S3 Infrastructure-as-code** (`iac`) — container images, orchestration
   (Kubernetes, Compose, Helm), and cloud provisioning (Terraform,
   CloudFormation, Pulumi): root/privileged containers, open ingress, public
   data stores, unencrypted resources, overbroad IAM, unpinned base images,
   committed state/secrets. N/A when the repo has no IaC files.
-- **Performance** (`perf`) — N+1 queries, O(n²)+ hotspots,
+- **AUD:S4 Performance** (`perf`) — N+1 queries, O(n²)+ hotspots,
   sync-blocking-in-async, missing pagination, and unbounded growth outside a
   cache; a cache that grows without limit belongs to `cache`.
-- **Concurrency** (`concurrency`) — races, TOCTOU, deadlock ordering, lost
+- **AUD:S5 Concurrency** (`concurrency`) — races, TOCTOU, deadlock ordering, lost
   updates, unsafe publication, state corrupted across await. N/A for
   strictly single-threaded code with no async.
-- **Error handling** (`errors`) — swallowed exceptions, fail-open defaults,
+- **AUD:S6 Error handling** (`errors`) — swallowed exceptions, fail-open defaults,
   overbroad catches, masking fallbacks, silent retries.
-- **Resource leaks** (`leaks`) — acquire-without-guaranteed-release:
+- **AUD:S7 Resource leaks** (`leaks`) — acquire-without-guaranteed-release:
   handles, pools, listeners, tasks, temp artifacts.
-- **Reliability** (`reliability`) — resilience under failure: failure modes,
+- **AUD:S8 Reliability** (`reliability`) — resilience under failure: failure modes,
   non-idempotent retries under redelivery, missing timeouts, retry storms,
   crash-window duplication, dropped work, data-loss paths. Never N/A: every
   repository has failure modes. This lens owns reliability outright — it was
   also a base lens until the two overlapping tasks let one case be audited
   twice and filed under two auditor keys.
-- **Cache** (`cache`) — cache correctness: stale reads, key collisions,
+- **AUD:S9 Cache** (`cache`) — cache correctness: stale reads, key collisions,
   stampede, serialization drift, and unbounded growth *of a cache*, which
   `perf` leaves to this lens. N/A when the repo caches nothing.
-- **Architecture** (`arch`) — violations against detected or declared
+- **AUD:S10 Architecture** (`arch`) — violations against detected or declared
   patterns and layer boundaries. If `docs/audit/arch-profile.md` is absent,
   run `arch-profile` first to detect the pattern.
-- **API contract** (`contract`) — declared public surface (specs, exports,
+- **AUD:S11 API contract** (`contract`) — declared public surface (specs, exports,
   published types, CLI flags) vs implementation vs the declared semver bump.
   N/A when no public contract surface exists.
-- **License** (`license`) — the project's own license, dependency-license
+- **AUD:S12 License** (`license`) — the project's own license, dependency-license
   compatibility, copyleft/source-available contamination, unlicensed
   dependencies, missing attribution/NOTICE, bundled-asset licenses. Rarely
   fully N/A — the project itself always needs a declared license.
-- **Dependencies** (`deps`) — unused, phantom, duplicate, heavyweight,
+- **AUD:S13 Dependencies** (`deps`) — unused, phantom, duplicate, heavyweight,
   unmaintained, license-conflicting, drifted, misclassified dependencies.
-- **Migrations** (`migrations`) — destructive ops, irreversible downs,
+- **AUD:S14 Migrations** (`migrations`) — destructive ops, irreversible downs,
   long-lock operations, missing FK indexes, schema-model drift, unbatched
   data migrations, deploy-order breaks. N/A when the repo has no schema or
   data migrations.
-- **Tests** (`tests`) — tautological tests, mocked-out subjects, flaky
+- **AUD:S15 Tests** (`tests`) — tautological tests, mocked-out subjects, flaky
   patterns, untracked skips, coverage holes on critical paths, and tests
   coupled to an external binary or environment the CI test step does not
   provision.
-- **Types** (`types`) — static-typing soundness: blanket suppressions,
+- **AUD:S16 Types** (`types`) — static-typing soundness: blanket suppressions,
   `any`-escapes, unsound casts, non-null assertions, untyped public
   boundaries, lax strictness flags. N/A when the repo has no static type
   system (untyped, by declared scope).
-- **Docs** (`docs`) — documentation accuracy against the code: stale,
+- **AUD:S17 Docs** (`docs`) — documentation accuracy against the code: stale,
   missing, or wrong behavior descriptions.
-- **Contributing** (`contributing`) — `CONTRIBUTING.md` against the repo's real
+- **AUD:S18 Contributing** (`contributing`) — `CONTRIBUTING.md` against the repo's real
   tooling. N/A when the repo has no contributor-facing documentation.
-- **CI/CD** (`ci`) — unpinned actions, over-broad token scope, script
+- **AUD:S19 CI/CD** (`ci`) — unpinned actions, over-broad token scope, script
   injection, privileged-trigger misuse, non-gating checks, masked failures.
   N/A when the repo has no CI/CD pipeline definitions.
-- **Commits** (`commits`) — commit-message discipline against the actual
+- **AUD:S20 Commits** (`commits`) — commit-message discipline against the actual
   diffs: type under/overstatement, unmarked breaking changes, malformed
   convention that mis-versions a release.
-- **Observability** (`observability`) — dark paths, missing correlation IDs,
+- **AUD:S21 Observability** (`observability`) — dark paths, missing correlation IDs,
   level misuse, unfireable alerts, cardinality bombs, PII in logs. N/A for a
   library with no runtime signal surface.
-- **Accessibility** (`a11y`) — WCAG 2.2 AA on the UI layer: keyboard
+- **AUD:S22 Accessibility** (`a11y`) — WCAG 2.2 AA on the UI layer: keyboard
   reachability, roles and names, contrast, focus order. N/A when there is no
   UI layer.
-- **Localization** (`i18n`) — hardcoded strings, locale-unsafe number, date,
+- **AUD:S23 Localization** (`i18n`) — hardcoded strings, locale-unsafe number, date,
   and sort handling against the declared locale scope. N/A when there is no
   localization surface and single-locale is the declared scope.
-- **Prompt safety** (`prompt-safety`) — LLM-integration safety: direct and
+- **AUD:S24 Prompt safety** (`prompt-safety`) — LLM-integration safety: direct and
   indirect prompt injection, model output reaching a privileged sink,
   excessive tool agency, secrets in the model context, cross-tenant
   retrieval. N/A when the repo does not call or embed a language model.
-- **Installed agent configuration** (`skill-safety`) — skills, subagent
+- **AUD:S25 Installed agent configuration** (`skill-safety`) — skills, subagent
   definitions, plugins, hooks and rule files the project installed rather than
   wrote, audited as an untrusted supply chain: override and concealment prose,
   invisible payloads, exfiltration, credential reach, auto-executing hooks and
   lifecycle scripts, unverifiable provenance. N/A only when the project
   installed no agent configuration — which is a determination, not an
   assumption from the absence of a directory.
-- **Complexity** (`complexity`) — over-engineering: speculative
+- **AUD:S26 Complexity** (`complexity`) — over-engineering: speculative
   abstractions, reinvented standard library, dead flexibility, needless
   dependencies.
-- **Unwired code** (`unwired`) — unwired and incomplete implementations that
+- **AUD:S27 Unwired code** (`unwired`) — unwired and incomplete implementations that
   are defined but never reached.
-- **Dead code** (`dead-code`) — unreferenced or unreachable code: unused
+- **AUD:S28 Dead code** (`dead-code`) — unreferenced or unreachable code: unused
   exports, dead branches, orphaned files, each proven dead through every
   reachability channel before deletion is proposed.
 
 ## Agent-enforcement lenses (only when an agent project — `.claude/` exists)
 
-- **Agent loopholes** (`agent-loopholes`) — bypassable or unenforced
+- **AUD:A0 Agent loopholes** (`agent-loopholes`) — bypassable or unenforced
   constraints in `.claude/rules`, hooks, settings, permissions, skills.
-- **Agent hooks** (`agent-hooks`) — hook coverage against the project's
+- **AUD:A1 Agent hooks** (`agent-hooks`) — hook coverage against the project's
   evidence base; recurring failures no hook guards.
-- **Agent rules** (`agent-rules`) — `.claude/rules/` quality; conventions
+- **AUD:A2 Agent rules** (`agent-rules`) — `.claude/rules/` quality; conventions
   that should be codified as rules.
 
 ## Not coverage lenses

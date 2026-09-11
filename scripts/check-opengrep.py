@@ -69,7 +69,15 @@ REPO_ROOT = Path(__file__).parent.parent
 # was measured and returns nothing on this repository — it omits the `-audit`
 # rule variants, which are precisely the ones Codacy flags. Registry rules are
 # fetched once and then cached by opengrep, so later runs need no network.
-CONFIG = "r/python.lang.security.audit"
+#
+# Widened from `r/python.lang.security.audit` to its parent. Codacy reported
+# `use-defused-xml` on findings_export.py, which lives outside the `-audit`
+# namespace, so the local gate could not see the finding or judge a suppression
+# for it — the gap .codacy.yml names: "a rule newly reported here that the local
+# gate does not run is a gap in scripts/check-opengrep.py's CONFIG, not a reason
+# to exclude a path." Measured on this repository: the parent namespace returns
+# that one finding and nothing else, so the widening costs no new noise.
+CONFIG = "r/python.lang.security"
 
 # Mirrors [tool.bandit] in pyproject.toml and the `opengrep` block in
 # .codacy.yml: shipped tools plus internal tooling, tests excluded. opengrep
@@ -78,6 +86,21 @@ CONFIG = "r/python.lang.security.audit"
 SCAN_ROOTS = ("skills", "scripts")
 
 TIMEOUT = 600
+
+# opengrep's own per-rule-per-file limit, distinct from TIMEOUT above: that one
+# bounds the whole subprocess, this one bounds a single rule against a single
+# file. Its default is 5s, and a rule exceeding it is reported in the scan's
+# `errors` — which `_report_errors` treats as fatal, correctly, since a rule
+# that did not finish leaves that file unscanned by it.
+#
+# Raised because widening CONFIG to the parent namespace roughly doubled the
+# rule count, and `insecure-transport…request-with-http` began intermittently
+# exceeding 5s on mcp_server.py and pr_common.py under load — a flaky gate,
+# where the flake reports as "not a clean bill" rather than as a finding. CI
+# runners are slower than the machine this was measured on, so the headroom is
+# deliberate: the cost of a too-high value is a slow failure, the cost of a
+# too-low one is a gate nobody trusts.
+RULE_TIMEOUT = 30
 
 # `nosem` is opengrep's other accepted spelling of the same marker.
 _MARKER = re.compile(r"#\s*nosem(?:grep)?\b")
@@ -118,6 +141,8 @@ def _scan(opengrep: str, *, disable_nosem: bool) -> dict:
                 "--json",
                 "--config",
                 CONFIG,
+                "--timeout",
+                str(RULE_TIMEOUT),
                 *(["--disable-nosem"] if disable_nosem else []),
                 *SCAN_ROOTS,
             ],

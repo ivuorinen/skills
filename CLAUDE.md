@@ -4,7 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as `/nitpicker <command> [extra instructions]`. The router is `skills/nitpicker/SKILL.md`; each command's instructions live in `skills/nitpicker/commands/<command>.md`, with shared conventions in `commands/_conventions.md`. The repo is installable as a Claude Code plugin via `/plugins`, and into Copilot/pi/other agents via `npx skills add ivuorinen/skills` (open Agent Skills format). Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are not shipped to consumers.
+A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as
+`/nitpicker <command> [extra instructions]`.
+
+The router is `skills/nitpicker/SKILL.md`. Each command's instructions live in
+`skills/nitpicker/commands/<command>.md`, with shared conventions in
+`commands/_conventions.md`.
+
+The repo is installable as a Claude Code plugin via `/plugins`, and into
+Copilot, pi and other agents via `npx skills add ivuorinen/skills` (open Agent
+Skills format). Internal dev skills — scaffolding, validation, release — live
+under `.claude/skills/` and are not shipped to consumers.
+
+## Context Discipline
+
+`_conventions.md` carries only what binds every command. Four protocols load on a
+trigger instead — `_findings-store` before the first store operation,
+`_committing` before a commit, `_documentation` before a fix or a `docs` finding,
+`_audit-coverage` for `audit`. Each trigger is stated in `_conventions.md` and in
+SKILL.md's execution order, and both are binding: a protocol not loaded is a
+protocol not followed. Rules that hold in *every* run — the finding contract,
+redaction, the migration consent gate, the run protocol's shape — stay in the
+core file rather than moving with their protocol.
+
+`scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
+firewall. It answers with coordinates — path, line range, enclosing symbol, why
+it matched — not with file bodies. Its modes are the acquisition ladder:
+`inventory` (A), `symbols` and `diff` (B), `evidence` (C). Level D is a direct
+read the caller performs after the pack narrows it. The invariant the callers
+are held to: **compression may decide what to inspect next; only original source
+may prove a finding.** `--self-test` runs the known-positive controls, because a
+retriever returning nothing is otherwise indistinguishable from a repository
+containing nothing.
+
+`scripts/check-context-tokens.py` reports the size of the set loaded on every
+turn and of one invocation. It is CLI-only and **cannot fail a build**: its
+numbers are four-characters-per-token estimates, and gating on an estimate turns
+an approximation into a rule nobody can reproduce. Read the `--baseline` delta,
+not the absolute. `check-agent-instructions.py` remains the directive-count gate;
+the two measure different halves of the same budget.
 
 ## Development Commands
 
@@ -12,6 +50,7 @@ A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as 
 make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
 make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
+make ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
 make test         # run pytest unit tests
 make list         # list the skill and its commands
 make lint         # ruff check on scripts/, tests/, skills/
@@ -65,34 +104,82 @@ Three install traps, each hit once already:
 
 - Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ", plus `license` and `compatibility`).
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
-- Every command file in `commands/` whose name does not begin with `_` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`; shared files prefixed `_` (e.g. `_conventions.md`, `_audit-coverage.md`) are exempt from the cross-check.
+- Every command file in `commands/` whose name does not begin with `_` needs a
+  row in one of SKILL.md's command tables (`## Commands` or
+  `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
+  Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are the
+  exception, and carry no row.
 - Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
 - No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
 ## Findings Store
 
-One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed through the `np_*` MCP tools where the session exposes them, else the shipped, stdlib-only CLI; `baseline`, `migrate` and `migrate-resolved` are CLI-only:
+One file per **open** finding under
+`docs/audit/findings/<auditor>/open/<id>.md`. Resolving one appends a record to
+the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open
+file, so the tree does not accumulate hundreds of resolved files.
+
+`INDEX.md` is generated: the index (rebuilt by findings.py and by the
+PostToolUse hook below) is tool output, not a file to hand-edit. An in-store
+`.gitattributes`, self-written by findings.py, marks the store
+`linguist-generated` so audit runs don't flood PR diffs.
+
+The store is managed through the `np_*` MCP tools where the session exposes
+them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps
+every operation to its interface and names the ones no tool wraps. Read it
+there rather than keeping a second list here — that is how this paragraph came
+to name three of the five.
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
+python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
+IDs are content-hashed rather than hand-assigned. `new --force` re-opens a
+resolved finding under the id it already had, dropping its ledger record; that
+is the one route by which an id in the ledger comes back.
+
+`migrate` converts 1.x `docs/audit/*-findings.md` documents. `migrate-resolved`
+folds a legacy `<auditor>/resolved/*.md` tree into the ledger.
+
+`export --format sarif|json|junit` (in `findings_export.py`) renders the store
+for another system. The Static Analysis Results Interchange Format (SARIF) —
+what a code-scanning UI ingests — omits resolved findings, since an alert on a
+fixed defect is indistinguishable from a live one. JUnit maps open to failure
+and resolved to pass, so a CI panel shows unfixed findings beside failing tests.
+
+`new --location path:START-END` records where the evidence was read — START (the
+first cited line) and END (the last) — plus a fingerprint of that source.
+`recheck` re-computes every one, so `reverify` can skip a finding whose cited
+bytes are unchanged rather than spend a model pass on it.
+
+The fingerprint covers the cited line range, so an unrelated edit *above* it
+reads as `changed`. That is the safe direction: it costs a re-check rather than
+a missed change. `location` is deliberately outside the content-hashed id.
+
+The PostToolUse hook `validate-audit-findings-hook.py` validates edited open
+findings and the ledger, and regenerates the index.
 
 ## PR Fetchers
 
 `cr` reads a PR's review surface through two entry points —
 `fetch-pr-comments.py` and `fetch-pr-status.py` — that cover GitHub, GitLab and
 Bitbucket Cloud behind **one** JSON format. Both are thin: they resolve their
-sibling directory and delegate to `pr_common.run_cli`, which parses the argument
-forms, dispatches on platform, and maps exceptions to the 0/1/2 exit contract.
+sibling directory and delegate to `pr_cli.run_cli`, which parses the argument
+forms and maps exceptions to the 0/1/2 exit contract.
 
-`pr_common.py` owns everything shared — git-remote parsing, platform detection,
-the `Target` (platform + git host + project path, from which the API base is
-derived), the credential-pinned HTTP layer, both pagination styles, and the
-output envelopes. One provider module per platform (`pr_github.py`,
-`pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly `fetch_comments(target, n)`
-and `fetch_status(target, n)`.
+`pr_common.py` is the **port**, and owns everything shared — git-remote parsing,
+platform detection, the `Target` (platform + git host + project path, from which
+the API base is derived), the credential-pinned HTTP layer, both pagination
+styles, the output envelopes, and `provider_for` dispatch. One provider module
+per platform (`pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly
+`fetch_comments(target, n)` and `fetch_status(target, n)`.
+
+`pr_cli.py` is the CLI **driving adapter** and is deliberately not part of that
+port: argv parsing, stdout rendering and exit codes are facts about running as a
+command, and `pr_common` is imported by all three providers and by
+`mcp_server.py` — the other driving adapter — none of which run as this CLI.
+Keeping the two apart is what lets `pr_common` stay the library its docstring
+claims. `make ring-deps` prints the resulting graph.
 
 Two invariants make the shared format worth having, and both are pinned by
 tests. A field a platform cannot supply is present and empty or null rather than
@@ -110,9 +197,12 @@ wrong guess is a credential handed to a third party.
 
 The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
 the same providers. They are the only tools on the server carrying
-`openWorldHint: true`, and the only ones whose results are wrapped in an
+`openWorldHint: true`, and their results are wrapped in an
 `<untrusted-data source="pull-request">` envelope — PR bodies are written by
-anyone who can comment on the PR.
+anyone who can comment on the PR. They are not the only enveloped tools:
+`np_context_pack` and the findings readers carry their own `source` tags, since
+repository paths and stored finding bodies are written by whoever wrote the
+audited tree. SKILL.md's **Untrusted results** paragraph is the full list.
 
 ## Editing a shipped tool mid-session
 
@@ -212,7 +302,13 @@ installs a version-pinned, digest-verified binary before `make check`.
 
 ## Conventions
 
-Skill/command writing style, lifecycle, and repo conventions live in `.claude/rules/`. How much of each rule is machine-enforced varies — several are gated only in part, and some not at all. Each rule states its own enforcement; read that statement in the rule itself rather than assuming a rule here is gated end to end.
+Skill and command writing style, lifecycle, and repo conventions live in
+`.claude/rules/`.
+
+How much of each rule is machine-enforced varies: several are gated only in
+part, and some not at all. Each rule states its own enforcement. Read that
+statement in the rule itself rather than assuming a rule here is gated end to
+end.
 
 - `skill-format.md`
 - `skill-style.md`
@@ -319,9 +415,17 @@ configured and unnamed here:
   `sed -i` or a redirect. Hand those edits to the owner rather than reaching for
   another spelling.
 - matcher `Bash` — `deny-unsafe-git-hook.py`, which blocks `git` with
-  `--no-verify` and a push to a protected branch. Per
-  `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
-  optional; commit without the flag and fix what fails.
+  `--no-verify` or `-n` (stacked clusters and the abbreviations git accepts
+  included), a `-c core.hooksPath=`, `--config-env=` or `GIT_CONFIG_*` override
+  that disables the repository's hooks, an alias whose body resolves to any of
+  those (a `!` shell body included), and a push to a protected branch. It reads
+  a command nested in `$(...)`, backticks or a subshell as its own stage, and
+  looks through a wrapper (`env`, `sudo`, `xargs`, …) to the git call behind it.
+  Per `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
+  optional; commit without the flag and fix what fails. That rule also states
+  what remains open — the guard matches command text, so a request carrying no
+  `git` token at all (a shell function shadowing it, a script, `eval` on a
+  runtime-built string) passes it.
 - matcher `Bash` — `guard-ctx-ok-hook.py`, which validates the `# ctx-ok`
   escape hatch from `.claude/rules/use-context-mode.md` and denies it on any
   verb outside its allowlist, including every read verb. Fails closed on an
@@ -334,12 +438,31 @@ configured and unnamed here:
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 
-Each graphify guard is wrapped `command -v graphify >/dev/null || exit 0; exec
-graphify hook-guard …`, so on a clone without graphify installed it exits 0 and
-is a no-op; when graphify is on `PATH` the guard's own exit code propagates and
+Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
+clone without graphify installed it exits 0 and is a no-op. When graphify is on
+the executable search path (`$PATH`), the guard's own exit code propagates and
 can block the call.
 
-Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`) and the working tree (`git diff`), so **unstaged** edits count too — before Claude hands back control. A `stop_hook_active` guard surfaces the reminder once rather than looping on every turn a skill edit remains uncommitted.
+Between those two it **pins the binary**: it compares `graphify --version`
+against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch.
+Without that, a different or compromised `graphify` earlier on `$PATH` silently
+takes over the permit/deny decision for every file read, glob and shell command
+in the session — the one executing component the vendored-skill trust model left
+unbound. An **empty or missing** pin file denies rather than passes: treating an
+unreadable pin as "no constraint" would make deleting one file disable the check
+in silence. The ceiling is worth knowing — a version string is self-reported, so
+this raises the cost of substitution and makes an accidental mismatch visible;
+it is not attestation.
+
+Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files
+before Claude hands back control. Its scope is the union of the git index
+(`git diff --cached`), the working tree (`git diff`) and the untracked set
+(`git ls-files --others`), so **unstaged** and brand-new files count too.
+
+A `stop_hook_active` guard keeps the reminder from re-firing on the forced
+continuation its own exit 2 causes. That is one stop cycle, not one session:
+the reminder repeats once per turn for as long as skill edits stay
+uncommitted. That is the observed behaviour, not a broken guard.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 

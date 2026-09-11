@@ -623,6 +623,17 @@ def check(
     rather than returning a partial report, because a silently narrowed scan
     reported as a result reads exactly like a clean one.
     """
+    # `_tracked` caches the project's file listing so every rule file in ONE
+    # scan asks the filesystem once. The cache is keyed on the root alone, so
+    # the tree is its input and not part of its key — nothing invalidates it
+    # when a file appears or disappears. Under the CLI that is invisible (one
+    # scan, then the process exits), but `np_check_rules_anatomy` is served by
+    # a process that lives for the whole session: the second call answered from
+    # the first call's listing, so deleting a file a rule cites left
+    # `stale_path` unreported. A detector for stale references cannot itself
+    # answer from a stale snapshot. Clearing here scopes the cache to one scan,
+    # which is the only span its docstring ever claimed.
+    _tracked.cache_clear()
     empty_summary = {"total": 0, "ok": 0, "with_issues": 0, "error_count": 0}
     known = ", ".join(rel for rel, _, _ in _RULE_DIRS)
 

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Shared plumbing for the PR fetchers: target resolution, HTTP, output envelopes.
 
-Imported by `pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py` and the two CLI
-entry points (`fetch-pr-comments.py`, `fetch-pr-status.py`). Stdlib-only, per
-`.claude/rules/use-uv-runner.md`; it is a library, not a CLI, so it has no
-`main()` and no `--help`.
+This is the provider *port*: the `Target` every adapter is handed, the envelope
+every adapter returns, and the transport they share. Imported by `pr_github.py`,
+`pr_gitlab.py`, `pr_bitbucket.py`, and by both driving adapters — `pr_cli.py`
+for the two CLI entry points, `mcp_server.py` for `np_pr_comments`/`np_pr_status`.
+Stdlib-only, per `.claude/rules/use-uv-runner.md`; it is a library, not a CLI, so
+it has no `main()` and no `--help`.
+
+Nothing about running as a command lives here — argv parsing, stdout rendering
+and exit codes are `pr_cli.py`'s, so that a provider and the MCP server never
+carry a delivery mechanism neither of them uses.
 
 The output envelopes below are the *contract*: every provider returns the same
 JSON shape, so `cr` reads one format regardless of platform. A field a platform
@@ -20,6 +26,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
@@ -371,30 +378,23 @@ def _credential_safe(url: str, allowed_netloc: str) -> bool:
     return split.scheme == "https" and split.netloc == allowed_netloc
 
 
-# Headers that may cross an origin on a redirect. Everything else is dropped.
-#
-# An allow-list, not a deny-list of credential names, because a deny-list fails
-# open for whatever is added after it is written — and that already happened
-# here. The handler named `authorization` alone, which covers GitHub and
-# Bitbucket; GitLab authenticates with `PRIVATE-TOKEN`, so a redirect off the
-# pinned host forwarded a GitLab PAT intact while the docstring claimed the
-# credential was stripped. Listing what is safe means the next provider's header
-# is protected by default rather than by someone remembering this line exists.
-#
-# These three are the ones urllib or this module set for content negotiation,
-# never for authentication: `_UA`, and the `Accept` each provider sends.
-_SAFE_REDIRECT_HEADERS = frozenset({"user-agent", "accept", "content-type"})
-
-
 class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Strip every credential header on a redirect that leaves the pinned API host.
+    """Refuse any redirect that leaves https-on-the-pinned-API-host.
 
-    urllib follows 3xx transparently and, unlike requests, carries the header
-    across hosts — so without this a cross-host redirect forwards the token
-    off-host, defeating the same-host guard in `_open`. The allowed netloc is
-    per-opener rather than global: three platforms mean three different hosts,
-    and a process-wide handler pinned to one of them would silently stop
-    protecting the other two.
+    urllib follows 3xx transparently and, unlike requests, carries request
+    headers across hosts — so without this a cross-host redirect forwards the
+    token off-host, defeating the same-host guard in `http_json`. The allowed
+    netloc is per-opener rather than global: three platforms mean three
+    different hosts, and a process-wide handler pinned to one of them would
+    silently stop protecting the other two.
+
+    This handler used to *strip* the credential and follow the hop anyway. That
+    kept the token safe and left the reach: the redirect target is chosen
+    wholly by the server, so a repository whose remote points at an
+    attacker-run instance turned `cr` into an SSRF probe from the developer's
+    machine, and whatever answered came back as the PR's review surface.
+    Refusing is the only reading under which `_credential_safe` means the same
+    thing here as it does in `_check_url`.
     """
 
     def __init__(self, allowed_netloc: str):
@@ -402,27 +402,27 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         self.allowed_netloc = allowed_netloc
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        """Keep only `_SAFE_REDIRECT_HEADERS` unless the target is still https
-        on the pinned host.
+        """Raise on a redirect the pinned-host predicate rejects; else proceed.
 
-        urllib copies request headers onto a redirect by default, so a server
-        answering with a redirect elsewhere — or to plaintext on its own
-        hostname — would be handed the credential the caller declared for this
-        host. The handler is built per request with the netloc it may keep the
-        header for, because a shared instance would have to be told which host
-        applies on every call, and the one that forgot would leak silently.
+        Raising rather than returning `None`: `None` makes urllib stop and hand
+        the 3xx back as the response, so the caller would parse an empty body
+        and read it as a PR with no comments. A refused hop must be a failure,
+        not a quietly short answer.
 
-        Strips by complement rather than by name: every provider chooses its own
-        auth header (`Authorization` on GitHub and Bitbucket, `PRIVATE-TOKEN` on
-        GitLab), so a name list protects whichever ones its author happened to
-        know about. urllib stores header keys `.capitalize()`d, which is why the
-        comparison lowercases rather than matching the spelling a caller passed.
+        `_credential_safe` is the same predicate `_check_url` applies to the
+        first URL and to every paginated successor, so every server-chosen URL
+        in this module is now judged by one function — which is the property
+        that function's docstring already claimed.
         """
-        new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and not _credential_safe(newurl, self.allowed_netloc):
-            for key in [k for k in new.headers if k.lower() not in _SAFE_REDIRECT_HEADERS]:
-                del new.headers[key]
-        return new
+        if not _credential_safe(newurl, self.allowed_netloc):
+            raise urllib.error.HTTPError(
+                newurl,
+                code,
+                f"refusing to follow a redirect off https://{self.allowed_netloc}: {newurl!r}",
+                headers,
+                fp,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _check_url(url: str, allowed_netloc: str) -> None:
@@ -796,12 +796,7 @@ def summarize_reviews(reviews: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-def emit(payload: Any) -> None:
-    """Structured data to stdout — the only thing that ever goes there."""
-    print(json.dumps(payload, indent=2))
-
-
-# ── CLI plumbing shared by both entry points ─────────────────────────────────
+# ── provider dispatch ────────────────────────────────────────────────────────
 _PROVIDER_MODULES = {
     "github": "pr_github",
     "gitlab": "pr_gitlab",
@@ -828,64 +823,14 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
     return host, path, int(match.group(1))
 
 
-def _split_flags(argv: list[str]) -> tuple[list[str], str, str]:
-    """(positional args, --platform value, --remote value). Both spellings of a
-    flag are accepted (`--platform x` and `--platform=x`), and an unknown flag is
-    a usage error rather than a positional — otherwise a typo'd flag would be read
-    as a repository name and reported as a bad path."""
-    platform = ""
-    remote = "origin"
-    positional: list[str] = []
-    it = iter(argv)
-    for arg in it:
-        if arg in ("--platform", "--remote"):
-            try:
-                value = next(it)
-            except StopIteration:
-                raise UsageError(f"{arg} needs a value") from None
-            if arg == "--platform":
-                platform = value
-            else:
-                remote = value
-        elif arg.startswith("--platform="):
-            platform = arg.split("=", 1)[1]
-        elif arg.startswith("--remote="):
-            remote = arg.split("=", 1)[1]
-        elif arg.startswith("-"):
-            raise UsageError(f"unknown flag: {arg!r}")
-        else:
-            positional.append(arg)
-    return positional, platform, remote
+def looks_like_pr_url(spec: str) -> bool:
+    """Whether `spec` carries a PR/MR number in a web-URL path.
 
-
-def parse_cli_args(argv: list[str]) -> tuple[Target, int]:
-    """Resolve (target, pr_number) from the argument forms both CLIs accept.
-
-    Accepted, in the order they are tried:
-        <pr-url>                          — everything comes from the URL
-        <pr_number>                       — repo comes from the git remote
-        <owner>/<repo> <pr_number>        — also group/sub/project, or host/owner/repo
-        <owner> <repo> <pr_number>        — the 1.x GitHub form, still accepted
-    Plus `--platform github|gitlab|bitbucket` and `--remote <name>` anywhere.
+    What a PR URL looks like is domain knowledge, so it lives beside
+    `parse_pr_url` rather than in the CLI adapter that branches on it — which
+    would otherwise have to reach for the private `_URL_PR_RE`.
     """
-    positional, platform, remote = _split_flags(argv)
-
-    if len(positional) == 1 and _URL_PR_RE.search(positional[0]):
-        host, path, number = parse_pr_url(positional[0])
-        return make_target(host, path, platform), number
-    if len(positional) == 1:
-        return resolve_target_from_remote(platform, remote), parse_pr_number(positional[0])
-    if len(positional) == 2:
-        return resolve_target(positional[0], platform), parse_pr_number(positional[1])
-    if len(positional) == 3:
-        return (
-            resolve_target(f"{positional[0]}/{positional[1]}", platform),
-            parse_pr_number(positional[2]),
-        )
-    raise UsageError(
-        "expected a PR URL, a PR number, or <repo> <pr_number>. "
-        "Run with --help for the accepted forms."
-    )
+    return _URL_PR_RE.search(spec) is not None
 
 
 def resolve_target_from_remote(platform: str = "", remote: str = "origin") -> Target:
@@ -910,33 +855,3 @@ def provider_for(target: Target) -> Any:
     # it even one line further up, silently.
     # nosemgrep: non-literal-import
     return importlib.import_module(_PROVIDER_MODULES[target.platform])
-
-
-def run_cli(doc: str, operation: str, argv: list[str]) -> int:
-    """Shared main() for both entry points. Returns the process exit code.
-
-    Both CLIs differ only in which provider function they call, so the argument
-    parsing, `--help` handling, provider dispatch and exit-code mapping live here
-    once. Exit codes: 0 success, 1 runtime/API error, 2 usage error — the contract
-    every shipped tool in this repo publishes.
-
-    `--help` is handled before any argument is resolved as a repository, so the
-    flag never gets read as input and answered with a path error instead of usage.
-    """
-    if "--help" in argv or "-h" in argv:
-        print(doc)
-        return 0
-    try:
-        target, pr_number = parse_cli_args(argv)
-    except UsageError as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 2
-    try:
-        emit(getattr(provider_for(target), operation)(target, pr_number))
-    except UsageError as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 2
-    except Exception as err:
-        print(f"[error] {err}", file=sys.stderr)
-        return 1
-    return 0

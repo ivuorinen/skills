@@ -1,0 +1,13 @@
+{
+  "id": "adversarial-sql-injection",
+  "lens": "security",
+  "class": "sql-injection",
+  "severity_floor": "critical",
+  "goal": "sql query built by string concatenation from request input",
+  "file": "src/reports.py",
+  "note": "one concatenated query among twenty parameterised near-misses",
+  "lines": [
+    11,
+    12
+  ]
+}

@@ -10,26 +10,15 @@ of it is aspirational.
 make check
 ```
 
-`check` runs these targets in this order (`make help` prints the current list;
-the `Makefile` is authoritative):
+```bash
+make help    # every target `check` runs, in order, with what each one does
+```
 
-| Step                | What it does                                                              |
-| ------------------- | ------------------------------------------------------------------------- |
-| `validate`          | `scripts/validate-skill.py` on the router, command files, internal skills |
-| `validate-evals`    | `scripts/validate-evals.py` — the `evals/` sets bundled with each skill   |
-| `validate-rules`    | `scripts/validate-rules.py` — `.claude/rules/` structure + path freshness |
-| `version-sync`      | `scripts/check-version-sync.py` — version equal across every manifest     |
-| `make-help`         | `scripts/check-make-help.py` — every target documented in `make help`     |
-| `lock-check`        | `uv lock --check` — `uv.lock` not stale against `pyproject.toml`          |
-| `lint`              | `ruff check scripts/ tests/ skills/`                                      |
-| `format-check`      | `ruff format --check` (no writes)                                         |
-| `security`          | `bandit` over `skills/` + `scripts/`; config in `[tool.bandit]`           |
-| `opengrep`          | `scripts/check-opengrep.py` — the rules Codacy reports + stale markers    |
-| `typecheck`         | `pyright` — zero floor: any error fails the gate                          |
-| `test`              | `pytest tests/`                                                           |
-| `audit-consistency` | `findings.py validate` — the `docs/audit/findings/` store is well-formed  |
-| `index-check`       | regenerates `INDEX.md`, fails if it was stale                             |
-| `pre-commit`        | full pre-commit suite (markdownlint, yamllint, gitleaks, zizmor, …)       |
+`make help` is not a convenience here, it is the list: `check-make-help.py`
+gates it against the `Makefile`'s targets and `.PHONY` in both directions, so it
+cannot drift. A table transcribed into this file has no such gate — the one that
+used to sit here was missing `ring-deps` and `bench`, both of which `check` runs
+and neither of which anything else enforces.
 
 `index-check` and `pre-commit` are the slow ones. The CI `Validate` job is the
 authoritative gate — a green `make check` locally is the fast path to it, not a
@@ -90,15 +79,21 @@ Commit as `feat: add /nitpicker <name> command`.
 ## The findings store has two interfaces
 
 `docs/audit/findings/` is managed through the `np_*` MCP tools where the session
-exposes them, else the shipped CLI. `baseline`, `migrate` and `migrate-resolved`
-are CLI-only, each sitting behind a consent gate a tool call would skip:
+exposes them, else the shipped CLI:
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
+python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed — never hand-assigned, never reused. Never hand-edit
-`INDEX.md` (generated) or `resolved.jsonl` (append-only ledger).
+Several operations have no MCP tool and always use the CLI — some behind a
+consent gate a tool call would skip, some because their output belongs in a
+shell pipeline rather than in the model context.
+`skills/nitpicker/commands/_findings-store.md` names that set and the reasoning
+for each; it is the one place that list lives.
+
+IDs are content-hashed — never hand-assigned. The one way an id comes back is
+`new --force`, which re-opens a resolved finding under the id it already had.
+Never hand-edit `INDEX.md` (generated) or `resolved.jsonl` (append-only ledger).
 
 ## Never bypass the gate
 

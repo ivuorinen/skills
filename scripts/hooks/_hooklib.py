@@ -8,13 +8,49 @@ precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
 # `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
 # A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose
 # verb the ctx-ok guard then denied as unrecognised.
-_STAGE_SPLIT = re.compile(r"\|\||&&|[|;\n]|(?<![<>])&(?!>)")
+#
+# `$(`, a backtick and a bare `(` are stage boundaries for the same reason `|`
+# is: each one starts a command that the shell EXECUTES. Without them
+# `echo $(git push origin main)` is a single stage whose first token is `echo`,
+# and every guard built on this function — the git guard, the protected-write
+# half of the agents guard, the ctx-ok hatch — judged the wrapper and never saw
+# the nested call. Splitting on the delimiters rather than parsing them keeps
+# nesting free: `$(a $(b))` yields `a` and `b` as separate stages.
+#
+# `\$\(` precedes the character class so the `$` is consumed with its paren
+# rather than left behind as a one-token stage. The closing `)` splits too —
+# what follows it is back in the outer command.
+_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>)")
+
+# Command wrappers: the token that runs is the one AFTER these, so a guard
+# reading `tokens[0]` sees the wrapper and skips the stage. `env git commit
+# --no-verify` was the whole bypass — one word, and every rule in the git guard
+# became unreachable.
+_WRAPPERS = frozenset(
+    {
+        "env",
+        "command",
+        "builtin",
+        "exec",
+        "sudo",
+        "doas",
+        "nice",
+        "ionice",
+        "nohup",
+        "setsid",
+        "stdbuf",
+        "time",
+        "timeout",
+        "xargs",
+    }
+)
 # A comment runs to end of LINE, not end of string: without re.MULTILINE only the
 # final line's comment is stripped, and an earlier `#` survives to become a stage
 # whose first token is `#`.
@@ -43,6 +79,11 @@ _CONTINUATION = re.compile(r"\\\n")
 # git global options that consume the NEXT token as their value. Without these
 # the token after them is mistaken for the subcommand, or the scan stops early.
 _VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
+
+# How many nested `env -S` payloads `_split_string_payload` unwraps. Four is far
+# past any legible command and keeps a hostile payload from making the guard the
+# slow part of every Bash call.
+_MAX_SPLIT_STRING_DEPTH = 4
 
 
 # Seconds, shared by every hook that shells out. An unbounded call is
@@ -136,6 +177,162 @@ def _unmask(token: str, spans: list[str]) -> str:
     return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
 
 
+def _split_string_payload(tokens: list[str], depth: int = 0) -> list[str]:
+    """`tokens` with every `env -S` payload expanded into the tokens it carries.
+
+    `env -S 'GIT_CONFIG_COUNT=1 … git commit -m x'` is one shell word, so the
+    scan below saw no `git` token and emitted no inner variant — the whole
+    command the guard exists to judge sat inside a single operand. GNU `env`
+    splits that payload itself at execution time, so the guard has to split it
+    too or the wrapper it already knows about becomes a way through it.
+
+    All four spellings `env` accepts are handled: `-S X`, `-SX`,
+    `--split-string X` and `--split-string=X`. A payload that does not tokenize
+    falls back to whitespace splitting rather than being dropped — refusing to
+    look is how the operand became invisible in the first place, and an
+    over-split payload can only add candidate stages, never remove one.
+
+    An expanded payload is expanded again, because a payload may carry another
+    `env -S`. `env -S 'env -S "git push origin main"'` splits once into `env`,
+    `-S`, `git push origin main`, leaving the git call one opaque token that no
+    later scan matches — the same invisible operand this expansion exists to
+    remove, reinstated one level down. GNU `env` keeps unwrapping it at
+    execution time, so the guard has to as well.
+
+    `_MAX_SPLIT_STRING_DEPTH` bounds the recursion, because "strictly shorter"
+    is not the same as "shallow": a token spelled `-S-S-S-S…` re-enters at two
+    characters a level, so a few kilobytes of operand would exhaust the stack of
+    a guard that runs before every Bash call.
+
+    Reaching that bound stops the *precise* expansion, never the looking. The
+    remaining tokens are whitespace-split and stripped of shell quoting instead,
+    which is what the depth-1 fallback above already does for a payload `shlex`
+    refuses, and for the same reason: coarser only ever adds candidate stages,
+    so a nest too deep to parse exactly is judged rather than waved through.
+    Stopping at the bound with the payload still folded would have made
+    `env -S` nested past the cap the one spelling that reaches git untouched.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token, payload = tokens[i], None
+        if token in ("-S", "--split-string") and i + 1 < len(tokens):
+            payload, i = tokens[i + 1], i + 2
+        elif token.startswith("-S") and len(token) > 2:
+            payload, i = token[2:], i + 1
+        elif token.startswith("--split-string="):
+            payload, i = token.split("=", 1)[1], i + 1
+        else:
+            out.append(token)
+            i += 1
+            continue
+        try:
+            expanded = shlex.split(payload)
+        except ValueError:
+            expanded = payload.split()
+        if depth < _MAX_SPLIT_STRING_DEPTH:
+            expanded = _split_string_payload(expanded, depth + 1)
+        else:
+            expanded = [word.strip("'\"\\") for tok in expanded for word in tok.split()]
+        out.extend(expanded)
+    return out
+
+
+def _assignments(tokens: list[str]) -> dict[str, str]:
+    """Every `NAME=value` operand in `tokens`, in order.
+
+    Shared by the stage prefix and the wrapper prefix, which differ only in
+    where the assignments sit: a stage's lead it, while `env`'s follow the
+    wrapper name and may be interleaved with its own options
+    (`env -u FOO A=1 git …`). Matching the shape rather than a position covers
+    both without modelling either grammar.
+    """
+    out: dict[str, str] = {}
+    for token in tokens:
+        if "=" in token and not token.startswith("-"):
+            name, _, value = token.partition("=")
+            out[name] = value
+    return out
+
+
+def _wrapper_variants(tokens: list[str]) -> list[tuple[dict[str, str], list[str]]]:
+    """The stage, plus every git call a leading wrapper hides, with its assignments.
+
+    The assignments matter as much as the call. `env GIT_CONFIG_COUNT=1
+    GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x`
+    puts them *after* the wrapper, where the stage-level prefix scan in
+    `shell_stages_with_env` never reaches — it stops at the `env` token. The
+    emitted variant therefore carried an empty environment map and
+    `_global_denial` missed the hook-disabling route that the same assignments
+    written without `env` are denied for. Each variant now carries what the
+    prefix it skipped applies.
+
+    Each wrapper has its own option grammar — `nice -n 10 git push` puts two
+    tokens between the wrapper and the command, `env -u FOO git push` two more —
+    so stripping a fixed prefix models one spelling and misses the rest. Emitting
+    every suffix that begins at a `git` token models none of them and misses no
+    spelling. Bounded by the stage's own length.
+
+    The original stage is kept as well, never replaced: `env` alone is a read
+    command the ctx-ok guard must still judge, and an unrecognised wrapped verb
+    must still fail closed.
+
+    A stage that merely mentions `git` after a wrapper (`sudo apt install git`)
+    yields a suffix with no subcommand, which every caller ignores. The residual
+    false positive — a wrapper-led stage whose operands literally read `git push`
+    — blocks one command rather than admitting one, which is the direction a
+    guard should err in.
+    """
+    if Path(tokens[0]).name not in _WRAPPERS:
+        return [({}, tokens)]
+    # The scan runs over the `-S`-expanded form so a payload-carried git call is
+    # reachable, while the original stage is kept unexpanded: it is what the
+    # ctx-ok guard and the unrecognised-verb path must still judge.
+    expanded = _split_string_payload(tokens)
+    return [({}, tokens)] + [
+        (_assignments(expanded[:i]), expanded[i:])
+        for i in range(1, len(expanded))
+        if Path(expanded[i]).name == "git"
+    ]
+
+
+def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]]:
+    """(env assignments, tokens) per stage — the full result `shell_stages` trims.
+
+    The `VAR=value` prefix is stripped so the command can be found, and used to
+    be discarded with it. `core.hooksPath` can be assigned through the
+    environment as readily as through `-c`, so
+    `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath … git commit` reached real
+    git with no token the guard inspected. Returning the prefix rather than
+    dropping it is what lets the git guard judge that route.
+
+    A separate function rather than a wider return type from `shell_stages`:
+    every other caller wants tokens alone, and changing that signature would
+    touch each of them for a question only one of them asks.
+    """
+    masked, spans = _mask_quoted(command)
+    # Comments first, then continuations: `foo # bar \` is comment to end of line,
+    # so the trailing backslash continues nothing and must not join the next line.
+    joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
+    stages: list[tuple[dict[str, str], list[str]]] = []
+    for segment in _STAGE_SPLIT.split(joined):
+        tokens = [_unmask(t, spans) for t in segment.split()]
+        env: dict[str, str] = {}
+        i = 0
+        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
+            name, _, value = tokens[i].partition("=")
+            env[name] = value
+            i += 1
+        if i < len(tokens):
+            # The wrapper's assignments are layered over the stage's, not merged
+            # blindly: `A=1 env A=2 git …` is what real `env` does, and the
+            # closer one is what reaches git.
+            stages.extend(
+                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:])
+            )
+    return stages
+
+
 def shell_stages(command: str) -> list[list[str]]:
     """Tokens for each pipeline/list stage, comments and `VAR=value` prefixes stripped.
 
@@ -147,20 +344,12 @@ def shell_stages(command: str) -> list[list[str]]:
     than by each caller, so `git_calls` and the ctx-ok guard agree on what a
     command says: a trailing `# push to main later` used to put `main` in the
     push guard's operand list.
+
+    A command nested in `$(...)`, backticks or a subshell is its own stage, and a
+    stage behind a wrapper yields the wrapped git call as another — see
+    `_STAGE_SPLIT` and `_wrapper_variants`.
     """
-    masked, spans = _mask_quoted(command)
-    # Comments first, then continuations: `foo # bar \` is comment to end of line,
-    # so the trailing backslash continues nothing and must not join the next line.
-    joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
-    stages: list[list[str]] = []
-    for segment in _STAGE_SPLIT.split(joined):
-        tokens = [_unmask(t, spans) for t in segment.split()]
-        i = 0
-        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
-            i += 1
-        if i < len(tokens):
-            stages.append(tokens[i:])
-    return stages
+    return [tokens for _env, tokens in shell_stages_with_env(command)]
 
 
 def skip_git_global_opts(tokens: list[str], i: int) -> int:

@@ -43,6 +43,10 @@ repos:
     hooks:
       - id: yamllint
         args: [--strict, -c=.yamllint.yaml]
+        # benchmarks/corpus/ holds seeded-defect fixtures, not this repo's YAML.
+        # Their content is the expected input of `make bench`; linting them to
+        # this repo's conventions would edit the thing under measurement.
+        exclude: '^benchmarks/corpus/'
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: 1f1e8bf348ff38fc88619a38d3ca4d9c56abea49 # v0.16.5
@@ -70,7 +74,7 @@ repos:
         # and the CI step: any .py added outside these roots would be gated by
         # pre-commit alone, and every tests/ edit would fail on B101.
         files: '^(?:skills|scripts)/'
-        exclude: '(^|/)(?:tests|\.venv|graphify-out|_extra)/'
+        exclude: '(^|/)(?:tests|\.venv|graphify-out)/'
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 12e63946db2c5cfcc9030fac21c3883ba88c6ed8 # 0.38.0
@@ -99,6 +103,12 @@ repos:
       # deterministic and tokenless; unpinned-uses is still a hard error.
       - id: zizmor
         args: [--pedantic, --offline]
+        # benchmarks/corpus/gha-expression-injection/ carries the injection this
+        # repo forbids, on purpose: it is the planted positive `make bench`
+        # scores retrieval against. Nothing under benchmarks/corpus/ ever runs
+        # as CI — it is fixture data checked out by the scorer — so the finding
+        # here would be a report about the test, not about the pipeline.
+        exclude: '^benchmarks/corpus/'
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1

@@ -100,7 +100,11 @@ indent-style = "space"
 # nobody can reproduce is worse than none, since it invites the reader to
 # conclude the exclusion is unjustified rather than merely stale. Re-measure
 # with `bandit -q -r tests/ -f json` if the balance ever needs checking.
-exclude_dirs = ["tests", ".venv", "graphify-out", "_extra"]
+# Every entry must name a directory that exists or is gitignored — a scan
+# exclusion for nothing is a standing instruction to skip a path nobody
+# remembers choosing. `_extra` sat here naming a directory no commit has ever
+# created; `test_bandit_exclusions_all_resolve` now pins that.
+exclude_dirs = ["tests", ".venv", "graphify-out"]
 
 # Three checks are skipped as structurally inapplicable, not as noise to bury:
 #

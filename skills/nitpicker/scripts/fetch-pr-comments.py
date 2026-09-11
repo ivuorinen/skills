@@ -77,7 +77,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import pr_common
+import pr_cli
 
 if __name__ == "__main__":
-    sys.exit(pr_common.run_cli(__doc__ or "", "fetch_comments", sys.argv[1:]))
+    sys.exit(pr_cli.run_cli(__doc__ or "", "fetch_comments", sys.argv[1:]))

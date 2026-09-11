@@ -25,6 +25,13 @@ reads the open [Agent Skills](https://agentskills.io) format.
 The bundled tools (`skills/nitpicker/scripts/*.py`) are stdlib-only and run
 with plain `python3` — no uv, no package installs on the consumer machine.
 
+Context discipline is part of the toolkit rather than a host feature it borrows.
+`context_pack.py` (MCP: `np_context_pack`) answers with coordinates — path, line
+range, enclosing symbol, why it matched — never with file bodies, so a lens
+decides what to open without reading the repository to find out. The rule its
+callers are held to is stated in `commands/_conventions.md`: **compression may
+decide what to inspect next; only original source may prove a finding.**
+
 ## Usage
 
 ```text
@@ -158,7 +165,19 @@ python3 skills/nitpicker/scripts/findings.py list --status open
 python3 skills/nitpicker/scripts/findings.py resolve <id> --status fixed --notes "…"
 python3 skills/nitpicker/scripts/findings.py validate
 python3 skills/nitpicker/scripts/findings.py index
+python3 skills/nitpicker/scripts/findings.py recheck
+python3 skills/nitpicker/scripts/findings.py export --format sarif > nitpicker.sarif
 ```
+
+`export` renders the store for another system — `sarif` for a code-scanning
+interface, `json` for another agent, `junit` for a CI reporter, which maps open
+findings to failures so they show beside failing tests. The markdown stays
+canonical.
+
+A finding filed with `--location src/auth.py:73-106` also records a fingerprint
+of the source there. `recheck` re-computes every one in a single pass, so
+`/nitpicker reverify` can skip a finding whose cited bytes have not moved
+instead of re-reasoning over it.
 
 ### Migrating from 1.x
 
@@ -187,7 +206,8 @@ category of the command table), findings
 management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
 scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`,
-`np_check_agent_instructions`), and
+`np_check_agent_instructions`), bounded repository context (`np_context_pack`),
+and
 pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
 Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
 reachable this way, so a command runs its analysis without a shell; the
