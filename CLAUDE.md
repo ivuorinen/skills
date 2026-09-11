@@ -100,15 +100,47 @@ Three install traps, each hit once already:
 
 ## Findings Store
 
-One file per **open** finding under `docs/audit/findings/<auditor>/open/<id>.md`; resolving one appends a record to the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open file (so the tree never accumulates hundreds of resolved files). `INDEX.md` is generated, and an in-store `.gitattributes` (self-written by findings.py) marks the store `linguist-generated` so audit runs don't flood PR diffs. Managed through the `np_*` MCP tools where the session exposes them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps every operation to its interface and names the ones no tool wraps — read it there rather than keeping a second list here, which is how this paragraph came to name three of the five.
+One file per **open** finding under
+`docs/audit/findings/<auditor>/open/<id>.md`. Resolving one appends a record to
+the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open
+file, so the tree never accumulates hundreds of resolved files.
+
+`INDEX.md` is generated. An in-store `.gitattributes`, self-written by
+findings.py, marks the store `linguist-generated` so audit runs don't flood PR
+diffs.
+
+The store is managed through the `np_*` MCP tools where the session exposes
+them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps
+every operation to its interface and names the ones no tool wraps. Read it
+there rather than keeping a second list here — that is how this paragraph came
+to name three of the five.
 
 ```bash
 python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed — never hand-assigned, never reused. `migrate` converts 1.x `docs/audit/*-findings.md` documents; `migrate-resolved` folds a legacy `<auditor>/resolved/*.md` tree into the ledger. `export --format sarif|json|junit` (in `findings_export.py`) renders the store for another system: SARIF omits resolved findings, since an alert on a fixed defect is indistinguishable from a live one; JUnit maps open to failure and resolved to pass, so a CI panel shows unfixed findings beside failing tests.
+IDs are content-hashed — never hand-assigned, never reused.
 
-`new --location path:START-END` records where the evidence was read plus a fingerprint of that source; `recheck` re-computes every one so `reverify` can skip a finding whose cited bytes are unchanged rather than spending a model pass on it. The fingerprint covers the cited line range, so an unrelated edit *above* it reads as `changed` — the safe direction: it costs a re-check, never a missed change. `location` is deliberately outside the content-hashed id. The PostToolUse hook `validate-audit-findings-hook.py` validates edited open findings and the ledger, and regenerates the index.
+`migrate` converts 1.x `docs/audit/*-findings.md` documents. `migrate-resolved`
+folds a legacy `<auditor>/resolved/*.md` tree into the ledger.
+
+`export --format sarif|json|junit` (in `findings_export.py`) renders the store
+for another system. SARIF — the Static Analysis Results Interchange Format a
+code-scanning UI ingests — omits resolved findings, since an alert on a fixed
+defect is indistinguishable from a live one. JUnit maps open to failure and
+resolved to pass, so a CI panel shows unfixed findings beside failing tests.
+
+`new --location path:START-END` records where the evidence was read, plus a
+fingerprint of that source. `recheck` re-computes every one, so `reverify` can
+skip a finding whose cited bytes are unchanged rather than spend a model pass
+on it.
+
+The fingerprint covers the cited line range, so an unrelated edit *above* it
+reads as `changed`. That is the safe direction: it costs a re-check, never a
+missed change. `location` is deliberately outside the content-hashed id.
+
+The PostToolUse hook `validate-audit-findings-hook.py` validates edited open
+findings and the ledger, and regenerates the index.
 
 ## PR Fetchers
 
@@ -384,12 +416,13 @@ configured and unnamed here:
 - matcher `Read|Glob` — `graphify hook-guard read`
 
 Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
-clone without graphify installed it exits 0 and is a no-op; when graphify is on
-`PATH` the guard's own exit code propagates and can block the call.
+clone without graphify installed it exits 0 and is a no-op. When graphify is on
+the executable search path (`$PATH`), the guard's own exit code propagates and
+can block the call.
 
 Between those two it **pins the binary**: it compares `graphify --version`
 against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch.
-Without that, a different or compromised `graphify` earlier on `PATH` silently
+Without that, a different or compromised `graphify` earlier on `$PATH` silently
 takes over the permit/deny decision for every file read, glob and shell command
 in the session — the one executing component the vendored-skill trust model left
 unbound. An **empty or missing** pin file denies rather than passes: treating an
@@ -398,7 +431,15 @@ in silence. The ceiling is worth knowing — a version string is self-reported, 
 this raises the cost of substitution and makes an accidental mismatch visible;
 it is not attestation.
 
-Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`), the working tree (`git diff`) and the untracked set (`git ls-files --others`), so **unstaged** and brand-new files count too — before Claude hands back control. A `stop_hook_active` guard keeps the reminder from re-firing on the forced continuation its own exit 2 causes. That is one stop cycle, not one session: the reminder repeats once per turn for as long as skill edits stay uncommitted, which is the observed behaviour and not a broken guard.
+Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files
+before Claude hands back control. Its scope is the union of the git index
+(`git diff --cached`), the working tree (`git diff`) and the untracked set
+(`git ls-files --others`), so **unstaged** and brand-new files count too.
+
+A `stop_hook_active` guard keeps the reminder from re-firing on the forced
+continuation its own exit 2 causes. That is one stop cycle, not one session:
+the reminder repeats once per turn for as long as skill edits stay
+uncommitted. That is the observed behaviour, not a broken guard.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
