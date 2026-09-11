@@ -69,7 +69,15 @@ REPO_ROOT = Path(__file__).parent.parent
 # was measured and returns nothing on this repository — it omits the `-audit`
 # rule variants, which are precisely the ones Codacy flags. Registry rules are
 # fetched once and then cached by opengrep, so later runs need no network.
-CONFIG = "r/python.lang.security.audit"
+#
+# Widened from `r/python.lang.security.audit` to its parent. Codacy reported
+# `use-defused-xml` on findings_export.py, which lives outside the `-audit`
+# namespace, so the local gate could not see the finding or judge a suppression
+# for it — the gap .codacy.yml names: "a rule newly reported here that the local
+# gate does not run is a gap in scripts/check-opengrep.py's CONFIG, not a reason
+# to exclude a path." Measured on this repository: the parent namespace returns
+# that one finding and nothing else, so the widening costs no new noise.
+CONFIG = "r/python.lang.security"
 
 # Mirrors [tool.bandit] in pyproject.toml and the `opengrep` block in
 # .codacy.yml: shipped tools plus internal tooling, tests excluded. opengrep

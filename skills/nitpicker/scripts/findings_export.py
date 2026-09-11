@@ -34,6 +34,15 @@ import re
 # `quoteattr` are output encoders, and they are exactly what a hand-rolled
 # replacement would get subtly wrong — `quoteattr` picks the quote character
 # from the value's own content, which a naive `.replace('"', "&quot;")` does not.
+#
+# opengrep's `use-defused-xml` fires on the same import for the same reason and
+# is wrong here twice over: `defusedxml` hardens parsers and offers no
+# replacement for these two encoders, and it is a third-party package, which a
+# shipped tool cannot take — `.claude/rules/use-uv-runner.md` holds everything
+# under `skills/*/scripts/` to the standard library. Reported as a Codacy
+# critical on PR #131; `CONFIG` in check-opengrep.py was widened in the same
+# change so this marker is judged by the local gate rather than only in the UI.
+# nosemgrep: use-defused-xml
 from xml.sax.saxutils import escape, quoteattr  # nosec B406
 
 FORMATS = ("sarif", "json", "junit")
