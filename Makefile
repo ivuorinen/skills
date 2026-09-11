@@ -154,8 +154,7 @@ bench-recall:
 	uv run --quiet scripts/bench-recall.py --run
 
 # Zero floor: any pyright error fails the gate. A count threshold could mask a
-# new error by fixing an old one, so the tolerated set must stay empty. Mirrors
-# the Type-check step in .github/workflows/validate-skills.yml — change both together.
+# new error by fixing an old one, so the tolerated set must stay empty.
 typecheck:
 	uv run --with pyright==1.1.411 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
 
@@ -163,8 +162,9 @@ lint:
 	uv run --extra dev ruff check scripts/ tests/ skills/
 
 # Scope matches [tool.bandit] in pyproject.toml: shipped tools plus internal
-# tooling, tests excluded there. Mirrors the Security step in
-# .github/workflows/validate-skills.yml — change both together.
+# tooling, tests excluded there. CI runs this through `make check` rather than
+# as a step of its own — the Makefile is the single definition of what
+# "checked" means, so there is no second copy to keep in step.
 security:
 	uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
 

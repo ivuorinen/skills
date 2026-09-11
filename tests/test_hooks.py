@@ -861,13 +861,21 @@ def test_ci_breaking_marker_gate_matches_both_footer_spellings():
     Reads the regex out of the workflow rather than restating it, so the test
     cannot pass against a literal the workflow no longer uses.
     """
-    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/commit-lint.yml").read_text(encoding="utf-8")
     m = re.search(r'r"(\^BREAKING[^"]*)"', workflow)
     assert m, "could not find the breaking-footer regex in the workflow"
     footer = re.compile(m.group(1), re.M)
     assert footer.search("BREAKING CHANGE: drops the v1 store")
     assert footer.search("BREAKING-CHANGE: drops the v1 store")
     assert not footer.search("mentions a breaking change in prose")
+
+
+# The required checks on `main`, from .claude/rules/github-actions-security.md.
+# Read the live set with `gh api repos/<owner>/<repo>/rulesets/<id>`; this copy
+# exists so the test below has something to resolve job names against.
+_REQUIRED_CHECKS = frozenset(
+    {"Validate", "Lint PR title", "Lint commit messages", "Analyze (python)", "Analyze (actions)"}
+)
 
 
 @pytest.mark.parametrize(
@@ -983,6 +991,49 @@ def test_bandit_exclusions_all_resolve():
             "different set than `make security` and CI"
         )
     assert "_extra" not in hook, "the bandit hook still excludes the removed `_extra`"
+
+
+def test_no_required_check_job_can_be_skipped_into_a_pass():
+    """A required check must never be reachable in the `skipped` state.
+
+    GitHub reports a skipped job as SUCCESS to required-status-check evaluation.
+    So a job whose name is a required check must satisfy BOTH of these, or the
+    gate can be turned green without running:
+
+    1. no job-level `if:` — an `if:` that evaluates false skips the job;
+    2. no trigger the job is not meant to answer on. `workflow_dispatch` is the
+       sharp one: anyone with write access can dispatch a workflow on a PR's
+       head branch, and the resulting check run lands on the PR head SHA.
+
+    `Lint commit messages` failed both at once — `if: github.event_name ==
+    'pull_request'` inside validate-skills.yml, which declares
+    `workflow_dispatch` — so dispatching Validate posted a green commit-lint
+    over whatever the real run concluded. It now lives in commit-lint.yml,
+    which triggers on `pull_request` alone.
+
+    `Validate` keeps `workflow_dispatch` legitimately and is exempt from the
+    trigger half: it carries no `if:`, so a dispatched run executes `make check`
+    for real and can only report what it actually found. The `if:` half binds it
+    like every other required job.
+    """
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        # `on` is the YAML 1.1 boolean True, not the string, under safe_load.
+        triggers = set(spec.get(True) or spec.get("on") or {})
+        for job_id, job in (spec.get("jobs") or {}).items():
+            if (job.get("name") or job_id) not in _REQUIRED_CHECKS:
+                continue
+            where = f"{path.name}:{job_id}"
+            assert "if" not in job, (
+                f"{where} is a required check with a job-level `if:` — a skipped "
+                "job reports as success to branch protection"
+            )
+            if (job.get("name") or job_id) == "Validate":
+                continue
+            assert "workflow_dispatch" not in triggers, (
+                f"{where} is a required check in a workflow that can be dispatched; "
+                "a dispatched run posts a check run on the PR head SHA"
+            )
 
 
 def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
