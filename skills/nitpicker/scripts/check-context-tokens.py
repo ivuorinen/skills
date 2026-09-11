@@ -222,7 +222,13 @@ def main(argv: list[str] | None = None) -> int:
         if not root.is_dir():
             raise UsageError(f"not a directory: {args.root}")
         data = report(root, args.skill, args.command)
-        if args.baseline:
+        # `is not None`, never truthiness — the same shape as `--grade` in
+        # bench-recall.py. `--baseline` has no default, so it is None exactly
+        # when omitted; `--baseline ""`, which is what an unset `$PREV` expands
+        # to in `--baseline "$PREV"`, asked for a delta and would instead fall
+        # through to the plain report. A caller watching the delta for a
+        # regression would read that as "no change".
+        if args.baseline is not None:
             baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
             # Parsing is not enough: `[]`, `null`, `123` and a bare string are all
             # valid JSON, and every one of them reaches `render_delta` as

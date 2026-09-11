@@ -335,6 +335,21 @@ def test_cli_reports_a_grading_error_at_exit_one(tmp_path, monkeypatch, capsys):
     assert "no audited copy" in capsys.readouterr().err
 
 
+def test_cli_treats_an_empty_grade_value_as_grading(tmp_path, monkeypatch, capsys):
+    """`--grade ""` asked to grade; a truthiness test sent it to the agent run.
+
+    That branch starts an agent per case — credentials and minutes — for a user
+    who requested the pure one. Pinned by asserting the grading error surfaces,
+    which only the grading branch can produce.
+    """
+    monkeypatch.setattr(_mod._retrieval, "load_cases", lambda case="": [CASE])
+    monkeypatch.setattr(
+        _mod, "run_case", lambda *a, **k: pytest.fail("empty --grade started an agent run")
+    )
+    assert _mod.main(["--grade", ""]) == 1
+    assert "no audited copy" in capsys.readouterr().err
+
+
 def test_cli_requires_a_mode(capsys):
     """`--grade` and `--run` are the whole interface; neither is a default."""
     with pytest.raises(SystemExit) as exc:

@@ -222,6 +222,18 @@ def test_a_baseline_of_the_wrong_json_shape_is_a_usage_error(tmp_path, capsys, p
     assert "must be a report object" in capsys.readouterr().err
 
 
+def test_an_empty_baseline_value_is_a_usage_error_not_a_plain_report(tmp_path, capsys):
+    """`--baseline "$PREV"` with `PREV` unset asked for a delta and got a report.
+
+    Same shape as `--grade ""` in bench-recall.py: the option has no default, so
+    truthiness cannot tell "omitted" from "supplied empty". A caller watching the
+    delta for a regression reads the fall-through as no change.
+    """
+    root = _project(tmp_path)
+    assert _mod.main([str(root), "--baseline", ""]) == 1
+    assert "Error:" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "payload",
     [

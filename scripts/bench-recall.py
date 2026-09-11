@@ -321,7 +321,12 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         cases = _retrieval.load_cases(args.case)
-        if args.grade:
+        # `is not None`, never truthiness: `--grade ""` is a request to grade,
+        # and a falsy test sends it to the agent branch instead — spending
+        # credentials and minutes per case on a run the user did not ask for.
+        # The option has no default, so it is None exactly when omitted; an
+        # empty value then fails in `_grade_dir` with the named-case error.
+        if args.grade is not None:
             rows = _grade_dir(cases, Path(args.grade))
         else:
             rows = _run_all(cases, args.agent_cmd, args.keep)
