@@ -142,6 +142,24 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/check-agent-instructions.py" [<project_root
 
 It reads every instruction file the detected harnesses load — both roles in the Harness scope table — and reports the defects that only exist across files or against a whole-set total: `instruction_budget` (the set's directives against the ~150 a session can carry once the harness takes its share), `position_risk` (a critical rule titled in the middle 20–80% of a root file, where it is skimmed past), `cross_file_duplicate` (one directive stated in two files), `dangling_import` (an `@path.md` import whose target does not exist — the harness skips it in silence, so every rule the target holds is absent from the session and the author has no signal), `circular_import` (an import chain returning to a file already on it, cut at a depth limit rather than followed), and `import_too_deep` (a chain running past the hops the harness follows, so the file at the end never arrives). The budget limit and a dangling import block. It names the harnesses it detected in `harnesses`.
 
+Both tools count directives, and neither measures size. Ten terse directives
+rewritten as ten long paragraphs score identically and cost several times as
+much, so prose bloat in the always-loaded set is invisible to both. A third,
+CLI-only tool measures that half:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/check-context-tokens.py" [<project_root>] \
+  [--skill <name>] [--command <name>] [--json] [--baseline <previous.json>]
+```
+
+It reports two payloads separately — the always-loaded set, and what one skill
+invocation costs before it has read any code — biggest file first. **It never
+fails**, whatever the numbers: its counts are four-characters-per-token
+estimates, and gating on an estimate turns an approximation into a rule nobody
+can reproduce. Read the `--baseline` delta rather than the absolute value; the
+same estimator applied to two commits cancels its own bias. File a finding when
+a payload grew without a matching gain in what it binds, citing both totals.
+
 A duplicate is graded by whether one session ever holds both copies: Medium within a harness, where the two are genuinely competing sources; Low across two, where the repetition is a deliberate mirror — `.github/copilot-instructions.md` exists precisely because Copilot does not read `CLAUDE.md` — and the hazard is that editing one leaves the other stale rather than contradicted. Position risk inside a rules directory belongs to `check-rules-anatomy.py`, which scores that file shape with a stricter rule — do not report it from both.
 
 ## Rule classification reference
