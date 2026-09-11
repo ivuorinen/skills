@@ -392,6 +392,24 @@ def test_new_finding_records_location_and_its_fingerprint(tmp_path):
     assert fm["location_sha"] == findings.location_fingerprint(repo, "src/auth.py:2-3")
 
 
+def test_location_survives_resolution_into_the_exported_row(tmp_path):
+    """SARIF places a resolved result by `location`; the ledger files it in `extra`.
+
+    `location` is not in `_KNOWN_FM`, so `_record_from_finding` moves it under
+    `extra` — reading only the top level exported an empty location for every
+    resolved finding that recorded one, and a consumer then falls back to
+    free-text `area`, which often resolves to no file at all.
+    """
+    repo, store = _repo_with_store(tmp_path, SOURCE)
+    path = findings.new_finding(
+        store, "security", "high", "security", "src/auth.py", "Bad", location="src/auth.py:2-3"
+    )
+    findings.resolve_finding(store, path.stem, "fixed", notes="done")
+    (row,) = [r for r in findings.gather_findings(store, status="fixed") if r["id"] == path.stem]
+    assert row["location"] == "src/auth.py:2-3"
+    assert repo.exists()
+
+
 def test_location_is_not_part_of_the_content_hashed_id(tmp_path):
     """Folding a line range into the id would rehash the same defect after any
     unrelated edit above it, and a re-file would land as a second finding."""

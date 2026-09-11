@@ -1793,7 +1793,14 @@ def gather_findings(
                     "auditor": rec.get("auditor", ""),
                     "severity": rec.get("severity") or "",
                     "area": rec.get("area", ""),
-                    "location": rec.get("location", ""),
+                    # `extra` as the fallback, and in practice the only source:
+                    # `location` is not in `_KNOWN_FM`, so `_record_from_finding`
+                    # files it under `extra` — reading the top level alone
+                    # exported an empty location for every resolved finding that
+                    # recorded one. `show_finding` already restores it from
+                    # there. Both spellings are read so a ledger written either
+                    # way resolves.
+                    "location": rec.get("location") or (rec.get("extra") or {}).get("location", ""),
                     "title": rec.get("title", ""),
                 }
             )
