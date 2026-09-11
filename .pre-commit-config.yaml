@@ -70,7 +70,7 @@ repos:
         # and the CI step: any .py added outside these roots would be gated by
         # pre-commit alone, and every tests/ edit would fail on B101.
         files: '^(?:skills|scripts)/'
-        exclude: '(^|/)(?:tests|\.venv|graphify-out|_extra)/'
+        exclude: '(^|/)(?:tests|\.venv|graphify-out)/'
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 12e63946db2c5cfcc9030fac21c3883ba88c6ed8 # 0.38.0

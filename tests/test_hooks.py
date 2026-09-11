@@ -869,6 +869,43 @@ def test_ci_breaking_marker_gate_matches_both_footer_spellings():
     assert not footer.search("mentions a breaking change in prose")
 
 
+def test_bandit_exclusions_all_resolve():
+    """Every excluded directory exists or is gitignored.
+
+    A scan exclusion naming nothing is a standing instruction to skip a path,
+    and the day someone creates that directory its Python is silently
+    unscanned. `_extra` sat in both bandit scopes naming a directory no commit
+    has ever created, with no rationale beside it while every other entry had
+    one.
+
+    Both copies are checked: pre-commit passes changed files explicitly, which
+    bypasses `[tool.bandit] exclude_dirs`, so the hook restates the set — and a
+    dead entry propagating into that restatement is the restatement working as
+    designed on a wrong value.
+    """
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    block = pyproject.split("[tool.bandit]", 1)[1]
+    m = re.search(r"^exclude_dirs = \[([^\]]*)\]", block, re.M)
+    assert m, "[tool.bandit] has no exclude_dirs"
+    excluded = re.findall(r'"([^"]+)"', m.group(1))
+    assert excluded, "exclude_dirs parsed empty; this test is checking nothing"
+
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8").split()
+    for name in excluded:
+        assert (ROOT / name).exists() or any(name in line for line in gitignore), (
+            f"[tool.bandit] excludes {name!r}, which does not exist and is not gitignored"
+        )
+
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    hook = config.split("- id: bandit", 1)[1].split("- repo:", 1)[0]
+    for name in excluded:
+        assert re.escape(name).replace("/", "/") in hook or name in hook, (
+            f"the bandit pre-commit hook does not exclude {name!r}; it would scan a "
+            "different set than `make security` and CI"
+        )
+    assert "_extra" not in hook, "the bandit hook still excludes the removed `_extra`"
+
+
 def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
     """pre-commit passes changed files explicitly, bypassing both `-r skills/
     scripts/` and [tool.bandit] exclude_dirs — so the hook must restate them or
