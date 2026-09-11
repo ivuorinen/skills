@@ -234,6 +234,21 @@ def main(argv: list[str] | None = None) -> int:
                     "--baseline must be a report object from a previous --json run. "
                     f"Received a JSON {type(baseline).__name__}."
                 )
+            # The top-level check is not enough either. `render_delta` walks
+            # `sets[name]["totals"]["est_tokens"]`, so every level it dereferences
+            # has to be a mapping: `{"sets": []}` clears the check above and then
+            # calls `.get` on a list. Each level is validated here, where the
+            # failure is a named usage error at exit 2, rather than reaching the
+            # renderer as an AttributeError at exit 1.
+            sets = baseline.get("sets", {})
+            if not isinstance(sets, dict) or not all(
+                isinstance(block, dict) and isinstance(block.get("totals", {}), dict)
+                for block in sets.values()
+            ):
+                raise UsageError(
+                    "--baseline 'sets' must map each set name to a block with a "
+                    "'totals' object, as a previous --json run writes it."
+                )
             render_delta(data, baseline)
         elif args.json:
             print(json.dumps(data, separators=(",", ":")))

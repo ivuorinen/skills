@@ -222,6 +222,28 @@ def test_a_baseline_of_the_wrong_json_shape_is_a_usage_error(tmp_path, capsys, p
     assert "must be a report object" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param('{"sets": []}', id="sets-is-a-list"),
+        pytest.param('{"sets": {"always": []}}', id="block-is-a-list"),
+        pytest.param('{"sets": {"always": {"totals": []}}}', id="totals-is-a-list"),
+    ],
+)
+def test_a_baseline_with_a_wrong_nested_shape_is_a_usage_error(tmp_path, capsys, payload):
+    """The top-level object check clears all three, and `render_delta` then walks them.
+
+    It dereferences `sets[name]["totals"]["est_tokens"]`, so any level that is
+    not a mapping raises AttributeError — exit 1 with a traceback where the
+    contract promises exit 2 with a message naming the bad argument.
+    """
+    root = _project(tmp_path)
+    bad = tmp_path / "b.json"
+    bad.write_text(payload, encoding="utf-8")
+    assert _mod.main([str(root), "--baseline", str(bad)]) == 2
+    assert "'sets' must map each set name" in capsys.readouterr().err
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
