@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as `/nitpicker <command> [extra instructions]`. The router is `skills/nitpicker/SKILL.md`; each command's instructions live in `skills/nitpicker/commands/<command>.md`, with shared conventions in `commands/_conventions.md`. The repo is installable as a Claude Code plugin via `/plugins`, and into Copilot/pi/other agents via `npx skills add ivuorinen/skills` (open Agent Skills format). Internal dev skills (scaffolding, validation, release) live under `.claude/skills/` and are not shipped to consumers.
+A hostile audit toolkit shipped as **one skill** — `nitpicker` — invoked as
+`/nitpicker <command> [extra instructions]`.
+
+The router is `skills/nitpicker/SKILL.md`. Each command's instructions live in
+`skills/nitpicker/commands/<command>.md`, with shared conventions in
+`commands/_conventions.md`.
+
+The repo is installable as a Claude Code plugin via `/plugins`, and into
+Copilot, pi and other agents via `npx skills add ivuorinen/skills` (open Agent
+Skills format). Internal dev skills — scaffolding, validation, release — live
+under `.claude/skills/` and are not shipped to consumers.
 
 ## Context Discipline
 
@@ -94,7 +104,11 @@ Three install traps, each hit once already:
 
 - Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ", plus `license` and `compatibility`).
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
-- Every command file in `commands/` whose name does not begin with `_` must have a row in one of the command tables of SKILL.md (`## Commands` or `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`; shared files prefixed `_` (e.g. `_conventions.md`, `_audit-coverage.md`) are exempt from the cross-check.
+- Every command file in `commands/` whose name does not begin with `_` must
+  have a row in one of SKILL.md's command tables (`## Commands` or
+  `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
+  Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are
+  exempt from that cross-check.
 - Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
 - No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
@@ -285,7 +299,13 @@ installs a version-pinned, digest-verified binary before `make check`.
 
 ## Conventions
 
-Skill/command writing style, lifecycle, and repo conventions live in `.claude/rules/`. How much of each rule is machine-enforced varies — several are gated only in part, and some not at all. Each rule states its own enforcement; read that statement in the rule itself rather than assuming a rule here is gated end to end.
+Skill and command writing style, lifecycle, and repo conventions live in
+`.claude/rules/`.
+
+How much of each rule is machine-enforced varies: several are gated only in
+part, and some not at all. Each rule states its own enforcement. Read that
+statement in the rule itself rather than assuming a rule here is gated end to
+end.
 
 - `skill-format.md`
 - `skill-style.md`
