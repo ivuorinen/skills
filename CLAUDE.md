@@ -134,7 +134,9 @@ to name three of the five.
 python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
-IDs are content-hashed, so they are neither hand-assigned nor reused.
+IDs are content-hashed rather than hand-assigned. `new --force` re-opens a
+resolved finding under the id it already had, dropping its ledger record; that
+is the one route by which an id in the ledger comes back.
 
 `migrate` converts 1.x `docs/audit/*-findings.md` documents. `migrate-resolved`
 folds a legacy `<auditor>/resolved/*.md` tree into the ledger.

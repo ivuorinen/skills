@@ -91,8 +91,9 @@ shell pipeline rather than in the model context.
 `skills/nitpicker/commands/_findings-store.md` names that set and the reasoning
 for each; it is the one place that list lives.
 
-IDs are content-hashed — never hand-assigned, never reused. Never hand-edit
-`INDEX.md` (generated) or `resolved.jsonl` (append-only ledger).
+IDs are content-hashed — never hand-assigned. The one way an id comes back is
+`new --force`, which re-opens a resolved finding under the id it already had.
+Never hand-edit `INDEX.md` (generated) or `resolved.jsonl` (append-only ledger).
 
 ## Never bypass the gate
 
