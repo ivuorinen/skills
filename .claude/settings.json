@@ -101,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing — deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing \u2014 deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\""
           }
         ]
       },
@@ -110,7 +110,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; exec graphify hook-guard search"
+            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned \"\"(.claude/skills/graphify/.graphify_version)\" >&2; exit 2; }; exec graphify hook-guard search"
           }
         ]
       },
@@ -119,7 +119,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; exec graphify hook-guard read"
+            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned \"\"(.claude/skills/graphify/.graphify_version)\" >&2; exit 2; }; exec graphify hook-guard read"
           }
         ]
       },

@@ -10,9 +10,27 @@ on its way into a protected branch.
 
 Never pass `--no-verify` when committing changes to skill files, version
 manifests, or the findings store — it skips the pre-commit validators that guard
-them. A PreToolUse hook (`deny-unsafe-git-hook.py`) denies the literal
-`--no-verify` and `-n`, but treat it as a backstop rather than the binding gate:
-it is bypassable through git aliases, `-c core.hooksPath=`, and stacked short
-flags, so the prohibition still rests on discipline and on CI. Keep the `Validate` job a required status check on
+them. A PreToolUse hook (`deny-unsafe-git-hook.py`) denies `--no-verify` and
+`-n` including stacked clusters (`-nm`) and abbreviations git accepts
+(`--no-veri`), `-c core.hooksPath=` and `--config-env=`, the same assignment
+made through `GIT_CONFIG_*` in the environment, and an alias body that resolves
+to a denied call — including a `!`-prefixed body, which is a shell command
+rather than a git subcommand. A command nested in `$(...)`, backticks or a
+subshell is judged as its own stage, and so is a git call behind a wrapper
+(`env`, `sudo`, `xargs`, …). Five bypasses of these shapes were closed together;
+`tests/test_hooks.py::test_git_guard_denies_the_reopened_bypass_classes` holds
+each one.
+
+Treat it as a backstop rather than the binding gate. It judges the command's
+**text**, so a request that carries no `git` token at all is outside it, and
+those are not theoretical:
+
+- an indirection that runs git from inside something else — a shell function or
+  rc alias shadowing `git`, a script the hook sees only by its own name
+  (`./deploy.sh`), `eval` on a string assembled at runtime
+- a wrapper outside the list `_hooklib._WRAPPERS` names
+
+Closing the spelled-out forms raised the cost of the rewrite; it did not turn
+the guard into the gate. Keep the `Validate` job a required status check on
 every protected branch; a merge that bypasses it lands on `main` unvalidated —
 that required check, not the local pre-commit run, is the binding gate.

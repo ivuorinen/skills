@@ -870,6 +870,84 @@ def test_ci_breaking_marker_gate_matches_both_footer_spellings():
     assert not footer.search("mentions a breaking change in prose")
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The defect: a SOURCE operand is a read. The guard's own denial message
+        # says "Reading these paths is allowed"; `cat` of the same file always
+        # was, so the asymmetry lived in the verb, not in the policy.
+        "cp scripts/hooks/_hooklib.py /tmp/x",
+        "cp scripts/hooks/ruff-hook.py /tmp/scratch/",
+        "mv scripts/hooks/a.py /tmp/b.py",
+        "cp -r scripts/hooks /tmp/backup",
+    ],
+)
+def test_copying_out_of_the_protected_tree_is_a_read_not_a_write(command, monkeypatch):
+    """Over-blocking, so it failed safe — and it is still worth fixing.
+
+    A denial an agent cannot act on is the shape that gets a guard routed around
+    rather than respected: told that reading is allowed while being refused a
+    read, there is no correct next command.
+    """
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # the destination is last
+        "cp /tmp/x scripts/hooks/ruff-hook.py",
+        "cp /tmp/x /tmp/y scripts/hooks/",
+        "mv /tmp/x scripts/hooks/ruff-hook.py",
+        "install /tmp/x scripts/hooks/new.py",
+        # ...unless an option names it, which inverts the position. Seeing one
+        # falls back to scanning every operand rather than modelling the
+        # inversion.
+        "cp -t scripts/hooks /tmp/x",
+        "cp --target-directory=scripts/hooks /tmp/x",
+        "cp /tmp/x .claude/settings.json",
+        # verbs that are not copy-shaped write every operand they name
+        "rm scripts/hooks/ruff-hook.py",
+        "chmod +x scripts/hooks/ruff-hook.py",
+        "truncate -s 0 scripts/hooks/ruff-hook.py",
+    ],
+)
+def test_writing_into_the_protected_tree_is_still_blocked(command, monkeypatch, capsys):
+    """The narrowing must not open the surface it was narrowing around."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "enforcement surface" in capsys.readouterr().err
+
+
+def test_the_agents_half_is_unaffected_by_the_operand_narrowing():
+    """`.claude/agents/**` denies READ too, so its half matches command text and
+    never asks which operand is written. Copying one out stays blocked."""
+    mod = _load("deny-agents-path-hook")
+    assert mod._references_agents("cp .claude/agents/x.md /tmp/y")
+
+
+def test_stop_reminder_does_not_reclaim_that_the_guard_stops_per_turn_repeats():
+    """`stop_hook_active` is true only on the forced continuation of one stop.
+
+    It is false again on the next turn, so it cannot prevent the reminder
+    repeating across TURNS — nothing persists between them for it to compare
+    against. Two places claimed otherwise while the accurate statement sat in
+    the inline comment twelve lines below the docstring.
+
+    Pins the false claim OUT rather than pinning a phrasing in: asserting the
+    current wording would fail the next editor who rewords it correctly, and
+    the regression worth catching is the specific wrong sentence coming back.
+    Whitespace is normalised because the claim wraps differently at any margin.
+    """
+    text = (ROOT / "scripts/hooks/stop-reminder.py").read_text(encoding="utf-8")
+    doc = " ".join(text.split('"""')[1].split())
+    assert "keeps a long-lived branch full of uncommitted skill edits from blocking" not in doc
+    assert "once per turn" in doc, "the docstring must say the reminder does repeat"
+
+
 def test_bandit_exclusions_all_resolve():
     """Every excluded directory exists or is gitignored.
 
@@ -2737,6 +2815,305 @@ def test_git_guard_denies_no_verify(command, monkeypatch, capsys):
         _run(mod, _bash(command), monkeypatch)
     assert exc.value.code == 2
     assert "--no-verify" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "fragment"),
+    [
+        # Stacked short flags: `-nm` is --no-verify plus -m, and a membership
+        # test against {"--no-verify", "-n"} matches neither token.
+        ("git commit -nm 'stacked'", "--no-verify"),
+        ("git commit -an -m x", "--no-verify"),
+        # `-c` values were consumed without being inspected, so everything
+        # expressed through them was invisible to the guard.
+        ("git -c core.hooksPath=/dev/null commit -m x", "disables the repository's hooks"),
+        ("git -c core.HOOKSPATH=/dev/null commit -m x", "disables the repository's hooks"),
+        ("git --config-env=core.hooksPath=EVIL commit -m x", "disables the repository's hooks"),
+        # An alias is judged by what it runs, with the call's own arguments
+        # appended — `push` alone targets no branch, `push origin main` does.
+        ("git -c alias.z=push z origin main", "git alias"),
+        ("git -c alias.c='commit --no-verify' c -m x", "git alias"),
+        ("git -c alias.s=add s -A", "git alias"),
+    ],
+)
+def test_git_guard_denies_every_known_bypass(command, fragment, monkeypatch, capsys):
+    """audit-fccf2da7: all three mandates fell to one-line rewrites.
+
+    Each spelling here did the blocked thing in real git — `-nm` and the
+    hooksPath override both committed with the pre-commit hook never running,
+    and the alias forms reached the push transport and staged a whole tree. The
+    guard consumed `-c` precisely in order to miss what it carried.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert fragment in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m ordinary",
+        "git commit -am ordinary",
+        # `-c` here is commit's reuse-message option taking `n` as its value,
+        # not a stacked `-n`. Scanning a cluster stops at a value-taking short.
+        "git commit -cn -m x",
+        # A cluster carrying neither `n` nor a value-taking short runs to the
+        # end of the flag and on to the next argument.
+        "git commit -v -m x",
+        "git commit -ve -m x",
+        "git push origin feature/x",
+        "git add src/one.py",
+        # An alias defined and never invoked changes nothing.
+        "git -c alias.z=push commit -m x",
+    ],
+)
+def test_git_guard_still_allows_legitimate_commands(command, monkeypatch):
+    """Over-blocking is a real cost: a denied legitimate command stops the run."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+
+
+# Every bypass class the four open agent-loopholes findings named, plus the one
+# that turned out to sit under all three guards. Each command here was ALLOWED
+# by the guard and did the blocked thing in real git.
+#
+# Grouped by mechanism rather than by finding, because the mechanisms overlap:
+# `echo $(env git push origin main)` is a substitution AND a wrapper, and it has
+# to be blocked by whichever one the guard reaches first.
+_KNOWN_BYPASSES = [
+    # abbreviated long option — git accepts any unambiguous prefix
+    pytest.param("git commit --no-veri -m x", "skips the pre-commit", id="abbrev-veri"),
+    pytest.param("git commit --no-ver -m x", "skips the pre-commit", id="abbrev-ver"),
+    pytest.param("git commit --no-v -m x", "skips the pre-commit", id="abbrev-v"),
+    # a wrapper before git — one word made every rule unreachable
+    pytest.param("env git commit --no-verify -m x", "skips the pre-commit", id="wrap-env"),
+    pytest.param("command git commit --no-verify -m x", "skips the pre-commit", id="wrap-command"),
+    pytest.param("sudo git push origin main", "protected branch", id="wrap-sudo"),
+    # a wrapper whose own options sit between it and git, which is why the guard
+    # scans for the git token rather than stripping a fixed-length prefix
+    pytest.param("nice -n 10 git push origin main", "protected branch", id="wrap-nice-value-opt"),
+    pytest.param("env -u FOO git push origin main", "protected branch", id="wrap-env-opt"),
+    pytest.param("timeout 30 git commit -nm x", "skips the pre-commit", id="wrap-timeout-operand"),
+    pytest.param("xargs git push origin main", "protected branch", id="wrap-xargs"),
+    # command substitution and subshells — the shell executes these, the guard
+    # saw only the outer verb
+    pytest.param("echo $(git push origin main)", "protected branch", id="subst-dollar"),
+    pytest.param("echo `git push origin main`", "protected branch", id="subst-backtick"),
+    pytest.param("(git push origin main)", "protected branch", id="subshell"),
+    pytest.param("x=$(git commit --no-verify -m x)", "skips the pre-commit", id="subst-assigned"),
+    pytest.param("echo $(env git push origin main)", "protected branch", id="subst-plus-wrapper"),
+    # GIT_CONFIG_* — the environment reaches core.hooksPath as readily as `-c`
+    pytest.param(
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "
+        "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+        "disables the repository's hooks",
+        id="env-config-count",
+    ),
+    pytest.param(
+        "GIT_CONFIG_GLOBAL=/tmp/evil git commit -m x",
+        "disables the repository's hooks",
+        id="env-config-global",
+    ),
+    # The count is written by the same caller as the keys, so it cannot bound
+    # the scan: git reads COUNT=0 and applies nothing, but a guard that trusted
+    # it would also skip a key that a later COUNT would activate.
+    pytest.param(
+        "GIT_CONFIG_COUNT=0 GIT_CONFIG_KEY_0=core.hooksPath "
+        "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+        "disables the repository's hooks",
+        id="env-config-untrusted-count",
+    ),
+    # a `!`-prefixed alias body is a SHELL command, so shlex.split yields `!git`
+    # and the subcommand matched nothing
+    pytest.param(
+        "git -c 'alias.z=!git push origin main' z", "protected branch", id="alias-shell-push"
+    ),
+    pytest.param(
+        "git -c 'alias.z=!git commit --no-verify -m x' z",
+        "skips the pre-commit",
+        id="alias-shell-commit",
+    ),
+    pytest.param(
+        "git -c 'alias.z=!env git push origin main' z",
+        "protected branch",
+        id="alias-shell-wrapped",
+    ),
+]
+
+
+@pytest.mark.parametrize("command,fragment", _KNOWN_BYPASSES)
+def test_git_guard_denies_the_reopened_bypass_classes(command, fragment, monkeypatch, capsys):
+    """The five findings that reopened after audit-fccf2da7 closed the first three.
+
+    audit-fccf2da7 closed `-nm`, the hooksPath override and the alias form. Each
+    command here then walked past the closed guard by changing how the same
+    request is SPELLED — an abbreviation, a wrapper word, a `$(...)`, an
+    environment variable, or a `!` in the alias body.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert fragment in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # `env` alone is a read command, not a wrapper around one — stripping it
+        # unconditionally would drop the stage and stop the ctx-ok guard seeing it.
+        "env",
+        # `git` as an operand rather than a command, behind a wrapper. The suffix
+        # scan finds the token and then finds no subcommand after it.
+        "sudo apt install git",
+        # Quoted text is masked before splitting, so a command NAMED in a string
+        # is not a command RUN.
+        "echo 'git push origin main'",
+        "grep -rn 'git push origin main' docs/",
+        # Parens inside a quoted argument must not split the stage.
+        "python3 -c 'print(2**8)'",
+        # A redirection's `&` is not a stage separator and never was.
+        "make check 2>&1 | tail -20",
+    ],
+)
+def test_git_guard_does_not_overblock_the_new_shapes(command, monkeypatch):
+    """The widened grammar must not start denying ordinary work.
+
+    Over-blocking is the failure mode a broadened guard invites, and it is the
+    one that gets a guard routed around rather than fixed.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+
+
+@pytest.mark.parametrize(
+    "hook,command",
+    [
+        # The stage scan is shared, so closing it in _hooklib closes it for every
+        # guard built on it — not only for the git guard the findings were filed
+        # against. Each of these was ALLOWED before.
+        ("deny-agents-path-hook", "echo $(sed -i s/a/b/ scripts/hooks/ruff-hook.py)"),
+        ("deny-agents-path-hook", "(cp /tmp/x scripts/hooks/ruff-hook.py)"),
+        ("deny-agents-path-hook", "echo `cp /tmp/x .claude/settings.json`"),
+        ("guard-ctx-ok-hook", "echo $(cat README.md)  # ctx-ok"),
+        ("guard-ctx-ok-hook", "echo `grep -r secret .`  # ctx-ok"),
+    ],
+)
+def test_the_shared_stage_scan_closes_every_dependent_guard(hook, command, monkeypatch):
+    """One mechanism, three dependents.
+
+    The finding was filed against the git guard because that is where it was
+    noticed, but `_stage_is_mutating` and `_verbs` read `tokens[0]` from the same
+    function. A fix that landed only in the git guard would have left two of the
+    three open, and nothing here would have said so.
+    """
+    mod = _load(hook)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_shell_stages_exposes_the_environment_prefix_it_strips():
+    """`shell_stages` drops the `VAR=value` prefix so the command can be found.
+
+    It used to drop it without returning it anywhere, which is why the
+    GIT_CONFIG_* route was invisible. The paired accessor is what the git guard
+    reads; `shell_stages` keeps its old signature so no other caller changed.
+    """
+    hooklib = _load("_hooklib")
+    stages = hooklib.shell_stages_with_env("FOO=1 BAR=2 git commit -m x")
+    assert stages == [({"FOO": "1", "BAR": "2"}, ["git", "commit", "-m", "x"])]
+    assert hooklib.shell_stages("FOO=1 git commit -m x") == [["git", "commit", "-m", "x"]]
+
+
+def test_a_nested_alias_body_is_refused_rather_than_unwound_forever():
+    """An alias whose body defines another alias is bounded, and bounded by DENYING.
+
+    The `!` body goes back through the same machinery the outer command did, so a
+    body that defines a further alias recurses. The cap makes that terminate.
+    Terminating by allowing would turn the ceiling into the bypass: nest one level
+    past it and the guard waves the command through unexamined.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    reason = mod._alias_denial("!git push origin main", [], mod._MAX_ALIAS_DEPTH)
+    assert reason == mod._ALIAS_DEPTH_DENIAL
+    # One below the cap still judges the body rather than refusing it wholesale.
+    reason = mod._alias_denial("!git push origin main", [], mod._MAX_ALIAS_DEPTH - 1)
+    assert reason is not None and "protected branch" in reason
+
+
+def test_a_shell_alias_body_is_judged_on_its_global_options_too():
+    """The `!` body is re-entered through `_global_denial`, not only `_denial`.
+
+    A body can carry `-c core.hooksPath=...` exactly as the outer command can, and
+    that assignment is judged before any subcommand is resolved — so the recursion
+    has to run the global pass, not just the subcommand pass.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    reason = mod._alias_denial("!git -c core.hooksPath=/dev/null commit -m x", [], 0)
+    assert reason is not None
+    assert "disables the repository's hooks" in reason
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # a `!` body that runs something harmless: both passes decline, so the
+        # alias is allowed rather than blocked for being an alias
+        "!git status",
+        "!echo hello",
+        # a plain (non-`!`) body that names a subcommand with no mandate on it
+        "status",
+        # no alias defined for the invoked subcommand at all
+        "",
+    ],
+)
+def test_an_alias_body_that_breaks_no_mandate_is_allowed(raw, monkeypatch):
+    """Judging the body must not become blocking every alias.
+
+    An alias is a normal thing to use. The guard exists to judge what the body
+    RUNS, and a body that runs something allowed stays allowed — including the
+    empty case, where the invoked subcommand simply is not an alias.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    assert mod._alias_denial(raw, [], 0) is None
+
+
+def test_git_guard_ignores_a_non_git_stage(monkeypatch):
+    """`_global_denial` short-circuits on anything that is not git."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash("echo -c core.hooksPath=/dev/null"), monkeypatch)
+
+
+def test_git_guard_handles_a_bare_git_invocation(monkeypatch):
+    """`git -c x.y=z` with no subcommand at all must not raise."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash("git -c core.pager=less"), monkeypatch)
+
+
+def test_git_guard_ignores_a_valueless_c_and_a_malformed_assignment(monkeypatch):
+    """`-c` without `key=value`, and a trailing `-c` with nothing after it."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash("git -c notanassignment commit -m x"), monkeypatch)
+    _run(mod, _bash("git commit -m x -c"), monkeypatch)
+
+
+def test_git_guard_ignores_an_empty_alias_body(monkeypatch):
+    """An alias defined to the empty string resolves to no command to judge."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash("git -c alias.z= z origin main"), monkeypatch)
+
+
+def test_git_guard_denies_a_bypass_in_a_later_stage(monkeypatch, capsys):
+    """Every stage is judged, not just the first."""
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("echo hi && git -c core.hooksPath=/dev/null commit -m x"), monkeypatch)
+    assert exc.value.code == 2
+    assert "disables the repository's hooks" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

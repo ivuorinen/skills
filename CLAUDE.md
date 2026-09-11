@@ -360,9 +360,17 @@ configured and unnamed here:
   `sed -i` or a redirect. Hand those edits to the owner rather than reaching for
   another spelling.
 - matcher `Bash` — `deny-unsafe-git-hook.py`, which blocks `git` with
-  `--no-verify` and a push to a protected branch. Per
-  `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
-  optional; commit without the flag and fix what fails.
+  `--no-verify` or `-n` (stacked clusters and the abbreviations git accepts
+  included), a `-c core.hooksPath=`, `--config-env=` or `GIT_CONFIG_*` override
+  that disables the repository's hooks, an alias whose body resolves to any of
+  those (a `!` shell body included), and a push to a protected branch. It reads
+  a command nested in `$(...)`, backticks or a subshell as its own stage, and
+  looks through a wrapper (`env`, `sudo`, `xargs`, …) to the git call behind it.
+  Per `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
+  optional; commit without the flag and fix what fails. That rule also states
+  what remains open — the guard matches command text, so a request carrying no
+  `git` token at all (a shell function shadowing it, a script, `eval` on a
+  runtime-built string) passes it.
 - matcher `Bash` — `guard-ctx-ok-hook.py`, which validates the `# ctx-ok`
   escape hatch from `.claude/rules/use-context-mode.md` and denies it on any
   verb outside its allowlist, including every read verb. Fails closed on an
@@ -375,12 +383,22 @@ configured and unnamed here:
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
 
-Each graphify guard is wrapped `command -v graphify >/dev/null || exit 0; exec
-graphify hook-guard …`, so on a clone without graphify installed it exits 0 and
-is a no-op; when graphify is on `PATH` the guard's own exit code propagates and
-can block the call.
+Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
+clone without graphify installed it exits 0 and is a no-op; when graphify is on
+`PATH` the guard's own exit code propagates and can block the call.
 
-Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`) and the working tree (`git diff`), so **unstaged** edits count too — before Claude hands back control. A `stop_hook_active` guard surfaces the reminder once rather than looping on every turn a skill edit remains uncommitted.
+Between those two it **pins the binary**: it compares `graphify --version`
+against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch.
+Without that, a different or compromised `graphify` earlier on `PATH` silently
+takes over the permit/deny decision for every file read, glob and shell command
+in the session — the one executing component the vendored-skill trust model left
+unbound. An **empty or missing** pin file denies rather than passes: treating an
+unreadable pin as "no constraint" would make deleting one file disable the check
+in silence. The ceiling is worth knowing — a version string is self-reported, so
+this raises the cost of substitution and makes an accidental mismatch visible;
+it is not attestation.
+
+Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files — the union of the git index (`git diff --cached`), the working tree (`git diff`) and the untracked set (`git ls-files --others`), so **unstaged** and brand-new files count too — before Claude hands back control. A `stop_hook_active` guard keeps the reminder from re-firing on the forced continuation its own exit 2 causes. That is one stop cycle, not one session: the reminder repeats once per turn for as long as skill edits stay uncommitted, which is the observed behaviour and not a broken guard.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 

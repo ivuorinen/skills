@@ -4,11 +4,17 @@
 # ///
 """Stop hook — remind about pending skill changes before Claude hands back control.
 
-Scoped to the union of the git index and the working tree. An index-only scope
-missed `git commit -am`, which stages and commits inside a single Bash call, so
-no stop ever observed a staged state. The `stop_hook_active` guard below — not
-the narrowness of the scope — is what keeps a long-lived branch full of
-uncommitted skill edits from blocking the stop once per turn forever.
+Scoped to the union of the git index, the working tree and the untracked set. An
+index-only scope missed `git commit -am`, which stages and commits inside a
+single Bash call, so no stop ever observed a staged state.
+
+The `stop_hook_active` guard below stops the reminder re-firing on the forced
+continuation its own exit 2 causes. That is ONE stop cycle, not one session:
+the variable is false again on the next turn, so a branch holding uncommitted
+skill edits is reminded once per turn until they are committed. That repetition
+is the intended behaviour and not a broken guard — deduping across turns would
+need state that outlives the process, which is a separate decision nobody has
+made.
 """
 
 import subprocess

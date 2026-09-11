@@ -14,7 +14,42 @@ from pathlib import Path
 # `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
 # A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose
 # verb the ctx-ok guard then denied as unrecognised.
-_STAGE_SPLIT = re.compile(r"\|\||&&|[|;\n]|(?<![<>])&(?!>)")
+#
+# `$(`, a backtick and a bare `(` are stage boundaries for the same reason `|`
+# is: each one starts a command that the shell EXECUTES. Without them
+# `echo $(git push origin main)` is a single stage whose first token is `echo`,
+# and every guard built on this function — the git guard, the protected-write
+# half of the agents guard, the ctx-ok hatch — judged the wrapper and never saw
+# the nested call. Splitting on the delimiters rather than parsing them keeps
+# nesting free: `$(a $(b))` yields `a` and `b` as separate stages.
+#
+# `\$\(` precedes the character class so the `$` is consumed with its paren
+# rather than left behind as a one-token stage. The closing `)` splits too —
+# what follows it is back in the outer command.
+_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>)")
+
+# Command wrappers: the token that runs is the one AFTER these, so a guard
+# reading `tokens[0]` sees the wrapper and skips the stage. `env git commit
+# --no-verify` was the whole bypass — one word, and every rule in the git guard
+# became unreachable.
+_WRAPPERS = frozenset(
+    {
+        "env",
+        "command",
+        "builtin",
+        "exec",
+        "sudo",
+        "doas",
+        "nice",
+        "ionice",
+        "nohup",
+        "setsid",
+        "stdbuf",
+        "time",
+        "timeout",
+        "xargs",
+    }
+)
 # A comment runs to end of LINE, not end of string: without re.MULTILINE only the
 # final line's comment is stripped, and an earlier `#` survives to become a stage
 # whose first token is `#`.
@@ -136,6 +171,62 @@ def _unmask(token: str, spans: list[str]) -> str:
     return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
 
 
+def _wrapper_variants(tokens: list[str]) -> list[list[str]]:
+    """The stage, plus every git call a leading wrapper hides.
+
+    Each wrapper has its own option grammar — `nice -n 10 git push` puts two
+    tokens between the wrapper and the command, `env -u FOO git push` two more —
+    so stripping a fixed prefix models one spelling and misses the rest. Emitting
+    every suffix that begins at a `git` token models none of them and misses no
+    spelling. Bounded by the stage's own length.
+
+    The original stage is kept as well, never replaced: `env` alone is a read
+    command the ctx-ok guard must still judge, and an unrecognised wrapped verb
+    must still fail closed.
+
+    A stage that merely mentions `git` after a wrapper (`sudo apt install git`)
+    yields a suffix with no subcommand, which every caller ignores. The residual
+    false positive — a wrapper-led stage whose operands literally read `git push`
+    — blocks one command rather than admitting one, which is the direction a
+    guard should err in.
+    """
+    if Path(tokens[0]).name not in _WRAPPERS:
+        return [tokens]
+    return [tokens] + [tokens[i:] for i in range(1, len(tokens)) if Path(tokens[i]).name == "git"]
+
+
+def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]]:
+    """(env assignments, tokens) per stage — the full result `shell_stages` trims.
+
+    The `VAR=value` prefix is stripped so the command can be found, and used to
+    be discarded with it. `core.hooksPath` can be assigned through the
+    environment as readily as through `-c`, so
+    `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath … git commit` reached real
+    git with no token the guard inspected. Returning the prefix rather than
+    dropping it is what lets the git guard judge that route.
+
+    A separate function rather than a wider return type from `shell_stages`:
+    every other caller wants tokens alone, and changing that signature would
+    touch each of them for a question only one of them asks.
+    """
+    masked, spans = _mask_quoted(command)
+    # Comments first, then continuations: `foo # bar \` is comment to end of line,
+    # so the trailing backslash continues nothing and must not join the next line.
+    joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
+    stages: list[tuple[dict[str, str], list[str]]] = []
+    for segment in _STAGE_SPLIT.split(joined):
+        tokens = [_unmask(t, spans) for t in segment.split()]
+        env: dict[str, str] = {}
+        i = 0
+        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
+            name, _, value = tokens[i].partition("=")
+            env[name] = value
+            i += 1
+        if i < len(tokens):
+            stages.extend((env, variant) for variant in _wrapper_variants(tokens[i:]))
+    return stages
+
+
 def shell_stages(command: str) -> list[list[str]]:
     """Tokens for each pipeline/list stage, comments and `VAR=value` prefixes stripped.
 
@@ -147,20 +238,12 @@ def shell_stages(command: str) -> list[list[str]]:
     than by each caller, so `git_calls` and the ctx-ok guard agree on what a
     command says: a trailing `# push to main later` used to put `main` in the
     push guard's operand list.
+
+    A command nested in `$(...)`, backticks or a subshell is its own stage, and a
+    stage behind a wrapper yields the wrapped git call as another — see
+    `_STAGE_SPLIT` and `_wrapper_variants`.
     """
-    masked, spans = _mask_quoted(command)
-    # Comments first, then continuations: `foo # bar \` is comment to end of line,
-    # so the trailing backslash continues nothing and must not join the next line.
-    joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
-    stages: list[list[str]] = []
-    for segment in _STAGE_SPLIT.split(joined):
-        tokens = [_unmask(t, spans) for t in segment.split()]
-        i = 0
-        while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
-            i += 1
-        if i < len(tokens):
-            stages.append(tokens[i:])
-    return stages
+    return [tokens for _env, tokens in shell_stages_with_env(command)]
 
 
 def skip_git_global_opts(tokens: list[str], i: int) -> int:
