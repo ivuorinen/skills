@@ -1016,7 +1016,11 @@ def test_no_required_check_job_can_be_skipped_into_a_pass():
     for real and can only report what it actually found. The `if:` half binds it
     like every other required job.
     """
-    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+    # Both suffixes: GitHub Actions loads `.yaml` as readily as `.yml`, so a
+    # required check added in a `.yaml` file would never be inspected — the
+    # exact bypass this gate exists to prevent, arriving through the glob.
+    workflows = ROOT / ".github/workflows"
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
         # `on` is the YAML 1.1 boolean True, not the string, under safe_load.
         triggers = set(spec.get(True) or spec.get("on") or {})
