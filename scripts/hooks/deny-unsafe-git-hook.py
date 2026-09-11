@@ -202,14 +202,24 @@ def _env_denial(env: dict[str, str]) -> str | None:
     return None
 
 
-def _global_config(tokens: list[str]) -> list[tuple[str, str]]:
+def _global_config(tokens: list[str], env: dict[str, str] | None = None) -> list[tuple[str, str]]:
     """Every `-c key=value` assignment sitting before the subcommand, key folded.
 
     `skip_git_global_opts` consumes the value of `-c` without inspecting it, so
     everything expressed through `-c` was invisible to this guard — which is how
     `git -c core.hooksPath=/dev/null commit` and `git -c alias.z=push z` both
     reached real git untouched.
+
+    `--config-env=<key>=<var>` names an environment variable rather than a
+    value, so it is resolved through `env` before being recorded. Recording the
+    variable *name* is what let `ALIAS_BODY=push git
+    --config-env=alias.z=ALIAS_BODY z origin main` through: `_alias_denial`
+    inspected the literal string `ALIAS_BODY`, found no subcommand in it, and
+    never saw the protected-branch push. An unresolvable name keeps its literal
+    spelling — the variable is then set outside this command's text, which is
+    the same reach the guard's docstring already records as open.
     """
+    env = env or {}
     pairs: list[tuple[str, str]] = []
     i = 1
     while i < len(tokens):
@@ -222,6 +232,8 @@ def _global_config(tokens: list[str]) -> list[tuple[str, str]]:
         elif opt.startswith("-"):
             if opt.startswith("--config-env=") or opt.startswith("-c="):
                 key, _, value = opt.split("=", 1)[1].partition("=")
+                if opt.startswith("--config-env="):
+                    value = env.get(value, value)
                 pairs.append((key.strip().lower(), value))
             i += 1
         else:
@@ -325,7 +337,7 @@ def _global_denial(
         return reason
     if Path(tokens[0]).name != "git":
         return None
-    config = _global_config(tokens)
+    config = _global_config(tokens, env)
     for key, value in config:
         if key in _HOOKS_DISABLING:
             return _HOOKSPATH_DENIAL.format(key=key, value=value)

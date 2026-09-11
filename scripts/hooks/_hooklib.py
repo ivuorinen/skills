@@ -8,6 +8,7 @@ precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -171,8 +172,70 @@ def _unmask(token: str, spans: list[str]) -> str:
     return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
 
 
-def _wrapper_variants(tokens: list[str]) -> list[list[str]]:
-    """The stage, plus every git call a leading wrapper hides.
+def _split_string_payload(tokens: list[str]) -> list[str]:
+    """`tokens` with every `env -S` payload expanded into the tokens it carries.
+
+    `env -S 'GIT_CONFIG_COUNT=1 … git commit -m x'` is one shell word, so the
+    scan below saw no `git` token and emitted no inner variant — the whole
+    command the guard exists to judge sat inside a single operand. GNU `env`
+    splits that payload itself at execution time, so the guard has to split it
+    too or the wrapper it already knows about becomes a way through it.
+
+    All four spellings `env` accepts are handled: `-S X`, `-SX`,
+    `--split-string X` and `--split-string=X`. A payload that does not tokenize
+    falls back to whitespace splitting rather than being dropped — refusing to
+    look is how the operand became invisible in the first place, and an
+    over-split payload can only add candidate stages, never remove one.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token, payload = tokens[i], None
+        if token in ("-S", "--split-string") and i + 1 < len(tokens):
+            payload, i = tokens[i + 1], i + 2
+        elif token.startswith("-S") and len(token) > 2:
+            payload, i = token[2:], i + 1
+        elif token.startswith("--split-string="):
+            payload, i = token.split("=", 1)[1], i + 1
+        else:
+            out.append(token)
+            i += 1
+            continue
+        try:
+            out.extend(shlex.split(payload))
+        except ValueError:
+            out.extend(payload.split())
+    return out
+
+
+def _assignments(tokens: list[str]) -> dict[str, str]:
+    """Every `NAME=value` operand in `tokens`, in order.
+
+    Shared by the stage prefix and the wrapper prefix, which differ only in
+    where the assignments sit: a stage's lead it, while `env`'s follow the
+    wrapper name and may be interleaved with its own options
+    (`env -u FOO A=1 git …`). Matching the shape rather than a position covers
+    both without modelling either grammar.
+    """
+    out: dict[str, str] = {}
+    for token in tokens:
+        if "=" in token and not token.startswith("-"):
+            name, _, value = token.partition("=")
+            out[name] = value
+    return out
+
+
+def _wrapper_variants(tokens: list[str]) -> list[tuple[dict[str, str], list[str]]]:
+    """The stage, plus every git call a leading wrapper hides, with its assignments.
+
+    The assignments matter as much as the call. `env GIT_CONFIG_COUNT=1
+    GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x`
+    puts them *after* the wrapper, where the stage-level prefix scan in
+    `shell_stages_with_env` never reaches — it stops at the `env` token. The
+    emitted variant therefore carried an empty environment map and
+    `_global_denial` missed the hook-disabling route that the same assignments
+    written without `env` are denied for. Each variant now carries what the
+    prefix it skipped applies.
 
     Each wrapper has its own option grammar — `nice -n 10 git push` puts two
     tokens between the wrapper and the command, `env -u FOO git push` two more —
@@ -191,8 +254,16 @@ def _wrapper_variants(tokens: list[str]) -> list[list[str]]:
     guard should err in.
     """
     if Path(tokens[0]).name not in _WRAPPERS:
-        return [tokens]
-    return [tokens] + [tokens[i:] for i in range(1, len(tokens)) if Path(tokens[i]).name == "git"]
+        return [({}, tokens)]
+    # The scan runs over the `-S`-expanded form so a payload-carried git call is
+    # reachable, while the original stage is kept unexpanded: it is what the
+    # ctx-ok guard and the unrecognised-verb path must still judge.
+    expanded = _split_string_payload(tokens)
+    return [({}, tokens)] + [
+        (_assignments(expanded[:i]), expanded[i:])
+        for i in range(1, len(expanded))
+        if Path(expanded[i]).name == "git"
+    ]
 
 
 def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]]:
@@ -223,7 +294,12 @@ def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]
             env[name] = value
             i += 1
         if i < len(tokens):
-            stages.extend((env, variant) for variant in _wrapper_variants(tokens[i:]))
+            # The wrapper's assignments are layered over the stage's, not merged
+            # blindly: `A=1 env A=2 git …` is what real `env` does, and the
+            # closer one is what reaches git.
+            stages.extend(
+                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:])
+            )
     return stages
 
 

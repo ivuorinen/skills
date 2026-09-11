@@ -2995,6 +2995,80 @@ _KNOWN_BYPASSES = [
         "protected branch",
         id="alias-shell-wrapped",
     ),
+    # Assignments carried BY the wrapper, not in front of it. The stage-level
+    # prefix scan stops at `env`, so these landed on the inner git call with an
+    # empty environment map and `_global_denial` never saw them — while the
+    # identical assignments written without `env` were denied.
+    pytest.param(
+        "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "
+        "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+        "disables the repository's hooks",
+        id="env-wrapper-carries-git-config",
+    ),
+    pytest.param(
+        "env -u LANG GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "
+        "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+        "disables the repository's hooks",
+        id="env-wrapper-with-its-own-option",
+    ),
+    # `env -S` carries a whole command in one shell word. GNU env splits it at
+    # execution time; until the guard split it too, the scan saw no `git` token
+    # and emitted no inner stage, so every rule was unreachable behind a
+    # wrapper the guard already knew about.
+    pytest.param(
+        'env -S "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath '
+        'GIT_CONFIG_VALUE_0=/dev/null git commit -m x"',
+        "disables the repository's hooks",
+        id="env-split-string-spaced",
+    ),
+    pytest.param(
+        'env -S"git commit --no-verify -m x"',
+        "skips the pre-commit",
+        id="env-split-string-attached",
+    ),
+    pytest.param(
+        'env --split-string="git commit --no-verify -m x"',
+        "skips the pre-commit",
+        id="env-split-string-long-equals",
+    ),
+    pytest.param(
+        'env --split-string "git push origin main"',
+        "protected branch",
+        id="env-split-string-long-spaced",
+    ),
+    # A payload `shlex` refuses still has to be judged. Dropping it would make
+    # an unbalanced quote the cheapest way past the expansion that was just
+    # added — whitespace splitting is coarser, and coarser only ever adds
+    # candidate stages.
+    pytest.param(
+        "env -S 'git commit --no-verify -m x\"'",
+        "skips the pre-commit",
+        id="env-split-string-unparseable-payload",
+    ),
+    # `-c=key=value`. git's own spelling is `-c key=value`, but the guard reads
+    # the attached form too, and an unexercised branch in a guard is a branch
+    # nobody has checked does what it claims.
+    pytest.param(
+        "git -c=core.hooksPath=/dev/null commit -m x",
+        "disables the repository's hooks",
+        id="attached-c-equals",
+    ),
+    # `--config-env` names a variable, not a value. Recording the NAME meant the
+    # alias body read as the literal string `ALIAS_BODY`, which matches no
+    # subcommand, so the protected-branch push behind it was never judged.
+    pytest.param(
+        "ALIAS_BODY=push git --config-env=alias.z=ALIAS_BODY z origin main",
+        "protected branch",
+        id="config-env-alias-body",
+    ),
+    # Already denied before the resolution change — the hooksPath rule matches
+    # on the KEY, so the unresolved value never mattered there. Pinned so
+    # resolving `--config-env` cannot regress the one shape it already caught.
+    pytest.param(
+        "HP=/dev/null git --config-env=core.hooksPath=HP commit -m x",
+        "disables the repository's hooks",
+        id="config-env-hookspath",
+    ),
 ]
 
 
