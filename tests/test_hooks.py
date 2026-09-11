@@ -2937,6 +2937,23 @@ def test_git_guard_still_allows_legitimate_commands(command, monkeypatch):
 # Grouped by mechanism rather than by finding, because the mechanisms overlap:
 # `echo $(env git push origin main)` is a substitution AND a wrapper, and it has
 # to be blocked by whichever one the guard reaches first.
+def _nested_env_s(command: str, depth: int) -> str:
+    """`command` wrapped in `depth` layers of `env -S`, each layer shell-quoted.
+
+    Built rather than written out: the sixth layer is already ~1.5 KB, and a
+    literal that long hides which part is the bypass. Every layer is real —
+    GNU env unwraps them all, which is what makes the depth reachable.
+    """
+    for _ in range(depth):
+        command = "env -S " + shlex.quote(command)
+    return command
+
+
+# Read from the guard rather than written down, so raising the cap keeps the
+# case below on the far side of it instead of quietly moving it inside.
+_PAST_CAP = _load("_hooklib")._MAX_SPLIT_STRING_DEPTH + 2
+
+
 _KNOWN_BYPASSES = [
     # abbreviated long option — git accepts any unambiguous prefix
     pytest.param("git commit --no-veri -m x", "skips the pre-commit", id="abbrev-veri"),
@@ -3044,6 +3061,30 @@ _KNOWN_BYPASSES = [
         "env -S 'git commit --no-verify -m x\"'",
         "skips the pre-commit",
         id="env-split-string-unparseable-payload",
+    ),
+    # A payload may itself be `env -S ...`. One level of expansion left the
+    # inner command a single opaque token again — exactly the operand the
+    # expansion was added to remove, one level down — so `_wrapper_variants`
+    # matched no `git` token and every rule went unreachable behind a doubled
+    # wrapper. GNU env unwraps each level at execution time.
+    pytest.param(
+        "env -S 'env -S \"git push origin main\"'",
+        "protected branch",
+        id="env-split-string-nested",
+    ),
+    # Past `_MAX_SPLIT_STRING_DEPTH`, where precise expansion stops. The bound
+    # has to keep looking coarsely rather than hand back a still-folded token:
+    # capping with the payload intact made a deep enough nest the one spelling
+    # that reached git untouched, which is the hole the cap itself opened.
+    pytest.param(
+        _nested_env_s("git push origin main", _PAST_CAP),
+        "protected branch",
+        id="env-split-string-nested-past-cap",
+    ),
+    pytest.param(
+        "env -S 'env -S \"env -S \\'git commit --no-verify -m x\\'\"'",
+        "skips the pre-commit",
+        id="env-split-string-nested-thrice",
     ),
     # `-c=key=value`. git's own spelling is `-c key=value`, but the guard reads
     # the attached form too, and an unexercised branch in a guard is a branch

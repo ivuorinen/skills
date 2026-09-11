@@ -80,6 +80,11 @@ _CONTINUATION = re.compile(r"\\\n")
 # the token after them is mistaken for the subcommand, or the scan stops early.
 _VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
 
+# How many nested `env -S` payloads `_split_string_payload` unwraps. Four is far
+# past any legible command and keeps a hostile payload from making the guard the
+# slow part of every Bash call.
+_MAX_SPLIT_STRING_DEPTH = 4
+
 
 # Seconds, shared by every hook that shells out. An unbounded call is
 # unrecoverable from the user's side: a PostToolUse hook that blocks freezes the
@@ -172,7 +177,7 @@ def _unmask(token: str, spans: list[str]) -> str:
     return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
 
 
-def _split_string_payload(tokens: list[str]) -> list[str]:
+def _split_string_payload(tokens: list[str], depth: int = 0) -> list[str]:
     """`tokens` with every `env -S` payload expanded into the tokens it carries.
 
     `env -S 'GIT_CONFIG_COUNT=1 … git commit -m x'` is one shell word, so the
@@ -186,6 +191,26 @@ def _split_string_payload(tokens: list[str]) -> list[str]:
     falls back to whitespace splitting rather than being dropped — refusing to
     look is how the operand became invisible in the first place, and an
     over-split payload can only add candidate stages, never remove one.
+
+    An expanded payload is expanded again, because a payload may carry another
+    `env -S`. `env -S 'env -S "git push origin main"'` splits once into `env`,
+    `-S`, `git push origin main`, leaving the git call one opaque token that no
+    later scan matches — the same invisible operand this expansion exists to
+    remove, reinstated one level down. GNU `env` keeps unwrapping it at
+    execution time, so the guard has to as well.
+
+    `_MAX_SPLIT_STRING_DEPTH` bounds the recursion, because "strictly shorter"
+    is not the same as "shallow": a token spelled `-S-S-S-S…` re-enters at two
+    characters a level, so a few kilobytes of operand would exhaust the stack of
+    a guard that runs before every Bash call.
+
+    Reaching that bound stops the *precise* expansion, never the looking. The
+    remaining tokens are whitespace-split and stripped of shell quoting instead,
+    which is what the depth-1 fallback above already does for a payload `shlex`
+    refuses, and for the same reason: coarser only ever adds candidate stages,
+    so a nest too deep to parse exactly is judged rather than waved through.
+    Stopping at the bound with the payload still folded would have made
+    `env -S` nested past the cap the one spelling that reaches git untouched.
     """
     out: list[str] = []
     i = 0
@@ -202,9 +227,14 @@ def _split_string_payload(tokens: list[str]) -> list[str]:
             i += 1
             continue
         try:
-            out.extend(shlex.split(payload))
+            expanded = shlex.split(payload)
         except ValueError:
-            out.extend(payload.split())
+            expanded = payload.split()
+        if depth < _MAX_SPLIT_STRING_DEPTH:
+            expanded = _split_string_payload(expanded, depth + 1)
+        else:
+            expanded = [word.strip("'\"\\") for tok in expanded for word in tok.split()]
+        out.extend(expanded)
     return out
 
 
