@@ -275,7 +275,12 @@ def test_run_case_names_the_case_when_substitution_breaks_the_quoting(tmp_path):
     """
     case = CASE | {"dir": tmp_path / "src", "goal": "the retry isn't idempotent"}
     (tmp_path / "src").mkdir()
-    with pytest.raises(_mod.RecallError, match="not parseable after substitution"):
+    # The case id is asserted, not just the suffix: naming the case is the whole
+    # point of mapping this to RecallError, and a regex matching only the tail
+    # would still pass if `{case['id']}: ` were dropped from the message.
+    with pytest.raises(
+        _mod.RecallError, match=r"c: --agent-cmd is not parseable after substitution"
+    ):
         _mod.run_case(case, "agent -p '{goal}'", tmp_path / "work")
 
 
