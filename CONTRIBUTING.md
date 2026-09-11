@@ -90,12 +90,17 @@ Commit as `feat: add /nitpicker <name> command`.
 ## The findings store has two interfaces
 
 `docs/audit/findings/` is managed through the `np_*` MCP tools where the session
-exposes them, else the shipped CLI. `baseline`, `migrate` and `migrate-resolved`
-are CLI-only, each sitting behind a consent gate a tool call would skip:
+exposes them, else the shipped CLI:
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
+python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
+
+Several operations have no MCP tool and always use the CLI — some behind a
+consent gate a tool call would skip, some because their output belongs in a
+shell pipeline rather than in the model context.
+`skills/nitpicker/commands/_findings-store.md` names that set and the reasoning
+for each; it is the one place that list lives.
 
 IDs are content-hashed — never hand-assigned, never reused. Never hand-edit
 `INDEX.md` (generated) or `resolved.jsonl` (append-only ledger).

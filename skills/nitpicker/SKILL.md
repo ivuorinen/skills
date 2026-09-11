@@ -31,13 +31,29 @@ The text following the invocation is parsed as:
 Execution order, always:
 
 1. Load [commands/_conventions.md](commands/_conventions.md) — it binds
-   every command (severity levels, findings store protocol, rules).
-   `np_read_reference` with `name: "conventions"` when the session exposes the
-   nitpicker MCP tools, else read the file directly.
+   every command (severity levels, context acquisition, the finding contract,
+   rules). `np_read_reference` with `name: "conventions"` when the session
+   exposes the nitpicker MCP tools, else read the file directly.
 2. Load the resolved command: `np_read_command` with `command: <command>`
    when the session exposes the nitpicker MCP tools, else read
    `commands/<command>.md` directly.
 3. Execute it with the extra instructions applied.
+
+Four protocols are **not** loaded at step 1. Each binds some commands and not
+others, so each is loaded when its trigger fires — the same
+progressive-disclosure split `references/tools/<tool>.md` uses for scanners, and
+for the same reason: a `triage` run that files nothing and commits nothing
+should not pay for the protocols governing filing and committing.
+`_conventions.md` names each trigger, and the four are named here so every one
+stays reachable one level from this file:
+
+| Reference | Loaded when |
+| --- | --- |
+| [commands/_findings-store.md](commands/_findings-store.md) | before the first findings-store operation |
+| [commands/_committing.md](commands/_committing.md) | before creating any commit |
+| [commands/_documentation.md](commands/_documentation.md) | before applying a fix, or filing a `docs` finding |
+| [commands/_audit-coverage.md](commands/_audit-coverage.md) | `audit` only, at run start |
+| [commands/_teach-formats.md](commands/_teach-formats.md) | `teach` only |
 
 Never chain commands on your own; run exactly the one resolved command
 (commands may themselves direct you to run another first — follow that).

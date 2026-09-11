@@ -221,8 +221,9 @@ def _read_command(args: dict) -> str:
 
 @tool(
     "np_read_reference",
-    "Return a shared nitpicker reference file: _conventions, _audit-coverage or "
-    "_teach-formats, or a scanner reference from references/tools/ by reference "
+    "Return a shared nitpicker reference file: _conventions, _findings-store, "
+    "_committing, _documentation, _audit-coverage or _teach-formats, or a "
+    "scanner reference from references/tools/ by reference "
     "name (semgrep, codeql, grype, trivy, gitleaks, checkov, gosec, snyk, "
     "npm-audit). The reference name is the file stem, not the detected binary: "
     "opengrep resolves through semgrep, and npm/yarn/pnpm through npm-audit. "
