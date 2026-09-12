@@ -31,15 +31,15 @@ _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 
-def _baseline(tmp_path, accepted, reasons=None):
+def _baseline(tmp_path, accepted, reasons=None, pin=None):
     """Write a baseline, justifying every rule in it unless told otherwise.
 
-    Defaulting the reasons keeps each test about the thing it names; the
-    unjustified path has a test of its own.
+    Defaulting the reasons and the pin keeps each test about the thing it names;
+    the unjustified and pin-mismatch paths have tests of their own.
     """
     if reasons is None:
         reasons = {e["rule"]: "audited: noise" for e in accepted}
-    doc = {"pin": "x", "reasons": reasons, "accepted": accepted}
+    doc = {"pin": _mod.PIN if pin is None else pin, "reasons": reasons, "accepted": accepted}
     (tmp_path / _mod.BASELINE).write_text(json.dumps(doc), encoding="utf-8")
 
 
@@ -100,6 +100,33 @@ def test_line_drift_is_not_a_new_diagnostic(tmp_path, monkeypatch):
     assert _mod.main([str(tmp_path)]) == 0
 
 
+def test_a_second_copy_of_a_baselined_diagnostic_is_new(tmp_path, monkeypatch, capsys):
+    """Multiplicity, not just membership.
+
+    The key drops the line number deliberately, so two identical offending lines
+    in one file collapse to one key. A set difference then reports nothing new
+    once the first is baselined — duplicate the bad line and the gate waves it
+    through. Counting is what closes that without keying on drifting lines.
+    """
+    one = {"rule": "clarity/escape-hatch-missing", "file": "CLAUDE.md", "message": "m"}
+    _baseline(tmp_path, [one])
+    twice = _diag("clarity/escape-hatch-missing")
+    _with_report(monkeypatch, _report(twice, dict(twice) | {"line": 42}))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    assert "1 NEW diagnostic" in capsys.readouterr().err
+
+
+def test_losing_one_of_two_identical_diagnostics_reads_as_stale(tmp_path, monkeypatch, capsys):
+    """The other direction of the same count: two accepted, one still firing."""
+    one = {"rule": "clarity/undefined-term", "file": "AGENTS.md", "message": "m"}
+    _baseline(tmp_path, [one, dict(one)])
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term", file="AGENTS.md")))
+
+    assert _mod.main([str(tmp_path)]) == 0
+    assert "no longer fire" in capsys.readouterr().out
+
+
 def test_a_fixed_finding_reports_but_does_not_fail(tmp_path, monkeypatch, capsys):
     """A gate that fails because something was FIXED is one people learn to
     re-run until it passes, which is worse than not having it."""
@@ -144,14 +171,50 @@ def test_an_unusable_report_skips_locally_and_fails_under_ci(tmp_path, monkeypat
     assert _mod.main([str(tmp_path)]) == 1
 
 
+def test_update_never_skips_when_it_cannot_get_a_report(tmp_path, monkeypatch, capsys):
+    """Skipping is right for the gate and wrong for `--update`.
+
+    `_skip_or_fail` used to run before the update branch, so `make
+    agentlinter-update` on a host without npx exited 0 having written nothing —
+    the contributor believes the diagnostic was accepted while CI keeps failing
+    on the unchanged baseline. Locally skippable, never silently un-recorded.
+    """
+    _baseline(tmp_path, [])
+    _with_report(monkeypatch, None)
+    monkeypatch.delenv("CI", raising=False)
+
+    assert _mod.main([str(tmp_path), "--update"]) == 1
+    assert "nothing to re-record" in capsys.readouterr().err
+
+
 def test_a_corrupt_baseline_fails_rather_than_being_ignored(tmp_path, monkeypatch, capsys):
     (tmp_path / _mod.BASELINE).write_text("{not json", encoding="utf-8")
     _with_report(monkeypatch, _report())
 
-    with pytest.raises(SystemExit) as exc:
-        _mod.main([str(tmp_path)])
-    assert exc.value.code == 1
+    assert _mod.main([str(tmp_path)]) == 1
     assert "unreadable" in capsys.readouterr().err
+
+
+def test_update_repairs_a_corrupt_baseline(tmp_path, monkeypatch, capsys):
+    """`--update` is what the read path tells you to run, so it must survive the
+    corruption it repairs.
+
+    Regression: `_load_baseline` used to `sys.exit(1)` from inside itself, and
+    `_write_baseline` calls it to preserve `reasons` — so `--update` died on a
+    corrupt baseline while printing "Regenerate it with … --update" at the user.
+    The advice was a loop with no exit.
+    """
+    (tmp_path / _mod.BASELINE).write_text("{not json", encoding="utf-8")
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path), "--update"]) == 0
+    written = json.loads((tmp_path / _mod.BASELINE).read_text(encoding="utf-8"))
+    assert written["accepted"][0]["rule"] == "clarity/undefined-term"
+    # Unrecoverable reasons are dropped LOUDLY, and the drop is self-correcting:
+    # the next gate run fails every rule as unjustified.
+    assert written["reasons"] == {}
+    assert "reasons not preserved" in capsys.readouterr().err
+    assert _mod.main([str(tmp_path)]) == 1
 
 
 @pytest.mark.parametrize("argv", [["--nope"], ["a", "b"], ["/no/such/dir"]])
@@ -204,6 +267,10 @@ def test_run_passes_the_pinned_local_json_argv(monkeypatch):
         (lambda _n: "/usr/bin/npx", "not json", "was not JSON"),
         (lambda _n: "/usr/bin/npx", '{"score": 1}', "no `diagnostics` list"),
         (lambda _n: "/usr/bin/npx", "[]", "no `diagnostics` list"),
+        # `_key` calls .get on each element, so these would raise AttributeError
+        # out of main — a traceback instead of the clean skip-or-fail.
+        (lambda _n: "/usr/bin/npx", '{"diagnostics": [null]}', "non-object entry"),
+        (lambda _n: "/usr/bin/npx", '{"diagnostics": ["a string"]}', "non-object entry"),
     ],
 )
 def test_run_returns_none_on_every_unusable_outcome(monkeypatch, capsys, which, run, expected_err):
@@ -254,6 +321,37 @@ def test_a_baselined_rule_with_no_reason_fails(tmp_path, monkeypatch, capsys):
     assert "clarity/undefined-term" in err
 
 
+def test_a_baseline_from_another_pin_is_rejected(tmp_path, monkeypatch, capsys):
+    """Accepted entries are judgements about one version's rule set.
+
+    Bump PIN without re-recording and the old entries silently vouch for a tool
+    that is no longer running. `make check` catches this for the committed
+    baseline through its pin test, but the script has to be correct standalone.
+    """
+    one = {"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}
+    _baseline(tmp_path, [one], pin="0.0.1-other")
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "recorded by agentlinter@0.0.1-other" in err
+    assert _mod.PIN in err
+
+
+def test_update_rewrites_a_mismatched_pin_and_keeps_reasons(tmp_path, monkeypatch):
+    """`--update` is the repair for a pin mismatch, so it must not be blocked by
+    one — the same split the corrupt-baseline path makes."""
+    one = {"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}
+    _baseline(tmp_path, [one], reasons={"clarity/undefined-term": "audited: noise"}, pin="0.0.1")
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path), "--update"]) == 0
+    written = json.loads((tmp_path / _mod.BASELINE).read_text(encoding="utf-8"))
+    assert written["pin"] == _mod.PIN
+    assert written["reasons"] == {"clarity/undefined-term": "audited: noise"}
+    assert _mod.main([str(tmp_path)]) == 0
+
+
 def test_update_preserves_hand_written_reasons(tmp_path, monkeypatch):
     """`--update` regenerates `accepted`. If it regenerated `reasons` too, every
     re-baseline would silently discard the justifications — which would make the
@@ -286,9 +384,7 @@ def test_a_non_object_reasons_field_is_rejected(tmp_path, monkeypatch, capsys):
     (tmp_path / _mod.BASELINE).write_text(json.dumps(doc), encoding="utf-8")
     _with_report(monkeypatch, _report())
 
-    with pytest.raises(SystemExit) as exc:
-        _mod.main([str(tmp_path)])
-    assert exc.value.code == 1
+    assert _mod.main([str(tmp_path)]) == 1
     assert "unreadable" in capsys.readouterr().err
 
 

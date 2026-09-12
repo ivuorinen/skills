@@ -43,7 +43,7 @@ occurrences on their own, while line numbers drift on every edit above them —
 keying on them would report the whole file as new after one inserted paragraph.
 
 Usage:
-    check-agentlinter.py [<project_root>] [--update]
+    uv run --quiet scripts/check-agentlinter.py [<project_root>] [--update]
 
 Exit codes:
     0  no new diagnostics (or baseline updated, or the run was skipped)
@@ -56,6 +56,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -71,6 +72,13 @@ REPO_ROOT = Path(__file__).parent.parent
 # is auditing, and npx installs. Fetching it here is our own reviewed decision
 # about our own tree; making that decision for someone else's is not ours.
 PIN = "0.3.3"
+
+# How to type this tool, for every message that advises running it.
+# `.claude/rules/use-uv-runner.md`: internal tooling runs through uv, never a
+# bare `python3` that can ignore the declared interpreter and script env. The
+# path is spelled out too — `Path(__file__).name` alone does not resolve from
+# the repo root, which is where anyone reading this advice is standing.
+INVOKE = "uv run --quiet scripts/check-agentlinter.py"
 
 BASELINE = ".agentlinter-baseline.json"
 TIMEOUT = 300
@@ -112,22 +120,40 @@ def _run(root: Path) -> dict | None:
     if not isinstance(report, dict) or not isinstance(report.get("diagnostics"), list):
         print("agentlinter: report has no `diagnostics` list.", file=sys.stderr)
         return None
+    # Element types too, not just the container. `_key` calls `.get` on each one,
+    # so a `null` or a scalar in the list raises AttributeError out of `main` —
+    # a traceback instead of the clean skip-or-fail every other bad-report path
+    # takes, and under CI a crash rather than a failed gate. The report comes
+    # from a third-party binary whose provenance is the reason PIN exists.
+    if any(not isinstance(d, dict) for d in report["diagnostics"]):
+        print("agentlinter: `diagnostics` holds a non-object entry.", file=sys.stderr)
+        return None
     return report
 
 
-def _load_baseline(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str], bool]:
+class _BaselineError(Exception):
+    """The baseline exists but cannot be read."""
+
+
+def _load_baseline(path: Path) -> tuple[Counter[tuple[str, str, str]], dict[str, str], str, bool]:
+    """Raise `_BaselineError` rather than exiting: the callers disagree.
+
+    Reading the baseline to judge a run is fatal when it fails. Reading it to
+    preserve `reasons` while OVERWRITING it is not — and an earlier version
+    exited from in here, which made `--update` die on precisely the corrupt file
+    it is advertised to repair, printing its own advice back at the user.
+    """
     if not path.is_file():
-        return set(), {}, False
+        return Counter(), {}, "", False
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         reasons = data.get("reasons") or {}
         if not isinstance(reasons, dict):
             raise TypeError("`reasons` must be an object keyed by rule id")
-        return {_key(d) for d in data["accepted"]}, reasons, True
+        pin = str(data.get("pin", ""))
+        return Counter(_key(d) for d in data["accepted"]), reasons, pin, True
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"{BASELINE} is unreadable: {exc}", file=sys.stderr)
-        print(f"Regenerate it with: python3 {Path(__file__).name} --update", file=sys.stderr)
-        sys.exit(1)
+        raise _BaselineError(str(exc)) from exc
 
 
 def _write_baseline(path: Path, report: dict) -> None:
@@ -146,7 +172,20 @@ def _write_baseline(path: Path, report: dict) -> None:
     # Reasons are hand-written and survive a re-record. Regenerating them away
     # would mean every `--update` silently discarded the justifications, which
     # is the state this field exists to prevent.
-    _, reasons, _ = _load_baseline(path)
+    #
+    # Best-effort, because this is the repair path: an unreadable baseline must
+    # not block the command that rewrites it. The reasons in an unparseable file
+    # are unrecoverable anyway, and dropping them is self-correcting — the next
+    # gate run fails every rule as unjustified, which is the right outcome after
+    # a baseline was corrupted.
+    try:
+        _, reasons, _, _ = _load_baseline(path)
+    except _BaselineError as exc:
+        reasons = {}
+        print(
+            f"warning: {BASELINE} was unreadable ({exc}); reasons not preserved.", file=sys.stderr
+        )
+        print("Re-justify each rule — the next gate run will list them.", file=sys.stderr)
     path.write_text(
         json.dumps(
             {"pin": PIN, "reasons": reasons, "accepted": accepted}, indent=2, ensure_ascii=False
@@ -164,7 +203,7 @@ def _parse(argv: list[str]) -> tuple[Path, bool]:
     if unknown or len(positional) > 1:
         bad = unknown or positional[1:]
         print(f"Error: unexpected argument(s): {bad}", file=sys.stderr)
-        print(f"Usage: {Path(__file__).name} [<project_root>] [--update]", file=sys.stderr)
+        print(f"Usage: {INVOKE} [<project_root>] [--update]", file=sys.stderr)
         sys.exit(2)
     root = Path(positional[0]).resolve() if positional else REPO_ROOT
     if not root.is_dir():
@@ -173,13 +212,20 @@ def _parse(argv: list[str]) -> tuple[Path, bool]:
     return root, "--update" in argv
 
 
-def _skip_or_fail() -> int:
+def _skip_or_fail(update: bool) -> int:
     """The tool could not produce a report.
 
     Locally this degrades to a skip so an offline clone can still run `make
     check`; under CI it fails, because a gate that skips silently is not a gate.
     Same split `make opengrep` makes, for the same reason.
+
+    `--update` never skips. Re-recording needs a report by definition, so a skip
+    there would exit 0 having written nothing — leaving the contributor believing
+    a diagnostic was accepted while CI keeps failing on the unchanged baseline.
     """
+    if update:
+        print("agentlinter: no report, so there is nothing to re-record.", file=sys.stderr)
+        return 1
     if os.environ.get("CI"):
         print("agentlinter: required under CI — failing.", file=sys.stderr)
         return 1
@@ -212,6 +258,58 @@ def _report_unjustified(rules: list[str]) -> int:
     return 1
 
 
+def _baseline_for_reading(
+    path: Path,
+) -> tuple[Counter[tuple[str, str, str]], dict[str, str]] | None:
+    """The baseline as a gate run needs it, or None having said why not.
+
+    Both failures are fatal to a gate run and neither is to `--update`, which is
+    why this lives here and not in `_load_baseline`.
+    """
+    try:
+        accepted, reasons, pin, existed = _load_baseline(path)
+    except _BaselineError as exc:
+        print(f"{BASELINE} is unreadable: {exc}", file=sys.stderr)
+        print(f"Regenerate it with: {INVOKE} --update", file=sys.stderr)
+        return None
+    if not existed:
+        print(f"Error: {BASELINE} not found under {path.parent}.", file=sys.stderr)
+        print(f"Create it with: {INVOKE} --update", file=sys.stderr)
+        return None
+    # A baseline recorded under another agentlinter carries another rule set, so
+    # its accepted entries are judgements about a different tool. Rejected here
+    # rather than in `_load_baseline`, because `--update` rewrites the pin and
+    # must not be blocked by the mismatch it repairs.
+    if pin != PIN:
+        print(
+            f"{BASELINE} was recorded by agentlinter@{pin or '?'}, PIN is {PIN}.", file=sys.stderr
+        )
+        print(f"Re-record it against the pinned version: {INVOKE} --update", file=sys.stderr)
+        return None
+    return accepted, reasons
+
+
+def _diff(
+    report: dict, accepted: Counter[tuple[str, str, str]]
+) -> tuple[list[dict], list[tuple[str, str, str]], int]:
+    """New diagnostics, no-longer-firing baseline entries, and the total.
+
+    Counted rather than set-differenced. The key drops the line number on
+    purpose, so two identical offending lines in one file share a key — and a
+    plain set difference reports nothing new once the first is baselined, which
+    lets a second copy of an accepted defect through. Counting keeps
+    multiplicity while staying immune to the line drift that keying on `line`
+    would import.
+    """
+    current = Counter(_key(d) for d in report["diagnostics"])
+    example: dict[tuple[str, str, str], dict] = {}
+    for d in report["diagnostics"]:
+        example.setdefault(_key(d), d)
+    new = [example[k] for k in sorted(current) for _ in range(current[k] - accepted[k])]
+    stale = sorted(k for k in accepted if accepted[k] > current[k])
+    return new, stale, sum(current.values())
+
+
 def _report_new(new: list[dict]) -> None:
     print(f"\n{len(new)} NEW diagnostic(s):", file=sys.stderr)
     for d in new:
@@ -221,7 +319,7 @@ def _report_new(new: list[dict]) -> None:
         if d.get("fix"):
             print(f"      fix: {d['fix']}", file=sys.stderr)
     print(
-        f"\nFix them, or accept them with: python3 {Path(__file__).name} --update",
+        f"\nFix them, or accept them with: {INVOKE} --update",
         file=sys.stderr,
     )
 
@@ -234,25 +332,22 @@ def main(argv: list[str]) -> int:
 
     report = _run(root)
     if report is None:
-        return _skip_or_fail()
+        return _skip_or_fail(update)
 
     baseline_path = root / BASELINE
     if update:
         _write_baseline(baseline_path, report)
         return 0
 
-    accepted, reasons, existed = _load_baseline(baseline_path)
-    if not existed:
-        print(f"Error: {BASELINE} not found under {root}.", file=sys.stderr)
-        print(f"Create it with: python3 {Path(__file__).name} --update", file=sys.stderr)
+    loaded = _baseline_for_reading(baseline_path)
+    if loaded is None:
         return 1
+    accepted, reasons = loaded
 
-    current = {_key(d): d for d in report["diagnostics"]}
-    new = [current[k] for k in sorted(current.keys() - accepted)]
-    stale = sorted(accepted - current.keys())
+    new, stale, total = _diff(report, accepted)
 
     score = report.get("score", "?")
-    print(f"agentlinter@{PIN}: score {score}/100, {len(current)} diagnostic(s).")
+    print(f"agentlinter@{PIN}: score {score}/100, {total} diagnostic(s).")
 
     if stale:
         print(f"\n{len(stale)} baseline entry(ies) no longer fire — re-baseline when convenient:")
