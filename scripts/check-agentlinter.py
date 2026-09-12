@@ -83,9 +83,13 @@ INVOKE = "uv run --quiet scripts/check-agentlinter.py"
 BASELINE = ".agentlinter-baseline.json"
 TIMEOUT = 300
 
+# The fields a diagnostic is identified by. `_key` is built from exactly these,
+# so a baseline entry missing any of them cannot match anything.
+_IDENTITY = ("rule", "file", "message")
+
 
 def _key(d: dict) -> tuple[str, str, str]:
-    return (str(d.get("rule", "")), str(d.get("file", "")), str(d.get("message", "")))
+    return tuple(str(d.get(f, "")) for f in _IDENTITY)  # type: ignore[return-value]
 
 
 def _run(root: Path) -> dict | None:
@@ -157,6 +161,20 @@ def _load_baseline(path: Path) -> tuple[Counter[tuple[str, str, str]], dict[str,
         accepted = data["accepted"]
         if not isinstance(accepted, list) or any(not isinstance(d, dict) for d in accepted):
             raise TypeError("`accepted` must be a list of objects")
+        # The three fields `_key` is built from, not merely the object holding
+        # them. Absent or blank, they collapse to ("", "", "") — an entry that
+        # matches no diagnostic, reports itself stale with a blank rule name,
+        # and is justified by `reasons: {"": …}`, so the gate exits 0 carrying
+        # a placeholder nobody can read. Non-strings would be silently
+        # stringified into a key that never matches.
+        for entry in accepted:
+            blank = [
+                f
+                for f in _IDENTITY
+                if not str(entry.get(f, "")).strip() or not isinstance(entry.get(f), str)
+            ]
+            if blank:
+                raise TypeError(f"`accepted` entry needs non-empty string {blank}")
         reasons = data.get("reasons") or {}
         if not isinstance(reasons, dict):
             raise TypeError("`reasons` must be an object keyed by rule id")
