@@ -1,4 +1,4 @@
-.PHONY: all check validate validate-evals spec-check validate-rules ring-deps version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep list test typecheck bench bench-recall help bump-patch bump-minor bump-major make-help
+.PHONY: all check validate validate-evals spec-check validate-rules ring-deps version-sync lock-check audit-consistency index-check pre-commit lint format format-check security opengrep agentlinter agentlinter-update list test typecheck bench bench-recall help bump-patch bump-minor bump-major make-help
 
 UV := uv run --quiet
 
@@ -22,6 +22,8 @@ help:
 	@echo "  format-check — ruff format --check (CI-safe, no writes)"
 	@echo "  security     — bandit static security scan of shipped tools and internal scripts"
 	@echo "  opengrep     — opengrep scan (the rules Codacy reports) + stale-suppression check"
+	@echo "  agentlinter  — agentlinter scan (the other engine Codacy reports) vs the committed baseline"
+	@echo "  agentlinter-update — re-record .agentlinter-baseline.json from the current tree"
 	@echo "  list         — list all skills with descriptions"
 	@echo "  typecheck    — pyright over the repo (0 errors required)"
 	@echo "  test         — run pytest unit tests"
@@ -36,7 +38,7 @@ help:
 # narrow store-consistency ones. make stops at the first failing prerequisite,
 # so anything ordered ahead of `test` and `security` can cost their entire
 # signal — which is exactly what `index-check` did from this position.
-check: validate validate-evals validate-rules ring-deps version-sync make-help lock-check lint format-check security opengrep typecheck test bench audit-consistency index-check pre-commit
+check: validate validate-evals validate-rules ring-deps version-sync make-help lock-check lint format-check security opengrep typecheck test bench agentlinter audit-consistency index-check pre-commit
 
 validate:
 	$(UV) scripts/validate-skill.py
@@ -168,16 +170,34 @@ lint:
 security:
 	uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
 
-# The second scanner, and the only one whose findings Codacy also reports. Its
-# ruleset lived solely in the Codacy UI until this target existed, so a finding
-# was invisible from a checkout and reproducible only by pushing. Also fails on
-# a `# nosemgrep` that suppresses nothing — a check nothing else here performs.
+# The second scanner, and one of the engines Codacy also reports from (the
+# `agentlinter` target below covers the other). Its ruleset lived solely in the
+# Codacy UI until this target existed, so a finding was invisible from a
+# checkout and reproducible only by pushing. Also fails on a `# nosemgrep` that
+# suppresses nothing — a check nothing else here performs.
 #
 # Degrades to a skip when opengrep is absent, so a clone without it still runs
 # `make check`; under CI it fails instead, because a gate that skips silently is
 # not a gate. The workflow installs opengrep before calling this.
 opengrep:
 	$(UV) scripts/check-opengrep.py
+
+# The same gap, closed for Codacy's other engine: Agentlinter's findings on
+# CLAUDE.md, AGENTS.md and the command files were reproducible only by pushing.
+#
+# It is a baseline gate, not a severity gate — its `critical` rules were all
+# false positives on this tree when it was wired in, so failing on severity
+# would fail forever on noise. The script's docstring carries the detail and the
+# reasons the invocation is shaped the way it is (`--local`, the version pin,
+# the parsed JSON rather than the always-zero exit code).
+#
+# `agentlinter-update` is not in `check:` — it re-records the accepted set, so
+# running it as part of the gate would make the gate pass by definition.
+agentlinter:
+	$(UV) scripts/check-agentlinter.py
+
+agentlinter-update:
+	$(UV) scripts/check-agentlinter.py --update
 
 # ruff pinned to the same version pyproject.toml and .pre-commit-config.yaml
 # name. These two targets WRITE, so a stale pin here reformats the tree one way
