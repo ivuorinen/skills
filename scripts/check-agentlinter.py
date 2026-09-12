@@ -115,12 +115,15 @@ def _run(root: Path) -> dict | None:
     return report
 
 
-def _load_baseline(path: Path) -> tuple[set[tuple[str, str, str]], bool]:
+def _load_baseline(path: Path) -> tuple[set[tuple[str, str, str]], dict[str, str], bool]:
     if not path.is_file():
-        return set(), False
+        return set(), {}, False
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return {_key(d) for d in data["accepted"]}, True
+        reasons = data.get("reasons") or {}
+        if not isinstance(reasons, dict):
+            raise TypeError("`reasons` must be an object keyed by rule id")
+        return {_key(d) for d in data["accepted"]}, reasons, True
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"{BASELINE} is unreadable: {exc}", file=sys.stderr)
         print(f"Regenerate it with: python3 {Path(__file__).name} --update", file=sys.stderr)
@@ -140,8 +143,15 @@ def _write_baseline(path: Path, report: dict) -> None:
         ),
         key=lambda d: (d["rule"], d["file"], d["message"]),
     )
+    # Reasons are hand-written and survive a re-record. Regenerating them away
+    # would mean every `--update` silently discarded the justifications, which
+    # is the state this field exists to prevent.
+    _, reasons, _ = _load_baseline(path)
     path.write_text(
-        json.dumps({"pin": PIN, "accepted": accepted}, indent=2, ensure_ascii=False) + "\n",
+        json.dumps(
+            {"pin": PIN, "reasons": reasons, "accepted": accepted}, indent=2, ensure_ascii=False
+        )
+        + "\n",
         encoding="utf-8",
     )
     print(f"OK  {BASELINE} updated: {len(accepted)} accepted diagnostic(s).")
@@ -177,6 +187,31 @@ def _skip_or_fail() -> int:
     return 0
 
 
+def _report_unjustified(rules: list[str]) -> int:
+    """A baselined rule with no recorded reason.
+
+    The whole risk of a baseline is that it stops being a record of judgements
+    and becomes a place to put things that were never looked at — and from the
+    file alone the two are indistinguishable. Requiring a reason per rule makes
+    silencing a NEW rule class cost a sentence explaining why it is noise. It is
+    the same job `check-opengrep.py` does when it fails a `# nosemgrep` that
+    suppresses nothing: a suppression has to keep earning its place.
+
+    Keyed by rule, not by entry: why a rule's hits are noise is a property of
+    the rule. A new hit of an already-justified rule is not silently absorbed —
+    it is not in `accepted`, so it fails as a new diagnostic first.
+    """
+    print(f"\n{len(rules)} baselined rule(s) with no recorded reason:", file=sys.stderr)
+    for rule in rules:
+        print(f"  {rule}", file=sys.stderr)
+    print(
+        f"\nAdd an entry per rule under `reasons` in {BASELINE}, saying why its hits\n"
+        "are noise here. A rule nobody can justify is a rule to fix, not to baseline.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _report_new(new: list[dict]) -> None:
     print(f"\n{len(new)} NEW diagnostic(s):", file=sys.stderr)
     for d in new:
@@ -206,7 +241,7 @@ def main(argv: list[str]) -> int:
         _write_baseline(baseline_path, report)
         return 0
 
-    accepted, existed = _load_baseline(baseline_path)
+    accepted, reasons, existed = _load_baseline(baseline_path)
     if not existed:
         print(f"Error: {BASELINE} not found under {root}.", file=sys.stderr)
         print(f"Create it with: python3 {Path(__file__).name} --update", file=sys.stderr)
@@ -224,9 +259,16 @@ def main(argv: list[str]) -> int:
         for rule, file, message in stale:
             print(f"  {rule}  {file}  {message[:90]}")
 
+    orphaned = sorted(r for r in reasons if not any(k[0] == r for k in accepted))
+    if orphaned:
+        print(f"\n{len(orphaned)} reason(s) for rules no longer baselined: {', '.join(orphaned)}")
+
     if new:
         _report_new(new)
         return 1
+
+    if unjustified := sorted({k[0] for k in accepted} - reasons.keys()):
+        return _report_unjustified(unjustified)
 
     print("OK  no new agentlinter diagnostics.")
     return 0

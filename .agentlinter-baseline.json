@@ -1,5 +1,16 @@
 {
   "pin": "0.3.3",
+  "reasons": {
+    "clarity/compound-instruction": "Audited 2026-09-12. CLAUDE.md:402 is one bullet describing one hook (validate-rules-hook.py and the two validators it runs) in a list of hooks. The rule counted three verbs in a description and read it as a three-action directive.",
+    "clarity/escape-hatch-missing": "Audited 2026-09-12, all 13. Five are descriptive statements or mid-sentence fragments, not imperatives (CLAUDE.md:107 states the enforced command-file shape; :406 is a fragment describing what Write/Edit matchers do). The other eight are deliberate unconditional rules, which .claude/rules/skill-style.md requires: 'Rules must be unconditional imperatives.' Four of those are machine-gated — you cannot 'unless the user asks' past check-stdlib-only.py or a pre-commit hook — and AGENTS.md:33/:35 are the .claude/agents/ security boundary, where an escape hatch would be the defect.",
+    "clarity/undefined-term": "Audited 2026-09-12, all 4. A bare ALL-CAPS token match. RED and GREEN are TDD phase names defined in .claude/rules/skill-lifecycle.md; AST is universal; INDEX is half the filename INDEX.md. Backticks do not clear this rule and its own advice (define on first use) does not satisfy it.",
+    "completeness/has-identity": "Audited 2026-09-12. DECLINED rather than a false positive: the rule wants a SOUL.md or an ## Identity section. This repo is a toolkit, not an agent product — conduct rules live in .claude/rules/ and persona comes from the harness, while .claude/rules/instruction-budget.md argues against adding always-loaded prose. Revisit if CLAUDE.md ever becomes an agent's own configuration.",
+    "consistency/outdated-cross-references": "Audited 2026-09-12, all 7, each referent checked on disk. The five cited .claude/rules/*.md paths all exist at exactly the cited path; the rule reads a file path as a section heading. The sixth, audit-9bc6eb39, is a findings-store id and is live in docs/audit/findings/resolved.jsonl — it resolves through the store, not the filesystem.",
+    "consistency/referenced-files-exist": "Audited 2026-09-12, both. INDEX.md exists at docs/audit/findings/INDEX.md. The rule only looks for referenced files at the workspace root, so any file in a subdirectory reads as missing.",
+    "runtime/config-exists": "Audited 2026-09-12. N/A: the tool reporting its OWN skipped checks because no clawdbot.json / openclaw.json exists here. Not a statement about this repository, and there is nothing to fix — but it does mean agentlinter's runtime category is uncovered.",
+    "skill-safety/dangerous-commands": "Audited 2026-09-12. commands/iac.md:41 names `curl \\| sh` as a Dockerfile defect class to hunt for — backticked, pipe-escaped for the markdown table, in the 'what to look for' column. iac.md contains no curl, wget or pipe-to-shell construct anywhere (verified by grep).",
+    "skill-safety/injection-vectors": "Audited 2026-09-12, both in commands/prompt-safety.md — the command whose subject is prompt injection. Line 20 carries a quoted example payload inside the finding-format spec; line 27 is the table row defining the direct-prompt-injection class. Both are documentation of the pattern, not instructions addressed to a reading agent."
+  },
   "accepted": [
     {
       "rule": "clarity/compound-instruction",
