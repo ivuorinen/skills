@@ -1,0 +1,197 @@
+{
+  "pin": "0.3.3",
+  "accepted": [
+    {
+      "rule": "clarity/compound-instruction",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Compound instruction with 3 actions in one bullet. Split into separate items."
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"- Command files live in `skills/nitpicker/commands/<command>.md`; each\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"- Never read or modify anything under `.claude/agents/` — sub-agent\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"Never hand-edit `INDEX.md` or `resolved.jsonl`.\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"Version must stay in sync across package.json, pyproject.toml,\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"`uv run --quiet <script>`, never `python3` directly. New internal scri\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"in `commands/_conventions.md` — never duplicate them into command file\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"must not rewrite its own reviewer. Denied in `.claude/settings.json` a\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "AGENTS.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"with plain `python3` — never add non-stdlib imports or uv invocations;\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"- Command files have no frontmatter. Required shape: h1 `# /nitpicker \""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"- Never duplicate `_conventions.md` content (severity table, findings \""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"4. `make check` must pass (the validator enforces table ↔ file sync).\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"Version must stay in sync across `package.json`, `.claude-plugin/plugi\""
+    },
+    {
+      "rule": "clarity/escape-hatch-missing",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "Absolute rule without escape hatch: \"never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so t\""
+    },
+    {
+      "rule": "clarity/undefined-term",
+      "file": "AGENTS.md",
+      "severity": "info",
+      "message": "Undefined acronym \"INDEX\" — define on first use or add to glossary."
+    },
+    {
+      "rule": "clarity/undefined-term",
+      "file": "CLAUDE.md",
+      "severity": "info",
+      "message": "Undefined acronym \"AST\" — define on first use or add to glossary."
+    },
+    {
+      "rule": "clarity/undefined-term",
+      "file": "CLAUDE.md",
+      "severity": "info",
+      "message": "Undefined acronym \"GREEN\" — define on first use or add to glossary."
+    },
+    {
+      "rule": "clarity/undefined-term",
+      "file": "CLAUDE.md",
+      "severity": "info",
+      "message": "Undefined acronym \"RED\" — define on first use or add to glossary."
+    },
+    {
+      "rule": "completeness/has-identity",
+      "file": "CLAUDE.md",
+      "severity": "warning",
+      "message": "No identity/persona defined. Without this, the agent has no consistent personality."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "AGENTS.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/commit-types.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "AGENTS.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/snapshot-before-mutating.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "AGENTS.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/vendored-skills.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "CLAUDE.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/skill-official-best-practices.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "CLAUDE.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/snapshot-before-mutating.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "CLAUDE.md",
+      "severity": "critical",
+      "message": "Referenced section \".claude/rules/use-uv-runner.md\" not found in any file."
+    },
+    {
+      "rule": "consistency/outdated-cross-references",
+      "file": "CLAUDE.md",
+      "severity": "critical",
+      "message": "Referenced section \"audit-9bc6eb39\" not found in any file."
+    },
+    {
+      "rule": "consistency/referenced-files-exist",
+      "file": "AGENTS.md",
+      "severity": "critical",
+      "message": "Referenced file \"INDEX.md\" not found in workspace."
+    },
+    {
+      "rule": "consistency/referenced-files-exist",
+      "file": "CLAUDE.md",
+      "severity": "critical",
+      "message": "Referenced file \"INDEX.md\" not found in workspace."
+    },
+    {
+      "rule": "runtime/config-exists",
+      "file": "(workspace)",
+      "severity": "info",
+      "message": "No runtime config (clawdbot.json / openclaw.json) found. Runtime checks skipped."
+    },
+    {
+      "rule": "skill-safety/dangerous-commands",
+      "file": "skills/nitpicker/commands/iac.md",
+      "severity": "info",
+      "message": "Dangerous command: Pipe curl to shell — \"| **dockerfile-hygiene** | Secret fetched then removed in a \""
+    },
+    {
+      "rule": "skill-safety/injection-vectors",
+      "file": "skills/nitpicker/commands/prompt-safety.md",
+      "severity": "error",
+      "message": "Potential injection vector in skill: \"5. **File findings** via the store protocol in `_conventions\""
+    },
+    {
+      "rule": "skill-safety/injection-vectors",
+      "file": "skills/nitpicker/commands/prompt-safety.md",
+      "severity": "info",
+      "message": "Potential injection vector in skill: \"| **direct-prompt-injection** | End-user input concatenated \""
+    }
+  ]
+}
