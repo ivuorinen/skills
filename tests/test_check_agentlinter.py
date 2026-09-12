@@ -387,6 +387,15 @@ def test_a_non_string_reason_is_rejected(tmp_path, monkeypatch, capsys):
         '{"accepted": ["a string"]}',
         '{"accepted": "not a list"}',
         '"just a string"',
+        # Identity fields, not just the object holding them. Absent or blank,
+        # `_key` collapses them to ("", "", ""): an entry matching no
+        # diagnostic, justified by `reasons: {"": …}`, that the gate would
+        # carry at exit 0 while printing a blank rule name.
+        '{"accepted": [{}], "reasons": {"": "audited: noise"}}',
+        '{"accepted": [{"rule": "r", "file": "f"}]}',
+        '{"accepted": [{"rule": "", "file": "f", "message": "m"}]}',
+        '{"accepted": [{"rule": "  ", "file": "f", "message": "m"}]}',
+        '{"accepted": [{"rule": 123, "file": "f", "message": "m"}]}',
     ],
 )
 def test_a_malformed_baseline_reports_instead_of_crashing(tmp_path, monkeypatch, capsys, doc):
