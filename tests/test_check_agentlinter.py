@@ -352,6 +352,60 @@ def test_update_rewrites_a_mismatched_pin_and_keeps_reasons(tmp_path, monkeypatc
     assert _mod.main([str(tmp_path)]) == 0
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\n"])
+def test_a_blank_reason_does_not_count_as_a_justification(tmp_path, monkeypatch, capsys, blank):
+    """A keys-only membership test lets `{"rule": ""}` stand in for a reason.
+
+    That defeats the whole mechanism: the point is a written justification, and
+    an empty string is the absence of one. Treated as absent, so it reaches the
+    report that names the rule.
+    """
+    one = {"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}
+    _baseline(tmp_path, [one], reasons={"clarity/undefined-term": blank})
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    assert "no recorded reason" in capsys.readouterr().err
+
+
+def test_a_non_string_reason_is_rejected(tmp_path, monkeypatch, capsys):
+    """`{"rule": 123}` is malformed data rather than a missing reason, so it
+    fails the load instead of being reported as unjustified."""
+    one = {"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}
+    _baseline(tmp_path, [one], reasons={"clarity/undefined-term": 123})
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    assert "must be strings" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        '[{"accepted": []}]',  # top-level array -> .get raises AttributeError
+        '{"accepted": [null]}',  # _key(None) raises AttributeError
+        '{"accepted": ["a string"]}',
+        '{"accepted": "not a list"}',
+        '"just a string"',
+    ],
+)
+def test_a_malformed_baseline_reports_instead_of_crashing(tmp_path, monkeypatch, capsys, doc):
+    """Valid JSON is not a valid baseline.
+
+    Each of these raised AttributeError past `_load_baseline`'s except clause,
+    so the gate showed a traceback and `--update` died before it could rewrite
+    the file — the same dead end as the exit-from-a-helper bug, by a different
+    route.
+    """
+    (tmp_path / _mod.BASELINE).write_text(doc, encoding="utf-8")
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    assert "unreadable" in capsys.readouterr().err
+    # and the documented repair still works on it
+    assert _mod.main([str(tmp_path), "--update"]) == 0
+
+
 def test_update_preserves_hand_written_reasons(tmp_path, monkeypatch):
     """`--update` regenerates `accepted`. If it regenerated `reasons` too, every
     re-baseline would silently discard the justifications — which would make the

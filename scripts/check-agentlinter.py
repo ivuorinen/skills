@@ -147,12 +147,29 @@ def _load_baseline(path: Path) -> tuple[Counter[tuple[str, str, str]], dict[str,
         return Counter(), {}, "", False
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        # Shape first, because `_key` and `.get` below assume it. Valid JSON is
+        # not a valid baseline: a top-level array, or `accepted: [null]`, would
+        # otherwise raise AttributeError past this `except` and surface as a
+        # traceback — and take `--update` down before it could rewrite the file,
+        # which is the same dead end the exit-from-a-helper bug created.
+        if not isinstance(data, dict):
+            raise TypeError("baseline must be a JSON object")
+        accepted = data["accepted"]
+        if not isinstance(accepted, list) or any(not isinstance(d, dict) for d in accepted):
+            raise TypeError("`accepted` must be a list of objects")
         reasons = data.get("reasons") or {}
         if not isinstance(reasons, dict):
             raise TypeError("`reasons` must be an object keyed by rule id")
+        if any(not isinstance(why, str) for why in reasons.values()):
+            raise TypeError("`reasons` values must be strings")
+        # A blank reason is an absent one. Dropping it here routes it to the
+        # unjustified report, which names the rule — where leaving it in would
+        # satisfy a keys-only membership test and let `{"rule": ""}` stand in
+        # for a justification, defeating the point of recording one.
+        reasons = {rule: why for rule, why in reasons.items() if why.strip()}
         pin = str(data.get("pin", ""))
-        return Counter(_key(d) for d in data["accepted"]), reasons, pin, True
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return Counter(_key(d) for d in accepted), reasons, pin, True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise _BaselineError(str(exc)) from exc
 
 
