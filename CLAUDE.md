@@ -57,6 +57,7 @@ make lint         # ruff check on scripts/, tests/, skills/
 make format       # ruff format on scripts/, tests/, skills/
 make security     # bandit scan of skills/ and scripts/ (config in [tool.bandit])
 make opengrep     # opengrep scan (the rules Codacy reports) + stale-suppression check
+make agentlinter  # agentlinter scan (Codacy's other engine) against the committed baseline
 ```
 
 ## Commands
@@ -257,10 +258,10 @@ Two scanners run over `skills/` and `scripts/`, and each has its own marker:
 `# nosec` for bandit, `# nosemgrep` for opengrep. `make opengrep` gates the
 second, and `scripts/check-opengrep.py` is the tool.
 
-opengrep is the scanner Codacy reports from, and its ruleset lived only in the
-Codacy UI — so a finding was invisible from a checkout and reproducible only by
-pushing. Two commits went to configuring bandit before the owner pointed out
-which engine was actually reporting. `make opengrep` runs
+opengrep is the scanner Codacy reports code findings from, and its ruleset lived
+only in the Codacy UI — so a finding was invisible from a checkout and
+reproducible only by pushing. Two commits went to configuring bandit before the
+owner pointed out which engine was actually reporting. `make opengrep` runs
 `r/python.lang.security.audit`, the namespace that reproduces those findings
 (`p/python` returns nothing here; it omits the `-audit` rule variants).
 
@@ -291,6 +292,21 @@ them.
 Locally the target skips when opengrep is absent; under CI it fails instead,
 because a gate that skips silently is not a gate. The `Validate` workflow
 installs a version-pinned, digest-verified binary before `make check`.
+
+## The Agentlinter Baseline
+
+Codacy's other engine is Agentlinter, which lints `CLAUDE.md`, `AGENTS.md`,
+`.claude/rules/` and the command files. `make agentlinter` reproduces it from a
+checkout, closing the gap `make opengrep` closed for the first engine.
+`scripts/check-agentlinter.py` is the tool; its docstring holds the reasoning
+behind the pinned version, the mandatory `--local`, and the parsed JSON — the
+tool exits 0 whatever it finds, so its exit code carries no signal.
+
+It gates against `.agentlinter-baseline.json`, not on severity: every `critical`
+it reported here was a false positive, so a severity gate would fail forever on
+noise. A new diagnostic fails the build — fix it, or record the decision with
+`make agentlinter-update`. An entry that stops firing is reported and fails
+nothing.
 
 ## Adding a New Command
 

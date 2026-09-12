@@ -88,4 +88,10 @@ jobs:
         #
         # tests/test_hooks.py asserts this job runs `make check` rather than
         # restating the targets, so the collapse cannot quietly be undone.
+        #
+        # Needs the runner's preinstalled node: the `agentlinter` target fetches
+        # a pinned npm package through npx. No setup-node step, because the
+        # package version is what needed pinning and it is pinned in the script.
+        # GitHub Actions sets CI=true, so a runner without npx fails that target
+        # rather than skipping it the way a local clone does.
         run: make check
