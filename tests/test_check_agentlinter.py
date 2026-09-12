@@ -31,6 +31,18 @@ _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 
+def _baseline(tmp_path, accepted, reasons=None):
+    """Write a baseline, justifying every rule in it unless told otherwise.
+
+    Defaulting the reasons keeps each test about the thing it names; the
+    unjustified path has a test of its own.
+    """
+    if reasons is None:
+        reasons = {e["rule"]: "audited: noise" for e in accepted}
+    doc = {"pin": "x", "reasons": reasons, "accepted": accepted}
+    (tmp_path / _mod.BASELINE).write_text(json.dumps(doc), encoding="utf-8")
+
+
 def _diag(rule: str, file: str = "CLAUDE.md", message: str = "m", severity: str = "warning"):
     return {"rule": rule, "file": file, "message": message, "severity": severity, "line": 1}
 
@@ -61,7 +73,7 @@ def test_invocation_is_pinned_local_and_json():
 
 def test_a_new_diagnostic_fails(tmp_path, monkeypatch, capsys):
     """The gate's whole point. agentlinter exits 0 here and every other case."""
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": []}), "utf-8")
+    _baseline(tmp_path, [])
     _with_report(monkeypatch, _report(_diag("clarity/escape-hatch-missing")))
 
     assert _mod.main([str(tmp_path)]) == 1
@@ -70,7 +82,7 @@ def test_a_new_diagnostic_fails(tmp_path, monkeypatch, capsys):
 
 def test_a_baselined_diagnostic_passes(tmp_path, monkeypatch, capsys):
     accepted = [{"rule": "clarity/escape-hatch-missing", "file": "CLAUDE.md", "message": "m"}]
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": accepted}), "utf-8")
+    _baseline(tmp_path, accepted)
     _with_report(monkeypatch, _report(_diag("clarity/escape-hatch-missing")))
 
     assert _mod.main([str(tmp_path)]) == 0
@@ -81,7 +93,7 @@ def test_line_drift_is_not_a_new_diagnostic(tmp_path, monkeypatch):
     """Keying on the line number would report a whole file as new after one
     inserted paragraph, which is the state of every documentation edit here."""
     accepted = [{"rule": "clarity/undefined-term", "file": "AGENTS.md", "message": "m"}]
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": accepted}), "utf-8")
+    _baseline(tmp_path, accepted)
     moved = _diag("clarity/undefined-term", file="AGENTS.md") | {"line": 999}
     _with_report(monkeypatch, _report(moved))
 
@@ -92,7 +104,7 @@ def test_a_fixed_finding_reports_but_does_not_fail(tmp_path, monkeypatch, capsys
     """A gate that fails because something was FIXED is one people learn to
     re-run until it passes, which is worse than not having it."""
     accepted = [{"rule": "clarity/compound-instruction", "file": "CLAUDE.md", "message": "m"}]
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": accepted}), "utf-8")
+    _baseline(tmp_path, accepted)
     _with_report(monkeypatch, _report())
 
     assert _mod.main([str(tmp_path)]) == 0
@@ -123,7 +135,7 @@ def test_an_unusable_report_skips_locally_and_fails_under_ci(tmp_path, monkeypat
     Locally that is a skip so an offline clone can still run `make check`; under
     CI it fails, because a gate that skips silently is not a gate.
     """
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": []}), "utf-8")
+    _baseline(tmp_path, [])
     _with_report(monkeypatch, None)
 
     monkeypatch.delenv("CI", raising=False)
@@ -213,7 +225,7 @@ def test_run_returns_none_on_every_unusable_outcome(monkeypatch, capsys, which, 
 def test_a_new_diagnostic_reports_its_suggested_fix(tmp_path, monkeypatch, capsys):
     """The fix line is the actionable half; a gate that prints only the rule id
     costs a turn to act on."""
-    (tmp_path / _mod.BASELINE).write_text(json.dumps({"pin": "x", "accepted": []}), "utf-8")
+    _baseline(tmp_path, [])
     _with_report(monkeypatch, _report(_diag("clarity/undefined-term") | {"fix": "define it"}))
 
     assert _mod.main([str(tmp_path)]) == 1
@@ -226,6 +238,69 @@ def test_the_module_entry_point_wires_to_main(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0
+
+
+def test_a_baselined_rule_with_no_reason_fails(tmp_path, monkeypatch, capsys):
+    """The risk a baseline carries: it stops being a record of judgements and
+    becomes somewhere to put things nobody looked at, and the file cannot tell
+    you which it is. Silencing a new rule class has to cost a sentence."""
+    accepted = [{"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}]
+    _baseline(tmp_path, accepted, reasons={})
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term")))
+
+    assert _mod.main([str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "no recorded reason" in err
+    assert "clarity/undefined-term" in err
+
+
+def test_update_preserves_hand_written_reasons(tmp_path, monkeypatch):
+    """`--update` regenerates `accepted`. If it regenerated `reasons` too, every
+    re-baseline would silently discard the justifications — which would make the
+    requirement above theatre rather than a control."""
+    accepted = [{"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}]
+    _baseline(tmp_path, accepted, reasons={"clarity/undefined-term": "audited: ALL-CAPS match"})
+    _with_report(monkeypatch, _report(_diag("clarity/undefined-term", message="a different hit")))
+
+    assert _mod.main([str(tmp_path), "--update"]) == 0
+    written = json.loads((tmp_path / _mod.BASELINE).read_text(encoding="utf-8"))
+    assert written["reasons"] == {"clarity/undefined-term": "audited: ALL-CAPS match"}
+    assert written["accepted"][0]["message"] == "a different hit"
+
+
+def test_a_reason_for_an_unbaselined_rule_is_reported_not_fatal(tmp_path, monkeypatch, capsys):
+    """The mirror of a stale entry: a justification that outlived its rule. Worth
+    saying so the file does not accumulate defences of findings long gone, but
+    not worth failing a build over."""
+    _baseline(tmp_path, [], reasons={"clarity/gone": "audited: noise"})
+    _with_report(monkeypatch, _report())
+
+    assert _mod.main([str(tmp_path)]) == 0
+    assert "clarity/gone" in capsys.readouterr().out
+
+
+def test_a_non_object_reasons_field_is_rejected(tmp_path, monkeypatch, capsys):
+    """A list here would make every `in reasons` check pass on nothing, turning
+    the requirement off without changing a line of code."""
+    doc = {"pin": "x", "reasons": ["clarity/undefined-term"], "accepted": []}
+    (tmp_path / _mod.BASELINE).write_text(json.dumps(doc), encoding="utf-8")
+    _with_report(monkeypatch, _report())
+
+    with pytest.raises(SystemExit) as exc:
+        _mod.main([str(tmp_path)])
+    assert exc.value.code == 1
+    assert "unreadable" in capsys.readouterr().err
+
+
+def test_every_rule_in_the_committed_baseline_is_justified():
+    """The real file, not a fixture. This is the assertion that would have caught
+    the state this repository was actually in: 32 entries accepted, 0 reasons."""
+    data = json.loads((REPO_ROOT / _mod.BASELINE).read_text(encoding="utf-8"))
+    baselined = {e["rule"] for e in data["accepted"]}
+    missing = baselined - data.get("reasons", {}).keys()
+    assert not missing, f"baselined with no recorded reason: {sorted(missing)}"
+    for rule, why in data["reasons"].items():
+        assert len(why) > 40, f"{rule}: a reason this short is a label, not a justification"
 
 
 def test_help_is_on_stdout_at_exit_0(capsys):
