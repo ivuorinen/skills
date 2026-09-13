@@ -207,9 +207,11 @@ management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
 scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`,
 `np_check_agent_instructions`), bounded repository context (`np_context_pack`),
-and
 pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
-Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
+Bitbucket Cloud in one shared JSON format), and session task tracking
+(`np_task_create`, `np_task_get`, `np_task_update`, `np_task_list`,
+`np_todo_write` — the same five operations as Claude Code's task tools, on
+every harness that runs the server). Every tool a command invokes is
 reachable this way, so a command runs its analysis without a shell; the
 `python3 scripts/…` form stays the documented fallback for Copilot, pi and CI,
 where no MCP server exists. Every tool is

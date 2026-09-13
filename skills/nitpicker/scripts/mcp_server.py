@@ -9,9 +9,16 @@ between them.
 Every `tools/call` is validated against the tool's own `inputSchema` before its
 handler runs (`_validate`): an unknown key, a wrong type, an out-of-vocab enum
 value or a missing required parameter is answered as an `isError` result naming
-the parameter. The schemas here are flat — one level of properties, arrays of
-scalars — and the validator covers exactly that; a nested schema would need
-more than it does, which is the ceiling to remember before writing one.
+the parameter. The schemas here are shallow — one level of properties, arrays
+of scalars or of flat objects — and the validator covers exactly that; a deeper
+schema would need more than it does, which is the ceiling to remember before
+writing one.
+
+The task tools (`np_task_*`, `np_todo_write`) are the one set whose state is
+this process rather than the audited tree: the tracker `_conventions.md`'s
+task-list rule needs, on every harness that runs this server. Nothing they do
+touches disk, so none of the confinement below applies to them; see the
+section that defines them for the ceilings that trade buys.
 
 Roots by scope:
   * skill/command tools use the plugin root derived from this file's location;
@@ -55,6 +62,7 @@ stdout carries ONLY JSON-RPC frames; backing functions must never print to it
 (they write warnings to stderr). `tests/test_mcp_server.py` pins this.
 """
 
+import itertools
 import json
 import os
 import re
@@ -198,24 +206,38 @@ class MethodError(Exception):
     """Raised for an unknown JSON-RPC method (mapped to error code -32601)."""
 
 
-def tool(name: str, description: str, schema: dict, annotations: dict):
+def tool(
+    name: str,
+    description: str,
+    schema: dict,
+    annotations: dict,
+    output_schema: dict | None = None,
+):
     """Register a handler as an MCP tool, declared beside the function it runs.
 
     Keeping the schema and annotations on the decorator means `tools/list` is
     generated from the same statement that wires the handler, so a tool cannot
     be advertised without an implementation or added without being advertised.
+
+    `title` is published at the top level as well as inside `annotations`: the
+    spec prefers the top-level field for display and reads `annotations.title`
+    as the fallback, and older clients know only the latter. `output_schema`
+    is given by a handler that returns a dict — dispatch then publishes it as
+    `structuredContent` beside the text block — and describes that dict.
     """
 
     def register(fn):
-        TOOLS.append(
-            {
-                "name": name,
-                "description": description,
-                "inputSchema": schema,
-                "annotations": annotations,
-                "handler": fn,
-            }
-        )
+        entry = {
+            "name": name,
+            "title": annotations["title"],
+            "description": description,
+            "inputSchema": schema,
+            "annotations": annotations,
+            "handler": fn,
+        }
+        if output_schema is not None:
+            entry["outputSchema"] = output_schema
+        TOOLS.append(entry)
         return fn
 
     return register
@@ -253,6 +275,8 @@ def _check_value(name: str, spec: dict, value: Any) -> str | None:
         return f"{name} must be one of {tuple(spec['enum'])}, got {value!r}"
     if "minimum" in spec and value < spec["minimum"]:
         return f"{name} must be at least {spec['minimum']}, got {value!r}"
+    if "properties" in spec and isinstance(value, dict) and (bad := _validate(spec, value)):
+        return f"{name}: {bad}"
     if "items" in spec and isinstance(value, list):
         for i, item in enumerate(value):
             if bad := _check_value(f"{name}[{i}]", spec["items"], item):
@@ -1151,6 +1175,245 @@ def _resolve_finding(args: dict) -> str:
     )
 
 
+# ── task tracking (session-scoped; the store is this process, not the tree) ──
+# `_conventions.md` runs every command as a task list, one entry per step.
+# Claude Code provides TaskCreate/TodoWrite only on some models, and Copilot,
+# pi and other Agent Skills hosts provide nothing — so the rule needs a tracker
+# that travels with the server. State lives here for the life of the process,
+# which is the session and a task list's lifetime, and nothing is written to
+# disk. Two ceilings, accepted: the list is gone on restart, and the two
+# registered servers (project scope, plugin scope) hold separate lists.
+_TASKS: dict[str, dict] = {}
+# Never reused: a stale reference to a deleted task must fail, not resolve to
+# whichever task was created next.
+_TASK_IDS = itertools.count(1)
+_TASK_STATUSES = ("pending", "in_progress", "completed")
+_ID_LIST = {"type": "array", "items": {"type": "string"}}
+_TASK_OUT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "subject": {"type": "string"},
+        "description": {"type": "string"},
+        "active_form": {"type": "string"},
+        "status": {"type": "string", "enum": [*_TASK_STATUSES, "deleted"]},
+        "owner": {"type": "string"},
+        "blocks": _ID_LIST,
+        "blocked_by": _ID_LIST,
+        "metadata": {"type": "object"},
+    },
+    "required": ["id", "subject", "status"],
+}
+_ONE_TASK = {"type": "object", "properties": {"task": _TASK_OUT}, "required": ["task"]}
+_TASK_LIST = {
+    "type": "object",
+    "properties": {"tasks": {"type": "array", "items": _TASK_OUT}},
+    "required": ["tasks"],
+}
+_TODO_ITEM = {
+    "type": "object",
+    "properties": {
+        "content": {"type": "string"},
+        "status": {"type": "string", "enum": list(_TASK_STATUSES)},
+        "active_form": {"type": "string"},
+    },
+    "required": ["content", "status", "active_form"],
+    "additionalProperties": False,
+}
+
+
+def _task(tid: str) -> dict:
+    """The stored task, or a ValueError naming the id the caller passed."""
+    if tid not in _TASKS:
+        raise ValueError(f"no task with id {tid!r}")
+    return _TASKS[tid]
+
+
+def _add_task(
+    subject: str,
+    description: str = "",
+    active_form: str = "",
+    metadata: dict | None = None,
+    status: str = "pending",
+) -> dict:
+    """Store a task under the next id and return it."""
+    task = {
+        "id": str(next(_TASK_IDS)),
+        "subject": subject,
+        "description": description,
+        "active_form": active_form,
+        "status": status,
+        "owner": "",
+        "blocks": [],
+        "blocked_by": [],
+        "metadata": metadata or {},
+    }
+    _TASKS[task["id"]] = task
+    return task
+
+
+def _summary(task: dict) -> dict:
+    """The listing row: what a caller scans to pick the next step, no bodies."""
+    return {k: task[k] for k in ("id", "subject", "status", "owner", "blocked_by")}
+
+
+def _link(blocker: dict, blocked: dict) -> None:
+    """Record that `blocker` blocks `blocked`, once, on both tasks."""
+    if blocked["id"] not in blocker["blocks"]:
+        blocker["blocks"].append(blocked["id"])
+    if blocker["id"] not in blocked["blocked_by"]:
+        blocked["blocked_by"].append(blocker["id"])
+
+
+def _delete_task(task: dict) -> dict:
+    """Remove a task and every link to it, so no task stays blocked by a ghost."""
+    del _TASKS[task["id"]]
+    for other in _TASKS.values():
+        for key in ("blocks", "blocked_by"):
+            if task["id"] in other[key]:
+                other[key].remove(task["id"])
+    return {"task": {"id": task["id"], "subject": task["subject"], "status": "deleted"}}
+
+
+@tool(
+    "np_task_create",
+    "Create a task in this session's list — one per process step, per the task-list "
+    "rule in _conventions. Returns the assigned id with the subject, as Claude Code's "
+    "TaskCreate does. `active_form` is the present-continuous label to show while the "
+    "task is in progress ('Applying the security lens').",
+    {
+        "type": "object",
+        "properties": {
+            "subject": {"type": "string"},
+            "description": {"type": "string"},
+            "active_form": {"type": "string"},
+            "metadata": {"type": "object"},
+        },
+        "required": ["subject"],
+        "additionalProperties": False,
+    },
+    # Adds one entry, removes nothing; a repeated call adds a second entry.
+    {**_MUTATES, "destructiveHint": False, "title": "Create a task"},
+    output_schema={
+        "type": "object",
+        "properties": {
+            "task": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "subject": {"type": "string"}},
+                "required": ["id", "subject"],
+            }
+        },
+        "required": ["task"],
+    },
+)
+def _task_create(args: dict) -> dict:
+    task = _add_task(
+        args["subject"],
+        description=args.get("description", ""),
+        active_form=args.get("active_form", ""),
+        metadata=args.get("metadata"),
+    )
+    return {"task": {"id": task["id"], "subject": task["subject"]}}
+
+
+@tool(
+    "np_task_get",
+    "Return one task in full by id.",
+    {
+        "type": "object",
+        "properties": {"task_id": {"type": "string"}},
+        "required": ["task_id"],
+        "additionalProperties": False,
+    },
+    {**_READ_ONLY, "title": "Get a task"},
+    output_schema=_ONE_TASK,
+)
+def _task_get(args: dict) -> dict:
+    return {"task": _task(args["task_id"])}
+
+
+@tool(
+    "np_task_list",
+    "List this session's tasks: id, subject, status, owner and what each is blocked by. "
+    "np_task_get returns one in full.",
+    _NO_ARGS,
+    {**_READ_ONLY, "title": "List tasks"},
+    output_schema=_TASK_LIST,
+)
+def _task_list(args: dict) -> dict:
+    return {"tasks": [_summary(t) for t in _TASKS.values()]}
+
+
+@tool(
+    "np_task_update",
+    "Update a task: set `status` (pending, in_progress, completed, or deleted — which "
+    "removes it and every link to it), `subject`, `description`, `active_form`, `owner` "
+    "or `metadata` (replaced whole), and link it with `add_blocks` / `add_blocked_by` "
+    "(task ids; the reverse link is recorded on the other task). An unknown id "
+    "anywhere in the call is an error and nothing is changed.",
+    {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string"},
+            "status": {"type": "string", "enum": [*_TASK_STATUSES, "deleted"]},
+            "subject": {"type": "string"},
+            "description": {"type": "string"},
+            "active_form": {"type": "string"},
+            "owner": {"type": "string"},
+            "metadata": {"type": "object"},
+            "add_blocks": _ID_LIST,
+            "add_blocked_by": _ID_LIST,
+        },
+        "required": ["task_id"],
+        "additionalProperties": False,
+    },
+    # `deleted` removes the task, so destructive; and not idempotent for the
+    # same reason — the second delete of one id fails.
+    {**_MUTATES, "destructiveHint": True, "title": "Update a task"},
+    output_schema=_ONE_TASK,
+)
+def _task_update(args: dict) -> dict:
+    task = _task(args["task_id"])
+    # Resolve every linked id before writing anything, so an unknown one leaves
+    # the task exactly as it was rather than half-updated.
+    blocks = [_task(i) for i in args.get("add_blocks", [])]
+    blocked_by = [_task(i) for i in args.get("add_blocked_by", [])]
+    if args.get("status") == "deleted":
+        return _delete_task(task)
+    for key in ("status", "subject", "description", "active_form", "owner", "metadata"):
+        if key in args:
+            task[key] = args[key]
+    for other in blocks:
+        _link(task, other)
+    for other in blocked_by:
+        _link(other, task)
+    return {"task": task}
+
+
+@tool(
+    "np_todo_write",
+    "Replace this session's whole task list with `todos` — each with `content`, "
+    "`status` (pending, in_progress, completed) and `active_form` — the way Claude "
+    "Code's TodoWrite does. Reads back through np_task_list; to change one item, use "
+    "np_task_create and np_task_update instead.",
+    {
+        "type": "object",
+        "properties": {"todos": {"type": "array", "items": _TODO_ITEM}},
+        "required": ["todos"],
+        "additionalProperties": False,
+    },
+    # Replaces the list, so anything not in `todos` is gone: destructive. Not
+    # idempotent either — the list reads the same, but the ids advance.
+    {**_MUTATES, "destructiveHint": True, "title": "Replace the task list"},
+    output_schema=_TASK_LIST,
+)
+def _todo_write(args: dict) -> dict:
+    _TASKS.clear()
+    for todo in args["todos"]:
+        _add_task(todo["content"], active_form=todo["active_form"], status=todo["status"])
+    return {"tasks": [_summary(t) for t in _TASKS.values()]}
+
+
 def _scrub(exc: Exception) -> str:
     """An exception message with the server's absolute root replaced by `<project>`.
 
@@ -1178,6 +1441,22 @@ def _negotiate(requested) -> str:
     return requested if requested in SUPPORTED_PROTOCOLS else SUPPORTED_PROTOCOLS[0]
 
 
+def _call_result(result: Any) -> dict:
+    """A handler's return value as a CallToolResult.
+
+    A handler returns bare text; or (text, is_error) when it has a result worth
+    returning *and* a failure to report — a partial SARIF scan is both, and
+    raising instead would discard the findings the readable files did yield; or
+    a dict, which is a structured result: published as `structuredContent` and,
+    for clients that predate the field, serialized into the text block too.
+    """
+    if isinstance(result, tuple):
+        return _text_result(result[0], is_error=result[1])
+    if isinstance(result, dict):
+        return {**_text_result(_compact(result)), "structuredContent": result}
+    return _text_result(result)
+
+
 def _handle(method: str, params: dict):
     """Dispatch one JSON-RPC method and return its `result` payload.
 
@@ -1198,12 +1477,8 @@ def _handle(method: str, params: dict):
             "serverInfo": SERVER_INFO,
         }
     if method == "tools/list":
-        return {
-            "tools": [
-                {k: t[k] for k in ("name", "description", "inputSchema", "annotations")}
-                for t in TOOLS
-            ]
-        }
+        published = ("name", "title", "description", "inputSchema", "outputSchema", "annotations")
+        return {"tools": [{k: t[k] for k in published if k in t} for t in TOOLS]}
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
@@ -1214,15 +1489,9 @@ def _handle(method: str, params: dict):
                 if bad := _validate(t["inputSchema"], args):
                     return _text_result(f"{name}: {bad}", is_error=True)
                 try:
-                    result = t["handler"]({k: v for k, v in args.items() if v is not None})
-                    # A handler returns bare text, or (text, is_error) when it
-                    # has a result worth returning *and* a failure to report —
-                    # a partial SARIF scan is both. Raising instead would be the
-                    # only other way to set isError, and that discards the
-                    # findings the readable files did yield.
-                    if isinstance(result, tuple):
-                        return _text_result(result[0], is_error=result[1])
-                    return _text_result(result)
+                    return _call_result(
+                        t["handler"]({k: v for k, v in args.items() if v is not None})
+                    )
                 except Exception as e:
                     # Redact at the dispatch boundary, not in each backing
                     # function: findings.py errors interpolate absolute store

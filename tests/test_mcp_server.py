@@ -610,8 +610,12 @@ def test_tools_list_shape():
     mod = _load()
     tools = _tools(mod)
     assert isinstance(tools, list)
+    core = {"name", "title", "description", "inputSchema", "annotations"}
     for t in tools:
-        assert set(t) == {"name", "description", "inputSchema", "annotations"}
+        # `title` at the top level is the spec's preferred display name;
+        # `outputSchema` only where a tool returns structuredContent.
+        assert core <= set(t) <= core | {"outputSchema"}, t["name"]
+        assert t["title"] == t["annotations"]["title"]
 
 
 # The only tools that leave the machine. Pinned as a set rather than a count so
@@ -663,6 +667,8 @@ def test_read_tools_are_marked_read_only():
         "np_show_finding",
         "np_findings_index",
         "np_validate_store",
+        "np_task_get",
+        "np_task_list",
     }
     seen = {t["name"]: t["annotations"] for t in _tools(mod)}
     assert read_only <= set(seen)
@@ -1792,3 +1798,181 @@ def test_server_info_version_is_the_plugins_not_a_literal(tmp_path):
     assert mod._plugin_version(tmp_path / "absent.json") == "unknown"
     (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
     assert mod._plugin_version(tmp_path / "bad.json") == "unknown"
+
+
+# ── task tracking tools (session-scoped, in-process) ──────────────────────────
+
+
+def _structured(result) -> dict:
+    """The structured half of a task-tool result, asserting the text block matches it.
+
+    The spec says a tool returning `structuredContent` SHOULD also return the
+    serialized JSON as text for older clients; the two must never disagree.
+    """
+    assert result["isError"] is False, result["content"][0]["text"]
+    assert json.loads(result["content"][0]["text"]) == result["structuredContent"]
+    return result["structuredContent"]
+
+
+def _create(mod, subject: str, **extra) -> str:
+    return _structured(_call(mod, "np_task_create", {"subject": subject, **extra}))["task"]["id"]
+
+
+_TASK_TOOLS = ("np_task_create", "np_task_get", "np_task_update", "np_task_list", "np_todo_write")
+
+
+def test_task_create_get_update_list_round_trip():
+    mod = _load()
+    created = _structured(
+        _call(
+            mod,
+            "np_task_create",
+            {"subject": "AUD:S0 Security", "active_form": "Applying the security lens"},
+        )
+    )
+    tid = created["task"]["id"]
+    # The same shape Claude Code's TaskCreate returns, so a harness watching
+    # for it pairs the id with the subject without a second call.
+    assert created["task"] == {"id": tid, "subject": "AUD:S0 Security"}
+
+    got = _structured(_call(mod, "np_task_get", {"task_id": tid}))["task"]
+    assert got["status"] == "pending"
+    assert got["active_form"] == "Applying the security lens"
+    assert got["description"] == ""
+    assert got["owner"] == ""
+    assert got["blocks"] == [] and got["blocked_by"] == []
+    assert got["metadata"] == {}
+
+    updated = _structured(
+        _call(
+            mod,
+            "np_task_update",
+            {"task_id": tid, "status": "in_progress", "owner": "audit", "metadata": {"lens": "S0"}},
+        )
+    )["task"]
+    assert updated["status"] == "in_progress"
+    assert updated["owner"] == "audit"
+    assert updated["metadata"] == {"lens": "S0"}
+
+    listed = _structured(_call(mod, "np_task_list", {}))
+    assert listed == {
+        "tasks": [
+            {
+                "id": tid,
+                "subject": "AUD:S0 Security",
+                "status": "in_progress",
+                "owner": "audit",
+                "blocked_by": [],
+            }
+        ]
+    }
+
+
+def test_task_ids_are_sequential_per_process_and_never_reused():
+    mod = _load()
+    a, b = _create(mod, "a"), _create(mod, "b")
+    assert (a, b) == ("1", "2")
+    _structured(_call(mod, "np_task_update", {"task_id": b, "status": "deleted"}))
+    # A deleted id is not handed out again: a stale reference must not resolve
+    # to a different task.
+    assert _create(mod, "c") == "3"
+    # A fresh process starts over — the store is the process, not a file.
+    assert _create(_load(), "d") == "1"
+
+
+def test_task_update_links_both_directions_and_delete_strips_them():
+    mod = _load()
+    a, b = _create(mod, "a"), _create(mod, "b")
+    updated = _structured(_call(mod, "np_task_update", {"task_id": b, "add_blocked_by": [a]}))
+    assert updated["task"]["blocked_by"] == [a]
+    assert _structured(_call(mod, "np_task_get", {"task_id": a}))["task"]["blocks"] == [b]
+    # Linking twice is not two links.
+    again = _structured(_call(mod, "np_task_update", {"task_id": a, "add_blocks": [b]}))
+    assert again["task"]["blocks"] == [b]
+
+    deleted = _structured(_call(mod, "np_task_update", {"task_id": a, "status": "deleted"}))
+    assert deleted == {"task": {"id": a, "subject": "a", "status": "deleted"}}
+    assert _structured(_call(mod, "np_task_get", {"task_id": b}))["task"]["blocked_by"] == []
+    gone = _call(mod, "np_task_get", {"task_id": a})
+    assert gone["isError"] is True
+    assert f"no task with id {a!r}" in gone["content"][0]["text"]
+
+
+def test_task_update_rejects_an_unknown_link_target_without_partial_writes():
+    mod = _load()
+    a = _create(mod, "a")
+    result = _call(
+        mod, "np_task_update", {"task_id": a, "status": "completed", "add_blocks": ["9"]}
+    )
+    assert result["isError"] is True
+    assert "no task with id '9'" in result["content"][0]["text"]
+    # The status change in the same call must not have landed either.
+    assert _structured(_call(mod, "np_task_get", {"task_id": a}))["task"]["status"] == "pending"
+
+
+def test_todo_write_replaces_the_list_and_reads_back_through_task_list():
+    mod = _load()
+    _create(mod, "stale")
+    written = _structured(
+        _call(
+            mod,
+            "np_todo_write",
+            {
+                "todos": [
+                    {"content": "step 1", "status": "completed", "active_form": "Doing step 1"},
+                    {"content": "step 2", "status": "in_progress", "active_form": "Doing step 2"},
+                ]
+            },
+        )
+    )
+    assert [t["subject"] for t in written["tasks"]] == ["step 1", "step 2"]
+    listed = _structured(_call(mod, "np_task_list", {}))["tasks"]
+    assert [(t["subject"], t["status"]) for t in listed] == [
+        ("step 1", "completed"),
+        ("step 2", "in_progress"),
+    ]
+    assert (
+        _structured(_call(mod, "np_task_get", {"task_id": listed[0]["id"]}))["task"]["active_form"]
+        == "Doing step 1"
+    )
+
+
+def test_todo_write_validates_each_item():
+    mod = _load()
+    bad = _call(
+        mod,
+        "np_todo_write",
+        {"todos": [{"content": "x", "status": "done", "active_form": "y"}]},
+    )
+    assert bad["isError"] is True
+    assert "todos[0]: status must be one of" in bad["content"][0]["text"]
+    short = _call(mod, "np_todo_write", {"todos": [{"content": "x"}]})
+    assert short["isError"] is True
+    assert (
+        "todos[0]: missing required parameter(s): status, active_form"
+        in (short["content"][0]["text"])
+    )
+    # Neither call touched the list.
+    assert _structured(_call(mod, "np_task_list", {})) == {"tasks": []}
+
+
+def test_task_tools_publish_output_schemas_and_honest_annotations():
+    mod = _load()
+    tools = {t["name"]: t for t in _tools(mod)}
+    for name in _TASK_TOOLS:
+        assert tools[name]["outputSchema"]["type"] == "object", name
+        assert tools[name]["annotations"]["openWorldHint"] is False, name
+    ann = {name: tools[name]["annotations"] for name in _TASK_TOOLS}
+    assert ann["np_task_get"]["readOnlyHint"] is True
+    assert ann["np_task_list"]["readOnlyHint"] is True
+    # Create only adds. Update can delete. todo_write replaces the whole list;
+    # it is not idempotent either, because the ids advance on every call.
+    assert ann["np_task_create"]["destructiveHint"] is False
+    assert ann["np_task_create"]["idempotentHint"] is False
+    assert ann["np_task_update"]["destructiveHint"] is True
+    assert ann["np_task_update"]["idempotentHint"] is False
+    assert ann["np_todo_write"]["destructiveHint"] is True
+    assert ann["np_todo_write"]["idempotentHint"] is False
+    # No `project_dir`: the store is the process, not the audited tree.
+    for name in _TASK_TOOLS:
+        assert "project_dir" not in tools[name]["inputSchema"]["properties"], name

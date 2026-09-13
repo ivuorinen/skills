@@ -39,9 +39,10 @@ Severity reflects actual risk, never preference.
 
 - **Run the command as a task list.** A command whose body defines a numbered
   Process or Procedure copies each step into the agent's task list before it
-  begins — in Claude Code one `TaskCreate`/`TodoWrite` entry per step, the
-  equivalent task tracker in other agents — and closes every step before
-  reporting. **Where the session exposes no task tracker, print the numbered
+  begins — one `np_task_create` entry per step where the session exposes the
+  nitpicker MCP tools (`np_task_update` closes it), else the harness's own
+  tracker (`TaskCreate`/`TodoWrite` in Claude Code) — and closes every step
+  before reporting. **Where the session exposes no task tracker, print the numbered
   steps with a one-line outcome each in the response instead, before
   reporting.** A tracker is the preferred form, never the condition: naming a
   tool as the only way to satisfy a rule means the rule disappears in a session
