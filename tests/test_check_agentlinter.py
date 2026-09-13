@@ -271,6 +271,25 @@ def test_run_passes_the_pinned_local_json_argv(monkeypatch):
         # out of main — a traceback instead of the clean skip-or-fail.
         (lambda _n: "/usr/bin/npx", '{"diagnostics": [null]}', "non-object entry"),
         (lambda _n: "/usr/bin/npx", '{"diagnostics": ["a string"]}', "non-object entry"),
+        # The identity contract `_load_baseline` enforces, applied at the other
+        # end of the pipe: without it `--update` writes a baseline that the next
+        # ordinary run rejects as unreadable, having exited 0.
+        (lambda _n: "/usr/bin/npx", '{"diagnostics": [{}]}', "missing `rule`"),
+        (
+            lambda _n: "/usr/bin/npx",
+            '{"diagnostics": [{"rule": "r", "file": "f"}]}',
+            "missing `rule`",
+        ),
+        (
+            lambda _n: "/usr/bin/npx",
+            '{"diagnostics": [{"rule": "  ", "file": "f", "message": "m"}]}',
+            "missing `rule`",
+        ),
+        (
+            lambda _n: "/usr/bin/npx",
+            '{"diagnostics": [{"rule": null, "file": "f", "message": "m"}]}',
+            "missing `rule`",
+        ),
     ],
 )
 def test_run_returns_none_on_every_unusable_outcome(monkeypatch, capsys, which, run, expected_err):

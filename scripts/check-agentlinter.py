@@ -132,6 +132,19 @@ def _run(root: Path) -> dict | None:
     if any(not isinstance(d, dict) for d in report["diagnostics"]):
         print("agentlinter: `diagnostics` holds a non-object entry.", file=sys.stderr)
         return None
+    # The same identity contract `_load_baseline` enforces, applied at the other
+    # end of the pipe. Without it `--update` accepts a degenerate diagnostic,
+    # writes an entry with empty identity fields, exits 0 — and the next
+    # ordinary run rejects the file it just produced. A tool whose repair path
+    # emits input its own reader refuses is broken in the direction that looks
+    # like success.
+    if any(
+        not isinstance(d.get(f), str) or not d[f].strip()
+        for d in report["diagnostics"]
+        for f in _IDENTITY
+    ):
+        print("agentlinter: a diagnostic is missing `rule`, `file` or `message`.", file=sys.stderr)
+        return None
     return report
 
 
