@@ -40,9 +40,15 @@
   ],
   "packageRules": [
     {
-      "description": "ruff is pinned in four places across three managers; one PR must move them all.",
+      "description": [
+        "ruff is pinned in four places across three managers; one PR must move them all.",
+        "group.commitMessageTopic puts the version in the title, which squash-merge turns into the release-notes line. The PyPI version (0.16.6) and the pre-commit tag (v0.16.6) are different strings, so Renovate drops commitMessageExtra for this group and the title read only `update ruff`. The group topic survives that, and prettyNewVersion prefixes `v` to a digit-led version, so both upgrades render the same value."
+      ],
       "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
-      "groupName": "ruff"
+      "groupName": "ruff",
+      "group": {
+        "commitMessageTopic": "{{{groupName}}} to {{{prettyNewVersion}}}"
+      }
     },
     {
       "description": "bandit likewise: the pyproject pin and the SHA-pinned pre-commit rev.",
