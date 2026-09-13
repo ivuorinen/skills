@@ -130,11 +130,20 @@ def test_context_pack_tool_reports_a_bad_mode_as_a_caller_error(tmp_path):
     """A PackError must reach the caller as a bad argument, not an internal error.
 
     Unmapped it would surface as -32603, which reads as "the server is broken"
-    rather than "fix the mode you passed" — and the caller retries the same call.
+    rather than "fix the goal you passed" — and the caller retries the same call.
+    A bad `mode` never reaches `build` any more (the schema enum is enforced at
+    dispatch), so the mapping is exercised through a goal with no searchable term.
     """
-    result = _call(_load(), "np_context_pack", {"mode": "minify"})
+    mod = _load()
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = _call(mod, "np_context_pack", {"mode": "minify"})
     assert result["isError"] is True
-    assert "inventory, symbols, diff, evidence" in result["content"][0]["text"]
+    assert "mode must be one of" in result["content"][0]["text"]
+    assert "inventory" in result["content"][0]["text"]
+
+    result = _call(mod, "np_context_pack", {"mode": "evidence", "goal": "!!!"})
+    assert result["isError"] is True
+    assert result["content"][0]["text"].startswith("ValueError: goal contains no searchable term")
 
 
 def test_context_pack_tool_reports_a_broken_host_as_a_runtime_fault(tmp_path, monkeypatch):
@@ -188,7 +197,9 @@ def test_process_sarif_tool_parses_and_confines_paths(tmp_path):
 
     ok = _call(mod, "np_process_sarif", {"paths": ["scan.sarif"]})
     assert ok.get("isError") is not True
-    data = json.loads(ok["content"][0]["text"])
+    # Enveloped: every message and rule id is scanner text over the audited
+    # repository, and the SARIF file itself is a caller-named path inside it.
+    data = json.loads(_unfence(ok, "scanner-output"))
     assert data["meta"]["unique"] == 1
     assert data["meta"]["errors"] == []
     assert data["by_severity"]["High"][0]["tool"] == "semgrep"
@@ -211,7 +222,7 @@ def test_process_sarif_marks_a_skipped_file_as_an_error_but_keeps_the_findings(t
     result = _call(mod, "np_process_sarif", {"paths": ["good.sarif", "missing.sarif"]})
 
     assert result["isError"] is True, "a skipped input must not read as a clean scan"
-    data = json.loads(result["content"][0]["text"])
+    data = json.loads(_unfence(result, "scanner-output"))
     assert data["meta"]["unique"] == 1, "the readable file's findings must survive"
     assert any("missing.sarif" in e for e in data["meta"]["errors"])
 
@@ -225,7 +236,7 @@ def test_process_sarif_error_paths_use_the_callers_spelling(tmp_path):
     """
     mod = _load()
     result = _call(mod, "np_process_sarif", {"paths": ["scans/missing.sarif"]})
-    errors = json.loads(result["content"][0]["text"])["meta"]["errors"]
+    errors = json.loads(_unfence(result, "scanner-output"))["meta"]["errors"]
 
     assert errors == ["File not found: scans/missing.sarif"]
     assert not any(str(tmp_path) in e for e in errors), "resolved absolute path leaked"
@@ -244,13 +255,13 @@ def test_context_pack_rejects_a_paths_string(tmp_path):
 
     `_scoped` takes `paths` as prefixes. Every single character resolves inside
     the root, so nothing raises and nothing matches — the tool returns an empty
-    pack, which an agent reads as a repository containing nothing. The server
-    does not validate against `inputSchema`, so the type check has to be here.
+    pack, which an agent reads as a repository containing nothing. The schema's
+    `array` type is what stops it, enforced at dispatch for every tool.
     """
     mod = _load()
     result = _call(mod, "np_context_pack", {"mode": "inventory", "paths": "skills"})
     assert result["isError"] is True
-    assert "array of path prefixes" in result["content"][0]["text"]
+    assert "paths must be an array" in result["content"][0]["text"]
 
 
 def test_check_rules_anatomy_tool_reports_and_flags_blocking(tmp_path):
@@ -1539,13 +1550,16 @@ def test_pr_tools_read_the_remote_inside_the_confined_project_root(tmp_path, mon
 
 @pytest.mark.parametrize("bad", [0, -1, "3", 1.5, True])
 def test_pr_tools_reject_a_non_positive_integer_pr_number(bad, monkeypatch):
-    # inputSchema is advisory — the server does not validate against it — so a
-    # wrong value reaches the handler and must be rejected there.
+    # The schema says `integer, minimum 1`, and the dispatch boundary enforces
+    # it: a string, a float, a bool (a subclass of int) and a non-positive value
+    # are each refused before any provider is reached.
     mod = _load()
-    monkeypatch.setattr(mod.pr_common, "provider_for", lambda _t: _FakeProvider())
+    provider = _FakeProvider()
+    monkeypatch.setattr(mod.pr_common, "provider_for", lambda _t: provider)
     result = _call(mod, "np_pr_comments", {"repo": "o/r", "pr_number": bad})
     assert result["isError"] is True
-    assert "positive integer" in result["content"][0]["text"]
+    assert "pr_number must be" in result["content"][0]["text"]
+    assert provider.calls == []
 
 
 def test_pr_tool_transport_failure_is_reported_as_an_error_result(monkeypatch):
@@ -1567,3 +1581,214 @@ def test_pr_tools_advertise_every_platform_in_their_schema():
     for name in ("np_pr_comments", "np_pr_status"):
         assert schemas[name]["properties"]["platform"]["enum"] == list(mod.pr_common.PLATFORMS)
         assert schemas[name]["required"] == ["pr_number"]
+
+
+# ── inputSchema enforcement (audit-6157616e) ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "tool, args, expected",
+    [
+        # A truthy string narrowed the pack to changed files while the caller
+        # asked for the whole repository — the same silent misreading
+        # `exclude_baseline: "false"` was closed for, reopened one tool over.
+        (
+            "np_context_pack",
+            {"mode": "inventory", "changed_only": "false"},
+            "changed_only must be a boolean",
+        ),
+        (
+            "np_context_pack",
+            {"mode": "inventory", "self_test": "false"},
+            "self_test must be a boolean",
+        ),
+        (
+            "np_context_pack",
+            {"mode": "inventory", "budget_tokens": 10},
+            "budget_tokens must be at least 256",
+        ),
+        ("np_context_pack", {"mode": "inventory", "paths": ["a", 5]}, "paths[1] must be a string"),
+        # `additionalProperties: false` was advertised and ignored, so a typo'd
+        # key was dropped in silence; now it is named, with the accepted set.
+        (
+            "np_show_finding",
+            {"id": "x", "identifier": "y"},
+            "unknown parameter(s): identifier; accepted:",
+        ),
+        (
+            "np_new_finding",
+            {
+                "auditor": "a",
+                "severity": "low",
+                "category": "docs",
+                "area": "x",
+                "title": "t",
+                "problem": 42,
+            },
+            "problem must be a string",
+        ),
+        ("np_list_findings", {"auditor": ["review"]}, "auditor must be a string"),
+    ],
+    ids=[
+        "bool-as-string",
+        "self-test-string",
+        "minimum",
+        "array-item",
+        "unknown-key",
+        "int-body",
+        "list-string",
+    ],
+)
+def test_arguments_are_validated_against_the_advertised_schema(tmp_path, tool, args, expected):
+    result = _call(_load(), tool, {"project_dir": str(tmp_path), **args})
+    assert result["isError"] is True
+    assert expected in result["content"][0]["text"], result["content"][0]["text"]
+
+
+def test_non_object_arguments_are_a_caller_error_not_a_crash(tmp_path):
+    """A list reached the handler and died on `.get` — an internal-looking error
+    for a caller mistake. (An *empty* list never did: `or {}` coerces it.)"""
+    mod = _load()
+    (resp,) = _rpc(
+        mod,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "np_list_skills", "arguments": ["x"]},
+        },
+    )
+    assert resp["result"]["isError"] is True
+    assert "arguments must be an object" in resp["result"]["content"][0]["text"]
+
+
+def test_an_explicit_null_is_treated_as_absent(tmp_path):
+    """`problem: null` used to be written into the finding as the string "None"."""
+    mod = _load()
+    created = _call(
+        mod,
+        "np_new_finding",
+        {
+            "auditor": "audit",
+            "severity": "low",
+            "category": "docs",
+            "area": "x.py",
+            "title": "null body",
+            "problem": None,
+            "location": None,
+        },
+    )
+    assert created["isError"] is False
+    path = tmp_path / json.loads(created["content"][0]["text"])["path"]
+    assert "## Problem\n\n" in path.read_text(encoding="utf-8")
+    assert "None" not in path.read_text(encoding="utf-8")
+
+    missing = _call(mod, "np_show_finding", {"id": None})
+    assert missing["isError"] is True
+    assert "missing required parameter(s): id" in missing["content"][0]["text"]
+
+
+# ── relative project_dir (audit-b9825858) ─────────────────────────────────────
+
+
+def test_relative_project_dir_resolves_against_the_allowed_root(tmp_path, monkeypatch):
+    """The cwd is unspecified under a plugin registration, so a relative
+    `project_dir` must mean the same sub-tree in every session — the rule
+    `_confined` already applied to file paths."""
+    (tmp_path / "packages" / "api").mkdir(parents=True)
+    elsewhere = tmp_path.parent / f"{tmp_path.name}-elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    mod = _load()
+    result = _call(mod, "np_validate_store", {"project_dir": "packages/api"})
+    assert result["isError"] is False, result["content"][0]["text"]
+    assert mod._project_root({"project_dir": "packages/api"}) == (tmp_path / "packages" / "api")
+
+
+# ── no absolute paths in results (audit-d3378191) ─────────────────────────────
+
+
+def test_write_results_name_paths_relative_to_the_project_root(tmp_path):
+    mod = _load()
+    created = _call(
+        mod,
+        "np_new_finding",
+        {"auditor": "audit", "severity": "low", "category": "docs", "area": "x", "title": "t"},
+    )
+    path = json.loads(created["content"][0]["text"])["path"]
+    assert path.startswith("docs/audit/findings/audit/open/")
+    assert (tmp_path / path).is_file()
+
+    index = _call(mod, "np_write_index", {})["content"][0]["text"]
+    assert index == "docs/audit/findings/INDEX.md"
+    assert (tmp_path / index).is_file()
+
+
+def test_validate_store_errors_are_fenced_and_carry_no_absolute_path(tmp_path):
+    """Each error quotes a value out of a finding file — stored-finding text,
+    behind the same envelope as `np_show_finding` — and is prefixed with the
+    absolute path `validate_file` built, which `_scrub` never sees."""
+    store = _seed(tmp_path)
+    (broken,) = store.glob("*/open/*.md")
+    broken.write_text(
+        broken.read_text(encoding="utf-8").replace("severity: high", "severity: banana"),
+        encoding="utf-8",
+    )
+    result = _call(_load(), "np_validate_store", {})
+    assert result["isError"] is False
+    errors = _unfence(result)
+    assert "invalid severity 'banana'" in errors
+    assert errors.startswith("docs/audit/findings/")
+    assert str(tmp_path) not in errors
+
+
+def test_foreign_copy_warning_names_the_projects_copy_relative_to_the_root(tmp_path, capsys):
+    mod = _load()
+    theirs = tmp_path / "skills" / "nitpicker" / "scripts" / "findings.py"
+    theirs.parent.mkdir(parents=True)
+    theirs.write_text("# the project's own copy\n", encoding="utf-8")
+    warning = mod._code_warning(tmp_path)
+    assert "not the project's skills/nitpicker/scripts/findings.py" in warning
+    assert str(tmp_path) not in warning
+    # The absolute paths still reach the operator, on stderr.
+    assert str(theirs) in capsys.readouterr().err
+
+
+# ── the server file is in the staleness snapshot (audit-c3e85f44) ─────────────
+
+
+def test_the_server_file_itself_is_snapshotted():
+    mod = _load()
+    path, mtime = mod._LOADED["mcp_server"]
+    assert path == _SERVER.resolve()
+    mod._LOADED["mcp_server"] = (path, mtime - 1)
+    assert "mcp_server" in mod._stale_modules()
+
+
+# ── internal errors are scrubbed and logged (audit-73252f50) ──────────────────
+
+
+def test_internal_error_frame_is_scrubbed_and_reported_on_stderr(tmp_path, monkeypatch, capsys):
+    mod = _load()
+
+    def leaky(*_a, **_k):
+        """Simulate a `_handle` bug whose message interpolates the project root."""
+        raise RuntimeError(f"cannot read {tmp_path}/x")
+
+    monkeypatch.setattr(mod, "_handle", leaky)
+    (resp,) = _rpc(mod, {"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert resp["error"]["code"] == -32603
+    assert resp["error"]["message"] == "RuntimeError: cannot read <project>/x"
+    assert "[nitpicker] ping: RuntimeError" in capsys.readouterr().err
+
+
+# ── serverInfo version (audit-5af2065d) ───────────────────────────────────────
+
+
+def test_server_info_version_is_the_plugins_not_a_literal(tmp_path):
+    mod = _load()
+    manifest = Path(__file__).parent.parent / ".claude-plugin" / "plugin.json"
+    assert mod.SERVER_INFO["version"] == json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    assert mod._plugin_version(tmp_path / "absent.json") == "unknown"
+    (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
+    assert mod._plugin_version(tmp_path / "bad.json") == "unknown"

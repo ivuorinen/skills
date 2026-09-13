@@ -223,10 +223,10 @@ through `python3 skills/nitpicker/scripts/findings.py` for the rest of the
 session; it loads fresh every invocation. Restarting the session picks up the
 new code.
 
-`mcp_server.py` records each module's mtime at import and prefixes a `[warn]`
-line to the result of every tool that writes (`np_new_finding`,
-`np_resolve_finding`, `np_write_index`) when the file has since changed, or
-when it is serving a different copy than the project has on disk. The read
+`mcp_server.py` records each module's mtime at import (its own file included)
+and prefixes a `[warn]` line to the result of every tool that writes
+(`np_new_finding`, `np_resolve_finding`, `np_write_index`) when the file has
+since changed, or when it is serving a different copy than on disk. The read
 tools carry no such prefix, so an edit to `process-sarif.py` or
 `check-rules-anatomy.py` reaches you through the rule above and through nothing
 else: `np_process_sarif` will consolidate a security scan with code that is not
