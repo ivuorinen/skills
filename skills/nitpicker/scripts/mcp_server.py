@@ -67,8 +67,9 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import context_pack
@@ -226,7 +227,7 @@ def tool(
     `structuredContent` beside the text block — and describes that dict.
     """
 
-    def register(fn):
+    def register(fn: Callable[[dict], Any]) -> Callable[[dict], Any]:
         entry = {
             "name": name,
             "title": annotations["title"],
@@ -265,11 +266,16 @@ def _check_value(name: str, spec: dict, value: Any) -> str | None:
 
     Covers what this server's flat schemas use — `type`, `enum`, `minimum` and
     scalar `items` — and nothing more; see the module docstring for the ceiling.
+
+    A whole-number float is an integer, as JSON Schema defines one: clients
+    serialise `5` as `5.0`, and refusing it shut a conforming caller out of every
+    integer parameter (audit-c0b73bed). `_normalize` hands the handler an `int`.
     """
     expected = spec["type"]  # every property here declares one; a KeyError is a bug
     accepted, phrase = _TYPES[expected]
     is_bool_as_number = isinstance(value, bool) and expected in ("integer", "number")
-    if not isinstance(value, accepted) or is_bool_as_number:
+    is_whole_float = expected == "integer" and isinstance(value, float) and value.is_integer()
+    if not (isinstance(value, accepted) or is_whole_float) or is_bool_as_number:
         return f"{name} must be {phrase}, got {value!r}"
     if "enum" in spec and value not in spec["enum"]:
         return f"{name} must be one of {tuple(spec['enum'])}, got {value!r}"
@@ -295,20 +301,53 @@ def _validate(schema: dict, args: Any) -> str | None:
     string "None" (audit-6157616e). One check at one place closes the class, and
     a new tool starts covered rather than starting with none of it.
 
-    An explicit null is treated as absent — a client that spells "unset" that way
-    gets the default, and a null for a required key is reported as missing.
+    What counts as absent is `_absent`'s rule — a client that spells "unset" that
+    way gets the default, and a null for a required key is reported as missing.
     """
     if not isinstance(args, dict):
         return f"arguments must be an object, got {args!r}"
     props = schema.get("properties", {})
     if schema.get("additionalProperties") is False and (unknown := sorted(set(args) - set(props))):
         return f"unknown parameter(s): {', '.join(unknown)}; accepted: {', '.join(sorted(props))}"
-    if missing := [k for k in schema.get("required", []) if args.get(k) is None]:
+    required = schema.get("required", [])
+    if missing := [k for k in required if args.get(k) is None]:
         return f"missing required parameter(s): {', '.join(missing)}"
     for key, value in args.items():
-        if value is not None and (bad := _check_value(key, props[key], value)):
+        spec = props[key]
+        if not _absent(spec, value, key in required) and (bad := _check_value(key, spec, value)):
             return bad
     return None
+
+
+def _absent(spec: dict, value: Any, required: bool) -> bool:
+    """Whether `value` means "not given", so no rule of `spec` applies to it.
+
+    An explicit null always does. So does `""` for an *optional* enum: v3.0.0
+    read `severity: ""` as no filter, and enforcing the enum turned that into an
+    error for every client built against it (contract-2ae1f18d). A required enum
+    still refuses `""`, since there is no default to fall back on. Ceiling: only
+    an enum earns the exception — an empty free-form string is a value.
+    """
+    return value is None or (value == "" and "enum" in spec and not required)
+
+
+def _normalize(schema: dict, args: dict) -> dict:
+    """Validated `args` as the handler receives them.
+
+    An absent value is dropped, so a handler's `args.get(key, default)` sees no
+    key rather than a null or an empty enum it would write through — an empty
+    `status` landed on a task verbatim. A whole-number float for an `integer`
+    becomes an `int`, so no handler meets `5.0` where it slices or builds a URL.
+    Ceiling: top-level properties only; no nested schema here declares an
+    integer or an optional enum.
+    """
+    props, required = schema.get("properties", {}), schema.get("required", [])
+    out = {}
+    for key, value in args.items():
+        spec = props[key]
+        if not _absent(spec, value, key in required):
+            out[key] = int(value) if spec["type"] == "integer" else value
+    return out
 
 
 # ── skill / command tools (plugin-scoped) ────────────────────────────────────
@@ -520,8 +559,11 @@ _CLOSING_TAG = "</untrusted-data>"
 # `</UNTRUSTED-DATA>` or `</untrusted-data >` passed through untouched, and a
 # model reading the envelope treats those as the terminator just the same. The
 # envelope is a prompt-level marker, not input to a strict parser, so the match
-# has to be as lenient as the reader is.
-_CLOSING_TAG_RE = re.compile(r"<\s*/\s*untrusted-data\s*>", re.IGNORECASE)
+# has to be as lenient as the reader is. That includes an attribute, a trailing
+# slash, `_` or whitespace for the hyphen, and whitespace anywhere inside — the
+# markdown payloads are not JSON-escaped, so a newline reaches the reader as one
+# (prompt-safety-a96485e2). `\b` keeps `</untrusted-database>` untouched.
+_CLOSING_TAG_RE = re.compile(r"<\s*/\s*untrusted[-_\s]*data\b[^>]*>", re.IGNORECASE)
 
 
 def _neutralize(payload: str) -> str:
@@ -625,8 +667,9 @@ def _rules_fenced(payload: str) -> str:
 
 _PROJECT_DIR_PROP = {"project_dir": {"type": "string"}}
 # The statuses `np_list_findings` filters on. The schema enum is enforced by
-# `_validate`, so this is the one place the vocabulary is spelled.
-_LIST_STATUSES = ("open", "fixed", "invalid")
+# `_validate`, so it must be the CLI's own vocabulary — `findings.STATUSES`
+# itself, not a copy that drifts when a status is added (arch-b8216302).
+_LIST_STATUSES = findings.STATUSES
 
 
 # ── findings read tools (project-scoped) ─────────────────────────────────────
@@ -955,6 +998,27 @@ def _pr_fenced(payload: str) -> str:
     )
 
 
+def _pr_fetch(args: dict, operation: str) -> str | tuple[str, bool]:
+    """Run one provider fetch and envelope its outcome, a failure included.
+
+    A failure is as third-party as a success: gh prints the remote API's error
+    `message` on stderr and `cli_json` raises it verbatim, and `repo` lets the
+    caller name any host. Left to dispatch, that text came back unfenced — a
+    directive arriving as trusted-looking output (prompt-safety-7148d9e9).
+    Target resolution sits inside the same boundary, because the git remote it
+    reads is repository content.
+    """
+    try:
+        target, pr_number = _pr_target(args)
+        provider = pr_common.provider_for(target)
+        fetch = provider.fetch_comments if operation == "comments" else provider.fetch_status
+        return _pr_fenced(_compact(fetch(target, pr_number)))
+    except Exception as e:
+        # Same boundary rule as dispatch: full detail on stderr, root scrubbed.
+        print(f"[nitpicker] np_pr_{operation}: {type(e).__name__}: {e}", file=sys.stderr)
+        return _pr_fenced(f"{type(e).__name__}: {_scrub(e)}"), True
+
+
 @tool(
     "np_pr_comments",
     "Fetch a PR/MR review surface (inline threads, review bodies, summary "
@@ -963,16 +1027,14 @@ def _pr_fenced(payload: str) -> str:
     _PR_ARGS,
     {**_READ_ONLY_NETWORK, "title": "Fetch PR review comments"},
 )
-def _pr_comments(args: dict) -> str:
+def _pr_comments(args: dict) -> str | tuple[str, bool]:
     """PR comments, wrapped so the caller cannot mistake them for instructions.
 
     Anyone able to comment on the PR writes this text, and bot reviewers echo
     repository content back into it. The envelope is the marker that a directive
     found inside is content to report, not to follow.
     """
-    target, pr_number = _pr_target(args)
-    provider = pr_common.provider_for(target)
-    return _pr_fenced(_compact(provider.fetch_comments(target, pr_number)))
+    return _pr_fetch(args, "comments")
 
 
 @tool(
@@ -984,12 +1046,10 @@ def _pr_comments(args: dict) -> str:
     _PR_ARGS,
     {**_READ_ONLY_NETWORK, "title": "Fetch PR status"},
 )
-def _pr_status(args: dict) -> str:
-    target, pr_number = _pr_target(args)
-    provider = pr_common.provider_for(target)
+def _pr_status(args: dict) -> str | tuple[str, bool]:
     # Fenced like the comments tool: `title` and the CI check names are also
     # third-party text, written by whoever opened the PR or configured the job.
-    return _pr_fenced(_compact(provider.fetch_status(target, pr_number)))
+    return _pr_fetch(args, "status")
 
 
 # ── code-provenance warning (see the _LOADED comment at the top) ─────────────
@@ -1349,8 +1409,9 @@ def _task_list(args: dict) -> dict:
     "Update a task: set `status` (pending, in_progress, completed, or deleted — which "
     "removes it and every link to it), `subject`, `description`, `active_form`, `owner` "
     "or `metadata` (replaced whole), and link it with `add_blocks` / `add_blocked_by` "
-    "(task ids; the reverse link is recorded on the other task). An unknown id "
-    "anywhere in the call is an error and nothing is changed.",
+    "(task ids; the reverse link is recorded on the other task). An unknown id or a "
+    "self-link anywhere in the call, or `deleted` sent with any other field, is an "
+    "error and nothing is changed.",
     {
         "type": "object",
         "properties": {
@@ -1373,7 +1434,21 @@ def _task_list(args: dict) -> dict:
     output_schema=_ONE_TASK,
 )
 def _task_update(args: dict) -> dict:
-    task = _task(args["task_id"])
+    """Apply one update whole or not at all: every check runs before any write.
+
+    Refused outright: an unknown id; a link from the task to itself, which left
+    it blocked forever with no call able to clear it; and `status: "deleted"`
+    beside any other field, which returned early and reported success for the
+    fields it dropped (audit-88eec917). Ceiling: a longer cycle (a blocks b
+    blocks a) is still accepted — catching it means walking the graph, and
+    nothing here schedules by it.
+    """
+    tid = args["task_id"]
+    task = _task(tid)
+    if tid in args.get("add_blocks", []) or tid in args.get("add_blocked_by", []):
+        raise ValueError(f"task {tid!r} cannot block itself")
+    if args.get("status") == "deleted" and (extra := sorted(set(args) - {"task_id", "status"})):
+        raise ValueError(f"status 'deleted' cannot be sent with: {', '.join(extra)}")
     # Resolve every linked id before writing anything, so an unknown one leaves
     # the task exactly as it was rather than half-updated.
     blocks = [_task(i) for i in args.get("add_blocks", [])]
@@ -1428,7 +1503,7 @@ def _scrub(exc: Exception) -> str:
         return msg
 
 
-def _negotiate(requested) -> str:
+def _negotiate(requested: Any) -> str:
     """The protocol revision this session will speak.
 
     MCP requires the server to echo the client's revision when it supports it,
@@ -1489,9 +1564,7 @@ def _handle(method: str, params: dict):
                 if bad := _validate(t["inputSchema"], args):
                     return _text_result(f"{name}: {bad}", is_error=True)
                 try:
-                    return _call_result(
-                        t["handler"]({k: v for k, v in args.items() if v is not None})
-                    )
+                    return _call_result(t["handler"](_normalize(t["inputSchema"], args)))
                 except Exception as e:
                     # Redact at the dispatch boundary, not in each backing
                     # function: findings.py errors interpolate absolute store
@@ -1504,7 +1577,7 @@ def _handle(method: str, params: dict):
     raise MethodError(f"unknown method: {method}")
 
 
-def serve(stdin, stdout) -> None:
+def serve(stdin: TextIO, stdout: TextIO) -> None:
     """Read newline-delimited JSON-RPC frames until stdin closes.
 
     Anything carrying an id is answered, because this speaks to a client over a
@@ -1596,7 +1669,8 @@ Registered by `.claude-plugin/plugin.json` (plugin scope) and this repo's
 `.mcp.json` (project scope). Call `tools/list` over the protocol for the tool
 surface; `SKILL.md` documents each tool and its annotations.
 
-Exit codes: 0 = success (clean EOF on stdin), 1 = runtime or I/O error.
+Exit codes: 0 = success (clean EOF on stdin), 1 = runtime or I/O error,
+2 = usage error (any argument other than --help).
 """
 
 
@@ -1607,6 +1681,13 @@ def main(argv: list[str] | None = None) -> int:
     if "--help" in args or "-h" in args:
         print(_USAGE)
         return 0
+    if args:
+        # An unsupported argument used to be ignored and the server then blocked
+        # on stdin, so a wrong invocation read as a hang; exit 2 names it as one
+        # (contract-c3333311).
+        print(f"mcp_server.py: unrecognised argument(s): {' '.join(args)}", file=sys.stderr)
+        print(_USAGE, file=sys.stderr)
+        return 2
     serve(sys.stdin, sys.stdout)
     return 0
 

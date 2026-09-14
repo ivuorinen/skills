@@ -303,7 +303,8 @@ is refused. A relative `project_dir` is taken against that root, never the
 server's working directory. Every call is validated against the tool's
 advertised `inputSchema` before it runs — an unknown key, a wrong type or an
 out-of-vocab value is an `isError` result naming the parameter, never a
-silently narrowed or empty answer.
+silently narrowed or empty answer. A null, or `""` for an optional enum, counts
+as not given; a whole-number float counts as an integer.
 
 **Untrusted results.** Any tool whose result carries text this server did not
 write returns it inside an `<untrusted-data>` envelope, tagged with who wrote
