@@ -2010,6 +2010,13 @@ def test_task_update_links_both_directions_and_delete_strips_them():
     assert gone["isError"] is True
     assert f"no task with id {a!r}" in gone["content"][0]["text"]
 
+    # tests-230e72b2: the other direction too — deleting the blocked task must
+    # strip it from its blocker's `blocks`, not only a blocker from `blocked_by`.
+    c, d = _create(mod, "c"), _create(mod, "d")
+    _call(mod, "np_task_update", {"task_id": d, "add_blocked_by": [c]})
+    _call(mod, "np_task_update", {"task_id": d, "status": "deleted"})
+    assert _structured(_call(mod, "np_task_get", {"task_id": c}))["task"]["blocks"] == []
+
 
 def test_task_update_rejects_an_unknown_link_target_without_partial_writes():
     mod = _load()
