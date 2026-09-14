@@ -42,7 +42,7 @@ compete for the same window whichever agent reads them.
 
 Exit codes: 0 = no High/Critical findings, 1 = High or Critical found, or an
 explicitly supplied <project_root> that holds no agent instruction files,
-2 = usage error.
+2 = usage error (an unknown `-`-prefixed option, or more than one <project_root>).
 """
 
 import json
@@ -61,16 +61,21 @@ import md_fences
 # A pattern with no glob is a *root* file: one document read start to finish, so
 # position within it is meaningful. A glob names a rules directory, where each
 # file is its own unit and `check-rules-anatomy.py` is the per-file authority.
+#
+# Rules-directory globs recurse (`**`), matching that tool's `_iter_rules`: a
+# one-level glob took a rule moved into a subdirectory out of the budget gate
+# entirely (audit-9efa98a4). Ceiling: pathlib's `**` does not descend through a
+# symlinked subdirectory, where `_iter_rules` does.
 _HARNESSES: dict[str, tuple[str, ...]] = {
-    "Claude Code": ("CLAUDE.md", ".claude/CLAUDE.md", ".claude/rules/*.md"),
-    "Cursor": (".cursorrules", ".cursor/rules/*.mdc", ".cursor/rules/*.md"),
+    "Claude Code": ("CLAUDE.md", ".claude/CLAUDE.md", ".claude/rules/**/*.md"),
+    "Cursor": (".cursorrules", ".cursor/rules/**/*.mdc", ".cursor/rules/**/*.md"),
     "GitHub Copilot": (
         ".github/copilot-instructions.md",
-        ".github/instructions/*.instructions.md",
+        ".github/instructions/**/*.instructions.md",
     ),
     "Gemini CLI": ("GEMINI.md", ".gemini/GEMINI.md"),
-    "Windsurf": (".windsurfrules", ".windsurf/rules/*.md"),
-    "Cline": (".clinerules", ".clinerules/*.md"),
+    "Windsurf": (".windsurfrules", ".windsurf/rules/**/*.md"),
+    "Cline": (".clinerules", ".clinerules/**/*.md"),
     "Zed": (".rules",),
     "Aider": ("CONVENTIONS.md",),
     "Continue": (".continuerules",),
@@ -546,13 +551,15 @@ def _scan_file(
     rel: str,
     text: str,
     owners: dict[str, set[str]],
-    seen_lines: dict[str, tuple[str, int]],
+    seen_lines: dict[str, list[tuple[str, int]]],
 ) -> list[dict]:
     """Per-line findings for one file; records its lines in `seen_lines` as it goes.
 
-    `seen_lines` is shared across the whole set and mutated here, which is what
-    makes the first file to state a line its owner and every later repeat the
-    finding.
+    `seen_lines` is shared across the whole set and mutated here: it keeps the
+    first occurrence in *every* file that states a line, and each later copy in
+    another file is the finding. Keeping only the first owner graded a third
+    copy against that file alone, so a duplicate splitting one Cursor session's
+    rule came out Low whenever CLAUDE.md held it first (audit-9cc56f15).
     """
     findings: list[dict] = []
     body_total = len(text.splitlines())
@@ -583,11 +590,14 @@ def _scan_file(
             )
         if len(s) < _MIN_DUPLICATE_LEN or s.startswith("#"):
             continue
-        prior = seen_lines.get(s)
-        if prior is None:
-            seen_lines[s] = (rel, lineno)
-        elif prior[0] != rel:
-            together = _co_loaded(owners.get(prior[0], set()), owners.get(rel, set()))
+        holders = seen_lines.setdefault(s, [])
+        others = [p for p in holders if p[0] != rel]
+        if len(others) == len(holders):
+            holders.append((rel, lineno))
+        if others:
+            co = [p for p in others if _co_loaded(owners.get(p[0], set()), owners.get(rel, set()))]
+            together = bool(co)
+            prior = (co or others)[0]
             findings.append(
                 {
                     "severity": "Medium" if together else "Low",
@@ -663,7 +673,7 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
         for label in dict.fromkeys(_escape_label(p, project_root) for p in escaping)
     ]
     per_file: list[dict] = []
-    seen_lines: dict[str, tuple[str, int]] = {}
+    seen_lines: dict[str, list[tuple[str, int]]] = {}
     total = 0
     scoped_total = 0
 
@@ -739,8 +749,14 @@ def main() -> None:
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(__doc__)
         return
-    if len(sys.argv) > 2:
-        print("Usage: check-agent-instructions.py [<project_root>]", file=sys.stderr)
+    # An unknown flag resolved as a root and exited 1, the blocking-finding code,
+    # so a wrong invocation read as a failed audit (contract-c3333311).
+    if len(sys.argv) > 2 or any(a.startswith("-") for a in sys.argv[1:]):
+        print(
+            "Usage: check-agent-instructions.py [<project_root>]. "
+            f"Received: {' '.join(sys.argv[1:])}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     project_root = Path(sys.argv[1]).resolve() if sys.argv[1:] else Path.cwd()

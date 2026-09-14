@@ -299,6 +299,44 @@ class TestDuplicateGrading:
         )
         assert f["severity"] == "Medium"
 
+    def test_a_third_copy_is_graded_against_every_prior_owner(self, tmp_path):
+        """audit-9cc56f15: `.cursorrules` and `x.mdc` share a Cursor session, but the
+        third copy was graded against CLAUDE.md alone and came out Low."""
+        line = "- Never commit a credential to this repository, ever.\n"
+        (tmp_path / "CLAUDE.md").write_text("# C\n\n" + line, encoding="utf-8")
+        (tmp_path / ".cursorrules").write_text("# C\n\n" + line, encoding="utf-8")
+        mdc = tmp_path / ".cursor" / "rules" / "x.mdc"
+        mdc.parent.mkdir(parents=True)
+        mdc.write_text("# X\n\n" + line, encoding="utf-8")
+
+        f = next(
+            x
+            for x in _mod.check(tmp_path)[0]["findings"]
+            if x["code"] == "cross_file_duplicate" and x["file"] == ".cursor/rules/x.mdc"
+        )
+        assert f["severity"] == "Medium"
+        assert ".cursorrules" in f["detail"]
+
+
+class TestNestedRuleDirectories:
+    """audit-9efa98a4: a one-level glob took a subdirectory out of the budget."""
+
+    def test_a_rule_in_a_subdirectory_counts_against_the_budget(self, tmp_path):
+        _workspace(tmp_path, claude="# C\n")
+        nested = tmp_path / ".claude" / "rules" / "sub" / "n.md"
+        nested.parent.mkdir(parents=True)
+        nested.write_text("".join(f"- Always rule {i}.\n" for i in range(200)), encoding="utf-8")
+
+        report, blocking = _mod.check(tmp_path)
+        assert ".claude/rules/sub/n.md" in {f["file"] for f in report["files"]}
+        assert blocking is True
+
+    def test_other_harness_rule_directories_recurse_too(self, tmp_path):
+        mdc = tmp_path / ".cursor" / "rules" / "team" / "x.mdc"
+        mdc.parent.mkdir(parents=True)
+        mdc.write_text("- Always x.\n", encoding="utf-8")
+        assert _mod.detect(tmp_path) == {"Cursor": [mdc]}
+
 
 class TestPathScopedFilesLeaveTheBudget:
     """A `paths:`-scoped rule loads only when a matching file is read, so it
@@ -395,7 +433,7 @@ class TestCommandFileStaysInSync:
         """Same contract as the root files, for the directory half of the table."""
         doc = self._DOC.read_text(encoding="utf-8")
         dirs = {
-            p.rsplit("/", 1)[0] + "/" for pats in _mod._HARNESSES.values() for p in pats if "*" in p
+            p.split("/*")[0] + "/" for pats in _mod._HARNESSES.values() for p in pats if "*" in p
         }
         missing = [d for d in sorted(dirs) if f"`{d}`" not in doc]
         assert not missing, f"Harness scope table omits rules directories: {missing}"
@@ -715,6 +753,16 @@ class TestCli:
     def test_too_many_arguments_is_a_usage_error(self, capsys, monkeypatch):
         """Usage errors exit 2, distinct from a runtime failure, so a caller can tell them apart."""
         monkeypatch.setattr(sys, "argv", ["x", "a", "b"])
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 2
+        assert "Usage:" in capsys.readouterr().err
+
+    def test_an_unknown_flag_is_a_usage_error(self, tmp_path, capsys, monkeypatch):
+        """contract-c3333311: `--bogus` resolved as a root and exited 1, the blocking code."""
+        _workspace(tmp_path, claude="# C\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["x", "--bogus"])
         with pytest.raises(SystemExit) as exc:
             _mod.main()
         assert exc.value.code == 2

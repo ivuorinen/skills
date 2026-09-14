@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
-"""Check .claude/rules/ files for good rule file anatomy.
+"""Check agent rule files for good rule file anatomy.
 
 Usage:
     check-rules-anatomy.py [<project_root>]
 
 Defaults to cwd when no argument given.
 
-Checks each .md file under <project_root>/.claude/rules/ for:
+Scans whichever of these rule directories exist under <project_root>, recursively:
+    .claude/rules (.md), .cursor/rules (.mdc, .md), .windsurf/rules (.md),
+    .github/instructions (.md), .clinerules (.md; only when it is a directory)
+
+Checks each rule file for:
     - Non-empty body
-    - Kebab-case .md filename
+    - Kebab-case filename with a supported extension
     - Valid path-scoped frontmatter when present (paths: must be a list of relative globs)
-    - No hedged language ("try to", "prefer", "consider", "generally", "when possible", "might")
-    - Dangling symlinks
+    - No hedged language ("try to", "prefer", "consider", "generally", "when possible",
+      "might") outside inline code spans
+    - Dangling symlinks, and symlinks resolving outside the project root
+    - Unterminated code fences, unfilled placeholders, stale dates, dead same-file
+      anchors, duplicate lines, directives buried mid-file, stale repo paths
 
 Outputs a JSON report to stdout. Each file entry lists findings with severity and detail.
 
-Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, or
-an explicitly supplied <project_root> that has no .claude/rules/ subdirectory.
+Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, a
+rules directory that cannot be scanned, or an explicitly supplied <project_root>
+containing none of the rule directories above, 2 = usage error (an unknown
+`-`-prefixed option, or more than one <project_root>).
 """
 
 import datetime
@@ -69,20 +78,24 @@ _ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
 _STALE_DATE_DAYS = 180
 
 # A same-file section link. Cross-file links are `stale_path`'s job.
-_ANCHOR_LINK_RE = re.compile(r"\]\(#([a-z0-9][a-z0-9-]*)\)")
+_ANCHOR_LINK_RE = re.compile(r"\]\(#([a-z0-9_][a-z0-9_-]*)\)")
+
+_CODE_SPAN_RE = re.compile(r"`[^`]*`")
 
 
 def _slug(heading: str) -> str:
     """GitHub's heading-to-anchor slug, close enough for a same-file link.
 
-    Lowercase, punctuation dropped, spaces to hyphens. Matching GitHub exactly
-    would need its full algorithm; this covers the shapes a rule file uses and
-    errs toward *not* reporting — an anchor this misses is a missed finding,
-    while one it invents is a false alarm on a commit-time gate.
+    Lowercase, every character but word characters, hyphens and spaces
+    dropped, and each space turned into its own hyphen — GitHub neither
+    squeezes runs (`Foo — Bar` is `#foo--bar`) nor drops underscores or
+    code-span text. The earlier copy did all three, so links that work on
+    GitHub were reported as dead on a commit-time gate (audit-41dfc7f7).
+    Ceiling: emoji and other symbols `\\w` keeps or drops differently from
+    GitHub's slugger can still disagree.
     """
-    text = re.sub(r"`[^`]*`", "", heading.lstrip("#").strip())
-    text = re.sub(r"[^\w\s-]", "", text).strip().lower()
-    return re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"[^\w\- ]", "", heading.lstrip("#").strip().lower())
+    return text.replace(" ", "-")
 
 
 def _looks_illustrative(ref: str) -> bool:
@@ -400,7 +413,10 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             else:
                 dupes.append((first, lineno, stripped[:60]))
 
-        m = _HEDGED_RE.search(line)
+        # Inline code spans are quotation, not phrasing: a rule that names a
+        # banned word in backticks to forbid it blocked the commit
+        # (audit-52e3cf3b).
+        m = _HEDGED_RE.search(_CODE_SPAN_RE.sub("", line))
         if m:
             snippet = line.strip()[:80]
             issue(
@@ -729,8 +745,19 @@ def main() -> None:
         print(__doc__)
         return
 
-    explicit = bool(sys.argv[1:])
-    project_root = Path(sys.argv[1]).resolve() if explicit else Path.cwd()
+    # Rejected before anything resolves as a path: read as a root, `--bogus`
+    # exited 1 — the blocking-finding code — and extra arguments were silently
+    # ignored (contract-c3333311).
+    args = sys.argv[1:]
+    if len(args) > 1 or any(a.startswith("-") for a in args):
+        print(
+            f"Usage: check-rules-anatomy.py [<project_root>]. Received: {' '.join(args)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    explicit = bool(args)
+    project_root = Path(args[0]).resolve() if explicit else Path.cwd()
 
     try:
         report, has_blocking = check(project_root, explicit)

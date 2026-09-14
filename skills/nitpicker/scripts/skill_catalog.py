@@ -219,10 +219,11 @@ def read_reference(name: str, root: Path | None = None) -> str:
 
     The set is every `_*.md` in `commands/` plus every `*.md` in
     `references/tools/`, discovered per call — a new shared file or scanner
-    reference is readable the commit it lands. The three are named anyway because the
-    `np_read_reference` tool description is the only surface a model picks the
-    tool from, and it can only carry a literal; naming two of three there once
-    left `_teach-formats` reachable but invisible, so `teach` read it off disk.
+    reference is readable the commit it lands. Every shared file is named in the
+    `np_read_reference` tool description anyway, because that description is the
+    only surface a model picks the tool from, and it can only carry a literal; a
+    description that once omitted `_teach-formats` left it reachable but
+    invisible, so `teach` read it off disk.
     `test_read_reference_description_names_every_shared_file` pins the two lists
     together.
 

@@ -38,6 +38,13 @@ class TestPredicates:
         assert md_fences.opener("~~~~") == "~~~~"
         assert md_fences.opener("not a fence") == ""
 
+    def test_a_backtick_run_with_a_backtick_after_it_is_an_inline_span(self):
+        """audit-9e264670: CommonMark forbids a backtick in a backtick fence's info
+        string, so the line is a code span, not an opener that never closes."""
+        assert md_fences.opener("```x``` is a span") == ""
+        assert md_fences.opener("```python `x`") == ""
+        assert md_fences.opener("~~~ `tilde info may hold one`") == "~~~"
+
     def test_an_info_string_never_closes(self):
         """CommonMark: a closing fence may not have an info string."""
         assert md_fences.closes("```python", "```") is False
@@ -78,6 +85,11 @@ class TestConsumersAgree:
         assert [s for _, s in mods["check_agent_instructions"]._content_lines(_NESTED)] == [
             "OUTSIDE"
         ]
+
+    def test_an_inline_span_at_line_start_does_not_hide_the_rest(self, mods):
+        """audit-9e264670: the span line opened a fence and zeroed the budget count."""
+        text = "```x``` is a span.\n\n- Always a.\n- Always b.\n"
+        assert mods["check_agent_instructions"]._count_instructions(text) == 2
 
     def test_findings_strips_the_whole_block(self, mods):
         """It returned 'INSIDE-B' before: closed early, then ate the real closer."""

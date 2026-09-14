@@ -914,3 +914,59 @@ def test_locationless_findings_with_shared_prefix_not_deduped():
     unique, removed = _deduplicate(out)
     assert removed == 0
     assert len(unique) == 2
+
+
+def _levelless(rule_id: str = "R1", **extra) -> dict:
+    """A result carrying no `level`, so SARIF's resolution order decides it."""
+    return {"ruleId": rule_id, "message": {"text": "m"}, "locations": [], **extra}
+
+
+def test_a_missing_level_resolves_from_the_rule_default_configuration():
+    """audit-331e8d4d: SARIF 2.1.0 takes a missing level from the rule's
+    `defaultConfiguration.level` before its own `warning` default."""
+    run = _run(rules=[{"id": "R1", "defaultConfiguration": {"level": "error"}}])
+    run["results"] = [_levelless()]
+    assert _extract_findings(run, "s.sarif")[0]["severity"] == "High"
+
+
+def test_a_missing_level_with_no_rule_default_is_warning():
+    """audit-331e8d4d: neither result nor rule level means `warning`, not Low."""
+    run = _run(rules=[{"id": "R1", "defaultConfiguration": "not an object"}])
+    run["results"] = [_levelless()]
+    assert _extract_findings(run, "s.sarif")[0]["severity"] == "Medium"
+
+
+def test_results_whose_kind_is_not_fail_are_not_findings():
+    """audit-331e8d4d: `pass`, `notApplicable` and `informational` are not defects."""
+    kinds = ["pass", "notApplicable", "informational", "open", "review", "fail"]
+    run = _run(results=[_levelless(f"R-{k}", kind=k) for k in kinds] + [_levelless("R-none")])
+    assert sorted(f["rule_id"] for f in _extract_findings(run, "s.sarif")) == ["R-fail", "R-none"]
+
+
+def test_rules_as_an_object_with_a_rule_index_degrades_instead_of_keyerror():
+    """audit-c5d5a652: `rules` holding an object was indexed with an integer."""
+    run = {
+        "tool": {"driver": {"name": "d", "rules": {"a": {"id": "R1"}}}},
+        "results": [{"ruleIndex": 0, "level": "error", "message": {"text": "m"}}],
+    }
+    assert _extract_findings(run, "s.sarif")[0]["rule_id"] == ""
+
+
+def test_an_unknown_flag_is_a_usage_error_not_a_missing_file(monkeypatch, capsys):
+    """contract-c3333311: exit 1 means a skipped input; a wrong invocation is 2."""
+    monkeypatch.setattr(sys, "argv", ["process-sarif.py", "--bogus"])
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "Usage:" in err and "--bogus" in err
+    assert "File not found" not in err
+
+
+def test_help_describes_the_dedup_key_errors_and_severity_the_code_uses():
+    """docs-b0920198: --help is the interface an agent reads, so it must match."""
+    doc = _mod.__doc__ or ""
+    assert "start_column" in doc.split("Output JSON")[0]  # the dedup key
+    assert "errors" in doc  # meta.errors
+    assert "most severe" in doc  # CVSS vs tool string, level only as fallback
+    assert "2 = usage error" in doc

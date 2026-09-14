@@ -35,9 +35,18 @@ def opener(stripped: str) -> str:
 
     Takes the line already stripped, because callers differ on whether an
     indented fence counts and that is theirs to decide.
+
+    A backtick run followed by another backtick on the same line is an inline
+    code span, not a fence: CommonMark forbids a backtick in a backtick fence's
+    info string. Returning the run there opened a fence that never closed, so
+    every consumer treated the rest of the file as code (audit-9e264670). A
+    tilde fence's info string may hold backticks, so only backtick runs are
+    judged this way.
     """
     m = _OPEN_RE.match(stripped)
-    return m.group(1) if m else ""
+    if not m or (m.group(1)[0] == "`" and "`" in stripped[m.end() :]):
+        return ""
+    return m.group(1)
 
 
 def closes(stripped: str, fence: str) -> bool:
