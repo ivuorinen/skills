@@ -2,7 +2,7 @@
 name: nitpicker
 description: 'Hostile audit toolkit: one entry point dispatching specialist commands — adversarial review, security, tests, docs, types, architecture, performance, reliability, caching, concurrency, error handling, resource leaks, dependencies, licensing, CI, commits, migrations, observability, API contracts, a11y, i18n, privacy, config, infrastructure-as-code, prompt safety, installed agent configuration, complexity, dead and unwired code, agent rule and hook enforcement, plus planning, plan execution, teaching, triage, PR review and review-comment implementation. Use when auditing or reviewing a repository, PR, or any quality dimension of a codebase — "audit this", "review the whole codebase", "find all problems", "exhaustive review", "/nitpicker <command>", a release gate check, or any specific audit ask (security scan, find race conditions, audit the tests, hunt dead code, is this installed skill safe, plan a change, teach me this codebase, review the PR, fix the CR comments).'
 license: MIT
-compatibility: Requires Python 3.11+ and git. The pr and cr commands additionally need network access and the gh CLI (or a GITHUB_TOKEN). The bundled MCP server is Claude-native; every command works without it through the stdlib-only CLI in scripts/.
+compatibility: Requires Python 3.11+ and git. The pr and cr commands additionally need network access and platform credentials — the gh CLI or GITHUB_TOKEN for GitHub, GITLAB_TOKEN or the glab CLI for GitLab, BITBUCKET_TOKEN or BITBUCKET_USERNAME with BITBUCKET_APP_PASSWORD for Bitbucket Cloud. The bundled MCP server is Claude-native; every command works without it through the stdlib-only CLI in scripts/.
 metadata:
   author: ivuorinen
 ---
@@ -202,50 +202,35 @@ flow.
 | `scripts/pr_cli.py` | both PR fetchers — argument forms, stdout rendering, the 0/1/2 exit contract |
 | `scripts/pr_github.py`, `scripts/pr_gitlab.py`, `scripts/pr_bitbucket.py` | both PR fetchers — one provider per platform |
 
-The two PR fetchers cover GitHub, GitLab and Bitbucket Cloud behind a single
-JSON format, so `cr` reads the same field names whichever platform hosts the
-review. A field a platform cannot supply is present and empty or null, never
-absent — `review_bodies` is empty off GitHub, `diff_hunk` is empty where the
-platform anchors by line, and `is_resolved` is null where the transport in use
-cannot report resolution. Platform detection comes from the git remote host and
-refuses to guess rather than sending a credential to the wrong API;
-`--platform` names it for a self-hosted instance. Bitbucket Data Center serves
-a different API and is out of scope.
+The PR fetchers give GitHub, GitLab and Bitbucket Cloud one JSON format. A
+field a platform cannot supply is present and empty or null, never absent
+(`review_bodies` off GitHub, `diff_hunk` where the platform anchors by line,
+`is_resolved` where the transport cannot report it). Platform detection reads
+the git remote host and refuses to guess; `--platform` names a self-hosted
+instance. Bitbucket Data Center is out of scope.
 
-Every tool a command *invokes* in the course of an audit — the findings store,
-the context packer, both PR fetchers, and the three analyzers — is also reachable
-as an MCP tool (see below), and that is the way a command runs it when the
-session has the server. These are CLI-only on purpose: `findings.py export`
-writes a file for another system to ingest, so it belongs in a shell pipeline
-rather than in the model context, and `check-context-tokens.py` answers with a
-table of four-characters-per-token estimates that is read as-is — there is no
-pass/fail for a tool to return, and nothing for one to add over the CLI.
-`agent-rules` still runs it; CLI-only is about the interface, not the audience.
-The rest of the table is support code with no tool of its own and none needed:
-`mcp_server.py` is the server, and `skill_catalog.py`, `findings_export.py`,
-`pr_common.py`, `pr_cli.py` and the three provider modules are libraries the
-entry points import.
+Every tool a command *invokes* during an audit — the findings store's file,
+resolve, list, show, validate and index operations, the context packer, the PR
+fetchers, and the SARIF and rule analyzers — is also an MCP tool (see below),
+and a command uses that form when the session has the server. CLI-only on
+purpose: the store's `export`, `recheck`, `baseline`, `migrate` and
+`migrate-resolved` (`_findings-store` gives each reason), and
+`check-context-tokens.py`, whose estimate table has no pass/fail for a tool to
+return; `agent-rules` still runs it. The remaining rows are the server and the
+libraries the entry points import.
 
-The CLI form stays the documented fallback: all bundled tools are stdlib-only
-and run with plain `python3 <path>` — no uv or package installs required on the
-host. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
+The CLI form is the fallback: every bundled tool is stdlib-only and runs with
+plain `python3 <path>`, no uv or package install. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
 resolve the path relative to this file.
 
 ## External scanner reference
 
-`references/tools/<tool>.md` holds the invocation detail for each external
-scanner `security` drives — flags, output shape, preconditions, exit-code rules
-— one file per tool. The **reference name is the file stem, not the binary**:
-`semgrep` (covering `opengrep`), `codeql`, `grype`, `trivy`, `gitleaks`,
-`checkov`, `gosec`, `snyk`, and `npm-audit` (covering `npm`, `yarn` and
-`pnpm`). Two of those stems name no binary at all, so a detected binary is not
-always the name to ask for — `opengrep` resolves through `semgrep`, and all
-three package managers through `npm-audit`.
-
-Read one only after detection finds that binary. They are split for exactly that
-reason: a host with two scanners installed loads two files rather than the ~160
-lines all of them come to. The path is named here so each is reachable directly
-from this file, not only through the command that uses it.
+`references/tools/<tool>.md` holds each scanner `security` drives: flags, output
+shape, preconditions, exit-code rules. Read one only after detection finds its
+binary, so a host loads only the scanners it has. The **reference name is the
+file stem, not the binary**: `semgrep` (for `opengrep` too), `codeql`, `grype`,
+`trivy`, `gitleaks`, `checkov`, `gosec`, `snyk`, and `npm-audit` (for `npm`,
+`yarn` and `pnpm`).
 
 ## MCP server
 

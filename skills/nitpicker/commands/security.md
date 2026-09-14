@@ -73,7 +73,7 @@ tool_out=$(command 2>"$_sa_tmp/tool-err.txt")
 tool_exit=$?
 # tool_out empty → record as Errored (regardless of exit code)
 # tool_out not valid JSON → record as Errored (regardless of exit code)
-#   Exception: yarn audit outputs NDJSON — for yarn, "empty output" is the only error condition
+#   Exception: yarn outputs NDJSON — for yarn, output that is empty or has no parseable JSON line is Errored (references/tools/npm-audit.md)
 # Otherwise → parse; non-zero exit with valid output means findings, not a crash
 ```
 

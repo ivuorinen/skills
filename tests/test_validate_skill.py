@@ -167,6 +167,21 @@ class TestVendoredSkip:
                 f"vendored skill {name!r} has no LICENSE"
             )
 
+    def test_shipped_skill_carries_license_and_notice(self):
+        # skills.sh, Copilot and pi installs copy skills/nitpicker/ on its own, so
+        # the MIT notices for its adapted content ship inside it, not only in the
+        # repo root (license-281b6c01).
+        repo_root = Path(__file__).parent.parent
+        skill = repo_root / "skills" / "nitpicker"
+        root_license = (repo_root / "LICENSE").read_text(encoding="utf-8")
+        assert (skill / "LICENSE").read_text(encoding="utf-8") == root_license
+        notice = (skill / "NOTICE").read_text(encoding="utf-8")
+        root_notice = (repo_root / "NOTICE").read_text(encoding="utf-8")
+        adapted = [s.strip() for s in root_notice.split("\n---\n") if "(adapted from)" in s]
+        assert adapted, "root NOTICE lists no adapted-from entry"
+        for entry in adapted:
+            assert entry in notice, f"skills/nitpicker/NOTICE lacks: {entry.splitlines()[0]}"
+
 
 class TestValidate:
     def test_valid_skill_no_errors(self, tmp_path):

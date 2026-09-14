@@ -27,8 +27,9 @@ the CLI is the fallback:
    mutate the working tree; `np_write_index` writes it, and is the tool matching
    `findings.py index`. Pick by whether the file on disk should change. The tools
    otherwise need no shell, no path resolution, and no heredoc quoting, and
-   the server enforces each tool's required parameters before dispatch (value
-   checks stay in the backing functions, exactly as for the CLI). Use them for
+   the server validates every call against the tool's `inputSchema` before
+   dispatch — an unknown key, wrong type, out-of-vocab value or missing
+   required parameter is an `isError` result naming it. Use them for
    every operation in the table below; in a session that has them, dropping to
    the CLI for an operation a tool covers is a last resort, not a convenience.
 2. **`scripts/findings.py` — the fallback.** The MCP server is Claude-native; in
@@ -69,10 +70,11 @@ unconsented migration one call away. `export` is CLI-only for the opposite
 reason — its output is a file for another system to ingest, so it belongs in a
 shell pipeline, not in the model context. `recheck` is the same: it is a bulk
 screen whose whole purpose is to keep findings *out* of the context window.
-The mutate tools omit `--force`,
-`--found`, and `--date` for the same reason as the first three — re-opening a
-resolved finding, overwriting an existing one, or back-dating a record is a
-CLI-only escape hatch, not something a tool call should reach by accident.
+The mutate tools omit `new --force` (overwrite or re-open) and
+`resolve --date`/`--force` (back-date or re-resolve) for the same reason as the
+first three — re-opening a resolved finding, overwriting an existing one,
+back-dating a record or re-resolving one is a CLI-only escape hatch, not
+something a tool call should reach by accident.
 
 ## CLI form
 

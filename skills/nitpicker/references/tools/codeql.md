@@ -45,8 +45,11 @@ fine and then fails the analyze step on a pack that does not exist:
 | `javascript-typescript` | `codeql/javascript-queries` |
 | every other language | `codeql/<lang>-queries` |
 
-`codeql resolve languages` lists the first column and `codeql resolve qlpacks`
-the second; check them rather than assuming the two agree.
+`codeql resolve languages` lists extractor names (`cpp`, `java`, `javascript`);
+`--format=betterjson` shows the accepted aliases (`c-cpp`, `java-kotlin`,
+`javascript-typescript`). Both spellings work for `--language`.
+`codeql resolve qlpacks` lists the second column; check them rather than
+assuming the two agree.
 
 ```bash
 # $lang is the database language; $pack is its query pack per the table above.
