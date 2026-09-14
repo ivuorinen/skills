@@ -18,8 +18,8 @@ _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import pr_common as c  # type: ignore[import-not-found]  # noqa: E402
-import pr_gitlab as gl  # type: ignore[import-not-found]  # noqa: E402
+import pr_common as c  # noqa: E402
+import pr_gitlab as gl  # noqa: E402
 
 _TARGET = c.Target("gitlab", "gitlab.com", "grp/proj")
 _SELF_HOSTED = c.Target("gitlab", "gitlab.acme.com", "grp/sub/proj")

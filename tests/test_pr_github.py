@@ -22,8 +22,8 @@ _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import pr_common as c  # type: ignore[import-not-found]  # noqa: E402
-import pr_github as gh  # type: ignore[import-not-found]  # noqa: E402
+import pr_common as c  # noqa: E402
+import pr_github as gh  # noqa: E402
 
 _TARGET = c.Target("github", "github.com", "owner/repo")
 _GHES = c.Target("github", "ghe.acme.com", "owner/repo")
