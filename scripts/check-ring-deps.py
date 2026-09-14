@@ -31,16 +31,27 @@ Two shapes of string-path load are resolved:
 
   sibling   `spec_from_file_location(stem, Path(__file__).resolve().parent / f"{stem}.py")`
             The filename is computed, but the directory is provably the loading
-            module's own: the expression is anchored at `__file__`, walks only
-            `.parent`, and contains no "..". Such an edge cannot leave its own
-            directory, so it cannot cross a ring, and is reported as intra-ring
-            without naming a specific file.
+            module's own: the expression is exactly `Path(__file__)`, an
+            optional `.resolve()`, one `.parent`, then `/` and an f-string whose
+            literal text holds no separator and no "..". Such an edge cannot
+            leave its own directory, so it cannot cross a ring, and is reported
+            as intra-ring without naming a specific file.
 
 A `spec_from_file_location` call matching neither shape is an error: it is an
 unresolvable edge, and passing it over would restore the silence this exists to
-remove. Subprocess calls are deliberately not edges — a hook that shells out to
+remove. The sibling shape is matched on the AST, not on text: a substring test
+read `.parents[3]` and an `os.path.dirname` chain as own-directory and passed
+both across rings (audit-7d8bf871). Its ceiling is the interpolated value — a
+`{stem}` holding "../x" at runtime is not something static analysis can see.
+Subprocess calls are deliberately not edges — a hook that shells out to
 a validator crosses a process boundary, not an import boundary, and nothing is
 loaded into the caller.
+
+A dotted import (`from scripts.hooks import x`, `import scripts.hooks.x`) is
+resolved against its full path, from the importing module's directory and from
+the repository root. Ring globs are recursive, and an edge to a file outside
+every ring is reported rather than skipped: it is a dependency the rule cannot
+rank, which is not the same as one that obeys it.
 
 Exit codes: 0 success, 1 a violation or an unresolvable load, 2 usage error.
 """
@@ -56,9 +67,9 @@ from pathlib import Path
 # Innermost first. The index is the ring's rank: an edge from rank i to rank j
 # is legal only when j <= i.
 RINGS: tuple[tuple[str, str], ...] = (
-    ("shipped", "skills/*/scripts/*.py"),
-    ("internal", "scripts/*.py"),
-    ("hooks", "scripts/hooks/*.py"),
+    ("shipped", "skills/*/scripts/**/*.py"),
+    ("internal", "scripts/**/*.py"),
+    ("hooks", "scripts/hooks/**/*.py"),
 )
 
 
@@ -95,8 +106,8 @@ def collect_modules(root: Path) -> Graph:
     for ring, pattern in RINGS:
         for path in sorted(root.glob(pattern)):
             rel = path.relative_to(root).as_posix()
-            # scripts/*.py also matches nothing under hooks/ (glob is not
-            # recursive), so a file lands in exactly one ring.
+            # scripts/**/*.py also matches scripts/hooks/; the hooks ring comes
+            # later in RINGS and overwrites, so a file lands in exactly one ring.
             g.modules[rel] = ring
             # A hyphen-named file is not importable; it is reachable only by
             # path, which is the whole reason this tool exists.
@@ -129,15 +140,38 @@ def _literal_path_segments(node: ast.expr) -> list[str] | None:
 def _anchored_at_own_dir(node: ast.expr) -> bool:
     """Whether the path expression provably stays in the loading module's dir.
 
-    True when it is built from `__file__` using only attribute access (.parent,
-    .resolve) with no ".." segment and no upward navigation beyond the first
-    `.parent`. Such a path cannot reach another ring.
+    True only for `Path(__file__)[.resolve()].parent / f"..."` whose literal
+    text holds no separator and no "..". Any other `__file__`-derived shape
+    (`.parents[n]`, `os.path.dirname` chains, a second `.parent`) is False and
+    so becomes an unresolvable-load error.
     """
-    src = ast.dump(node)
-    if "__file__" not in src or ".." in ast.unparse(node):
+    if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
         return False
-    # More than one `.parent` walks upward out of the module's own directory.
-    return ast.unparse(node).count(".parent") <= 1
+    anchor, name = node.left, node.right
+    if not (isinstance(anchor, ast.Attribute) and anchor.attr == "parent"):
+        return False
+    base = anchor.value
+    if (
+        isinstance(base, ast.Call)
+        and isinstance(base.func, ast.Attribute)
+        and base.func.attr == "resolve"
+        and not base.args
+    ):
+        base = base.func.value
+    is_file_path = (
+        isinstance(base, ast.Call)
+        and isinstance(base.func, ast.Name)
+        and base.func.id == "Path"
+        and len(base.args) == 1
+        and isinstance(base.args[0], ast.Name)
+        and base.args[0].id == "__file__"
+    )
+    if not (is_file_path and isinstance(name, ast.JoinedStr)):
+        return False
+    text = "".join(
+        v.value for v in name.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
+    )
+    return not any(bad in text for bad in ("/", "\\", ".."))
 
 
 def _resolve_target(root: Path, module_path: Path, segments: list[str]) -> str | None:
@@ -216,16 +250,38 @@ def _path_load_calls(scope: ast.AST) -> list[ast.Call]:
     return calls
 
 
-def _import_edges(tree: ast.AST, g: Graph, rel: str) -> None:
-    """Module-level and function-local `import` edges to another ring module."""
+def _dotted_target(root: Path, path: Path, dotted: str) -> str | None:
+    """Relative path of the file a dotted name `a.b.c` names, if one exists.
+
+    Tried from the importing module's own directory (sys.path[0] for a script)
+    and from the repository root, as `a/b/c.py` and then `a/b/c/__init__.py`.
+    """
+    for base in (path.parent, root):
+        stem = base.joinpath(*dotted.split("."))
+        for candidate in (stem.with_name(stem.name + ".py"), stem / "__init__.py"):
+            if candidate.is_file():
+                return candidate.relative_to(root).as_posix()
+    return None
+
+
+def _import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> None:
+    """Module-level and function-local `import` edges to another ring module.
+
+    A plain name resolves by stem; a dotted one by its full path, so
+    `from scripts.hooks import x` is the edge to `scripts/hooks/x.py` rather
+    than a lookup of the stem `scripts`, which matched nothing (audit-7d8bf871).
+    """
     for node in ast.walk(tree):
         names: list[str] = []
         if isinstance(node, ast.Import):
-            names = [a.name.split(".")[0] for a in node.names]
+            names = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names = [node.module.split(".")[0]]
-        for stem in names:
-            dst = g.by_stem.get(stem)
+            names = [node.module, *(f"{node.module}.{a.name}" for a in node.names)]
+        for name in names:
+            if "." in name:
+                dst = _dotted_target(root, path, name)
+            else:
+                dst = g.by_stem.get(name)
             if dst and dst != rel:
                 g.edges.append(Edge(rel, dst, "import"))
 
@@ -294,7 +350,7 @@ def build(root: Path) -> Graph:
             # clean would hide exactly the edge this tool exists to surface.
             g.errors.append(f"{rel}: cannot parse ({exc})")
             continue
-        _import_edges(tree, g, rel)
+        _import_edges(tree, g, rel, root, path)
         _path_edges(tree, g, rel, root, path)
     # Deduplicate while keeping order; a module importing the same target from
     # two functions is one edge, not two.
@@ -319,6 +375,9 @@ def violations(g: Graph) -> list[str]:
         src_ring = g.modules.get(e.src)
         dst_ring = g.modules.get(e.dst)
         if src_ring is None or dst_ring is None:
+            # Unrankable is not compliant: skipping it passed the very edge
+            # the rule cannot judge (audit-7d8bf871).
+            out.append(f"  {e.src} -> {e.dst}: an endpoint is outside every ring")
             continue
         if rank[dst_ring] > rank[src_ring]:
             out.append(

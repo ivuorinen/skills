@@ -308,7 +308,9 @@ def _resolve_opengrep() -> tuple[str | None, int]:
         return opengrep, 0
     # Under CI a skipped gate is indistinguishable from a passing one, which is
     # the failure this check exists to prevent — so it fails there, and only there.
-    if os.environ.get("CI"):
+    # Read as a boolean, not as presence: `CI=false` is a local run saying so
+    # (config-c14ca4cd).
+    if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
         print(
             "ERROR  opengrep is not installed, and this gate cannot be skipped under CI.\n"
             "       Install it in the workflow before `make check`.",

@@ -102,6 +102,14 @@ def test_missing_opengrep_under_ci_fails(monkeypatch, capsys):
     assert "cannot be skipped under CI" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(("value", "code"), [("false", 0), ("0", 0), ("1", 1), ("TRUE", 1)])
+def test_ci_is_read_as_a_boolean_not_as_presence(monkeypatch, value, code):
+    """config-c14ca4cd: `CI=false` is a local run that says so, and must skip."""
+    monkeypatch.setattr(_mod.shutil, "which", lambda _: None)
+    monkeypatch.setenv("CI", value)
+    assert _mod.main([]) == code
+
+
 def test_resolve_returns_the_binary_when_present(monkeypatch):
     monkeypatch.setattr(_mod.shutil, "which", lambda _: "/usr/bin/opengrep")
     assert _mod._resolve_opengrep() == ("/usr/bin/opengrep", 0)

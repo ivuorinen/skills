@@ -66,7 +66,7 @@ class TestTableAliases:
     reached users unflagged.
     """
 
-    _ROWS = "| Command | Purpose |\n| --- | --- |\n"
+    _ROWS = "## Commands\n\n| Command | Purpose |\n| --- | --- |\n"
 
     def _aliases(self, rows: str):
         return _mod.table_aliases(self._ROWS + rows)
@@ -92,7 +92,7 @@ class TestTableAliases:
 
 
 class TestAliasCollisions:
-    _HEAD = "| Command | Purpose |\n| --- | --- |\n"
+    _HEAD = "## Commands\n\n| Command | Purpose |\n| --- | --- |\n"
 
     def _errors(self, rows: str, commands: set[str]) -> list[str]:
         return _mod._alias_errors(Path("SKILL.md"), self._HEAD + rows, commands)
@@ -126,7 +126,7 @@ class TestAliasCollisions:
 
 
 def test_duplicate_table_commands_detected():
-    body = "| `foo` | a |\n| `foo` | dup |\n| `bar` | b |\n"
+    body = "## Commands\n\n| `foo` | a |\n| `foo` | dup |\n| `bar` | b |\n"
     assert _mod._duplicate_table_commands(body) == ["foo"]
 
 
@@ -948,3 +948,91 @@ def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 1
     assert "cannot read file" in capsys.readouterr().out
+
+
+# ── fix group F: frontmatter keys, command-table scope, fences, --help ────────
+# audit-70fd1d59, audit-5315131e, audit-4562b342, audit-24b0f17a
+
+
+class TestFrontmatterKeysOutsideTheBareWordShape:
+    """audit-70fd1d59: a bare-word key pattern attached `vendor.flag: true` to the
+    previous key as a nested line, so the key escaped the spec-field check."""
+
+    @pytest.mark.parametrize("key", ["vendor.flag", "client setting"])
+    def test_is_reported_as_outside_the_spec(self, tmp_path, key):
+        content = VALID.replace("---\n\n", f"{key}: on\n---\n\n", 1)
+        errors = _errors(tmp_path, content)
+        assert _has(errors, f"frontmatter key '{key}' is not in the Agent Skills spec")
+
+    def test_a_value_holding_a_colon_keeps_its_key(self):
+        assert _mod._fm_sections("description: 'Use when: x'\n") == [
+            ("description", "'Use when: x'", [])
+        ]
+
+
+class TestCommandRowsComeOnlyFromCommandTables:
+    """audit-5315131e: a row in any table counted toward the 1:1 file sync."""
+
+    _TABLE = "| Command | Purpose |\n|---|---|\n"
+
+    def test_a_row_in_another_table_does_not_list_a_command(self, tmp_path):
+        skill = COMMANDS_SKILL + "\n## Modifiers\n\n" + self._TABLE + "| `gamma` | x |\n"
+        files = {f"{c}.md": _cmd(c) for c in ("alpha", "beta", "gamma")}
+        errors = _run_commands(tmp_path, files, skill)
+        assert _has(errors, "gamma.md: not in the Commands table")
+
+    def test_subsections_and_internal_commands_count(self, tmp_path):
+        skill = (
+            COMMANDS_SKILL
+            + "\n### More\n\n"
+            + self._TABLE
+            + "| `gamma` | g |\n\n## Internal commands\n\n"
+            + self._TABLE
+            + "| `delta` | d |\n"
+        )
+        files = {f"{c}.md": _cmd(c) for c in ("alpha", "beta", "gamma", "delta")}
+        assert _run_commands(tmp_path, files, skill) == []
+
+    def test_duplicates_and_aliases_are_scoped_the_same_way(self):
+        body = "## Commands\n\n| `foo` | a |\n\n## Other\n\n| `foo` | b (alias: `f`) |\n"
+        assert _mod._duplicate_table_commands(body) == []
+        assert _mod.table_aliases(body) == []
+
+
+class TestLegacyPathScanUsesTheShippedFenceRule:
+    """audit-4562b342: a private backtick-only regex paired fences across prose."""
+
+    def test_prose_after_a_nested_fence_is_still_scanned(self, tmp_path):
+        content = VALID + (
+            "\n````markdown\n```\n````\n\n"
+            "Write the report to ./codereview.md now.\n\n```text\nx\n```\n"
+        )
+        assert _has(_warnings(tmp_path, content), "legacy output path './codereview.md'")
+
+    def test_a_tilde_fence_is_not_scanned(self, tmp_path):
+        content = VALID + "\n~~~\nWrite to codereview.md\n~~~\n"
+        assert not _has(_warnings(tmp_path, content), "legacy output path")
+
+    def test_the_fence_rule_is_md_fences(self):
+        shipped = Path(__file__).parent.parent / "skills/nitpicker/scripts/md_fences.py"
+        assert Path(_mod.md_fences.__file__).resolve() == shipped.resolve()
+        assert not hasattr(_mod, "_fence_open") and not hasattr(_mod, "_FENCE_OPEN_RE")
+
+
+class TestHelpBeforePaths:
+    """audit-24b0f17a: `--help` was read as a SKILL.md path."""
+
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_is_stdout_exit_zero(self, tmp_path, monkeypatch, capsys, flag):
+        with pytest.raises(SystemExit) as exc:
+            _main_on(monkeypatch, tmp_path, [flag])
+        assert exc.value.code == 0
+        out = capsys.readouterr().out
+        assert "usage:" in out.lower() and "cannot read file" not in out
+
+    def test_an_unknown_option_is_a_usage_error_on_stderr(self, tmp_path, monkeypatch, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _main_on(monkeypatch, tmp_path, ["--bogus"])
+        assert exc.value.code == 2
+        captured = capsys.readouterr()
+        assert "--bogus" in captured.err and captured.out == ""

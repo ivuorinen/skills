@@ -274,7 +274,9 @@ def _skip_or_fail(update: bool) -> int:
     if update:
         print("agentlinter: no report, so there is nothing to re-record.", file=sys.stderr)
         return 1
-    if os.environ.get("CI"):
+    # Read as a boolean, not as presence: `CI=false` is a local run saying so
+    # (config-c14ca4cd).
+    if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
         print("agentlinter: required under CI — failing.", file=sys.stderr)
         return 1
     print("agentlinter: skipped (see above). Not a clean result.")

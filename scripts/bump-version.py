@@ -5,6 +5,11 @@
 """Bump version across all JSON manifests and pyproject.toml.
 
 Usage: ./scripts/bump-version.py [major|minor|patch]
+
+`--help`/`-h` prints this text before the argument is read as a part
+(audit-24b0f17a).
+
+Exit codes: 0 success, 2 usage error.
 """
 
 import json
@@ -12,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -61,7 +67,7 @@ def bump_version(version: str, part: str) -> str:
     raise SystemExit(f"error: unknown part {part!r} (expected major|minor|patch)")
 
 
-def render_json(rel_path: str, mutate, version: str) -> str:
+def render_json(rel_path: str, mutate: Callable[[dict, str], object], version: str) -> str:
     """Return the updated JSON manifest content without writing it."""
     obj = json.loads((REPO_ROOT / rel_path).read_text(encoding="utf-8"))
     mutate(obj, version)
@@ -133,9 +139,13 @@ def relock() -> bool:
 
 def main() -> int:
     part = sys.argv[1] if len(sys.argv) > 1 else "patch"
+    if part in {"--help", "-h"}:
+        print(__doc__)
+        return 0
     if part not in {"major", "minor", "patch"}:
-        print(f"Usage: {sys.argv[0]} [major|minor|patch]")
-        return 1
+        print(f"Received {part!r}; expected major, minor or patch.", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [major|minor|patch]", file=sys.stderr)
+        return 2
 
     current = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))["version"]
     new_version = bump_version(current, part)

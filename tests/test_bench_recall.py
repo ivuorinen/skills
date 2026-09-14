@@ -368,17 +368,63 @@ def test_cli_help_exits_zero(capsys):
     assert "bench-recall" in capsys.readouterr().out
 
 
-def test_a_recall_floor_gates_when_one_is_set(tmp_path, monkeypatch, capsys):
-    """MIN_RECALL ships as None because no run has produced a distribution yet.
-
-    Pinned so the gating path is live the day a floor is written, rather than
-    being discovered broken by the first person to set one.
-    """
+def test_no_recall_floor_is_gated_until_one_is_measured(tmp_path, monkeypatch, capsys):
+    """dead-code-051d0958: nothing set MIN_RECALL, so its exit path never ran.
+    It is gone until a measured floor exists; a zero recall is reported, not failed."""
     _audited(tmp_path, {"location": "app.py:40-44"})
     monkeypatch.setattr(_mod._retrieval, "load_cases", lambda case="": [CASE])
-    monkeypatch.setattr(_mod, "MIN_RECALL", 0.5)
-    assert _mod.main(["--grade", str(tmp_path)]) == 1
-    assert "recall 0.0 < 0.5" in capsys.readouterr().err
+    assert _mod.main(["--grade", str(tmp_path)]) == 0
+    assert "recall=0.0" in capsys.readouterr().out
+    assert not hasattr(_mod, "MIN_RECALL")
+
+
+def test_overlap_is_bench_retrievals_definition(tmp_path, monkeypatch):
+    """complexity-f842d3fd: one hit-overlap rule for both benchmarks, not two copies."""
+    _audited(tmp_path, {"location": "app.py:10-12"})
+    monkeypatch.setattr(_mod._retrieval, "_overlaps", lambda a, b: False)
+    assert _mod.grade_case(CASE, tmp_path / "c")["found"] is False
+
+
+@pytest.mark.parametrize("raw", ["15m", "", "0", "-5", "1.5"])
+def test_a_bad_timeout_is_a_usage_error_before_any_agent_runs(monkeypatch, capsys, raw):
+    """config-9f45dcbd: `15m` raised a ValueError traceback from inside the run."""
+    monkeypatch.setenv("BENCH_RECALL_TIMEOUT", raw)
+    monkeypatch.setattr(_mod._retrieval, "load_cases", lambda case="": pytest.fail("ran"))
+    assert _mod.main(["--run"]) == 2
+    expected = f"BENCH_RECALL_TIMEOUT must be a whole number of seconds, got {raw!r}"
+    assert expected in capsys.readouterr().err
+
+
+def test_the_parsed_timeout_reaches_the_runner(tmp_path, monkeypatch):
+    audited = _audited(tmp_path, {})
+    monkeypatch.setenv("BENCH_RECALL_TIMEOUT", "7")
+    monkeypatch.setattr(_mod._retrieval, "load_cases", lambda case="": [CASE])
+    seen: list[int] = []
+    monkeypatch.setattr(
+        _mod, "run_case", lambda case, cmd, wd, timeout: seen.append(timeout) or audited
+    )
+    assert _mod.main(["--run"]) == 0
+    assert seen == [7]
+
+
+def test_run_case_hands_its_timeout_to_the_agent_call(tmp_path, monkeypatch):
+    case = CASE | {"dir": tmp_path / "src"}
+    (tmp_path / "src").mkdir()
+    seen: dict = {}
+
+    def fake(argv, **kwargs):
+        seen.update(kwargs)
+        return _mod.subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(_mod.subprocess, "run", fake)
+    _mod.run_case(case, "true", tmp_path / "work", timeout=7)
+    assert seen["timeout"] == 7
+
+
+def test_help_documents_the_timeout_variable(capsys):
+    with pytest.raises(SystemExit):
+        _mod.main(["--help"])
+    assert "BENCH_RECALL_TIMEOUT" in capsys.readouterr().out
 
 
 def test_run_all_grades_each_case_and_cleans_up(tmp_path, monkeypatch):
@@ -391,7 +437,7 @@ def test_run_all_grades_each_case_and_cleans_up(tmp_path, monkeypatch):
     audited = _audited(tmp_path, {})
     seen: list[Path] = []
 
-    def fake_run(case, agent_cmd, workdir):
+    def fake_run(case, agent_cmd, workdir, timeout):
         seen.append(workdir)
         return audited
 
@@ -406,7 +452,7 @@ def test_run_all_keeps_the_copies_and_says_where_when_asked(tmp_path, monkeypatc
     audited = _audited(tmp_path, {})
     seen: list[Path] = []
 
-    def fake_run(case, agent_cmd, workdir):
+    def fake_run(case, agent_cmd, workdir, timeout):
         seen.append(workdir)
         return audited
 
@@ -421,7 +467,7 @@ def test_run_all_cleans_up_even_when_a_case_raises(tmp_path, monkeypatch):
     """The cleanup is in a `finally` for a reason: a failing run is the common one."""
     seen: list[Path] = []
 
-    def boom(case, agent_cmd, workdir):
+    def boom(case, agent_cmd, workdir, timeout):
         seen.append(workdir)
         raise _mod.RecallError("agent died")
 
@@ -434,7 +480,7 @@ def test_run_all_cleans_up_even_when_a_case_raises(tmp_path, monkeypatch):
 def test_cli_run_mode_dispatches_to_the_runner(tmp_path, monkeypatch, capsys):
     audited = _audited(tmp_path, {})
     monkeypatch.setattr(_mod._retrieval, "load_cases", lambda case="": [CASE])
-    monkeypatch.setattr(_mod, "run_case", lambda case, cmd, wd: audited)
+    monkeypatch.setattr(_mod, "run_case", lambda case, cmd, wd, timeout: audited)
     assert _mod.main(["--run"]) == 0
     assert "recall=1.0" in capsys.readouterr().out
 

@@ -171,6 +171,15 @@ def test_an_unusable_report_skips_locally_and_fails_under_ci(tmp_path, monkeypat
     assert _mod.main([str(tmp_path)]) == 1
 
 
+@pytest.mark.parametrize(("value", "code"), [("false", 0), ("0", 0), ("1", 1), ("Yes", 1)])
+def test_ci_is_read_as_a_boolean_not_as_presence(tmp_path, monkeypatch, value, code):
+    """config-c14ca4cd: `CI=false` is a local run that says so, and must skip."""
+    _baseline(tmp_path, [])
+    _with_report(monkeypatch, None)
+    monkeypatch.setenv("CI", value)
+    assert _mod.main([str(tmp_path)]) == code
+
+
 def test_update_never_skips_when_it_cannot_get_a_report(tmp_path, monkeypatch, capsys):
     """Skipping is right for the gate and wrong for `--update`.
 

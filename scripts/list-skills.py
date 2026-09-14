@@ -9,7 +9,7 @@ import textwrap
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import collect_skills  # type: ignore[import-not-found]
+from common import collect_skills
 
 MAX_WIDTH = 100
 

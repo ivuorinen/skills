@@ -18,8 +18,8 @@ _ANATOMY_PATH = (
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
 )
 _spec = importlib.util.spec_from_file_location("check_rules_anatomy", _ANATOMY_PATH)
-_anatomy = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_anatomy)  # type: ignore[union-attr]
+_anatomy = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_anatomy)  # pyright: ignore[reportOptionalMemberAccess]
 
 # Re-exported so callers (and tests) keep importing it from this module.
 parse_rules_frontmatter = _anatomy._parse_frontmatter
@@ -122,10 +122,10 @@ def validate(  # noqa: C901
 # noise rather than a gate.
 _DATE_RE = re.compile(r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b")
 
-# use-uv-runner.md, internal half: every internal dev script runs under uv.
-_UV_SHEBANG = "#!/usr/bin/env -S uv run --quiet"
-# Import-only modules, never executed directly — a shebang would be a lie.
-_NO_SHEBANG_OK = {"common.py", "_hooklib.py"}
+# The internal-shebang half of use-uv-runner.md is checked by
+# scripts/check-stdlib-only.py alone. A second copy here used a different
+# exemption list, so the two gates gave contradictory verdicts on one file
+# (audit-a4b2f181).
 
 # CLAUDE.md's `## Conventions` section presents itself as the index of
 # .claude/rules/, and Claude Code loads CLAUDE.md — so a rule missing from the
@@ -211,18 +211,6 @@ def check_repo_rules(repo_root: Path, errors: list[str]) -> None:
                     f"  ERROR  {rel}:{lineno}: time-sensitive content — "
                     f"date literal {m.group()!r} in a shipped skill body"
                 )
-
-    for path in sorted(repo_root.glob("scripts/**/*.py")):
-        if path.name in _NO_SHEBANG_OK:
-            continue
-        try:
-            first = path.read_text(encoding="utf-8").split("\n", 1)[0]
-        except (OSError, UnicodeDecodeError) as e:
-            errors.append(f"  ERROR  {path.relative_to(repo_root)}: cannot read file: {e}")
-            continue
-        if first != _UV_SHEBANG:
-            rel = path.relative_to(repo_root)
-            errors.append(f"  ERROR  {rel}: first line must be '{_UV_SHEBANG}' (got {first!r})")
 
 
 def _discover_targets(repo_root: Path) -> list[Path]:

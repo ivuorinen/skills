@@ -10,8 +10,17 @@ from pathlib import Path
 # scripts/validate-rules.py, which path-loads check-rules-anatomy.py.
 _FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 _spec = importlib.util.spec_from_file_location("findings_for_common", _FINDINGS_PATH)
-_findings = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_findings)  # type: ignore[union-attr]
+_findings = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_findings)  # pyright: ignore[reportOptionalMemberAccess]
+
+# The shipped fence rule (``` and ~~~, length-aware). Internal validators strip
+# fences through it rather than a private copy that drifts from it: validate-skill
+# once paired backtick runs with a regex and scanned the wrong lines
+# (audit-4562b342).
+_MD_FENCES_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "md_fences.py"
+_fences_spec = importlib.util.spec_from_file_location("md_fences_for_common", _MD_FENCES_PATH)
+md_fences = importlib.util.module_from_spec(_fences_spec)  # pyright: ignore[reportArgumentType]
+_fences_spec.loader.exec_module(md_fences)  # pyright: ignore[reportOptionalMemberAccess]
 
 # Re-exported so callers (and tests) keep importing it from this module.
 parse_frontmatter = _findings.parse_frontmatter

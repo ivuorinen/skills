@@ -344,3 +344,21 @@ class TestMain:
         monkeypatch.setattr(sys, "argv", ["prog", "--help"])
         runpy.run_path(str(_TOOL), run_name="__main__")
         assert "Usage:" in capsys.readouterr().out
+
+
+class TestNullCaseFields:
+    """audit-e639ffa3: `str(None)` is 'None', which is not blank, so a null
+    prompt, output or assertion passed as gradable text."""
+
+    @pytest.mark.parametrize("field", ["prompt", "expected_output"])
+    @pytest.mark.parametrize("value", [None, 0, ["x"]])
+    def test_a_non_string_text_field_is_empty(self, tmp_path, field, value):
+        case = {**VALID_CASE, field: value}
+        errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
+        assert _has(errors, f"has an empty '{field}'")
+
+    @pytest.mark.parametrize("value", [None, 1])
+    def test_a_non_string_assertion_is_empty(self, tmp_path, value):
+        case = {**VALID_CASE, "assertions": [value]}
+        errors = _evals(tmp_path, {"skill_name": "my-skill", "evals": [case]})
+        assert _has(errors, "has an empty assertion")

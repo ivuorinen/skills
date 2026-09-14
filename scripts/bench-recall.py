@@ -40,8 +40,15 @@ Precision is reported, never gated: a real audit of a seeded repository
 legitimately finds defects nobody planted, and scoring those as false positives
 would train the corpus toward lenses that report less.
 
-Exit codes: 0 = graded (or thresholds met), 1 = runtime/IO error or a threshold
-missed, 2 = usage error.
+No recall floor is gated: nothing ever set one, so its exit path was dead code
+(dead-code-051d0958). Add a `--min-recall` flag once runs have produced a
+distribution to set it from.
+
+Environment: BENCH_RECALL_TIMEOUT, whole seconds each `--run` agent invocation
+may take (default 900). Parsed once, before any agent runs; a value such as
+`15m` is a usage error rather than a traceback mid-run (config-9f45dcbd).
+
+Exit codes: 0 = graded, 1 = runtime/IO error, 2 = usage error.
 """
 
 import argparse
@@ -54,6 +61,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TextIO
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "skills/nitpicker/scripts"))
@@ -66,8 +74,8 @@ import findings  # noqa: E402
 _spec = importlib.util.spec_from_file_location(
     "bench_retrieval", _ROOT / "scripts" / "bench-retrieval.py"
 )
-_retrieval = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_retrieval)  # type: ignore[union-attr]
+_retrieval = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_retrieval)  # pyright: ignore[reportOptionalMemberAccess]
 
 # One agent invocation per case. `{goal}`, `{lens}` and `{dir}` are substituted;
 # nothing else is, so a template cannot reach values this tool did not choose.
@@ -75,20 +83,12 @@ _spec.loader.exec_module(_retrieval)  # type: ignore[union-attr]
 # thing being measured is the lens, not the runner.
 DEFAULT_AGENT_CMD = "claude -p '/nitpicker {lens}' --permission-mode acceptEdits"
 
-# Recall is the number that matters; the others are reported so a regression can
-# be attributed. Left unset rather than guessed: no run has produced a
-# distribution yet, so any floor written today would be aspiration, which is
-# exactly what bench-retrieval.py's threshold comment warns against. Set them
-# from the first few runs.
-MIN_RECALL: float | None = None
+# Seconds per agent invocation when BENCH_RECALL_TIMEOUT is unset.
+DEFAULT_TIMEOUT = 900
 
 
 class RecallError(Exception):
     """A case could not be run or graded."""
-
-
-def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
-    return a[0] <= b[1] and b[0] <= a[1]
 
 
 def _severity_meets(actual: str, floor: str) -> bool:
@@ -160,7 +160,10 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
         if located is None:
             continue
         path, start, end = located
-        if Path(path).name != Path(case["file"]).name or not _overlaps((start, end), want):
+        # bench-retrieval's overlap rule, not a local copy free to diverge from it
+        # (complexity-f842d3fd).
+        overlaps = _retrieval._overlaps((start, end), want)
+        if Path(path).name != Path(case["file"]).name or not overlaps:
             continue
         haystack = f"{finding['title']}\n{finding['body']}".lower()
         matches.append(
@@ -190,7 +193,7 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
     }
 
 
-def run_case(case: dict, agent_cmd: str, workdir: Path) -> Path:
+def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_TIMEOUT) -> Path:
     """Copy the case into `workdir`, audit it with `agent_cmd`, return that copy.
 
     Copied rather than audited in place: the agent writes a findings store, and
@@ -228,7 +231,7 @@ def run_case(case: dict, agent_cmd: str, workdir: Path) -> Path:
             cwd=str(target),
             capture_output=True,
             text=True,
-            timeout=int(os.environ.get("BENCH_RECALL_TIMEOUT", "900")),
+            timeout=timeout,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RecallError(f"{case['id']}: agent command failed to run ({exc})") from exc
@@ -252,7 +255,7 @@ def aggregate(rows: list[dict]) -> dict:
     }
 
 
-def render(rows: list[dict], totals: dict, out=None) -> None:
+def render(rows: list[dict], totals: dict, out: TextIO | None = None) -> None:
     out = out or sys.stdout
     print(f"{'case':<30}{'lens':<12}{'found':>7}{'sev':>6}{'class':>7}{'filed':>7}", file=out)
     for row in rows:
@@ -277,7 +280,9 @@ def _parser() -> argparse.ArgumentParser:
         prog="bench-recall",
         description="Score whether a lens recognises a seeded defect it has been shown. "
         "Not part of `make check`: it needs an agent, credentials and minutes per case.",
-        epilog="Exit codes: 0 graded, 1 runtime error or threshold missed, 2 usage error.",
+        epilog="Environment: BENCH_RECALL_TIMEOUT — whole seconds each --run agent invocation "
+        f"may take (default {DEFAULT_TIMEOUT}). "
+        "Exit codes: 0 graded, 1 runtime error, 2 usage error (including a bad timeout).",
     )
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument(
@@ -305,10 +310,12 @@ def _grade_dir(cases: list[dict], root: Path) -> list[dict]:
     return rows
 
 
-def _run_all(cases: list[dict], agent_cmd: str, keep: bool) -> list[dict]:
+def _run_all(
+    cases: list[dict], agent_cmd: str, keep: bool, timeout: int = DEFAULT_TIMEOUT
+) -> list[dict]:
     workdir = Path(tempfile.mkdtemp(prefix="bench-recall-"))
     try:
-        rows = [grade_case(case, run_case(case, agent_cmd, workdir)) for case in cases]
+        rows = [grade_case(case, run_case(case, agent_cmd, workdir, timeout)) for case in cases]
     finally:
         if keep:
             print(f"[info] audited copies kept in {workdir}", file=sys.stderr)
@@ -317,8 +324,25 @@ def _run_all(cases: list[dict], agent_cmd: str, keep: bool) -> list[dict]:
     return rows
 
 
+def _agent_timeout() -> int | None:
+    """BENCH_RECALL_TIMEOUT as whole seconds, or None after reporting a bad value."""
+    raw = os.environ.get("BENCH_RECALL_TIMEOUT", str(DEFAULT_TIMEOUT))
+    if raw.strip().isdigit() and int(raw) > 0:
+        return int(raw)
+    print(
+        f"Error: BENCH_RECALL_TIMEOUT must be a whole number of seconds, got {raw!r}",
+        file=sys.stderr,
+    )
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    # Only `--run` invokes an agent, so only it reads the timeout; a pure grade
+    # is not failed by a variable it never uses.
+    timeout = _agent_timeout() if args.run else DEFAULT_TIMEOUT
+    if timeout is None:
+        return 2
     try:
         cases = _retrieval.load_cases(args.case)
         # `is not None`, never truthiness: `--grade ""` is a request to grade,
@@ -329,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.grade is not None:
             rows = _grade_dir(cases, Path(args.grade))
         else:
-            rows = _run_all(cases, args.agent_cmd, args.keep)
+            rows = _run_all(cases, args.agent_cmd, args.keep, timeout)
         totals = aggregate(rows)
     except (RecallError, _retrieval.BenchError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -339,10 +363,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"cases": rows, "totals": totals}, separators=(",", ":")))
     else:
         render(rows, totals)
-
-    if MIN_RECALL is not None and totals["recall"] < MIN_RECALL:
-        print(f"FAIL  recall {totals['recall']} < {MIN_RECALL}", file=sys.stderr)
-        return 1
     return 0
 
 

@@ -157,3 +157,20 @@ class TestCli:
         monkeypatch.setattr(sys, "argv", ["check-make-help.py"])
         runpy.run_path(str(_TOOL), run_name="__main__")
         assert "agree" in capsys.readouterr().out
+
+
+class TestMultiNameRules:
+    """audit-124edb0a: `secret deploy:` declares two targets, and a single-name
+    pattern saw neither, so both escaped the help and .PHONY checks."""
+
+    def test_every_name_in_a_multi_name_rule_is_a_target(self, tmp_path):
+        body = ".PHONY: help build\n\n" + _HELP_BLOCK + "build:\n\techo\n\nsecret deploy:\n\techo\n"
+        targets, listed, phony = _mod.read_makefile(_makefile(tmp_path, body))
+        assert targets == {"help", "build", "secret", "deploy"}
+        problems = _mod.drift(targets, listed, phony)
+        assert any("'secret' is not listed" in p for p in problems)
+        assert any("'deploy' is missing from .PHONY" in p for p in problems)
+
+    def test_a_multi_name_variable_assignment_is_not_a_target(self, tmp_path):
+        targets, _, _ = _mod.read_makefile(_makefile(tmp_path, "a b := x\n" + _HELP_BLOCK))
+        assert targets == {"help"}
