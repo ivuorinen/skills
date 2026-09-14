@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import re
 
 # git plumbing only, argv lists, never shell=True. The reason sits above the
@@ -274,16 +275,39 @@ def _git(root: Path, *args: str) -> str:
     The three failure shapes are classified apart, because the caller's next
     move differs: an absent or hung binary is the host's problem
     (`PackEnvironmentError`, exit 1) while a rejected argument — a revision that
-    does not resolve — is the call's (`PackError`, exit 2). `_tracked_files`
-    already handles a git that *fails* by falling back to a walk, so leaving a
-    git that *hangs* unbounded was the one shape nothing covered.
+    does not resolve — is the call's (`PackError`, exit 2).
+
+    The audited tree's own `.git/config` is hostile input (security-02c0e5c1):
+    a tree delivered with its `.git` directory can set `core.fsmonitor`, which
+    git runs during `ls-files` and `diff`, or a hook git fires on an index
+    write. Both are switched off here for every call; `_diff` adds
+    `--no-ext-diff --no-textconv` for the diff drivers. `core.quotePath=false`
+    keeps a non-ASCII name as itself in the hunk headers rather than as an
+    octal-escaped quoted string no path matches (audit-90ca5e17). `LC_ALL=C`
+    keeps git's stderr in English, which `_tracked_files` matches on.
+
+    Ceiling: a `filter.<driver>.clean` command named by an in-tree
+    `.gitattributes` still runs when `git diff` re-reads a stat-dirty file.
+    Driver names are arbitrary, so no fixed `-c` can switch them all off, and
+    names outside quotePath's reach — a tab, newline, quote or backslash —
+    are still quoted in the hunk headers.
     """
     try:
         # fixed argv, no shell, git only — reason above the marker, see the
         # `import subprocess` note on why nothing may trail it.
         proc = subprocess.run(  # nosec B603
-            ["git", *args],
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "core.quotePath=false",
+                *args,
+            ],
             cwd=root,
+            env={**os.environ, "LC_ALL": "C"},
             text=True,
             capture_output=True,
             check=False,
@@ -331,11 +355,31 @@ def _tracked_files(root: Path) -> list[Path]:
     in progress. The pack then reported zero files, which is exactly the
     "indistinguishable from an empty repository" answer `omitted` exists to
     prevent. An audit reads the working tree, not the index.
+
+    Only "not a git repository" falls back (errors-f3991c07). Every other
+    failure — a corrupt index, an absent or hung git — raised nothing before:
+    the walk ran instead, which does not apply `.gitignore`, so a secrets file
+    and build output joined the pack with exit 0 and no note. Nothing in this
+    call came from the caller, so any other failure is `PackEnvironmentError`.
     """
     try:
         listing = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-    except PackError:
-        return sorted(_walk(root))
+    except PackError as exc:
+        if "not a git repository" in str(exc):
+            return sorted(_walk(root))
+        raise PackEnvironmentError(str(exc)) from exc
+    return [root / name for name in listing.split("\0") if name]
+
+
+def _changed_files(root: Path, base: str) -> list[Path]:
+    """Every path git reports changed against `base`, deletions included, under `root`.
+
+    audit-90ca5e17: `--name-only` printed names relative to the repository top
+    level and quoted non-ASCII ones, so both missed when joined onto a
+    subdirectory `root`. `--relative` scopes and strips to `root`, and `-z`
+    turns quoting off.
+    """
+    listing = _git(root, "diff", "--name-only", "-z", "--relative", _rev(base), "--")
     return [root / name for name in listing.split("\0") if name]
 
 
@@ -420,12 +464,19 @@ def _line_count(path: Path, root: Path) -> int | None:
 
     The containment test `_read` performs is kept: a tracked symlink pointing
     at `~/.aws/credentials` must not be ranged or sized under an in-repo path.
+
+    A last line with no terminator still counts (audit-029db16b): counting
+    newlines alone reported a one-line file without one as empty.
     """
     try:
         if not path.resolve().is_relative_to(root):
             return None
+        count, last = 0, b"\n"
         with path.open("rb") as handle:
-            return sum(chunk.count(b"\n") for chunk in iter(lambda: handle.read(1 << 20), b""))
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                count += chunk.count(b"\n")
+                last = chunk[-1:]
+        return count + int(last != b"\n")
     except OSError:
         return None
 
@@ -598,31 +649,47 @@ def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
     scope = {f.resolve() for f in files}
     # `--no-prefix` because the a/ and b/ prefixes are not fixed: a user with
     # `diff.mnemonicPrefix` set gets c/ and w/ instead, and a parser keyed to
-    # `+++ b/` silently returns zero hunks on their machine.
-    raw = _git(root, "diff", "--no-prefix", "--unified=0", _rev(base), "--")
+    # `+++ b/` silently returns zero hunks on their machine. `--relative`
+    # matches `_changed_files`: paths come back relative to a subdirectory root.
+    raw = _git(
+        root,
+        "diff",
+        "--no-prefix",
+        "--unified=0",
+        "--relative",
+        "--no-ext-diff",
+        "--no-textconv",
+        _rev(base),
+        "--",
+    )
     current: Path | None = None
     previous: Path | None = None
     outline: list[tuple[str, int, int]] = []
+    in_header = False
     for line in raw.splitlines():
         # Every entry resets the per-file state here. Keying only on `+++ `
         # meant a deleted file — whose post-image header is `+++ /dev/null` —
         # left `current` pointing at the *previous* entry, so its hunks were
         # emitted as candidates on an unrelated file while the deletion itself
-        # produced none. Anchoring on `diff --git` also stops a *content* line
-        # from being read as a header: an added line whose text is `++ b/foo`
-        # renders as `+++ b/foo`, and this repo's docs quote diffs.
+        # produced none.
         if line.startswith("diff --git "):
-            current, previous, outline = None, None, []
+            current, previous, outline, in_header = None, None, [], True
             continue
-        if line.startswith("--- "):
+        # Headers are accepted only between `diff --git` and the entry's first
+        # `@@` (audit-d308a1c1). The reset above alone did not stop a *content*
+        # line being read as one: an added line whose text is `++ b/foo`
+        # renders as `+++ b/foo`, re-pointed `current` at another file and
+        # dropped every later hunk of this one — and this repo's docs quote diffs.
+        if in_header and line.startswith("--- "):
             previous = None if line == "--- /dev/null" else root / line[4:]
             continue
-        if line.startswith("+++ "):
+        if in_header and line.startswith("+++ "):
             current = None if line == "+++ /dev/null" else root / line[4:]
             source = (_read(current, root) or "") if current else ""
             outline = symbols_of(current, source) if source and current else []
             continue
         hunk = _HUNK.match(line)
+        in_header = in_header and not hunk
         # A deleted file has no post-image, so its hunks are attributed to the
         # pre-image path — the file the reader has to look at in `base`.
         target = current if current is not None else previous
@@ -817,14 +884,16 @@ def build(
     if not root.is_dir():
         raise PackError(f"not a directory: {root}")
 
-    files = _tracked_files(root)
-    if changed_only or mode == "diff":
-        changed = {
-            (root / name).resolve()
-            for name in _git(root, "diff", "--name-only", _rev(base), "--").splitlines()
-            if name
-        }
-        files = [f for f in files if f.resolve() in changed]
+    # Diff mode scopes by the changed set itself, not its intersection with
+    # `ls-files`: a staged deletion is gone from `ls-files`, so the intersection
+    # dropped exactly the change a reviewer most needs to see (audit-90ca5e17).
+    if mode == "diff":
+        files = _changed_files(root, base)
+    else:
+        files = _tracked_files(root)
+        if changed_only:
+            changed = {f.resolve() for f in _changed_files(root, base)}
+            files = [f for f in files if f.resolve() in changed]
     files = _scoped(root, files, paths or [])
 
     pack = Pack(mode=mode, goal=goal)
