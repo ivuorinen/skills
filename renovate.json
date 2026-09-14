@@ -46,14 +46,16 @@
       ],
       "matchPackageNames": ["ruff", "astral-sh/ruff-pre-commit"],
       "groupName": "ruff",
+      "semanticCommitType": "chore",
       "group": {
         "commitMessageTopic": "{{{groupName}}} to {{{prettyNewVersion}}}"
       }
     },
     {
-      "description": "bandit likewise: the pyproject pin and the SHA-pinned pre-commit rev.",
+      "description": "bandit likewise: the pyproject pin and the SHA-pinned pre-commit rev. Both groups are dev tooling that touches no path under skills/, so semanticCommitType overrides the preset's fix(deps) with chore — commit-types.md gives such a change no version bump.",
       "matchPackageNames": ["bandit", "PyCQA/bandit"],
-      "groupName": "bandit"
+      "groupName": "bandit",
+      "semanticCommitType": "chore"
     }
   ]
 }

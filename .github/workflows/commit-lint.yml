@@ -57,11 +57,15 @@ jobs:
         #
         # Read from the BASE revision, never the working tree. `actions/checkout`
         # on `pull_request` checks out the merge result, so the tree carries the
-        # PR's own changes — a PR could set `entry: '.*'` and every one of its
-        # commit subjects would then pass the gate it just rewrote. The policy
-        # has to come from the revision being merged INTO. A PR that genuinely
-        # changes the regex is still linted against the old one; that is the
-        # correct order, and the new regex governs from the merge onward.
+        # PR's own changes — a PR that only set `entry: '.*'` in the pre-commit
+        # config would otherwise pass its own subjects through the regex it just
+        # loosened. A PR that genuinely changes the regex is still linted against
+        # the old one, and the new regex governs from the merge onward.
+        #
+        # This stops a config-only change, not an edit to this workflow: the run
+        # executes the PR's copy of this file, so a PR can rewrite the step
+        # itself. What catches that is the required code-owner review on the
+        # `main` ruleset, not anything this step does.
         run: |
           python3 - <<'PY'
           import os, re, subprocess, sys
