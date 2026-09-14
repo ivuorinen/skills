@@ -22,6 +22,7 @@ module owns what is genuinely common — parsing a git remote, pinning a token t
 one host, paginating, and shaping the result.
 """
 
+import http.client
 import json
 import os
 import re
@@ -32,7 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import IO, Any
 
 PLATFORMS = ("github", "gitlab", "bitbucket")
 
@@ -429,7 +430,15 @@ class _TokenSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         super().__init__()
         self.allowed_netloc = allowed_netloc
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         """Raise on a redirect the pinned-host predicate rejects; else proceed.
 
         Raising rather than returning `None`: `None` makes urllib stop and hand
