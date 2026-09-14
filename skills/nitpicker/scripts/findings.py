@@ -1603,6 +1603,21 @@ def _validate_store_locked(root: Path) -> list[str]:  # noqa: C901
 # ── index ─────────────────────────────────────────────────────────────────────
 
 
+_MD_CODE_SPAN = re.compile(r"(`[^`]*`)")
+_MD_INLINE_OPENER = re.compile(r"([\\*_<\[])")
+
+
+def _md_text(text: str) -> str:
+    """`text` as literal Markdown: escape what opens emphasis, HTML or a link.
+
+    A finding title is data and INDEX.md is generated Markdown: `__file__`
+    rendered bold, and markdownlint --fix then rewrote the index to `**file**`.
+    Backtick code spans pass through untouched, since titles use them on purpose.
+    """
+    parts = _MD_CODE_SPAN.split(text)
+    return "".join(p if i % 2 else _MD_INLINE_OPENER.sub(r"\\\1", p) for i, p in enumerate(parts))
+
+
 def build_index(root: Path) -> str:
     """Render INDEX.md's content without writing it.
 
@@ -1667,7 +1682,8 @@ def build_index(root: Path) -> str:
         for _rank, fid, fm, title, path in sorted(open_findings, key=lambda x: (x[0], x[1])):
             rel = f"{store}/{path.relative_to(root).as_posix()}"
             lines.append(
-                f"- **{fm.get('severity', '?')}** [{fid}] {title} — `{fm.get('area', '?')}` ({rel})"
+                f"- **{fm.get('severity', '?')}** [{fid}] {_md_text(title)} — "
+                f"`{fm.get('area', '?')}` ({rel})"
             )
     else:
         lines.append("(none)")

@@ -2771,6 +2771,14 @@ def test_index_is_identical_for_a_relative_and_an_absolute_root(tmp_path, monkey
     assert "(docs/audit/findings/security/open/" in absolute
 
 
+def test_index_escapes_markdown_in_titles_outside_code_spans(tmp_path):
+    """A title is data: `__file__` rendered bold, and markdownlint --fix then
+    rewrote the generated index to `**file**`. Code spans stay as written."""
+    _new(tmp_path, title="paths from __file__ or *env* via <name> and [x](y) in `a_b*c`")
+    out = findings.build_index(tmp_path)
+    assert r"paths from \_\_file\_\_ or \*env\* via \<name> and \[x](y) in `a_b*c`" in out
+
+
 _needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
 
