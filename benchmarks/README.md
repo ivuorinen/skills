@@ -47,7 +47,7 @@ corpus/<case-id>/
 
 ```json
 {
-  "id": "python-command-injection",
+  "id": "example-command-injection",
   "lens": "security",
   "class": "command-injection",
   "severity_floor": "high",
@@ -77,11 +77,11 @@ corpus/<case-id>/
    Distractors are welcome and are the point of the `adversarial-*` cases: code
    that shares the defect's vocabulary without being the defect.
 2. Write `expected.json`.
-3. Run `python3 scripts/bench-retrieval.py --case <case-id> -v` and read the
+3. Run `uv run --quiet scripts/bench-retrieval.py --case <case-id> -v` and read the
    rank. A case that scores a perfect 1.0 with no distractors is not testing
    retrieval, it is testing `grep`.
 4. `make bench` must still pass.
-5. Optionally `python3 scripts/bench-recall.py --run --case <case-id>` to see
+5. Optionally `uv run --quiet scripts/bench-recall.py --run --case <case-id>` to see
    whether a lens actually reports it. Not required to land a case: retrieval is
    what gates.
 

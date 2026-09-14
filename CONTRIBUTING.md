@@ -4,6 +4,20 @@ This repo ships **nitpicker**, a hostile audit toolkit, as one skill plus a
 Claude Code plugin. Everything below is enforced by tooling in the repo — none
 of it is aspirational.
 
+## Setup
+
+```bash
+uv sync --extra dev    # the dev environment the Makefile's `uv run --extra dev` targets use
+pre-commit install     # installs both hook types .pre-commit-config.yaml declares
+```
+
+`.pre-commit-config.yaml` sets `default_install_hook_types: [pre-commit,
+commit-msg]`, so one `pre-commit install` wires the file validators and the
+commit-message check. `pre-commit` is not in the dev extra: `make pre-commit`
+runs version 4.6.2 through `uv run --with`, so install that version wherever you
+put it on `PATH` (for example `uv tool install pre-commit==4.6.2`). On a clone
+without the hooks, nothing local runs until CI rejects the push.
+
 ## Before every commit
 
 ```bash
@@ -11,14 +25,16 @@ make check
 ```
 
 ```bash
-make help    # every target `check` runs, in order, with what each one does
+make help    # every target, with what each one does
 ```
 
-`make help` is not a convenience here, it is the list: `check-make-help.py`
-gates it against the `Makefile`'s targets and `.PHONY` in both directions, so it
-cannot drift. A table transcribed into this file has no such gate — the one that
-used to sit here was missing `ring-deps` and `bench`, both of which `check` runs
-and neither of which anything else enforces.
+`make help` lists every target; the `check:` line in the `Makefile` gives the
+gate and its order. `check-make-help.py` compares the help names against the
+`Makefile`'s targets and `.PHONY` as sets, in both directions, so no target goes
+missing from the help — it does not check order, and `make help` also lists
+targets `check` never runs. A table transcribed into this file has no gate at
+all — the one that used to sit here was missing `ring-deps` and `bench`, both of
+which `check` runs.
 
 `index-check` and `pre-commit` are the slow ones. The CI `Validate` job is the
 authoritative gate — a green `make check` locally is the fast path to it, not a
@@ -53,6 +69,20 @@ A docs-only or `.claude/rules/`-only change is `docs:` or `chore:`, never
 
 Merging to `main` opens a release-please Release PR; merging that PR creates the
 tag and GitHub Release.
+
+## Pull requests
+
+The repository merges by squash only, and the squash commit takes the **PR
+title** as its subject. That title is the commit release-please reads on
+`main`, so it is the release input — the prefixes of the commits on the branch
+are not.
+
+Title the PR with the highest-impact type among its commits
+(`.claude/rules/commit-types.md`): a branch holding one `feat:` commit is a
+`feat:` PR, even when every other commit is `fix:` or `docs:`. The `Lint PR
+title` check (`.github/workflows/pr-title.yml`) fails a title that is not a
+conventional commit; it cannot tell whether the type matches the commits, so
+that part is on you. Retitle the PR rather than rewording commits.
 
 ## Adding a command
 

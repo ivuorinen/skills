@@ -1,6 +1,9 @@
 ---
 paths:
   - ".github/workflows/**"
+  - ".pre-commit-config.yaml"
+  - "renovate.json"
+  - "**/action.yml"
 ---
 
 # GitHub Actions Hygiene
@@ -33,6 +36,24 @@ trusting this paragraph; a copy in prose is a copy that can go stale.
 The same SHA-pinning discipline covers every `rev:` in `.pre-commit-config.yaml`. Those repositories execute arbitrary code inside the authoritative `Validate` job, and a `rev:` naming a tag is mutable — the tag can be repointed at new code without the pin changing. Pin each `rev:` to the tag's full 40-character commit SHA with a trailing `# <tag>` comment, exactly as the workflows pin actions. Write the tag **verbatim as upstream publishes it**, not a normalised version string: `PyCQA/bandit` and `python-jsonschema/check-jsonschema` tag `1.9.4` and `0.37.4` with no `v` prefix, and `v1.9.4` does not exist. That comment is what `renovate.json`'s custom manager hands the `github-tags` datasource as `currentValue`, so a comment naming a tag that does not exist upstream silently stops updates for that repo. Resolve a SHA with `git ls-remote <repo-url> refs/tags/<tag>^{}` (fall back to `refs/tags/<tag>` when the dereferenced form is absent) and confirm it is 40 hex characters before writing it — that same lookup proves the tag name going into the comment is real.
 
 zizmor does not audit `.pre-commit-config.yaml`, so this clause is verified in review.
+
+The version comment is not machine-checked for workflows either. The pre-commit
+zizmor hook runs `--offline`, and the check that compares a comment against the
+tag its SHA resolves to (`ref-version-mismatch`) needs the network, so a `# v4`
+left on a `v4.37.9` pin passes the gate. Confirm the comment with the same
+`git ls-remote` lookup, or an online `zizmor --pedantic .`, whenever a pin moves.
+
+**Accepted risk: hook dependencies float.** The SHA pin fixes a hook
+repository's own code, not what its environment installs. No hook here carries
+`additional_dependencies` pins, so pre-commit resolves each hook package's
+dependencies from the package index when it builds the environment: the Python
+hooks install through pip with ranged requirements, and markdownlint-cli2 pins
+its direct dependencies without a lockfile. A newly published transitive
+release can therefore run inside `Validate` and on a developer machine without
+any pin changing. This is accepted rather than closed, because exact pins for
+every hook's dependency tree would be a second lockfile per hook that nothing
+here generates or updates. Revisit it if a hook environment is ever implicated,
+or if Renovate gains a way to maintain those pins.
 
 Renovate keeps these revs current only because `renovate.json` carries a custom
 regex manager for them. The built-in `pre-commit` manager cannot: it reads `rev:`

@@ -128,13 +128,13 @@ Evidence:
 Governs: the code layer.
 
 Evidence — three rings, verified acyclic and inward-only across the full static
-import graph of 72 Python modules:
+import graph `make ring-deps` prints:
 
 | Ring | Path | Runtime contract |
 | --- | --- | --- |
-| Inner | `skills/*/scripts/` (16 modules) | stdlib-only, `#!/usr/bin/env python3` |
-| Middle | `scripts/` (11 modules) | uv, PEP-723 inline metadata |
-| Outer | `scripts/hooks/` (14 modules) | uv, invoked by the harness |
+| Inner | `skills/*/scripts/` | stdlib-only, `#!/usr/bin/env python3` |
+| Middle | `scripts/` | uv, PEP-723 inline metadata |
+| Outer | `scripts/hooks/` | uv, invoked by the harness |
 
 - **No inner→outer edge exists.** The shipped ring imports nothing from
   `scripts/` or `scripts/hooks/`; its only non-stdlib imports are its own

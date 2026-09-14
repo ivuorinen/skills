@@ -64,22 +64,29 @@ Run `/nitpicker release-gate`. It fails on any open finding at High or above
 across all auditors — this is the aggregate backstop after the per-gate
 fixes. If it fails: stop and report.
 
-## Step 4 — Verify Conventional Commits
+## Step 4 — Verify the PR Title Against the Commits
 
-Confirm every commit on this branch follows the conventional commits format
-release-please uses for version bumps and release notes:
+The repository merges by squash only, with the PR title as the squash commit
+title (`gh api repos/{owner}/{repo}` → `squash_merge_commit_title: PR_TITLE`),
+so release-please reads the **PR title**, not the branch's commit subjects.
+The types, from highest impact to lowest:
 
-- `feat:` — minor bump; `fix:` — patch bump
-- `feat!:` or `BREAKING CHANGE:` footer — major bump
-- `chore:`, `docs:`, `refactor:` — no bump
+- `feat!:` or a `BREAKING CHANGE:` footer — major bump
+- `feat:` — minor bump
+- `fix:` — patch bump
+- `chore:`, `docs:`, `refactor:`, `ci:` — no bump
 
 ```bash
-git log main..HEAD --oneline
+git log main..HEAD --format='%s%n%b'
+gh pr view --json title --jq .title
 ```
 
-Any non-conforming message: stop; instruct the user to reword via
-`git rebase -i main`. Do **not** require a manual `CHANGELOG.md` entry —
-release-please manages the changelog.
+Find the highest-impact type among the branch's commits (subjects and
+`BREAKING CHANGE:` footers). The PR title must be a conventional commit carrying
+that type. A title with a lower type, or no conventional type: stop; instruct
+the user to retitle the PR (`gh pr edit --title "<type>: <summary>"`). With no
+PR open yet, report the type the title must carry. Do **not** require a manual
+`CHANGELOG.md` entry — release-please manages the changelog.
 
 ## Step 5 — Confirm CI Is Green
 
@@ -96,7 +103,7 @@ After all steps pass, present:
   [✓] validate-skills — no skill errors; all version files in sync at vX.Y.Z
   [✓] all audit gates — no open Critical/High findings (see INDEX.md)
   [✓] /nitpicker release-gate — PASS (threshold High)
-  [✓] conventional commits — all commits on branch use valid format
+  [✓] PR title — carries the highest-impact type among the branch's commits
   [✓] CI — validate-skills.yml passing
 
 Release-please automation will create the Release PR when these changes are
@@ -108,7 +115,8 @@ Then ask:
 > **Create a PR for these changes? (y/n) [default: n]**
 
 `n` or no answer: stop; inform the user no PR was created. `y`: open a PR
-using the branch's conventional commit messages for title and description.
+titled with the highest-impact type found in Step 4 and described from the
+branch's commit messages.
 Do **not** bump versions, create tags, or push beyond what is staged.
 
 ## What This Skill Does NOT Do

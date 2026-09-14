@@ -27,7 +27,7 @@ protocol not followed. Rules that hold in *every* run — the finding contract,
 redaction, the migration consent gate, the run protocol's shape — stay in the
 core file rather than moving with their protocol.
 
-`scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
+`skills/nitpicker/scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
 firewall. It answers with coordinates — path, line range, enclosing symbol, why
 it matched — not with file bodies. Its modes are the acquisition ladder:
 `inventory` (A), `symbols` and `diff` (B), `evidence` (C). Level D is a direct
@@ -37,7 +37,7 @@ may prove a finding.** `--self-test` runs the known-positive controls, because a
 retriever returning nothing is otherwise indistinguishable from a repository
 containing nothing.
 
-`scripts/check-context-tokens.py` reports the size of the set loaded on every
+`skills/nitpicker/scripts/check-context-tokens.py` reports the size of the set loaded on every
 turn and of one invocation. It is CLI-only and **cannot fail a build**: its
 numbers are four-characters-per-token estimates, and gating on an estimate turns
 an approximation into a rule nobody can reproduce. Read the `--baseline` delta,
@@ -110,7 +110,6 @@ Three install traps, each hit once already:
   `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
   Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are the
   exception, and carry no row.
-- Never duplicate `_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
 - No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
 
 ## Findings Store
@@ -162,79 +161,19 @@ findings and the ledger, and regenerates the index.
 
 ## PR Fetchers
 
-`cr` reads a PR's review surface through two entry points —
-`fetch-pr-comments.py` and `fetch-pr-status.py` — that cover GitHub, GitLab and
-Bitbucket Cloud behind **one** JSON format. Both are thin: they resolve their
-sibling directory and delegate to `pr_cli.run_cli`, which parses the argument
-forms and maps exceptions to the 0/1/2 exit contract.
-
-`pr_common.py` is the **port**, and owns everything shared — git-remote parsing,
-platform detection, the `Target` (platform + git host + project path, from which
-the API base is derived), the credential-pinned HTTP layer, both pagination
-styles, the output envelopes, and `provider_for` dispatch. One provider module
-per platform (`pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py`) exposes exactly
-`fetch_comments(target, n)` and `fetch_status(target, n)`.
-
-`pr_cli.py` is the CLI **driving adapter** and is deliberately not part of that
-port: argv parsing, stdout rendering and exit codes are facts about running as a
-command, and `pr_common` is imported by all three providers and by
-`mcp_server.py` — the other driving adapter — none of which run as this CLI.
-Keeping the two apart is what lets `pr_common` stay the library its docstring
-claims. `make ring-deps` prints the resulting graph.
-
-Two invariants make the shared format worth having, and both are pinned by
-tests. A field a platform cannot supply is present and empty or null rather than
-absent, so a caller reads every key unconditionally instead of branching on key
-existence to learn which platform answered. And a credential is only ever sent
-to the host it was declared for:
-the redirect handler is built per-request with that host, every paginated URL is
-re-validated before it is followed (both `Link` headers and body `next` fields
-are server-controlled), and a token reaches only its platform's own public
-host unless `GH_HOST`/`GITLAB_HOST` names the self-hosted one. Withheld by
-default, declared by exception: gating on a *mismatch* instead would let the
-unconfigured case through, since it declares no host to mismatch against.
-Platform detection refuses an unrecognised host rather than guessing, since a
-wrong guess is a credential handed to a third party.
-
-The MCP (Model Context Protocol) tools `np_pr_comments` and `np_pr_status` wrap
-the same providers. They are the only tools on the server carrying
-`openWorldHint: true`, and their results are wrapped in an
-`<untrusted-data source="pull-request">` envelope — PR bodies are written by
-anyone who can comment on the PR. They are not the only enveloped tools:
-`np_context_pack` and the findings readers carry their own `source` tags, since
-repository paths and stored finding bodies are written by whoever wrote the
-audited tree. SKILL.md's **Untrusted results** paragraph is the full list.
+`cr` reads a PR's review surface through `fetch-pr-comments.py` and
+`fetch-pr-status.py`, which cover GitHub, GitLab and Bitbucket Cloud behind one
+JSON format; the MCP (Model Context Protocol) tools `np_pr_comments` and
+`np_pr_status` wrap the same providers. `.claude/rules/pr-fetchers.md` loads
+with those modules and holds the port/adapter split and the credential-pinning
+invariants.
 
 ## Editing a shipped tool mid-session
 
-The MCP server imports every shipped module it depends on once at startup and
-holds them for the life of the process. `_LOADED` in `mcp_server.py` is the
-authoritative list; it includes the hyphen-named `process-sarif.py` and
-`check-rules-anatomy.py`, which reach it through `_load_bundled` rather than a
-plain import and are easy to overlook. **Editing any module on that list does
-not change what the running server executes.** Worse, two servers are
-registered: `.mcp.json` starts one from the working tree, and
-`.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the
-installed copy under `~/.claude/plugins/cache/`, which reflects only the
-installed version, at any age.
-
-So after editing anything under `skills/*/scripts/`, drive the findings store
-through `python3 skills/nitpicker/scripts/findings.py` for the rest of the
-session; it loads fresh every invocation. Restarting the session picks up the
-new code.
-
-`mcp_server.py` records each module's mtime at import (its own file included)
-and prefixes a `[warn]` line to the result of every tool that writes
-(`np_new_finding`, `np_resolve_finding`, `np_write_index`) when the file has
-since changed, or when it is serving a different copy than on disk. The read
-tools carry no such prefix, so an edit to `process-sarif.py` or
-`check-rules-anatomy.py` reaches you through the rule above and through nothing
-else: `np_process_sarif` will consolidate a security scan with code that is not
-on disk and say nothing. This is a backstop, not the control: the rule above is.
-
-This is not hypothetical. A stale `redact()` wrote an unredacted credential into
-`resolved.jsonl` during the audit that added the redaction, and only a
-`detect-private-key` commit hook caught it — see `audit-9bc6eb39`.
+The running MCP server holds the shipped modules it imported at startup, so an
+edit under `skills/*/scripts/` does not change what it executes.
+`.claude/rules/mcp-stale-server.md` loads with those files and names the
+interface to use for the rest of the session.
 
 ## Script Execution
 
@@ -254,62 +193,20 @@ discipline plus the per-tool `--help` tests.
 
 ## Suppression Markers
 
-Two scanners run over `skills/` and `scripts/`, and each has its own marker:
-`# nosec` for bandit, `# nosemgrep` for opengrep. `make opengrep` gates the
-second, and `scripts/check-opengrep.py` is the tool.
-
-opengrep is the scanner Codacy reports code findings from, and its ruleset lived
-only in the Codacy UI — so a finding was invisible from a checkout and
-reproducible only by pushing. Two commits went to configuring bandit before the
-owner pointed out which engine was actually reporting. `make opengrep` runs
-`r/python.lang.security.audit`, the namespace that reproduces those findings
-(`p/python` returns nothing here; it omits the `-audit` rule variants).
-
-**A `# nosemgrep` marker only counts on the finding's own line or the line
-directly above it.** One line further up is ignored silently — no warning, no
-diff, the finding just quietly comes back. A reason comment therefore belongs
-*above* the marker: one placed between the marker and the code separates the
-two, and the suppression stops applying.
-
-So the gate also runs a second pass with `--disable-nosem` and fails on any
-marker that lines up with no revealed finding. That catches the misplaced marker
-and the leftover one that outlived its call. Nothing else checks this; Codacy
-does not.
-
-Two things worth knowing before trusting a clean run:
-
-- Staleness is judged only against the configured namespace, so suppressing a
-  rule outside it means widening `CONFIG` first, or the marker reads as stale.
-- Markers outside the scanned roots are judged neither way; the count is printed
-  rather than passed over silently.
-
-A scan error fails the gate. opengrep skips a file it cannot parse, so a parse
-error means unscanned code, and reporting the remainder as clean would hide it.
-This is also why the gate runs opengrep rather than semgrep: semgrep 1.172.0
-cannot parse a `match` statement and drops the whole file, and this repo uses
-them.
-
-Locally the target skips when opengrep is absent; under CI it fails instead,
-because a gate that skips silently is not a gate. The `Validate` workflow
-installs a version-pinned, digest-verified binary before `make check`.
+`# nosec` marks a bandit finding and `# nosemgrep` an opengrep one; `make
+opengrep` reproduces Codacy's opengrep findings and fails on a `# nosemgrep`
+that suppresses nothing. Locally the target skips when opengrep is absent; the
+`Validate` workflow installs a pinned binary, so under CI it fails instead.
+`.claude/rules/suppression-markers.md` loads with `scripts/` and `skills/` and
+holds the placement rule and the gate's limits.
 
 ## The Agentlinter Baseline
 
-Codacy's other engine is Agentlinter, which lints `CLAUDE.md`, `AGENTS.md`,
-`.claude/rules/` and the command files. `make agentlinter` reproduces it from a
-checkout, closing the gap `make opengrep` closed for the first engine.
-`scripts/check-agentlinter.py`'s docstring carries the rest: the pinned version,
-the mandatory `--local`, and why the gate parses `--json` (it exits 0 regardless).
-
-It gates against `.agentlinter-baseline.json`, not on severity: every `critical`
-it reported here was a false positive, so a severity gate would fail forever on
-noise. A new diagnostic fails the build — fix it, or accept it with `make
-agentlinter-update`. An entry that stops firing is reported and fails nothing.
-
-Every baselined rule carries a written justification in that file's `reasons`
-map; the gate fails on one that does not, and `--update` preserves them. Without
-it a baseline cannot be told from a list of things nobody read. Every entry was
-audited against source on 2026-09-12.
+`make agentlinter` reproduces Codacy's Agentlinter engine over `CLAUDE.md`,
+`AGENTS.md`, `.claude/rules/` and the command files, and fails on a diagnostic
+missing from `.agentlinter-baseline.json` — fix it, or accept it with `make
+agentlinter-update`. `.claude/rules/agentlinter-baseline.md` covers the
+baseline and its justifications.
 
 ## Adding a New Command
 
@@ -349,6 +246,9 @@ end.
 - `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash only,
   not a `git checkout --` inside a script)
 - `vendored-skills.md`
+- Path-scoped, loaded with the files they govern: `mcp-stale-server.md`,
+  `suppression-markers.md`, `agentlinter-baseline.md`, `version-bumps.md`,
+  `enforcement-surface-owner.md`, `hooks-fail-closed.md`, `pr-fetchers.md`
 
 ## Plugin Metadata
 
@@ -357,26 +257,9 @@ end.
 | `.claude-plugin/plugin.json`      | Plugin name, version, author, keywords   |
 | `.claude-plugin/marketplace.json` | Marketplace listing (used by `/plugins`) |
 
-Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`. Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
-
-`uv.lock` carries one more copy in its root `[[package]]` entry.
-Neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped
-with the lockfile still declaring 2.0.0. `make lock-check` gates it with
-`uv lock --check`, uv's own staleness test, which also catches dependency drift.
-
-Both bump paths keep it current. `bump-version.py` re-locks after writing the
-manifests. On CI, the `sync-lockfile` job in `release-please.yml` commits the
-regenerated lockfile onto the release PR, because release-please has no updater
-for it.
-
-Re-locking is best-effort rather than guaranteed. When `uv` is absent, times
-out, or fails, `bump-version.py` reports the failure and continues instead of
-aborting a bump whose manifests are already written. It names the recovery in
-its output.
-
-Run `uv lock` to resync — that is the supported way to move the version in the
-lockfile. Hand-edit `uv.lock` only where uv cannot run at all, and treat that as
-a stopgap: the next `uv lock` overwrites the value.
+Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`; `uv.lock` holds one more copy.
+`.claude/rules/version-bumps.md` loads with those files and covers both bump
+paths and resyncing the lockfile.
 
 ## Versioning
 
@@ -431,8 +314,8 @@ configured and unnamed here:
   the binding control, not this hook. The same hook also blocks a Bash **write**
   to `scripts/hooks/` or `.claude/settings.json` (`PROTECTED_WRITE`), where
   reading stays allowed — so the enforcement surface cannot be edited around via
-  `sed -i` or a redirect. Hand those edits to the owner rather than reaching for
-  another spelling.
+  `sed -i` or a redirect. `.claude/rules/enforcement-surface-owner.md` says who
+  makes those edits.
 - matcher `Bash` — `deny-unsafe-git-hook.py`, which blocks `git` with
   `--no-verify` or `-n` (stacked clusters and the abbreviations git accepts
   included), a `-c core.hooksPath=`, `--config-env=` or `GIT_CONFIG_*` override

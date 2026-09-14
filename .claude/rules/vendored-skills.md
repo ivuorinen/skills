@@ -1,3 +1,12 @@
+---
+paths:
+  - ".claude/skills/**"
+  - "skills/*/commands/**"
+  - "scripts/validate-skill.py"
+  - "tests/test_validate_skill.py"
+  - "NOTICE"
+---
+
 # Vendored Skills
 
 A vendored skill is authored by someone else and installed into this repo rather

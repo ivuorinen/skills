@@ -1,7 +1,9 @@
 # Instruction Budget
 
-`CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md` and `.claude/rules/*.md` are read
-on every turn, whether or not the turn needs them. Claude Code spends part of
+`CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md` and every rule file under
+`.claude/rules/` without `paths:` frontmatter — nested ones included
+(`.claude/rules/**/*.md`) — are read on every turn, whether or not the turn
+needs them. Claude Code spends part of
 the window on its own instructions first — roughly 50 — so this set and the
 harness draw on one budget.
 
