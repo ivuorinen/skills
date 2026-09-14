@@ -280,6 +280,17 @@ def test_invalid_double_star_glob_reported_not_crashed(tmp_path):
     assert _has(errors, "not a valid pattern") or _has(warnings, "stale")
 
 
+def test_a_glob_that_raises_is_reported_on_every_python(tmp_path, monkeypatch):
+    # The test above only reaches the ValueError arm on CPython <3.13, so the
+    # coverage gate passed or failed by interpreter. Force the raise instead.
+    def _raise(*_a, **_k):
+        raise ValueError("Invalid pattern")
+
+    monkeypatch.setattr(Path, "glob", _raise)
+    content = '---\npaths:\n  - "src/*.ts"\n---\n\nBody.\n'
+    assert _has(_errors(tmp_path, content), "not a valid pattern: 'src/*.ts'")
+
+
 def test_blank_line_inside_paths_list_keeps_all_items():
     text = '---\npaths:\n  - "stale/removed/*"\n\n  - "src/*"\n---\nbody\n'
     fm, _ = _mod.parse_rules_frontmatter(text)
