@@ -23,9 +23,11 @@ one host, paginating, and shaping the result.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,9 +45,12 @@ _SEGMENT_RE = re.compile(r"[A-Za-z0-9._-]+")
 # A DNS hostname: dot-separated labels of alphanumerics and hyphens, no empty
 # label and no leading/trailing hyphen. Stricter than `_SEGMENT_RE` on purpose —
 # this value becomes the netloc every credential is pinned to, so `..` and other
-# path tokens must not survive as "hosts".
+# path tokens must not survive as "hosts". An optional numeric `:port` is part of
+# it, because an https remote on a non-standard port carries that port into the
+# API origin (audit-b2706098).
 _HOST_RE = re.compile(
     r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
+    r"(?::[0-9]{1,5})?"
 )
 
 # How many `owner/repo`-style segments each platform's project path has. GitLab
@@ -247,8 +252,15 @@ def parse_remote_url(url: str) -> tuple[str, str]:
         split = urllib.parse.urlsplit(url)
         if not split.netloc:
             raise UsageError(f"unrecognised git remote URL: {url!r}")
-        # netloc may carry credentials and a port; neither belongs in the host.
-        host = split.netloc.rsplit("@", 1)[-1].split(":", 1)[0]
+        # netloc may carry credentials and a port. Credentials never belong in
+        # the host. A web port does — audit-b2706098: dropping `:8443` aimed a
+        # self-hosted API at whatever serves :443 on that host, carrying the
+        # token declared for the instance. An ssh port names the git daemon, not
+        # the API, and a scheme's default port is the same server, so both go.
+        host, _, port = split.netloc.rsplit("@", 1)[-1].partition(":")
+        default_port = {"https": "443", "http": "80"}.get(split.scheme)
+        if default_port and port and port != default_port:
+            host = f"{host}:{port}"
         path = split.path
     path = path.strip("/")
     if path.endswith(".git"):
@@ -272,9 +284,25 @@ def git_remote_url(remote: str = "origin", cwd: str | None = None) -> str:
     parse failure that describes the wrong problem. The error carries git's own
     stderr plus the explicit alternatives, so a checkout with no remote — a
     tarball, a fresh CI clone — is one message away from working.
+
+    security-02c0e5c1: `core.fsmonitor` and `core.hooksPath` name commands git
+    runs, and git reads them from the repository's own `.git/config` — which
+    arrives with the tree when that tree is an archive or a shared directory
+    rather than a fresh clone. Both are pinned with `-c`, which outranks every
+    config file. Ceiling: only these two keys; `remote get-url` invokes no diff
+    or textconv driver, where the other config-borne commands live.
     """
     result = subprocess.run(
-        ["git", "remote", "get-url", remote],
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "remote",
+            "get-url",
+            remote,
+        ],
         capture_output=True,
         timeout=10,
         cwd=cwd,
@@ -439,17 +467,46 @@ def _check_url(url: str, allowed_netloc: str) -> None:
         )
 
 
+# Largest body one request may return. A review-surface page is kilobytes; this
+# bounds what a broken or hostile host can make a single call hold in memory.
+_MAX_BODY_BYTES = 32 * 1024 * 1024
+
+
 def http_json(
     url: str, headers: dict[str, str], allowed_netloc: str, timeout: int = 30
 ) -> tuple[Any, Any]:
-    """GET `url` and parse JSON. Returns (body, response_headers)."""
+    """GET `url` and parse JSON. Returns (body, response_headers).
+
+    reliability-be38987f: `timeout` reaches urllib as a *socket* timeout, which
+    bounds each blocking operation rather than the request, so a host sending a
+    byte just inside it held one call open for as long as it kept writing, and
+    an unbounded `read()` grew memory with it. The body is therefore drained
+    with `read1` — one socket read per call — and checked against a wall-clock
+    deadline and `_MAX_BODY_BYTES` between reads. `read(n)` cannot do this: a
+    buffered read blocks until n bytes have arrived, however slowly they come.
+
+    Ceiling: the deadline is checked between reads, so the worst case is about
+    twice `timeout`. Connecting and reading the status line and headers happen
+    inside `opener.open`, bounded only per socket operation, so a host that
+    trickles its headers is not cut off by the deadline.
+    """
     _check_url(url, allowed_netloc)
     opener = urllib.request.build_opener(_TokenSafeRedirectHandler(allowed_netloc))
     req = urllib.request.Request(url, headers={"User-Agent": _UA, **headers})
+    deadline = time.monotonic() + timeout
     # Scheme and host are pinned by _check_url immediately above, on this URL and
     # on every paginated successor before it is followed.
     with opener.open(req, timeout=timeout) as resp:  # nosec B310
-        raw = resp.read()
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := resp.read1(65536):
+            size += len(chunk)
+            if size > _MAX_BODY_BYTES:
+                raise TransportError(f"response from {url!r} exceeds {_MAX_BODY_BYTES} bytes")
+            if time.monotonic() > deadline:
+                raise TransportError(f"response from {url!r} missed its {timeout}s deadline")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
         return (json.loads(raw) if raw else None), resp.headers
 
 
@@ -471,7 +528,8 @@ def _next_from_link(link_header: str) -> str:
 # `next` link is chosen by the *server*: a bug, a proxy, or a hostile endpoint
 # that returns a constant next URL would otherwise spin forever, and these tools
 # run in non-interactive shells where an unbounded stall is worse than an error.
-# The per-request timeout bounds one hop, never the loop.
+# `http_json`'s deadline bounds one hop's body, never the loop — and not that
+# hop's headers; its docstring states the ceiling.
 _MAX_PAGES = 100
 
 
@@ -512,7 +570,7 @@ def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -
     return results
 
 
-def cli_json(argv: list[str], timeout: int = 60) -> Any:
+def cli_json(argv: list[str], timeout: int = 60, env: dict[str, str] | None = None) -> Any:
     """Run a platform CLI (`gh`, `glab`) and parse its JSON stdout.
 
     Handles a paginating CLI that emits one JSON document per page rather than
@@ -521,6 +579,11 @@ def cli_json(argv: list[str], timeout: int = 60) -> Any:
     documents and a single `json.loads` raises — turning the GitLab CLI fallback
     into a hard failure on exactly the large merge requests that need paging.
     Consecutive documents are decoded and, when they are arrays, merged into one.
+
+    `env`, when given, replaces the child's environment; None inherits this
+    process's. Both CLIs read a token from the environment for whichever host
+    they are pointed at, so a provider passes `env_without(...)` for a host the
+    user never declared (security-fc4ef7fe, security-de2d288b).
     """
     # argv is a list and no shell is involved, so there is nothing for an
     # argument to escape into. Its interpolated parts are validated upstream:
@@ -529,7 +592,7 @@ def cli_json(argv: list[str], timeout: int = 60) -> Any:
     # The marker must sit on the line directly above the call — opengrep ignores
     # it even one line further up, silently.
     # nosemgrep: dangerous-subprocess-use-audit
-    result = subprocess.run(argv, capture_output=True, timeout=timeout)
+    result = subprocess.run(argv, capture_output=True, timeout=timeout, env=env)
     if result.returncode != 0:
         raise TransportError(
             result.stderr.decode().strip() or f"{argv[0]} exited {result.returncode}"
@@ -559,6 +622,26 @@ def _decode_concatenated(text: str) -> list[Any]:
         while index < len(text) and text[index] in " \t\r\n":
             index += 1
     return docs
+
+
+def env_without(names: tuple[str, ...], why: str) -> dict[str, str]:
+    """This process's environment minus `names`, for a CLI that must not see them.
+
+    Withholding a token from this module's own HTTP call does not withhold it
+    from `gh` or `glab`: both read credentials from the environment for
+    whichever host `--hostname` names (security-fc4ef7fe, security-de2d288b).
+    The variables actually removed are named on stderr, followed by `why`, so a
+    CLI that then fails to authenticate reads as a withheld credential rather
+    than a broken login.
+
+    Ceiling: environment variables only. A login the CLI stored for that host
+    itself (`gh auth login --hostname`, glab's config) is the user's per-host
+    declaration and stays in effect.
+    """
+    removed = [name for name in names if name in os.environ]
+    if removed:
+        warn(f"not passing {', '.join(removed)} {why}")
+    return {key: value for key, value in os.environ.items() if key not in names}
 
 
 def cli_available(name: str) -> bool:

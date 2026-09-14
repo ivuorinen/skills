@@ -108,6 +108,59 @@ class TestGhTransports:
         argv = run.call_args[0][0]
         assert argv[argv.index("--hostname") + 1] == "ghe.acme.com"
 
+    def test_graphql_on_github_com_inherits_the_environment(self, monkeypatch):
+        monkeypatch.setenv("GH_TOKEN", "tok")
+        with patch.object(subprocess, "run", return_value=_proc(stdout=b"{}")) as run:
+            gh._gh_graphql("query", {})
+        assert run.call_args[1]["env"] is None
+
+    def test_graphql_on_an_undeclared_enterprise_host_gets_no_env_token(self, monkeypatch):
+        """security-fc4ef7fe: gh reads GH_ENTERPRISE_TOKEN for every non-github.com host.
+
+        `_token_for` withholding GITHUB_TOKEN meant nothing while gh itself
+        picked the enterprise token out of the inherited environment and sent
+        it to whichever host `--hostname` named.
+        """
+        for name in gh._GH_TOKEN_VARS:
+            monkeypatch.setenv(name, "secret")
+        monkeypatch.setenv("KEEP_ME", "1")
+        monkeypatch.delenv("GH_HOST", raising=False)
+        with patch.object(subprocess, "run", return_value=_proc(stdout=b"{}")) as run:
+            gh._gh_graphql("query", {}, "github.evil.example")
+        env = run.call_args[1]["env"]
+        assert set(gh._GH_TOKEN_VARS) == {
+            "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+        }
+        assert not set(gh._GH_TOKEN_VARS) & set(env)
+        assert env["KEEP_ME"] == "1"
+
+    def test_graphql_on_the_declared_enterprise_host_inherits_the_environment(self, monkeypatch):
+        monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "secret")
+        monkeypatch.setenv("GH_HOST", "GHE.acme.com")
+        with patch.object(subprocess, "run", return_value=_proc(stdout=b"{}")) as run:
+            gh._gh_graphql("query", {}, "ghe.acme.com")
+        assert run.call_args[1]["env"] is None
+
+    def test_rest_paginate_on_an_undeclared_enterprise_host_gets_no_env_token(self, monkeypatch):
+        monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "secret")
+        monkeypatch.delenv("GH_HOST", raising=False)
+        with patch.object(subprocess, "run", return_value=_proc(stdout=b"[[]]")) as run:
+            gh._gh_rest_paginate("repos/o/r/x", "github.evil.example")
+        assert "GH_ENTERPRISE_TOKEN" not in run.call_args[1]["env"]
+
+    def test_gh_get_on_an_undeclared_enterprise_host_gets_no_env_token(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_ENTERPRISE_TOKEN", "secret")
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_HOST", raising=False)
+        with patch.object(gh, "_gh_available", return_value=True):
+            _list, get_one, _label = gh._transport(_GHES)
+        with patch.object(subprocess, "run", return_value=_proc(stdout=b"{}")) as run:
+            get_one("repos/o/r/pulls/1")
+        assert "GITHUB_ENTERPRISE_TOKEN" not in run.call_args[1]["env"]
+
     def test_rest_paginate_flattens_slurped_pages(self):
         with patch.object(subprocess, "run", return_value=_proc(stdout=b"[[1,2],[3]]")) as run:
             assert gh._gh_rest_paginate("repos/o/r/x") == [1, 2, 3]
@@ -245,6 +298,37 @@ class TestTransportSelection:
         ):
             gh._transport(_TARGET)
 
+    @pytest.mark.parametrize(
+        "target",
+        [_TARGET, _GHES],
+        ids=["github-com-while-gh-host-names-another", "declared-enterprise"],
+    )
+    def test_every_gh_call_names_the_target_host(self, target, monkeypatch):
+        """gh picks its host from GH_HOST whenever `--hostname` is absent.
+
+        The flag used to be omitted for github.com, so with GH_HOST naming an
+        Enterprise instance a github.com fetch went to that instance instead.
+        All three gh call sites are driven through the stubbed subprocess.
+        """
+        monkeypatch.setenv("GH_HOST", "ghe.acme.com")
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        def fake_run(argv, *a, **k):
+            if "graphql" in argv:
+                return _proc(stdout=json.dumps(_graphql_response([])).encode())
+            return _proc(stdout=b"[[]]" if "--paginate" in argv else b"{}")
+
+        with patch.object(subprocess, "run", side_effect=fake_run) as run:
+            gh.fetch_graphql(target, 1)
+            gh._gh_transport(target)("repos/owner/repo/pulls/1/comments")
+            with patch.object(gh, "_gh_available", return_value=True):
+                _list, get_one, _label = gh._transport(target)
+            get_one("repos/owner/repo/pulls/1")
+        assert run.call_count == 3
+        for call in run.call_args_list:
+            argv = call[0][0]
+            assert argv[argv.index("--hostname") + 1] == target.host
+
 
 # ── GraphQL thread fetch ──────────────────────────────────────────────────────
 
@@ -300,6 +384,52 @@ class TestFetchGraphql:
         with patch.object(gh, "_gh_graphql", side_effect=[first, more]):
             threads = gh.fetch_graphql(_TARGET, 1)
         assert [x["id"] for x in threads[0]["comments"]] == ["C_1", "C_2"]
+
+    def test_outer_pagination_with_a_constant_cursor_stops_at_the_page_cap(self, capsys):
+        """reliability-2bc887b7: a server answering hasNextPage forever is bounded.
+
+        Measured past 1000 requests before the cap; the MCP server serves stdio
+        on one thread, so that stalled every later tool call in the session.
+        """
+        page = _graphql_response([_thread_node()], has_next=True)
+        with patch.object(gh, "_gh_graphql", return_value=page) as gql:
+            threads = gh.fetch_graphql(_TARGET, 1)
+        assert gql.call_count == c._MAX_PAGES
+        assert len(threads) == c._MAX_PAGES
+        assert "may be truncated" in capsys.readouterr().err
+
+    def test_inner_pagination_with_a_constant_cursor_stops_at_the_page_cap(self, capsys):
+        first = _graphql_response([_thread_node(has_next=True)])
+        more = {
+            "data": {
+                "node": {
+                    "comments": {
+                        "pageInfo": {"hasNextPage": True, "endCursor": "same"},
+                        "nodes": [],
+                    }
+                }
+            }
+        }
+        with patch.object(gh, "_gh_graphql", side_effect=[first] + [more] * c._MAX_PAGES) as gql:
+            gh.fetch_graphql(_TARGET, 1)
+        assert gql.call_count == 1 + c._MAX_PAGES
+        assert "may be truncated" in capsys.readouterr().err
+
+    def test_inner_pagination_ending_on_the_last_allowed_page_does_not_warn(
+        self, monkeypatch, capsys
+    ):
+        # The warning marks a real truncation, not a thread whose final page
+        # happened to be the last one the cap allowed.
+        monkeypatch.setattr(c, "_MAX_PAGES", 1)
+        first = _graphql_response([_thread_node(has_next=True)])
+        last = {
+            "data": {
+                "node": {"comments": {"pageInfo": {"hasNextPage": False}, "nodes": []}},
+            }
+        }
+        with patch.object(gh, "_gh_graphql", side_effect=[first, last]):
+            gh.fetch_graphql(_TARGET, 1)
+        assert "may be truncated" not in capsys.readouterr().err
 
     def test_thread_deleted_mid_inner_pagination_keeps_what_was_read(self):
         first = _graphql_response([_thread_node(has_next=True)])

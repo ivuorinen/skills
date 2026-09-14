@@ -9,11 +9,13 @@ loosened host check still returns data, and a dropped envelope key still parses.
 import email.message
 import http.server
 import importlib.util
+import io
 import json
 import runpy
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -32,10 +34,22 @@ _STATUS_CLI = _SCRIPTS / "fetch-pr-status.py"
 
 
 def _http_resp(body, link: str = "") -> MagicMock:
+    """A urllib response yielding `body` as JSON through `read1`.
+
+    `read1` is re-armed on every `with`: `http_json` drains a body in chunks
+    until `read1` returns empty, and the page-cap tests reopen this one
+    response a hundred times, so a stream consumed once would read as empty
+    from the second page on.
+    """
+    data = json.dumps(body).encode()
     resp = MagicMock()
-    resp.read.return_value = json.dumps(body).encode()
     resp.headers.get.return_value = link
-    resp.__enter__ = lambda s: s
+
+    def enter(s):
+        s.read1.side_effect = io.BytesIO(data).read1
+        return s
+
+    resp.__enter__ = enter
     resp.__exit__ = MagicMock(return_value=False)
     return resp
 
@@ -83,12 +97,51 @@ class TestParseRemoteUrl:
     def test_supported_spellings(self, url, expected):
         assert c.parse_remote_url(url) == expected
 
-    def test_credentials_and_port_are_not_part_of_the_host(self):
-        # A netloc carrying user:pass@host:port must yield the bare host, or the
+    def test_credentials_are_not_part_of_the_host(self):
+        # A netloc carrying user:pass@host must yield the host alone, or the
         # credential guard would pin to a string no API URL can ever match.
-        assert (
-            c.parse_remote_url("https://u:p@gitlab.acme.com:8443/g/p.git")[0] == "gitlab.acme.com"
-        )
+        assert c.parse_remote_url("https://u:p@gitlab.acme.com/g/p.git")[0] == "gitlab.acme.com"
+
+    @pytest.mark.parametrize(
+        "url, expected",
+        [
+            ("https://u:p@gitlab.acme.com:8443/g/p.git", "gitlab.acme.com:8443"),
+            ("http://gitlab.acme.com:8080/g/p.git", "gitlab.acme.com:8080"),
+            ("https://gitlab.acme.com:443/g/p.git", "gitlab.acme.com"),
+            ("http://gitlab.acme.com:80/g/p.git", "gitlab.acme.com"),
+            ("ssh://git@gitlab.acme.com:2222/g/p.git", "gitlab.acme.com"),
+        ],
+    )
+    def test_a_web_port_is_kept_and_an_ssh_port_is_not(self, url, expected):
+        """audit-b2706098: an https port selects the server the API lives on.
+
+        Dropping it aimed a self-hosted instance on :8443 at whatever answers
+        :443 on that host — carrying the token declared for the instance. An
+        ssh port names the git daemon, never the API, so it still goes; a
+        scheme's default port is the same server either way.
+        """
+        assert c.parse_remote_url(url)[0] == expected
+
+    @pytest.mark.parametrize(
+        "url, api_base",
+        [
+            (
+                "https://gitlab.acme.com:8443/grp/proj/-/merge_requests/5",
+                "https://gitlab.acme.com:8443/api/v4",
+            ),
+            ("https://github.acme.com:8443/o/r/pull/3", "https://github.acme.com:8443/api/v3"),
+        ],
+    )
+    def test_the_port_reaches_the_api_base_and_the_pinned_netloc(self, url, api_base):
+        host, path, _ = c.parse_pr_url(url)
+        target = c.make_target(host, path)
+        assert target.api_base == api_base
+        assert target.api_netloc == api_base.split("/")[2]
+
+    @pytest.mark.parametrize("host", ["gitlab.acme.com:abc", "gitlab.acme.com:", ":8443"])
+    def test_a_malformed_port_is_refused(self, host):
+        with pytest.raises(c.UsageError, match="invalid host"):
+            c.platform_for_host(host)
 
     @pytest.mark.parametrize("url", ["", "   ", "not-a-url", "https://github.com/"])
     def test_unparseable_raises_usage_error(self, url):
@@ -321,8 +374,25 @@ class TestGitRemoteUrl:
         proc = MagicMock(returncode=0, stdout=b"git@github.com:o/r.git\n", stderr=b"")
         with patch.object(subprocess, "run", return_value=proc) as run:
             assert c.git_remote_url("upstream", cwd="/tmp") == "git@github.com:o/r.git"
-        assert run.call_args[0][0] == ["git", "remote", "get-url", "upstream"]
+        assert run.call_args[0][0][-3:] == ["remote", "get-url", "upstream"]
         assert run.call_args[1]["cwd"] == "/tmp"
+
+    def test_the_audited_trees_git_config_cannot_run_a_command(self):
+        """security-02c0e5c1: `core.fsmonitor` and hooks in `.git/config` are commands.
+
+        The tree being read may arrive with its own `.git` directory, so both
+        are overridden on the command line, which outranks every config file.
+        """
+        proc = MagicMock(returncode=0, stdout=b"u\n", stderr=b"")
+        with patch.object(subprocess, "run", return_value=proc) as run:
+            c.git_remote_url()
+        assert run.call_args[0][0][:5] == [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ]
 
     def test_missing_remote_names_the_way_out(self):
         # The error has to say what to run instead, or the agent spends a turn
@@ -364,6 +434,31 @@ class TestCliHelpers:
         proc = MagicMock(returncode=0, stdout=b'{"ok": 1}', stderr=b"")
         with patch.object(subprocess, "run", return_value=proc):
             assert c.cli_json(["gh", "api", "x"]) == {"ok": 1}
+
+    def test_cli_json_passes_the_environment_it_is_given(self):
+        # The providers strip credentials a CLI would send off-host; that only
+        # works if the stripped environment is the one the CLI actually runs in.
+        proc = MagicMock(returncode=0, stdout=b"{}", stderr=b"")
+        with patch.object(subprocess, "run", return_value=proc) as run:
+            c.cli_json(["glab", "api", "x"], env={"PATH": "/bin"})
+            assert run.call_args[1]["env"] == {"PATH": "/bin"}
+            c.cli_json(["glab", "api", "x"])
+            assert run.call_args[1]["env"] is None
+
+    def test_env_without_removes_only_the_named_variables_and_says_so(self, monkeypatch, capsys):
+        monkeypatch.setenv("GITLAB_TOKEN", "secret")
+        monkeypatch.setenv("KEEP_ME", "1")
+        monkeypatch.delenv("OAUTH_TOKEN", raising=False)
+        env = c.env_without(("GITLAB_TOKEN", "OAUTH_TOKEN"), "to glab for gitlab.evil.example")
+        assert "GITLAB_TOKEN" not in env and env["KEEP_ME"] == "1"
+        err = capsys.readouterr().err
+        assert "GITLAB_TOKEN" in err and "OAUTH_TOKEN" not in err
+        assert "gitlab.evil.example" in err
+
+    def test_env_without_is_silent_when_nothing_was_set(self, monkeypatch, capsys):
+        monkeypatch.delenv("OAUTH_TOKEN", raising=False)
+        c.env_without(("OAUTH_TOKEN",), "to glab")
+        assert capsys.readouterr().err == ""
 
     def test_cli_json_treats_empty_stdout_as_no_body(self):
         proc = MagicMock(returncode=0, stdout=b"  ", stderr=b"")
@@ -739,13 +834,75 @@ class TestPaginateLink:
 
     def test_empty_body_contributes_nothing(self):
         resp = MagicMock()
-        resp.read.return_value = b""
+        resp.read1.return_value = b""
         resp.headers.get.return_value = ""
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
         with patch.object(c.urllib.request, "build_opener") as opener:
             opener.return_value.open.return_value = resp
             assert c.paginate_link("https://api.github.com/x", {}, "api.github.com") == []
+
+
+def _trickle(interval: float) -> type:
+    """A handler promising a large body and sending it one byte per `interval`.
+
+    Each byte lands well inside a socket timeout, so a per-operation timeout
+    never fires: the shape reliability-be38987f measured holding one request
+    open for as long as the server kept writing. The write loop is bounded so
+    `shutdown()` cannot hang once the client has gone.
+    """
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            for _ in range(20):
+                try:
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                except OSError:
+                    return
+                time.sleep(interval)
+
+        # Signature matches BaseHTTPRequestHandler's exactly; silences stderr.
+        def log_message(self, format, *args):
+            pass
+
+    return Handler
+
+
+class TestHttpJsonBounds:
+    """reliability-be38987f: one request is bounded in wall time and in bytes."""
+
+    def test_a_trickling_body_is_cut_off_at_the_deadline(self):
+        # A real socket, because the defect lives below any mock: a buffered
+        # read of N bytes blocks until N arrive, however slowly they come.
+        server, port = _serve(_trickle(0.2))
+        try:
+            start = time.monotonic()
+            with (
+                patch.object(c, "_check_url"),
+                pytest.raises(c.TransportError, match="deadline"),
+            ):
+                c.http_json(f"http://127.0.0.1:{port}/x", {}, f"127.0.0.1:{port}", timeout=1)
+            assert time.monotonic() - start < 3
+        finally:
+            server.shutdown()
+
+    def test_a_body_past_the_size_cap_is_refused(self, monkeypatch):
+        monkeypatch.setattr(c, "_MAX_BODY_BYTES", 8)
+        with patch.object(c.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = _http_resp(["0123456789"])
+            with pytest.raises(c.TransportError, match="bytes"):
+                c.http_json("https://api.github.com/x", {}, "api.github.com")
+
+    def test_a_body_at_the_size_cap_is_read_whole(self, monkeypatch):
+        body = ["0123456789"]
+        monkeypatch.setattr(c, "_MAX_BODY_BYTES", len(json.dumps(body)))
+        with patch.object(c.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = _http_resp(body)
+            assert c.http_json("https://api.github.com/x", {}, "api.github.com")[0] == body
 
 
 class TestPaginateBodyNext:

@@ -60,6 +60,28 @@ _JOB_STATES = {
 _MR_STATES = {"opened": "open", "locked": "open", "closed": "closed", "merged": "merged"}
 
 
+# The variables glab takes a token from for whichever host it is pointed at
+# (gitlab-org/cli `internal/api/client.go`, `searchEnvForIdentity`). CI_JOB_TOKEN
+# is a credential for the CI server's own instance and nothing here needs it on
+# another host, so it is withheld with them.
+_GLAB_TOKEN_VARS = ("GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN", "CI_JOB_TOKEN")
+
+
+def _declared(target: pr_common.Target) -> bool:
+    """Whether GITLAB_HOST names `target`'s host, written bare or as a URL.
+
+    Shared by `_token_for` and the glab transport so the two cannot disagree
+    about which host a credential may reach. The port is compared, not dropped:
+    an https remote keeps it (audit-b2706098), and `gitlab.acme.com:8443` is a
+    different server from `gitlab.acme.com`.
+    """
+    declared = os.environ.get("GITLAB_HOST", "").strip()
+    if not declared:
+        return False
+    netloc = urllib.parse.urlsplit(declared if "://" in declared else f"https://{declared}").netloc
+    return netloc.lower() == target.host.lower()
+
+
 def _token_for(target: pr_common.Target) -> str:
     """GITLAB_TOKEN, but only when it belongs to the instance being addressed.
 
@@ -75,13 +97,7 @@ def _token_for(target: pr_common.Target) -> str:
     token = os.environ.get("GITLAB_TOKEN", "")
     if not token or target.host == "gitlab.com":
         return token
-    declared = os.environ.get("GITLAB_HOST", "").strip()
-    declared_host = (
-        urllib.parse.urlsplit(declared if "://" in declared else f"https://{declared}").netloc
-        if declared
-        else ""
-    )
-    if declared_host and declared_host.lower() == target.host.lower():
+    if _declared(target):
         return token
     pr_common.warn(
         f"GITLAB_TOKEN is not declared for {target.host}; not sending it. "
@@ -93,7 +109,14 @@ def _token_for(target: pr_common.Target) -> str:
 def _transport(
     target: pr_common.Target,
 ) -> tuple[Callable[[str], list[Any]], Callable[[str], Any], str]:
-    """(paginating list transport, single-object transport, label) — or raise."""
+    """(paginating list transport, single-object transport, label) — or raise.
+
+    security-de2d288b: glab takes a token from the environment for any host it
+    is pointed at, so withholding GITLAB_TOKEN from the REST transport did
+    nothing once the glab fallback ran with this process's environment. For a
+    host other than gitlab.com that GITLAB_HOST does not name, glab runs with
+    `_GLAB_TOKEN_VARS` removed; only a login glab stored for that host applies.
+    """
     token = _token_for(target)
     if token:
         headers = {"PRIVATE-TOKEN": token}
@@ -112,6 +135,15 @@ def _transport(
 
     if pr_common.cli_available("glab"):
         base = ["glab", "api", "--hostname", target.host]
+        env = (
+            None
+            if target.host == "gitlab.com" or _declared(target)
+            else pr_common.env_without(
+                _GLAB_TOKEN_VARS,
+                f"to glab for {target.host}; "
+                f"set GITLAB_HOST={target.host} if they belong to that instance",
+            )
+        )
 
         def glab_list(path: str) -> list[Any]:
             """Normalise `glab`'s output to a list, whatever arrived.
@@ -121,10 +153,12 @@ def _transport(
             re-check the type at each site.
             """
             joiner = "&" if "?" in path else "?"
-            result = pr_common.cli_json([*base, "--paginate", f"{path}{joiner}per_page=100"])
+            result = pr_common.cli_json(
+                [*base, "--paginate", f"{path}{joiner}per_page=100"], env=env
+            )
             return result if isinstance(result, list) else ([] if result is None else [result])
 
-        return glab_list, lambda path: pr_common.cli_json([*base, path]), "glab"
+        return glab_list, lambda path: pr_common.cli_json([*base, path], env=env), "glab"
 
     raise pr_common.TransportError(
         "No auth available. Set GITLAB_TOKEN (and GITLAB_HOST for a self-hosted "

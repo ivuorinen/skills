@@ -100,29 +100,67 @@ def _gh_available() -> bool:
     return pr_common.cli_available("gh")
 
 
-def _gh_graphql(query: str, variables: dict[str, Any], hostname: str = "") -> dict[str, Any]:
+# The variables gh takes a token from. go-gh's `tokenForHost` returns
+# GH_ENTERPRISE_TOKEN or GITHUB_ENTERPRISE_TOKEN for every host that is not
+# github.com, github.localhost or a ghe.com tenancy, and GH_TOKEN/GITHUB_TOKEN for
+# those — which one reaches a host is gh's choice, so all four are withheld.
+_GH_TOKEN_VARS = ("GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
+def _declared(host: str) -> bool:
+    """Whether GH_HOST names `host` — the user's statement that their tokens are for it.
+
+    Shared by `_token_for` and `_gh_env` so the urllib transport and the gh
+    transport cannot disagree about which host a credential may reach.
+    """
+    return os.environ.get("GH_HOST", "").strip().lower() == host.lower()
+
+
+def _gh_env(hostname: str) -> dict[str, str] | None:
+    """The environment a gh subprocess for `hostname` runs in; None inherits ours.
+
+    security-fc4ef7fe: `_token_for` pinned GITHUB_TOKEN to GH_HOST, yet every gh
+    call ran with the inherited environment, and gh hands GH_ENTERPRISE_TOKEN to
+    any non-github.com host `--hostname` names. `platform_for_host` accepts any
+    `github.` prefix, so a `github.evil.example` remote received it. For a host
+    GH_HOST does not name, gh runs with no environment token and only a login
+    stored for that host applies.
+
+    github.com inherits the environment: gh never sends the enterprise pair
+    there.
+    """
+    if hostname == "github.com" or _declared(hostname):
+        return None
+    return pr_common.env_without(
+        _GH_TOKEN_VARS,
+        f"to gh for {hostname}; set GH_HOST={hostname} if they belong to that instance",
+    )
+
+
+def _gh_graphql(
+    query: str, variables: dict[str, Any], hostname: str = "github.com"
+) -> dict[str, Any]:
     """Run a GraphQL query through `gh`, passing it on stdin rather than in argv.
 
     `--input -` keeps a multi-line query and its variables out of the command
-    line, where length limits and quoting would both apply. `hostname` is
-    omitted for github.com so `gh` uses its default host resolution.
+    line, where length limits and quoting would both apply. `--hostname` is
+    passed for github.com too: without it gh takes its host from GH_HOST, so a
+    github.com fetch went to whichever Enterprise instance GH_HOST named.
     """
-    argv = ["gh", "api", "graphql"]
-    if hostname:
-        argv += ["--hostname", hostname]
-    argv += ["--input", "-"]
+    argv = ["gh", "api", "graphql", "--hostname", hostname, "--input", "-"]
 
     payload = json.dumps({"query": query, "variables": variables}).encode()
+    env = _gh_env(hostname)
     # argv is a list and no shell is involved. Its only interpolated part is the
     # hostname, validated by _HOST_RE before a pr_common.Target is constructed.
     # nosemgrep: dangerous-subprocess-use-audit
-    result = subprocess.run(argv, input=payload, capture_output=True, timeout=30)
+    result = subprocess.run(argv, input=payload, capture_output=True, timeout=30, env=env)
     if result.returncode != 0:
         raise GhTransportError(result.stderr.decode().strip())
     return json.loads(result.stdout)
 
 
-def _gh_rest_paginate(path: str, hostname: str = "") -> list[Any]:
+def _gh_rest_paginate(path: str, hostname: str = "github.com") -> list[Any]:
     """Every page of a REST collection, flattened only where flattening is right.
 
     `--slurp` wraps the pages in an outer array, and the page shape depends on
@@ -130,16 +168,16 @@ def _gh_rest_paginate(path: str, hostname: str = "") -> list[Any]:
     while a single-object endpoint yields the objects themselves. Extending
     unconditionally splices an object's *keys* into the result and loses the
     record, so an object page is appended whole instead.
+
+    `--hostname` is always passed, for the reason `_gh_graphql` gives.
     """
-    argv = ["gh", "api", "--paginate", "--slurp"]
-    if hostname:
-        argv += ["--hostname", hostname]
-    argv += [path]
+    argv = ["gh", "api", "--paginate", "--slurp", "--hostname", hostname, path]
+    env = _gh_env(hostname)
     # argv is a list and no shell is involved. `path` is built from a pr_common.Target
     # whose segments passed _check_segments, so it carries no separator or
     # traversal token.
     # nosemgrep: dangerous-subprocess-use-audit
-    result = subprocess.run(argv, capture_output=True, timeout=60)
+    result = subprocess.run(argv, capture_output=True, timeout=60, env=env)
     if result.returncode != 0:
         raise GhTransportError(result.stderr.decode().strip())
     pages: list[Any] = json.loads(result.stdout)
@@ -176,7 +214,7 @@ def _token_for(target: pr_common.Target) -> str:
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token or target.host == "github.com":
         return token
-    if os.environ.get("GH_HOST", "").strip().lower() == target.host.lower():
+    if _declared(target.host):
         return token
     pr_common.warn(
         f"GITHUB_TOKEN is not declared for {target.host}; not sending it. "
@@ -187,8 +225,7 @@ def _token_for(target: pr_common.Target) -> str:
 
 def _gh_transport(target: pr_common.Target) -> Callable[[str], list[Any]]:
     """A rest_list callable(path) -> list bound to the gh CLI."""
-    hostname = "" if target.host == "github.com" else target.host
-    return lambda path: _gh_rest_paginate(path, hostname)
+    return lambda path: _gh_rest_paginate(path, target.host)
 
 
 def _token_transport(target: pr_common.Target, token: str) -> Callable[[str], list[Any]]:
@@ -224,11 +261,10 @@ def _transport(
     """
     token = _token_for(target)
     if _gh_available():
-        hostname = "" if target.host == "github.com" else target.host
 
         def gh_get(path: str) -> Any:
-            argv = ["gh", "api"] + (["--hostname", hostname] if hostname else []) + [path]
-            return pr_common.cli_json(argv)
+            argv = ["gh", "api", "--hostname", target.host, path]
+            return pr_common.cli_json(argv, env=_gh_env(target.host))
 
         return _gh_transport(target), gh_get, "gh"
     if token:
@@ -254,23 +290,34 @@ def _gql_comment(c: dict[str, Any]) -> dict[str, Any]:
 
 def _all_thread_comments(node: dict[str, Any], hostname: str) -> list[dict[str, Any]]:
     """All comments for one thread, following the inner `comments` cursor so a
-    thread with >100 comments is not silently truncated to its first page."""
+    thread with >100 comments is not silently truncated to its first page.
+
+    Bounded to `_MAX_PAGES` follow-up requests for the reason `fetch_graphql`
+    is (reliability-2bc887b7), warning only when a next page is still pending.
+    """
 
     conn = node["comments"]
     comments = [_gql_comment(c) for c in conn["nodes"]]
     info = conn.get("pageInfo") or {}
     cursor = info.get("endCursor")
-    while info.get("hasNextPage") and cursor:
+    for _ in range(pr_common._MAX_PAGES):
+        if not (info.get("hasNextPage") and cursor):
+            return comments
         sub = _gh_graphql(_THREAD_COMMENTS_QUERY, {"id": node["id"], "cursor": cursor}, hostname)
         if "errors" in sub:
             raise RuntimeError(json.dumps(sub["errors"]))
         node_data = (sub.get("data") or {}).get("node")
         if not node_data:
-            break  # thread deleted or hidden mid-pagination — keep what we have
+            return comments  # thread deleted or hidden mid-pagination — keep what we have
         conn = node_data["comments"]
         comments.extend(_gql_comment(c) for c in conn["nodes"])
         info = conn.get("pageInfo") or {}
         cursor = info.get("endCursor")
+    if info.get("hasNextPage") and cursor:
+        pr_common.warn(
+            f"stopped after {pr_common._MAX_PAGES} comment pages of thread {node['id']}; "
+            "result may be truncated"
+        )
     return comments
 
 
@@ -280,14 +327,17 @@ def fetch_graphql(target: pr_common.Target, pr_number: int) -> list[dict[str, An
     Tried before REST for that reason alone: `isResolved` has no REST
     equivalent, so a REST-only run cannot distinguish a live thread from one
     already handled and must fall back to checking whether the flagged code
-    still exists. Paged by cursor until the connection reports no next page.
+    still exists. Paged by cursor until the connection reports no next page, or
+    for `_MAX_PAGES` requests — reliability-2bc887b7: the next-page flag is the
+    server's, and a constant one looped past 1000 requests while the
+    single-threaded MCP server stalled behind it.
     """
     owner, repo = target.segments
-    hostname = "" if target.host == "github.com" else target.host
+    hostname = target.host
     threads: list[dict[str, Any]] = []
     cursor: str | None = None
 
-    while True:
+    for _ in range(pr_common._MAX_PAGES):
         resp = _gh_graphql(
             _GRAPHQL_QUERY,
             {"owner": owner, "repo": repo, "pr": pr_number, "cursor": cursor},
@@ -323,9 +373,13 @@ def fetch_graphql(target: pr_common.Target, pr_number: int) -> list[dict[str, An
             )
 
         if not page["pageInfo"]["hasNextPage"]:
-            break
+            return threads
         cursor = page["pageInfo"]["endCursor"]
 
+    # Reached only with a next page still pending after every allowed request.
+    pr_common.warn(
+        f"stopped after {pr_common._MAX_PAGES} review-thread pages; result may be truncated"
+    )
     return threads
 
 
