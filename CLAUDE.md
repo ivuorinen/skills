@@ -301,9 +301,10 @@ configured and unnamed here:
   text names `.claude/agents/` **or a full protected agent filename** —
   literally, quoted, escaped, variable-built, or glob-spelled (the
   `permissions.deny` block binds file tools only, not Bash — it names `Read`,
-  `Edit` **and** `Write` rules explicitly, rather than assuming an `Edit` rule
-  also binds Write, which is undocumented client behaviour no in-repo gate can
-  observe. `tests/test_settings.py` pins the exact list). So
+  `Edit` **and** `Write` rules. Claude Code's permissions docs state that `Edit`
+  rules apply to every built-in tool that edits files, so the `Write` entries
+  are redundant belt and braces, kept because they cost nothing.
+  `tests/test_settings.py` pins the exact list). So
   `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
   It raises the cost of reaching that tree; it does not close it. The guard
   matches tokens, so a command that locates the files by **content** rather than
