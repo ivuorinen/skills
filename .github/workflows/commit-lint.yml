@@ -21,9 +21,10 @@ name: Commit Lint
 # ruleset names it bare. See .claude/rules/github-actions-security.md.
 on:
   pull_request:
-    # No `edited`: a title edit changes no commit, so re-running this gate on it
-    # buys nothing and adds an event on which it could be mis-skipped.
-    types: [opened, reopened, synchronize]
+    # `edited` is here for the PR description: the session-reference step reads
+    # it, and a description can change without any commit being pushed. The job
+    # carries no `if:`, so the extra event cannot skip it into a pass.
+    types: [opened, edited, reopened, synchronize]
 
 permissions: {}
 
@@ -133,5 +134,42 @@ jobs:
                   f"::error::{sha} marks a breaking change but its diff is CI-only "
                   f"(see .claude/rules/commit-types.md): {subject}"
               )
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Reject Claude session references
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Through env, never interpolated into `run:` — the description is
+          # attacker-controlled text.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        # A session link exposes the session to anyone who reads the public
+        # history, and the squash-merge message concatenates every branch commit
+        # body, so one trailer on any commit reaches `main`. The PR description
+        # is checked too, since the repository's squash setting can publish it.
+        # The pattern mirrors the `no-session-reference` commit-msg hook in
+        # .pre-commit-config.yaml; tests/test_session_reference_gate.py fails
+        # when the two drift apart.
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+
+          SESSION = re.compile(r"Claude-Session:|claude\.ai/code/session_", re.I)
+
+          log = subprocess.run(
+              ["git", "log", "--format=%H%x00%B%x1e", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          bad = []
+          for record in log.split("\x1e"):
+              sha, _, message = record.strip("\n").partition("\x00")
+              if sha and SESSION.search(message):
+                  bad.append(f"commit {sha[:8]}")
+          if SESSION.search(os.environ.get("PR_BODY") or ""):
+              bad.append("the PR description")
+
+          for where in bad:
+              print(f"::error::{where} carries a Claude session reference; remove it before merging")
           sys.exit(1 if bad else 0)
           PY

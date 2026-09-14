@@ -127,6 +127,17 @@ repos:
         entry: '^((feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\([\w./-]+\))?!?: .+|(Merge|Revert|fixup!) .+)'
         args: [--negate]
         stages: [commit-msg]
+      # A session link in a commit message publishes the session to whoever
+      # reads the history. pygrep fails on a matching line unless `--negate` is
+      # passed (that flag inverts it to fail on NO match, which is what the hook
+      # above wants), so this hook deliberately omits it. The commit-lint
+      # workflow runs the same pattern over the PR range and description.
+      - id: no-session-reference
+        name: no Claude session reference in the commit message
+        language: pygrep
+        entry: 'Claude-Session:|claude\.ai/code/session_'
+        args: [--ignore-case]
+        stages: [commit-msg]
       - id: validate-skills
         name: validate SKILL.md and command files
         language: system
