@@ -23,8 +23,11 @@ Subcommands:
     resolve          mark a finding fixed/invalid (moves it to the ledger)
     list             list findings (open files + resolved ledger)
     show             print one finding (open file or resolved ledger)
+    export           render the store as SARIF, JSON or JUnit XML
+    recheck          re-fingerprint every open finding's recorded location
     validate         structural validation (exit 1 on errors)
     index            regenerate INDEX.md
+    baseline         snapshot open findings as the accepted release-gate baseline
     migrate          convert a v1 *-findings.md document into the store
     migrate-resolved (legacy 1.x store layout only) convert legacy
                      <auditor>/resolved/*.md files into the ledger
@@ -42,6 +45,9 @@ import hashlib
 import json
 import os
 import re
+
+# One fixed git invocation, list argv, no shell.
+import subprocess  # nosec B404
 import sys
 import tempfile
 from pathlib import Path
@@ -93,13 +99,18 @@ _SECRET_RE = re.compile(
     r"|github_pat_[A-Za-z0-9_]{22,}"  # GitHub fine-grained PAT (now the default)
     r"|glpat-[A-Za-z0-9_-]{20,}"  # GitLab personal access token
     r"|glrt-[A-Za-z0-9_-]{20,}"  # GitLab runner token (modern)
+    # GitLab's other token families — deploy, OAuth application secret, CI build,
+    # pipeline trigger, SCIM, feed, incoming mail, agent (security-20a7426d).
+    r"|gl(?:dt|oas|cbt|ptt|soat|ft|imt|agent)-[A-Za-z0-9_-]{20,}"
     r"|GR1348941[A-Za-z0-9_-]{20,}"  # GitLab runner token (legacy prefix)
     r"|ATBB[A-Za-z0-9]{24,}"  # Bitbucket app password (BITBUCKET_APP_PASSWORD)
     # Atlassian API and scoped tokens — what BITBUCKET_TOKEN actually holds.
     # ATBB above covers only app passwords, so the variable the docs tell users
     # to set was the one shape still passing through.
     r"|AT(?:ATT|CTT)[A-Za-z0-9_=.-]{20,}"
-    r"|sk-[A-Za-z0-9-]{20,}"
+    # `_` belongs in the class: Anthropic and OpenAI project keys carry one, and a
+    # class without it masked only up to the first (security-20a7426d).
+    r"|sk-[A-Za-z0-9_-]{20,}"
     r"|AKIA[0-9A-Z]{16}"
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
     r"|npm_[A-Za-z0-9]{36}"  # npm automation token
@@ -132,7 +143,11 @@ _PEM_RE = re.compile(
 # evidence, so it is deliberately absent rather than accepted at that
 # false-positive rate. Cite the file:line for those instead.
 
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]+\b")
+# audit-348cfdf9: the last domain label must be alphabetic, and an `@` followed by
+# a version (`checkout@v4.1.1`, `lodash@4.17.21`) is a pin, not an address — the
+# old pattern rewrote exactly the subjects `ci` and `deps` findings name. Ceiling:
+# an address on an all-numeric or `v<digit>`-leading domain goes unredacted.
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@(?![vV]?\d)[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
 
 
 def _mask(token: str) -> str:
@@ -275,7 +290,12 @@ def _normalize_body(body: str) -> str:
     """Make a body markdownlint-clean outside code fences: blank lines around
     headings, blank-line runs collapsed. Fenced content is preserved verbatim,
     and a fence only closes on the marker that opened it (``` vs ~~~), honoring
-    the full delimiter length."""
+    the full delimiter length.
+
+    A heading is one to six `#` followed by a space or the end of the line, as
+    CommonMark defines it (audit-53e314fa): `#123` is paragraph text, and treating
+    it as a heading split a body citing an issue number into broken paragraphs.
+    """
     out: list[str] = []
     fence = ""  # opening marker while inside a fence, else ""
     for line in body.strip().splitlines():
@@ -292,7 +312,7 @@ def _normalize_body(body: str) -> str:
         elif not stripped:
             if out and out[-1].strip():
                 out.append("")
-        elif stripped.startswith("#"):
+        elif re.match(r"#{1,6}(?:\s|$)", stripped):
             if out and out[-1].strip():
                 out.append("")
             out.append(stripped)
@@ -328,12 +348,29 @@ def _drop_trailing_resolution(body: str) -> str:
     """Remove a trailing '## Resolution' section so a --force re-resolve replaces
     it instead of appending a duplicate. resolve_finding always appends the
     resolution as the last section, so truncating from the last '## Resolution'
-    heading is exact."""
+    heading is exact.
+
+    Only a heading outside every code fence counts (audit-85ca46a6). A finding
+    that quotes markdown holding that line lost everything after the quote on
+    resolve — its Impact and Fix, into an append-only ledger with the open file
+    already deleted. Ceiling: a real, unfenced `## Resolution` section written by
+    hand is still treated as the tool's own and replaced.
+    """
     lines = body.splitlines()
-    for i in range(len(lines) - 1, -1, -1):
-        if lines[i].rstrip() == "## Resolution":
-            return "\n".join(lines[:i]).rstrip()
-    return body
+    cut = None
+    fence = ""
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if fence:
+            if md_fences.closes(stripped, fence):
+                fence = ""
+            continue
+        marker = md_fences.opener(stripped)
+        if marker:
+            fence = marker
+        elif stripped == "## Resolution":
+            cut = i
+    return body if cut is None else "\n".join(lines[:cut]).rstrip()
 
 
 def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
@@ -351,6 +388,17 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return [fmt(headers), sep, *(fmt(r) for r in rows)]
 
 
+def _multiline(value: str) -> bool:
+    """Whether `value` spans more than one line by `str.splitlines`' definition.
+
+    audit-fc9b0529: `parse_frontmatter` splits on `\\r`, form feed, `\\x85`, U+2028
+    and the other `splitlines` boundaries, not only `\\n`, so a guard checking for
+    `\\n` alone let `area="x\\u2028severity: critical"` inject a key on read-back.
+    The sentinel catches a trailing separator, which `splitlines` otherwise drops.
+    """
+    return len(f"{value}x".splitlines()) > 1
+
+
 def render_finding(fm: dict[str, str], title: str, body: str) -> str:
     """Serialise a finding to the on-disk form, refusing anything that will not
     round-trip.
@@ -363,14 +411,14 @@ def render_finding(fm: dict[str, str], title: str, body: str) -> str:
     it produced. The remaining fields are guarded to keep the frontmatter block
     parseable, which is a smaller claim than identity.
     """
-    if "\n" in title:
+    if _multiline(title):
         raise FindingError("title must be single-line")
     lines = ["---"]
     # Known keys in canonical order, then any extra keys (e.g. cve:) preserved.
     for key in (*_KNOWN_FM, *(k for k in fm if k not in _KNOWN_FM)):
         value = fm.get(key, "")
-        if "\n" in value:
-            # A newline would inject extra frontmatter lines (last-write-wins on parse).
+        if _multiline(value):
+            # Any line break would inject extra frontmatter lines (last-write-wins on parse).
             raise FindingError(f"frontmatter field {key!r} must be single-line")
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             # parse_frontmatter strips one matching quote pair, so a pre-quoted
@@ -418,7 +466,7 @@ def ledger_path(root: Path) -> Path:
 try:
     import fcntl
 except ImportError:  # pragma: no cover — non-POSIX
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 
 @contextlib.contextmanager
@@ -428,12 +476,21 @@ def store_lock(root: Path):
     ponytail: flock only, no Windows path. On a platform without fcntl this
     degrades to no locking — single-writer use stays correct, concurrent use
     reverts to the pre-lock races. Add msvcrt.locking if Windows ever matters.
+
+    security-3fbe26a3: the lock file sits in the audited repository, and a
+    committed `.lock` symlink made every index write truncate its target. The
+    store is refused when any component up to the repository is a link, and the
+    open adds O_NOFOLLOW so a link swapped in after that check still fails.
+    Refusal raises `FindingError`, so every mutation inherits the check.
     """
+    lock = root / ".lock"
+    _refuse_symlink(root, lock)
     if fcntl is None:  # pragma: no cover — non-POSIX
         yield
         return
     root.mkdir(parents=True, exist_ok=True)
-    with (root / ".lock").open("w") as f:
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             yield
@@ -441,10 +498,115 @@ def store_lock(root: Path):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # absent on Windows, where links are rare
+_SYMLINK_REFUSED = "refusing to follow a symlink in the findings store"
+
+
+def _symlink_in_store(root: Path, path: Path | None = None) -> Path | None:
+    """The first symlink on the way from `path` (or `root`) up to the repository.
+
+    security-3fbe26a3: the store is a directory inside the repository under
+    audit, and `git clone` preserves symlinks, so the store directory, `docs/`
+    above it, an auditor directory, one open finding, the ledger or `.lock` can
+    each be a committed link aimed outside the project. Following one turned a
+    resolve into an append to `~/.bashrc` and a `show` into a read of a private
+    key.
+
+    Walks `path` and each parent up to `root`, then `root` and each ancestor
+    until one holds `.git`. Each component is tested for being a link BEFORE its
+    `.git` is consulted, so a `docs` link aimed at another repository cannot end
+    the walk early. Nothing above the repository is inspected: a symlinked home
+    or code directory is the user's own layout.
+
+    Ceiling: with no `.git` above it the walk runs to `/`, so an absolute root
+    spelled through a system-level link is refused — pass its real path. The
+    check is check-then-use; O_NOFOLLOW and `_atomic_write`'s rename close the
+    final component, not a parent directory swapped in between.
+    """
+    root = root.absolute()
+    p = path.absolute() if path is not None else root
+    while p != root and p.parent != p:
+        if p.is_symlink():
+            return p
+        p = p.parent
+    for q in (p, *p.parents):
+        if q.is_symlink():
+            return q
+        if (q / ".git").exists():
+            return None
+    return None
+
+
+def _refuse_symlink(root: Path, path: Path | None = None) -> None:
+    """Raise `FindingError` naming the link `_symlink_in_store` finds, if any."""
+    link = _symlink_in_store(root, path)
+    if link is not None:
+        raise FindingError(f"{link}: {_SYMLINK_REFUSED}")
+
+
+def _atomic_write(path: Path, text: str, mode: int = 0o644) -> None:
+    """Replace `path` with `text` durably, or leave it exactly as it was.
+
+    reliability-ce1b17bb: every store writer comes through here, because the
+    hand-rolled `<name>.<pid>.tmp` + replace each of them used got three things
+    wrong, each measured:
+
+    - A predictable temp name is followed when it is a symlink, so anyone able
+      to plant one had an arbitrary-file write. mkstemp creates with
+      O_CREAT|O_EXCL, which refuses to follow a link, under a random name a
+      recycled PID cannot collide with either.
+    - A failed write left the temp file behind, hidden by the store's own
+      `*.tmp` ignore rule. Any exception unlinks it.
+    - Nothing was fsynced, so a crash could keep the rename and lose the data.
+      The data is fsynced before the rename and the directory after it.
+
+    A destination that is itself a symlink is refused (security-3fbe26a3).
+    `os.replace` would swap the link for a regular file rather than write
+    through it, so the refusal is not what stops the write; it reports the
+    planted link instead of silently destroying the evidence of it.
+
+    `mode` is set explicitly because mkstemp always creates 0o600; the ledger
+    keeps that, and the git-tracked text files get the conventional 0o644.
+
+    Ceiling: the directory fsync is best effort. Not every filesystem supports
+    it, and the rename has already happened by then, so an error there is
+    suppressed rather than raised out of a completed write.
+    """
+    if path.is_symlink():
+        raise FindingError(f"{path}: {_SYMLINK_REFUSED}")
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), mode)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(path)
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def read_ledger(root: Path, errors: list[str] | None = None) -> list[dict]:
     """Parse resolved.jsonl into a list of records; malformed lines go to
-    `errors` (or stderr) instead of crashing."""
+    `errors` (or stderr) instead of crashing.
+
+    A ledger reached through a symlink is reported and read as empty
+    (security-3fbe26a3), so a committed link cannot feed an outside file into a
+    rendered finding.
+    """
     p = ledger_path(root)
+    link = _symlink_in_store(root, p)
+    if link is not None:
+        _note(errors, f"{link}: {_SYMLINK_REFUSED}")
+        return []
     if not p.exists():
         return []
     try:
@@ -485,8 +647,14 @@ def _ledger_summary(root: Path) -> dict[str, tuple[str, str]]:
     The index only needs these two fields, but every record embeds the finding's
     whole body. Reading the file by line and keeping two short strings per id
     caps peak memory at one record instead of the whole ledger.
+
+    Refuses a symlinked ledger like `read_ledger` does (security-3fbe26a3).
     """
     p = ledger_path(root)
+    link = _symlink_in_store(root, p)
+    if link is not None:
+        _note(None, f"{link}: {_SYMLINK_REFUSED}")
+        return {}
     if not p.exists():
         return {}
     summary: dict[str, tuple[str, str]] = {}
@@ -536,6 +704,10 @@ def append_ledger(root: Path, record: dict) -> None:
     the third, which write_ledger already does for its rename.
     """
     p = ledger_path(root)
+    # security-3fbe26a3: a committed `resolved.jsonl` symlink turned this append
+    # into a write to `~/.bashrc` and the fchmod below into a chmod of it. Refuse
+    # the link; O_NOFOLLOW on the open is the race-free backstop for the name.
+    _refuse_symlink(root, p)
     p.parent.mkdir(parents=True, exist_ok=True)
     # Read before the open, since O_CREAT makes the file exist either way. Racy
     # in isolation and not here: every caller holds `store_lock`, and guessing
@@ -548,7 +720,7 @@ def append_ledger(root: Path, record: dict) -> None:
     # commit hook was the only thing that caught it, so the window between the
     # write and the review is worth narrowing. Git records only the exec bit, so
     # this costs nothing downstream — it binds on the machine that wrote it.
-    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    fd = os.open(p, os.O_RDWR | os.O_APPEND | os.O_CREAT | _O_NOFOLLOW, 0o600)
     try:
         # The mode above applies only when this call *creates* the file, which
         # is the same trap `write_ledger` documents for its temp file: a ledger
@@ -606,54 +778,13 @@ def write_ledger(root: Path, records: list[dict]) -> None:
             + "\n".join(errors)
         )
     p.parent.mkdir(parents=True, exist_ok=True)
-    # PID-suffixed: a fixed tmp name is shared mutable state, so two concurrent
-    # writers interleave into it and both then rename it over the real ledger.
-    # mkstemp, not a PID-named `os.open`. Three properties, each of which a
-    # hand-rolled name got wrong in turn:
-    #
-    # - It creates with O_CREAT|O_EXCL, so the 0o600 always applies. A mode
-    #   argument is honoured only when `os.open` *creates* the file, so a stale
-    #   `resolved.jsonl.<pid>.tmp` left by a crashed run kept its old mode and
-    #   `replace` carried that onto the ledger — measured at 0o666.
-    # - O_EXCL also refuses to follow a symlink at that path. Plain
-    #   O_CREAT|O_TRUNC follows one and truncates its target, so anyone able to
-    #   pre-create the temp name in this directory got an arbitrary-file write:
-    #   the victim file was measured overwritten with ledger content.
-    # - The name is random rather than PID-derived, so a recycled PID cannot
-    #   collide with a concurrent writer's temp file either.
-    fd, tmp_name = tempfile.mkstemp(dir=p.parent, prefix=p.name + ".", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        # fsync before the rename: resolve deletes the open finding file after
-        # this returns, so the rename reaching disk ahead of the data would lose
-        # the whole ledger on a crash. append_ledger provides the same durability.
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("".join(_ledger_line(r) + "\n" for r in records))
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(p)
-        # The rename is a directory entry, and fsyncing the file does not commit
-        # it. resolve_finding deletes the open finding once this returns, so a
-        # crash between the two could lose the rename while the deletion stood —
-        # the finding gone from both halves of the store. Directory fsync is the
-        # POSIX way to make the rename durable; not every filesystem requires it,
-        # and where it is unsupported the error is not worth failing a write over.
-        # Suppression covers the open as well as the fsync. The rename has
-        # already happened by this point, so the write succeeded; letting an
-        # OSError escape here would raise out of a completed write, and the
-        # force re-resolve path would then leave the ledger holding the record
-        # while the open finding it replaces still sits on disk.
-        with contextlib.suppress(OSError):
-            dir_fd = os.open(p.parent, os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-    except BaseException:
-        # A failure before the rename leaves the temp file behind, and mkstemp
-        # names are unpredictable, so nothing would ever clean it up.
-        tmp.unlink(missing_ok=True)
-        raise
+    # `_atomic_write`, not a PID-named `os.open`: mkstemp's O_EXCL is what makes
+    # the 0o600 always apply (a stale `resolved.jsonl.<pid>.tmp` once carried
+    # 0o666 onto the ledger) and what refuses a planted temp-name symlink. Data
+    # and directory are both fsynced because resolve deletes the open finding
+    # once this returns, so a crash that kept only half would lose it from both
+    # halves of the store. The serialisation runs before the temp file exists.
+    _atomic_write(p, "".join(_ledger_line(r) + "\n" for r in records), mode=0o600)
 
 
 def _record_from_finding(
@@ -746,17 +877,11 @@ def read_baseline(root: Path, errors: list[str] | None = None) -> set[str]:
 def write_baseline(root: Path, ids: list[str], created: str) -> Path:
     p = baseline_path(root)
     payload = {"created": created, "ids": sorted(set(ids))}
-    # Locked and PID-suffixed for the reason write_ledger states: a fixed tmp
-    # name is shared mutable state, so two concurrent writers interleave into it
-    # and both then rename the spliced file over the real baseline.
+    # Locked and atomic: a fixed tmp name is shared mutable state, so two
+    # concurrent writers interleave into it and both then rename the spliced file
+    # over the real baseline. `_atomic_write` states the rest (reliability-ce1b17bb).
     with store_lock(root):
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        tmp.replace(p)
+        _atomic_write(p, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return p
 
 
@@ -808,15 +933,53 @@ def is_store_gitignored(root: Path) -> bool:
     Detected here so the CLI can warn rather than fail — the state is a
     misconfiguration, not a reason to refuse to record anything.
 
-    Deliberately partial: this reads the repository's own .gitignore only, so a
-    rule in a parent directory, a global excludes file, or `.git/info/exclude`
-    is missed. Those are rarer, and a false "not ignored" costs a missing
-    warning where a false positive would cost a wrong one on every run.
+    git answers first (audit-8afd787c): the hand-rolled reading skipped every
+    `!` negation, so `docs/audit/*` followed by `!docs/audit/findings/` read as
+    ignored, and the store lost its managed hygiene files. `--no-index` asks
+    about the rules rather than about what happens to be tracked, the trailing
+    slash marks the store as a directory even before it exists, and `GIT_*`
+    variables are dropped so a git hook's environment cannot point the query at
+    another repository. The `-c` overrides keep the audited tree's own
+    `.git/config` from naming a command to run (security-02c0e5c1), as in
+    `context_pack._git`.
+
+    The heuristic below runs only when git cannot answer — not installed, timed
+    out, or not a repository it recognises. It is deliberately partial: it reads
+    the repository's own .gitignore only and ignores negations, so a rule in a
+    parent directory, a global excludes file, or `.git/info/exclude` is missed.
+    A false "not ignored" costs a missing warning where a false positive would
+    cost a wrong one on every run.
     """
     repo = find_repo_root(root)
     if repo is None:
         return False
     rel = _store_rel(root)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        done = subprocess.run(  # nosec B603 B607
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-C",
+                str(repo),
+                "check-ignore",
+                "-q",
+                "--no-index",
+                "--",
+                rel + "/",
+            ],
+            capture_output=True,
+            timeout=10,
+            check=False,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        done = None
+    if done is not None and done.returncode in (0, 1):
+        return done.returncode == 0
     gi = repo / ".gitignore"
     if not gi.exists():
         return False
@@ -860,15 +1023,17 @@ def ensure_store_gitattributes(root: Path) -> None:
             # Preserve any pre-existing rules and append only the managed patterns
             # that are absent, so an existing .gitignore still ends up covering the
             # transient .lock/*.tmp rather than being skipped and leaving them tracked.
-            gitignore.write_text("\n".join(existing + missing) + "\n", encoding="utf-8")
+            _atomic_write(gitignore, "\n".join(existing + missing) + "\n")
         if not store_gitattributes_present(root):
-            (root / _STORE_GITATTRIBUTES).write_text(_STORE_GITATTRIBUTES_BODY, encoding="utf-8")
-    except OSError:
+            _atomic_write(root / _STORE_GITATTRIBUTES, _STORE_GITATTRIBUTES_BODY)
+    except (OSError, FindingError):
         # Store hygiene is best effort and never the caller's operation. A
         # read-only checkout, a missing parent, or a race with another writer
         # must not fail the finding that was actually being filed — the
         # .gitignore and .gitattributes entries are a convenience for review,
-        # not a correctness requirement of the store.
+        # not a correctness requirement of the store. FindingError is a
+        # committed symlink `_atomic_write` refused to write through
+        # (security-3fbe26a3); skipping leaves its target untouched.
         pass
 
 
@@ -893,9 +1058,22 @@ def iter_open(
     root: Path, errors: list[str] | None = None
 ) -> list[tuple[Path, dict[str, str], str]]:
     """Parse every open finding file; unreadable files go to `errors` (or
-    stderr) instead of crashing."""
+    stderr) instead of crashing.
+
+    A store reached through a symlink, or an entry that is one or sits under
+    one, is reported the same way and skipped (security-3fbe26a3): a committed
+    `open/<id>.md` link to a private key otherwise reached the model's context.
+    """
+    link = _symlink_in_store(root)
+    if link is not None:
+        _note(errors, f"{link}: {_SYMLINK_REFUSED}")
+        return []
     out = []
     for path in sorted(root.glob("*/open/*.md")):
+        link = _symlink_in_store(root, path)
+        if link is not None:
+            _note(errors, f"{link}: {_SYMLINK_REFUSED}")
+            continue
         try:
             fm, title, _ = parse_finding(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as e:
@@ -1058,6 +1236,10 @@ def new_finding(
     fm = _open_frontmatter(root, fid, auditor, severity, category, area, found, location)
     path = root / auditor / "open" / f"{fid}.md"
     with store_lock(root):
+        # Before the collision check reads it: a symlink planted at the id's path
+        # would otherwise put the first heading of its target into the error
+        # (security-3fbe26a3).
+        _refuse_symlink(root, path)
         # One parse, reused: read_ledger is the expensive call, and re-reading it
         # for the rewrite below both wastes the work and widens the race window.
         records = read_ledger(root)
@@ -1093,9 +1275,9 @@ def new_finding(
                     + "\n".join(ledger_errors)
                 )
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(render_finding(fm, title, body), encoding="utf-8")
-        tmp.replace(path)
+        # Durable before the ledger rewrite below drops the record, so a crash
+        # cannot lose a re-opened finding from both halves (reliability-ce1b17bb).
+        _atomic_write(path, render_finding(fm, title, body))
         if force and fid in ledger:
             # Re-opening a resolved finding: drop its ledger record only AFTER the
             # open file exists, so a crash leaves it open+ledger (which validate
@@ -1103,6 +1285,17 @@ def new_finding(
             # append-before-delete ordering.
             write_ledger(root, [r for r in records if r.get("id") != fid])
     return path
+
+
+def _with_resolution(body: str, notes: str) -> str:
+    """`body` with its `## Resolution` section replaced by `notes`, or unchanged.
+
+    Shared by both resolve paths so a re-resolve and a first resolve cannot
+    diverge on how the section is written. Empty notes keep the body as it was.
+    """
+    if not notes.strip():
+        return body
+    return _drop_trailing_resolution(body).rstrip() + f"\n\n## Resolution\n{notes.strip()}\n"
 
 
 def resolve_finding(
@@ -1119,6 +1312,9 @@ def resolve_finding(
     file is gone once the record lands. That asymmetry is the reason the whole
     read-modify-write below is one critical section rather than two steps —
     a half-completed resolve loses the finding from both halves of the store.
+
+    An open file reached through a symlink is refused before it is read or
+    deleted (security-3fbe26a3), and so is a symlinked ledger or store.
     """
     if status not in ("fixed", "invalid"):
         raise FindingError(f"resolve status must be fixed|invalid, got {status!r}")
@@ -1136,6 +1332,8 @@ def resolve_finding(
         records = read_ledger(root)  # one parse, reused for every rewrite below
         ledger = {r["id"]: r for r in records if r.get("id")}
         matches = sorted(root.glob(f"*/open/{fid}.md"))
+        for match in matches:
+            _refuse_symlink(root, match)
 
         if fid in ledger and not force:
             raise FindingError(f"{fid} is already resolved; use --force to re-resolve")
@@ -1145,11 +1343,7 @@ def resolve_finding(
                 rec = dict(ledger[fid])
                 rec["status"] = status
                 rec["resolved"] = resolved_at
-                if notes.strip():
-                    rec["body"] = (
-                        _drop_trailing_resolution(rec.get("body", "")).rstrip()
-                        + f"\n\n## Resolution\n{notes.strip()}\n"
-                    )
+                rec["body"] = _with_resolution(rec.get("body", ""), notes)
                 write_ledger(root, [r for r in records if r.get("id") != fid] + [rec])
                 return ledger_path(root)
             raise FindingError(f"no open finding with id {fid} under {root}")
@@ -1159,10 +1353,7 @@ def resolve_finding(
         if "auditor" not in fm:
             fm["auditor"] = path.parent.parent.name
         _check_auditor(fm["auditor"])
-        if notes.strip():
-            body = (
-                _drop_trailing_resolution(body).rstrip() + f"\n\n## Resolution\n{notes.strip()}\n"
-            )
+        body = _with_resolution(body, notes)
         rec = _record_from_finding(fm, title, body, status, resolved_at, fid)
         if fid in ledger:
             write_ledger(root, [r for r in records if r.get("id") != fid] + [rec])
@@ -1176,8 +1367,17 @@ def resolve_finding(
 
 
 def show_finding(root: Path, fid: str) -> str:
+    """One finding as its on-disk text: the open file, else rendered from the ledger.
+
+    Refuses a store, auditor directory or open file reached through a symlink
+    (security-3fbe26a3). A committed `open/<id>.md` link to `~/.ssh/id_rsa`
+    returned the key's text, and this result is what an MCP caller reads.
+    """
     _check_id(fid)
+    _refuse_symlink(root)
     matches = sorted(root.glob(f"*/open/{fid}.md"))
+    for match in matches:
+        _refuse_symlink(root, match)
     if matches:
         try:
             return matches[0].read_text(encoding="utf-8")
@@ -1197,14 +1397,21 @@ def show_finding(root: Path, fid: str) -> str:
 # ── validation ────────────────────────────────────────────────────────────────
 
 
-def validate_file(path: Path) -> list[str]:  # noqa: C901
+def validate_file(path: Path, text: str | None = None) -> list[str]:  # noqa: C901
+    """Every structural problem with one finding file.
+
+    `text`, when given, is validated as if it were the content at `path`, which
+    need not exist: `migrate_v1` checks each file it plans before writing any
+    (migrations-0078af5d), since a migration that writes what `validate` rejects
+    blocks every later commit.
+    """
     errors: list[str] = []
 
     def err(msg: str) -> None:
         errors.append(f"{path}: {msg}")
 
     try:
-        fm, title, body = parse_finding(path.read_text(encoding="utf-8"))
+        fm, title, body = parse_finding(path.read_text(encoding="utf-8") if text is None else text)
     except (OSError, UnicodeDecodeError) as e:
         return [f"{path}: cannot read: {e}"]
     if not fm:
@@ -1269,11 +1476,19 @@ def validate_file(path: Path) -> list[str]:  # noqa: C901
     return errors
 
 
-def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:  # noqa: C901
+def validate_ledger_record(  # noqa: C901
+    rec: dict, path: Path, lineno: int | None = None
+) -> list[str]:
+    """Every problem with one ledger record, each prefixed `path:lineno:`.
+
+    `lineno` is optional so the migrations can validate a record they have only
+    planned (migrations-0078af5d); its message then names the source file alone.
+    """
     errors: list[str] = []
+    where = str(path) if lineno is None else f"{path}:{lineno}"
 
     def err(msg: str) -> None:
-        errors.append(f"{path}:{lineno}: {msg}")
+        errors.append(f"{where}: {msg}")
 
     rid = rec.get("id", "")
     if not rid:
@@ -1301,14 +1516,36 @@ def validate_ledger_record(rec: dict, path: Path, lineno: int) -> list[str]:  # 
     return errors
 
 
-def validate_store(root: Path) -> list[str]:  # noqa: C901
+def validate_store(root: Path) -> list[str]:
     """Check the store as a whole, returning every problem rather than the first.
 
     Collects instead of raising because this backs a commit-time gate: a caller
     fixing the store wants the full list in one run, not one error per attempt.
     Covers what per-file validation cannot see — duplicate ids across auditors,
     and findings sitting somewhere no command reads from.
+
+    Runs under `store_lock` (concurrency-b0349752). A resolve appends the ledger
+    record and unlinks the open file inside the lock, and a validation that
+    interleaved with it saw both halves of that one move — `cannot read` and
+    `also open` — so a PostToolUse hook sent the agent to repair a valid store.
+    The lock is not reentrant: no caller may already hold it. A missing store is
+    answered without locking, because taking the lock creates the directory, and
+    a symlinked one is reported rather than locked through (security-3fbe26a3).
+
+    Ceiling: where the lock file cannot be created — a read-only checkout — this
+    raises instead of validating unlocked.
     """
+    link = _symlink_in_store(root)
+    if link is not None:
+        return [f"{link}: {_SYMLINK_REFUSED}"]
+    if not root.exists():
+        return []
+    with store_lock(root):
+        return _validate_store_locked(root)
+
+
+def _validate_store_locked(root: Path) -> list[str]:  # noqa: C901
+    """`validate_store`'s checks; the caller holds `store_lock`."""
     errors: list[str] = []
     seen: dict[str, Path] = {}
     # A leftover legacy tree is the state an aborted `migrate-resolved` leaves
@@ -1327,7 +1564,9 @@ def validate_store(root: Path) -> list[str]:  # noqa: C901
             seen[fid] = path
 
     lpath = ledger_path(root)
-    if lpath.exists():
+    if lpath.is_symlink():
+        errors.append(f"{lpath}: {_SYMLINK_REFUSED}")
+    elif lpath.exists():
         try:
             raw = lpath.read_text(encoding="utf-8")
         except OSError as e:
@@ -1419,8 +1658,14 @@ def build_index(root: Path) -> str:
         "",
     ]
     if open_findings:
+        # audit-5c6e99aa: relative to the repository, never as the root was
+        # spelled. The MCP server passes an absolute root and the CLI a relative
+        # one, so the same store rendered two indexes and the absolute one wrote
+        # the account's home path into a committed file. Ceiling: outside any
+        # repository `_store_rel` falls back to the default store path.
+        store = _store_rel(root)
         for _rank, fid, fm, title, path in sorted(open_findings, key=lambda x: (x[0], x[1])):
-            rel = path.as_posix()
+            rel = f"{store}/{path.relative_to(root).as_posix()}"
             lines.append(
                 f"- **{fm.get('severity', '?')}** [{fid}] {title} — `{fm.get('area', '?')}` ({rel})"
             )
@@ -1436,18 +1681,17 @@ def write_index(root: Path) -> Path:
     It is also the one file in the store with several writers at once, which is
     what the lock and the atomic replace below are for.
     """
-    # Managing the store's own review-hygiene mark rides along with the index
-    # refresh that every mutating command already runs.
-    ensure_store_gitattributes(root)
     path = root / "INDEX.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # tmp+replace like every other writer here: INDEX.md has three concurrent
-    # writers (CLI, MCP server, PostToolUse hook), and a bare write_text truncates
-    # then streams, so two builds interleave into one spliced file.
+    # Atomic like every other writer here: INDEX.md has three concurrent writers
+    # (CLI, MCP server, PostToolUse hook), and a bare write_text truncates then
+    # streams, so two builds interleave into one spliced file.
     with store_lock(root):
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(build_index(root), encoding="utf-8")
-        tmp.replace(path)
+        # Managing the store's own review-hygiene mark rides along with the index
+        # refresh that every mutating command already runs. Inside the lock, so
+        # the store's symlink check has run before the first write to it
+        # (security-3fbe26a3).
+        ensure_store_gitattributes(root)
+        _atomic_write(path, build_index(root))
     return path
 
 
@@ -1463,6 +1707,12 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # n
     recurs across auditor directories. A file whose id is already in the ledger
     with DIFFERENT content is a conflict, not a duplicate: it aborts the run
     rather than being deleted unrecorded.
+
+    Every planned record is validated before the first append
+    (migrations-0078af5d). The ledger is append-only and this deletes its
+    sources, so a record `validate` rejects — a legacy `sec_001` id — used to
+    leave a store the pre-commit hook blocks, recoverable only by hand-editing
+    the ledger. It aborts instead, naming every rejection.
     """
     files = sorted(root.glob("*/resolved/*.md"))
     with store_lock(root):
@@ -1488,6 +1738,13 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # n
                 # Mark the synthesised date so a reader can tell it from a real
                 # one, and so later date arithmetic cannot silently trust it.
                 rec["date_synthesised"] = True
+            if not rec["found"]:
+                # Legacy resolved files routinely omit `found`, which `validate`
+                # requires. Normalised to the resolution date rather than rejected
+                # (migrations-0078af5d): the finding cannot postdate its fix, so
+                # that is the latest date it can have been found. Ceiling: the
+                # true discovery date is lost, as it already was in the source.
+                rec["found"] = rec["resolved"]
             if fid not in existing:
                 planned.append((path, rec))
                 # Record it now so a second file with the same legacy id later in
@@ -1506,6 +1763,12 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # n
             raise FindingError(
                 "refusing to delete unrecorded findings — resolve these manually:\n"
                 + "\n".join(conflicts)
+            )
+        invalid = [e for path, rec in planned for e in validate_ledger_record(rec, path)]
+        if invalid:
+            raise FindingError(
+                "refusing to migrate records `validate` would reject — fix the sources:\n"
+                + "\n".join(invalid)
             )
         if dry_run:
             for path, rec in planned:
@@ -1563,7 +1826,13 @@ def _build_v1(
         # this tool did not author, and its Evidence sections quote real code.
         return ("open", fid, path, render_finding(fm, redact(entry["title"]), redact(body)))
 
-    resolved = fields.get("Fixed", "") or entry.get("pass_date", "") or generated or "1970-01-01"
+    # migrations-0078af5d: v1 `Fixed:` is prose as often as a date ("in commit
+    # abc1234"), and storing it verbatim wrote a resolved date `validate` rejects.
+    # Take the first ISO date in it, else fall back as a missing one does.
+    fixed = re.search(r"\d{4}-\d{2}-\d{2}", fields.get("Fixed", ""))
+    resolved = (
+        (fixed.group() if fixed else "") or entry.get("pass_date", "") or generated or "1970-01-01"
+    )
     notes = fields.get("Notes", "").strip()
     body = f"## Resolution\n{notes}" if notes else "## Resolution\n(none recorded)"
     pass_bits = ", ".join(
@@ -1596,6 +1865,14 @@ def _build_v1(
 
 
 def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C901
+    """Convert one v1 `*-findings.md` document into the store; return the count.
+
+    Nothing is written until the whole plan is known to be writable: an id
+    already open under any auditor (audit-c29fa56c) or already resolved aborts,
+    and so does any planned file or record `validate` would reject
+    (migrations-0078af5d). A migration that reported success used to leave a
+    store the pre-commit hook blocks, with an ambiguous `resolve` target.
+    """
     text = src.read_text(encoding="utf-8")
     auditor = v1_auditor(src.name)
     generated = ""
@@ -1713,6 +1990,10 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                     if path.read_text(encoding="utf-8") == content:
                         continue  # already migrated identically — re-running is a no-op
                     raise FindingError(f"duplicate id {fid} while migrating {src.name}")
+                if list(root.glob(f"*/open/{fid}.md")):
+                    # Open under another auditor: legacy ids recur across v1
+                    # documents, and `validate` rejects the pair (audit-c29fa56c).
+                    raise FindingError(f"duplicate id {fid} while migrating {src.name}")
                 to_write_files.append((path, content))
             else:  # resolved
                 if fid in existing_resolved:
@@ -1721,6 +2002,13 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                     raise FindingError(f"duplicate id {fid} while migrating {src.name}")
                 to_append.append(item[2])
 
+        invalid = [e for path, content in to_write_files for e in validate_file(path, content)]
+        invalid += [e for rec in to_append for e in validate_ledger_record(rec, src)]
+        if invalid:
+            raise FindingError(
+                f"refusing to migrate {src.name}: `validate` would reject the result:\n"
+                + "\n".join(invalid)
+            )
         if dry_run:
             for path, _content in to_write_files:
                 print(f"WOULD WRITE {path}")
@@ -1730,12 +2018,10 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
 
         for path, content in to_write_files:
             path.parent.mkdir(parents=True, exist_ok=True)
-            # tmp+replace like every other writer here: a bare write_text truncates,
+            # Atomic like every other writer here: a bare write_text truncates,
             # and an interrupted migration would leave a partial file that the
             # idempotence check above then reports as a misleading "duplicate id".
-            tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-            tmp.write_text(content, encoding="utf-8")
-            tmp.replace(path)
+            _atomic_write(path, content)
         for rec in to_append:
             append_ledger(root, rec)
         return len(to_write_files) + len(to_append)
@@ -1817,7 +2103,9 @@ def gather_findings(
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def add_root(p: argparse.ArgumentParser) -> None:
@@ -1920,6 +2208,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     p_mr.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
 
     args = parser.parse_args(argv)
+
+    if args.cmd in ("show", "resolve"):
+        # contract-c3333311: a malformed id is a wrong invocation, which the
+        # docstring's exit contract answers with 2 — retrying with corrected
+        # arguments is the right move, and exit 1 told the caller it was not.
+        try:
+            _check_id(args.id)
+        except FindingError as e:
+            print(f"ERROR  {e}", file=sys.stderr)
+            return 2
 
     if args.cmd == "new":
         body = sys.stdin.read() if args.body == "-" else args.body
@@ -2040,7 +2338,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         return 0
 
     if args.cmd == "index":
-        print(write_index(args.root))
+        try:
+            print(write_index(args.root))
+        except FindingError as e:
+            # A store refused for a symlink (security-3fbe26a3) is a failed
+            # operation, reported rather than raised as a traceback.
+            print(f"ERROR  {e}", file=sys.stderr)
+            return 1
         return 0
 
     if args.cmd == "baseline":

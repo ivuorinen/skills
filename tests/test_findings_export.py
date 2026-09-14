@@ -39,6 +39,11 @@ def test_location_leaves_a_bare_area_alone():
     assert fx._location("the CI pipeline") == ("the CI pipeline", None)
 
 
+def test_location_takes_the_start_of_a_line_range_area():
+    """audit-ac0135a8: `path:12-40` is the spelling `location` uses, and areas copy it."""
+    assert fx._location("src/app.py:12-40") == ("src/app.py", 12)
+
+
 def test_location_does_not_mistake_a_windows_drive_or_trailing_colon():
     assert fx._location("src/a.py:") == ("src/a.py:", None)
 

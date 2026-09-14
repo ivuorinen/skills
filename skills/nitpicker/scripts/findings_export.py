@@ -58,11 +58,6 @@ SARIF_LEVEL = {
     "advisory": "note",
 }
 
-# `area` is free text by design — it may be a file, a directory, a glob, or a
-# subsystem name. This pulls a line number off the `path:123` spelling and
-# leaves everything else alone rather than guessing.
-_AREA_LINE = re.compile(r"^(?P<path>.+?):(?P<line>\d+)$")
-
 # `location` is the coordinate a finding was filed with — `path:12` or
 # `path:12-40` — recorded by `findings.py new --location` alongside a
 # fingerprint of that source. Unlike `area` it is always a path and a line
@@ -82,11 +77,17 @@ _MAX_SARIF_LINE = 2**31 - 1
 
 
 def _location(area: str) -> tuple[str, int | None]:
-    """(uri, line) from an `area`, with line None unless the area names a usable one."""
-    match = _AREA_LINE.match(area.strip())
+    """(uri, line) from an `area`, with line None unless the area names a usable one.
+
+    audit-ac0135a8: an area copied from `location` reads `path:12-40`, which the
+    single-line pattern passed through verbatim as the URI with no region. The
+    range's start is the region's start line; its end is not carried, since a
+    code-scanning UI anchors an alert on one line.
+    """
+    match = _LOCATION_SPEC.match(area.strip())
     if not match:
         return area.strip(), None
-    line = int(match.group("line"))
+    line = int(match.group("start"))
     return match.group("path"), line if 0 < line <= _MAX_SARIF_LINE else None
 
 
