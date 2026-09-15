@@ -145,3 +145,6 @@ exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]
 # every `tmp_path`/`monkeypatch` parameter adds noise without catching anything.
 reportMissingParameterType = "error"
 executionEnvironments = [{ root = "tests", reportMissingParameterType = "none" }]
+# types-44e0e1c7: a suppression that suppresses nothing is an error, so a
+# stale `# type: ignore` cannot outlive the problem it once hid.
+reportUnnecessaryTypeIgnoreComment = "error"
