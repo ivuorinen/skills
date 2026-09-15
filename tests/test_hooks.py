@@ -4011,3 +4011,87 @@ def test_validate_evals_hook_passes_the_skill_dir_not_the_json(monkeypatch, tmp_
     _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
     assert seen, "the hook never shelled out"
     assert seen[0][-1] == str(repo / "skills" / "foo")
+
+
+# ── skill-safety-59f9427a: the vendored graphify skill installs only the pinned version ──
+
+GRAPHIFY_DIR = SCRIPTS_DIR.parent / ".claude" / "skills" / "graphify"
+# A package spec naming graphifyy without `==`, extras allowed: `graphifyy`,
+# `graphifyy[video]`. `graphifyy==…` and `graphifyy[video]==…` do not match.
+_UNPINNED_GRAPHIFYY = re.compile(r"graphifyy(?:\[[^\]]*\])?(?!\[|==)")
+
+
+def _vendored_graphify_docs() -> list[Path]:
+    """Every Markdown file of the vendored graphify skill."""
+    return sorted(GRAPHIFY_DIR.rglob("*.md"))
+
+
+def test_vendored_graphify_names_graphifyy_only_at_the_pinned_version():
+    """Setup installed whatever PyPI served (`uv tool install --upgrade graphifyy`),
+    ran unreviewed package code with the session's credentials, and then left
+    every Bash, Read and Glob call denied by the settings.json version pin."""
+    unpinned = [
+        f"{path.relative_to(GRAPHIFY_DIR)}:{number}: {line.strip()}"
+        for path in _vendored_graphify_docs()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _UNPINNED_GRAPHIFYY.search(line)
+    ]
+    assert unpinned == []
+
+
+def test_vendored_graphify_never_upgrades_or_breaks_system_packages():
+    """Neither flag belongs in an install the repository pins: `--upgrade` moves
+    past the pin, and `--break-system-packages` overrides the interpreter's own
+    refusal to be modified."""
+    text = "\n".join(p.read_text(encoding="utf-8") for p in _vendored_graphify_docs())
+    assert "--break-system-packages" not in text
+    assert not re.search(r"install\s+--upgrade", text)
+    assert ".graphify_version" in (GRAPHIFY_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_notice_records_the_graphify_install_deviation():
+    """Vendored content is modified only with the deviation from upstream on record."""
+    notice = (SCRIPTS_DIR.parent / "NOTICE").read_text(encoding="utf-8")
+    section = next(s for s in notice.split("\n## ") if s.startswith("graphify"))
+    assert "skill-safety-59f9427a" in section
+
+
+# ── skill-safety-5f9c118a: fetched content never reaches a subagent that can write ──
+
+
+def test_vendored_graphify_dispatches_no_writing_subagent():
+    """Extraction was mandated through general-purpose subagents *because* they
+    hold Write and Bash, and `/graphify add` feeds them fetched web pages: a
+    prompt-injection payload in a page reached an agent able to run shell
+    commands and write files in this repository."""
+    offenders = [
+        f"{path.relative_to(GRAPHIFY_DIR)}:{number}"
+        for path in _vendored_graphify_docs()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "general-purpose" in line
+    ]
+    assert offenders == []
+
+
+def test_vendored_graphify_extraction_returns_json_for_the_parent_to_write():
+    """The subagent returns its JSON as text; only the parent writes chunk files."""
+    spec = (GRAPHIFY_DIR / "references" / "extraction-spec.md").read_text(encoding="utf-8")
+    skill = (GRAPHIFY_DIR / "SKILL.md").read_text(encoding="utf-8")
+    assert "Write tool" not in spec
+    assert "final message" in spec
+    assert "parent writes" in skill
+
+
+def test_vendored_graphify_add_asks_the_owner_before_fetching():
+    """A fetched URL is untrusted input to the extraction pass; each one needs the
+    owner's go-ahead before it enters the corpus."""
+    add = (GRAPHIFY_DIR / "references" / "add-watch.md").read_text(encoding="utf-8")
+    section = add.split("## For /graphify add", 1)[1].split("\n## ", 1)[0]
+    assert "confirm" in section.split("```", 1)[0]
+
+
+def test_notice_records_the_graphify_subagent_deviation():
+    """The second local modification is on record beside the first."""
+    notice = (SCRIPTS_DIR.parent / "NOTICE").read_text(encoding="utf-8")
+    section = next(s for s in notice.split("\n## ") if s.startswith("graphify"))
+    assert "skill-safety-5f9c118a" in section
