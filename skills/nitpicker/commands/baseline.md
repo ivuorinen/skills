@@ -20,8 +20,9 @@ accepting the debt honestly. A finding at a new area or title gets a new id, so
 genuine new problems are never in the baseline and block the gate. Ids hash
 auditor+area+title (not the finding body): a regression reusing an
 already-baselined auditor+area+title reuses that id, and `findings.py` refuses
-to file it as a duplicate — it surfaces as a file-time error, never a silent
-waive.
+to file it. `--force` re-opens it under the baselined id, where release-gate
+waives it — so remove the id from `baseline.json` in a reviewed diff before
+re-opening.
 
 ## Procedure
 
@@ -39,8 +40,8 @@ waive.
    `findings.py resolve <id> --status fixed`) as it is truly
    fixed — it leaves open/ and drops out of the gate on its own.
 4. Do not re-baseline to "clean up". A resolved finding drops from the gate
-   whether or not it stays in the baseline (step 3), so a stale baselined id is
-   inert. `findings.py baseline` refuses to overwrite an existing baseline —
+   whether or not it stays in the baseline (step 3), but its id stays waived
+   if the finding is ever re-opened (see Mindset). `findings.py baseline` refuses to overwrite an existing baseline —
    reset only via `--clear` then a fresh baseline, or `--force` after reviewing
    the baseline.json diff.
 ```

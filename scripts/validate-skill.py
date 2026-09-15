@@ -8,6 +8,13 @@ Enforces the Agent Skills specification (https://agentskills.io/specification)
 plus this repo's own stricter conventions. Where the two differ the repo rule is
 the tighter one — the spec makes `description` free-form, we additionally
 require a "Use when" trigger clause.
+
+Usage: validate-skill.py [SKILL.md ...]
+
+With no arguments, validates skills/*/SKILL.md and .claude/skills/*/SKILL.md.
+`--help`/`-h` is answered before any argument is read as a path (audit-24b0f17a).
+
+Exit codes: 0 valid, 1 validation errors, 2 usage error.
 """
 
 import re
@@ -16,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import parse_frontmatter  # type: ignore[import-not-found]
+from common import md_fences, parse_frontmatter
 
 # Vendored skills — authored by someone else and installed into this repo (e.g.
 # via `/graphify`), NOT held to our SKILL.md conventions. Skills named here are
@@ -43,8 +50,11 @@ _SPEC_FIELDS: frozenset[str] = frozenset(
 # Top-level frontmatter key: unindented `key:` or `key: value`. YAML permits the
 # key to be quoted, and a bare-word-only pattern silently skipped `"key": value`
 # — the line then attached to the previous key as a nested line, so an
-# unrecognised key escaped the spec-field check entirely.
-_FM_KEY_RE = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_-]+))[ \t]*:(.*)$""")
+# unrecognised key escaped the spec-field check entirely. The bare spelling is any
+# unindented run up to the first `:` for the same reason: a word-character class
+# let `vendor.flag:` and `client setting:` through as nested lines
+# (audit-70fd1d59).
+_FM_KEY_RE = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#"'][^:]*?))[ \t]*:(.*)$""")
 
 # A YAML flow collection opens with [ or {. The spec types `allowed-tools` as one
 # space-separated string and `metadata` values as strings, so either marker in
@@ -78,41 +88,23 @@ def filter_vendored(targets: list[Path]) -> tuple[list[Path], list[str]]:
     return kept, skipped
 
 
-_FENCE_OPEN_RE = re.compile(r"(`{3,}|~{3,})")
-_FENCE_CLOSE_RE = re.compile(r"(`{3,}|~{3,})\s*")
-
-
-def _fence_open(stripped: str) -> str:
-    """The opening fence run (``` / ~~~, 3+ chars) at the start of a line, else ''."""
-    m = _FENCE_OPEN_RE.match(stripped)
-    return m.group(1) if m else ""
-
-
-def _fence_closes(stripped: str, fence: str) -> bool:
-    """True if the line closes an open ``fence`` run: only the run (plus optional
-    trailing whitespace), the same marker char, and at least as long — so a
-    four-backtick block is not closed by a three-backtick line.
-    """
-    m = _FENCE_CLOSE_RE.fullmatch(stripped)
-    return bool(m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence))
-
-
 def strip_fences(lines: list[str]) -> list[str]:
     """Return lines outside fenced code blocks.
 
     Handles indented fences, distinct markers (``` closed only by ```, ~~~ by
     ~~~), and the full delimiter length (a four-backtick opener is not closed by
-    a three-backtick line).
+    a three-backtick line). The open/close rule is the shipped `md_fences`, so
+    this validator and the shipped tools cannot disagree about a fence.
     """
     result: list[str] = []
     fence = ""
     for line in lines:
         stripped = line.lstrip()
         if fence:
-            if _fence_closes(stripped, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
             continue
-        opened = _fence_open(stripped)
+        opened = md_fences.opener(stripped)
         if opened:
             fence = opened
             continue
@@ -181,13 +173,13 @@ def unsafe_shell_lines(lines: list[str]) -> list[tuple[int, str]]:
     for i, line in enumerate(lines, 1):
         stripped = line.lstrip()
         if fence:
-            if _fence_closes(stripped, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
                 executable = False
             elif executable and _UNSAFE_SHELL_RE.search(line):
                 out.append((i, line.strip()))
             continue
-        opened = _fence_open(stripped)
+        opened = md_fences.opener(stripped)
         if opened:
             fence = opened
             executable = bool(_EXECUTABLE_FENCE_RE.match(stripped))
@@ -205,10 +197,10 @@ def _unterminated_fence(lines: list[str]) -> bool:
     for line in lines:
         stripped = line.lstrip()
         if fence:
-            if _fence_closes(stripped, fence):
+            if md_fences.closes(stripped, fence):
                 fence = ""
         else:
-            fence = _fence_open(stripped) or fence
+            fence = md_fences.opener(stripped) or fence
     return bool(fence)
 
 
@@ -477,8 +469,11 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
 
     # Legacy output paths — scan prose and inline code, but skip fenced code blocks
     # (example/format documentation) and table rows (behavior documentation).
-    body_no_doc = re.sub(r"```[\s\S]*?```", "", body)
-    body_no_doc = re.sub(r"^\|.*\|$", "", body_no_doc, flags=re.MULTILINE)
+    # strip_fences, not a backtick regex: the regex paired runs across a nested
+    # fence, dropped the prose between, and never saw ~~~ (audit-4562b342).
+    body_no_doc = "\n".join(
+        ln for ln in strip_fences(body.splitlines()) if not re.fullmatch(r"\|.*\|", ln)
+    )
     for legacy in ("./codereview.md", "./fixreport.md", "codereview.md", "fixreport.md"):
         if legacy in body_no_doc:
             warn(f"references legacy output path '{legacy}' — use docs/audit/ instead")
@@ -495,14 +490,35 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
 _CMD_ROW = re.compile(r"^\|\s*`([a-z0-9][a-z0-9-]*)`\s*\|")
 
 
-def table_commands(skill_body: str) -> set[str]:
-    """Return command names listed in the SKILL.md Commands table."""
-    cmds: set[str] = set()
+_CMD_SECTIONS = frozenset({"Commands", "Internal commands"})
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+
+
+def _command_table_rows(skill_body: str) -> list[tuple[str, str]]:
+    """(command, stripped row) for each row under `## Commands` or `## Internal commands`.
+
+    A section runs to the next heading of level 2 or higher, so its `###`
+    subsections stay in it. Rows from any other table used to count, so a
+    command dropped from the dispatch tables still passed the 1:1 sync
+    (audit-5315131e).
+    """
+    rows: list[tuple[str, str]] = []
+    in_section = False
     for line in strip_fences(skill_body.splitlines()):
-        m = _CMD_ROW.match(line.strip())
-        if m and m.group(1) != "command":
-            cmds.add(m.group(1))
-    return cmds
+        heading = _HEADING.match(line)
+        if heading and len(heading.group(1)) <= 2:
+            in_section = len(heading.group(1)) == 2 and heading.group(2) in _CMD_SECTIONS
+            continue
+        stripped = line.strip()
+        m = _CMD_ROW.match(stripped)
+        if in_section and m and m.group(1) != "command":
+            rows.append((m.group(1), stripped))
+    return rows
+
+
+def table_commands(skill_body: str) -> set[str]:
+    """Return command names listed in the SKILL.md command tables."""
+    return {name for name, _ in _command_table_rows(skill_body)}
 
 
 def _duplicate_table_commands(skill_body: str) -> list[str]:
@@ -513,13 +529,10 @@ def _duplicate_table_commands(skill_body: str) -> list[str]:
     """
     seen: set[str] = set()
     dups: list[str] = []
-    for line in strip_fences(skill_body.splitlines()):
-        m = _CMD_ROW.match(line.strip())
-        if m and m.group(1) != "command":
-            name = m.group(1)
-            if name in seen and name not in dups:
-                dups.append(name)
-            seen.add(name)
+    for name, _ in _command_table_rows(skill_body):
+        if name in seen and name not in dups:
+            dups.append(name)
+        seen.add(name)
     return dups
 
 
@@ -538,13 +551,9 @@ def table_aliases(skill_body: str) -> list[tuple[str, str]]:
     sync covers canonical names only.
     """
     found: list[tuple[str, str]] = []
-    for line in strip_fences(skill_body.splitlines()):
-        stripped = line.strip()
-        m = _CMD_ROW.match(stripped)
-        if not m or m.group(1) == "command":
-            continue
+    for name, stripped in _command_table_rows(skill_body):
         for decl in _ALIAS_DECL.findall(stripped):
-            found.extend((alias, m.group(1)) for alias in _BACKTICKED.findall(decl))
+            found.extend((alias, name) for alias in _BACKTICKED.findall(decl))
     return found
 
 
@@ -660,11 +669,28 @@ def validate_commands(  # noqa: C901
                 prev_level = level
 
 
+def _path_args(args: list[str]) -> list[Path]:
+    """The SKILL.md paths named on the command line, after `--help` and options.
+
+    Answered before any argument becomes a path, so `--help` is never reported
+    as an unreadable file (audit-24b0f17a).
+    """
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        sys.exit(0)
+    unknown = [a for a in args if a.startswith("-")]
+    if unknown:
+        print(f"error: unknown option {unknown[0]!r}", file=sys.stderr)
+        print("usage: validate-skill.py [SKILL.md ...]", file=sys.stderr)
+        sys.exit(2)
+    return [Path(a) for a in args]
+
+
 def main() -> None:
     errors: list[str] = []
     warnings: list[str] = []
 
-    targets = [Path(a) for a in sys.argv[1:]] if sys.argv[1:] else []
+    targets = _path_args(sys.argv[1:])
 
     if not targets:
         repo_root = Path(__file__).parent.parent

@@ -270,12 +270,15 @@ class TestMain:
         assert market["plugins"][0]["version"] == "1.1.0"
         assert manifest["."] == "1.1.0"
 
-    def test_main_unknown_part_returns_1(self, tmp_path, monkeypatch):
+    def test_main_unknown_part_is_a_usage_error(self, tmp_path, monkeypatch, capsys):
+        """audit-24b0f17a: a usage error is exit 2 on stderr, not 1 on stdout."""
         self._make_repo(tmp_path)
         mod = _load_mod()
         mod.__dict__["REPO_ROOT"] = tmp_path  # set the module global (typed-clean)
         monkeypatch.setattr(sys, "argv", ["bump-version.py", "bogus"])
-        assert mod.main() == 1
+        assert mod.main() == 2
+        captured = capsys.readouterr()
+        assert "Usage:" in captured.err and "bogus" in captured.err and captured.out == ""
         # Nothing written on the guard path.
         assert (
             json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))["version"]
@@ -312,5 +315,15 @@ def test_module_runs_as_a_script(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["bump-version.py", "bogus"])
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(SCRIPTS_DIR / "bump-version.py"), run_name="__main__")
-    assert exc.value.code == 1
+    assert exc.value.code == 2
+    assert "Usage:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_is_stdout_exit_zero_and_writes_nothing(tmp_path, monkeypatch, capsys, flag):
+    """audit-24b0f17a: `--help` is answered before it can be read as a part."""
+    mod = _load_mod()
+    mod.__dict__["REPO_ROOT"] = tmp_path  # no manifests here: a write would raise
+    monkeypatch.setattr(sys, "argv", ["bump-version.py", flag])
+    assert mod.main() == 0
     assert "Usage:" in capsys.readouterr().out

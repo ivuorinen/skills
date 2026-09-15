@@ -9,13 +9,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
+    SHIPPED_ROOT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
+_HOOK = "validate-skill-hook"
 
 
 def main() -> None:
@@ -42,9 +45,9 @@ def main() -> None:
     # A command-file edit is validated through its parent SKILL.md (table sync, format).
     target = path if is_skill else path.parent.parent / "SKILL.md"
 
-    validator = REPO_ROOT / "scripts" / "validate-skill.py"
+    validator = SHIPPED_ROOT / "scripts" / "validate-skill.py"
     if not validator.exists():
-        return
+        report_skip(_HOOK, "scripts/validate-skill.py not found", "make validate")
 
     try:
         result = subprocess.run(
@@ -54,8 +57,8 @@ def main() -> None:
             text=True,
             timeout=HOOK_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
-        return  # uv absent or the validator hung — CI remains the gate
+    except (OSError, subprocess.SubprocessError) as exc:
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "make validate")
     if result.returncode != 0:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.
         print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)

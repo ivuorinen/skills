@@ -30,8 +30,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 _EXEMPT = {"help", "all"}
 
-# `foo:` at column 0, not `foo := value`.
-_TARGET_RE = re.compile(r"^([a-z][a-z0-9_-]*):(?!=)", re.M)
+# `foo:` or `foo bar:` at column 0, not `foo := value`. One rule can declare
+# several targets, and a single-name pattern saw none of them, so `secret
+# deploy:` escaped both the help and .PHONY checks (audit-124edb0a).
+_TARGET_RE = re.compile(r"^([a-z][a-z0-9_-]*(?:[ \t]+[a-z][a-z0-9_-]*)*)[ \t]*:(?!=)", re.M)
 # The recipe lines of `help`, which look like: @echo "  name  — description"
 _HELP_ENTRY_RE = re.compile(r'@echo\s+"\s+([a-z][a-z0-9_-]*)\s')
 _PHONY_RE = re.compile(r"^\.PHONY:\s*(.+)$", re.M)
@@ -45,7 +47,7 @@ def read_makefile(path: Path) -> tuple[set[str], set[str], set[str]]:
     other target's output as though it were a help entry.
     """
     text = path.read_text(encoding="utf-8")
-    targets = {m.group(1) for m in _TARGET_RE.finditer(text)}
+    targets = {name for m in _TARGET_RE.finditer(text) for name in m.group(1).split()}
 
     # Prefixed with a newline so `help:` is found as the first line too. Without
     # it the search misses a Makefile that opens with the help target, no help

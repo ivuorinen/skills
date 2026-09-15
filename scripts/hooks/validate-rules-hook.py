@@ -15,24 +15,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
+    SHIPPED_ROOT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
-
-# The two scripts this hook runs ship beside it, so their paths are derived from
-# `__file__` rather than from REPO_ROOT. REPO_ROOT comes from CLAUDE_PROJECT_DIR
-# or REPO_ROOT, and while `repo_root()` refuses a value that does not point at
-# this checkout, that is an existence test rather than a containment one — it
-# left an environment-derived string interpolated into the argv below, reported
-# as py/command-line-injection. A path built from `__file__` cannot be
-# influenced by the environment at all, which is both the stronger guarantee and
-# the simpler one to read. REPO_ROOT still supplies the subprocess `cwd`, which
-# is the tree being validated rather than the code doing the validating.
-_SHIPPED_ROOT = Path(__file__).resolve().parent.parent.parent
+_HOOK = "validate-rules-hook"
+_BY_HAND = (
+    "uv run --quiet scripts/validate-rules.py"
+    " && python3 skills/nitpicker/scripts/check-rules-anatomy.py ."
+)
 
 
 def main() -> None:
@@ -57,10 +53,12 @@ def main() -> None:
     if path.suffix != ".md" or not candidate.startswith(rules_dir + os.sep):
         return
 
-    validator = _SHIPPED_ROOT / "scripts" / "validate-rules.py"
-    anatomy = _SHIPPED_ROOT / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
+    # Both scripts come from the checkout this hook ships in (`SHIPPED_ROOT`);
+    # REPO_ROOT only supplies the subprocess `cwd`, the tree being validated.
+    validator = SHIPPED_ROOT / "scripts" / "validate-rules.py"
+    anatomy = SHIPPED_ROOT / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
     if not validator.exists() or not anatomy.exists():
-        return
+        report_skip(_HOOK, "validate-rules.py or check-rules-anatomy.py not found", _BY_HAND)
 
     output = []
     failed = False
@@ -87,10 +85,13 @@ def main() -> None:
                 text=True,
                 timeout=HOOK_TIMEOUT,
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as exc:
             # Stop running validators, but fall through to the report below: a
             # failure already collected from an earlier one is a real result,
-            # and returning here would discard it.
+            # and returning here would discard it. With nothing collected, the
+            # skip itself is the result and has to be said.
+            if not failed:
+                report_skip(_HOOK, f"{type(exc).__name__}: {exc}", _BY_HAND)
             break
         if result.returncode != 0:
             failed = True

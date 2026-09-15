@@ -10,28 +10,53 @@ INDEX.md so it never drifts from the store. Never autofixes — the store is
 written through findings.py, which only produces canonical files.
 """
 
+import importlib.machinery
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
+    SHIPPED_ROOT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
-FINDINGS = REPO_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
+_HOOK = "validate-audit-findings-hook"
+_BY_HAND = "make check"
+# The shipped tool this hook executes, from its own checkout (audit-1e48d360).
+FINDINGS = SHIPPED_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
+
+
+def _load_findings() -> types.ModuleType:
+    """findings.py from this hook's own checkout, loaded by path.
+
+    Loaded rather than copied: `store_root` used to return its own literal path
+    while claiming to share findings.py's, so changing `DEFAULT_ROOT` would have
+    stopped this hook validating store edits without a word (audit-a2f8f189).
+    It is the same file the hook executes (`FINDINGS`, under `SHIPPED_ROOT`), so
+    the definition read is the one shipped beside this hook. Registered in
+    `sys.modules` under a private name so the module's own dataclasses and
+    imports resolve as they do under import.
+    """
+    loader = importlib.machinery.SourceFileLoader("_audit_hook_findings", str(FINDINGS))
+    module = types.ModuleType(loader.name)
+    module.__file__ = str(FINDINGS)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
+findings = _load_findings()
 
 
 def store_root(repo_root: Path) -> Path:
-    """The findings store directory for a repo root.
-
-    One definition, so this hook and findings.py cannot disagree about where
-    the store lives.
-    """
-    return repo_root / "docs" / "audit" / "findings"
+    """The findings store directory for a repo root: `findings.DEFAULT_ROOT` under it."""
+    return repo_root / findings.DEFAULT_ROOT
 
 
 def should_check(path: Path, repo_root: Path) -> bool:
@@ -83,8 +108,8 @@ def main() -> None:  # noqa: C901
                 cwd=REPO_ROOT,
                 timeout=HOOK_TIMEOUT,
             )
-        except (OSError, subprocess.SubprocessError):
-            return  # findings.py unrunnable — `make check` remains the gate
+        except (OSError, subprocess.SubprocessError) as exc:
+            report_skip(_HOOK, f"{type(exc).__name__}: {exc}", _BY_HAND)
         if result.returncode != 0:
             # PostToolUse surfaces only exit 2 + stderr back to the agent.
             print(
@@ -103,8 +128,8 @@ def main() -> None:  # noqa: C901
                 cwd=REPO_ROOT,
                 timeout=HOOK_TIMEOUT,
             )
-        except (OSError, subprocess.SubprocessError):
-            return  # findings.py unrunnable — `make check` remains the gate
+        except (OSError, subprocess.SubprocessError) as exc:
+            report_skip(_HOOK, f"{type(exc).__name__}: {exc}", _BY_HAND)
         if result.returncode != 0:
             print("  audit-findings hook: resolved.jsonl failed store validation", file=sys.stderr)
             print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)
@@ -123,8 +148,8 @@ def main() -> None:  # noqa: C901
             cwd=REPO_ROOT,
             timeout=HOOK_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
-        return  # findings.py unrunnable — `make check` remains the gate
+    except (OSError, subprocess.SubprocessError) as exc:
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", _BY_HAND)
     if index.returncode != 0:
         print("  audit-findings hook: INDEX.md regeneration failed", file=sys.stderr)
         print((index.stderr or index.stdout).rstrip(), file=sys.stderr, flush=True)

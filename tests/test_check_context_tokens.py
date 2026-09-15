@@ -49,6 +49,30 @@ def test_always_loaded_collects_the_named_files_and_every_rule(tmp_path):
     assert paths == {"CLAUDE.md", "AGENTS.md"} | {f".claude/rules/r{i}.md" for i in range(3)}
 
 
+def test_always_loaded_includes_rules_in_subdirectories(tmp_path):
+    """audit-9efa98a4: a one-level glob dropped `.claude/rules/sub/*.md` from the report."""
+    root = _project(tmp_path, rules=1)
+    (root / ".claude" / "rules" / "sub").mkdir()
+    (root / ".claude" / "rules" / "sub" / "n.md").write_text("# n\n", encoding="utf-8")
+    assert ".claude/rules/sub/n.md" in {row["path"] for row in _mod.always_loaded(root)}
+
+
+@pytest.mark.parametrize(("body", "lines"), [("", 0), ("no newline", 1), ("a\nb\n", 2)])
+def test_measure_counts_lines_not_newlines_plus_one(tmp_path, body, lines):
+    """audit-029db16b: `count("\\n") + 1` overstated every newline-terminated file."""
+    f = tmp_path / "f.md"
+    f.write_text(body, encoding="utf-8")
+    assert _mod._measure(f, tmp_path)["lines"] == lines
+
+
+def test_render_out_parameters_are_annotated():
+    """types-851598e4: an untyped `out` let a path type-check where a stream belongs."""
+    import inspect
+
+    for fn in (_mod._render_set, _mod.render, _mod.render_delta):
+        assert inspect.signature(fn).parameters["out"].annotation is not inspect.Parameter.empty
+
+
 def test_always_loaded_ignores_a_stray_markdown_file_beside_claude_md(tmp_path):
     """The set is a convention, not a directory listing.
 

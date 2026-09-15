@@ -149,6 +149,31 @@ def test_runner_internal_shebangless_library_exempt(tmp_path: Path) -> None:
     assert find_runner_violations(tmp_path) == []
 
 
+# audit-a4b2f181: the one implementation of the internal-shebang rule. These
+# cases moved here from test_validate_rules.py when its copy was deleted.
+
+
+def test_runner_internal_uv_shebang_accepted(tmp_path: Path) -> None:
+    _internal(tmp_path, "thing.py", "#!/usr/bin/env -S uv run --quiet\nprint(1)\n")
+    assert find_runner_violations(tmp_path) == []
+
+
+def test_runner_any_shebangless_library_is_exempt_not_just_named_ones(tmp_path: Path) -> None:
+    _internal(tmp_path, "_benchlib.py", '"""lib."""\nX = 1\n')
+    hooks = tmp_path / "scripts" / "hooks"
+    hooks.mkdir()
+    (hooks / "_hooklib.py").write_text('"""Shared."""\n', encoding="utf-8")
+    assert find_runner_violations(tmp_path) == []
+
+
+def test_runner_nested_internal_script_is_checked(tmp_path: Path) -> None:
+    """The rule covers scripts/**/*.py; a two-level glob missed scripts/sub/."""
+    sub = tmp_path / "scripts" / "sub"
+    sub.mkdir(parents=True)
+    (sub / "tool.py").write_text("#!/usr/bin/env python3\nimport json\n", encoding="utf-8")
+    assert any("scripts/sub/tool.py" in p for p in find_runner_violations(tmp_path))
+
+
 def test_nested_shipped_tool_is_scanned(tmp_path: Path) -> None:
     # .pre-commit-config.yaml's pattern fires on nested shipped scripts, so the
     # glob here must reach them too — a non-recursive glob left them unchecked.

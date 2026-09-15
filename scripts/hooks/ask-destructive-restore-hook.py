@@ -27,7 +27,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
+    event_command,
     git_calls,
     load_event,
     repo_root,
@@ -63,23 +64,77 @@ def _decide(decision: str, reason: str) -> None:
 
 
 def _targets(command: str) -> list[str] | None:
-    """Path operands of the first destructive restore, or None if there is none.
-
-    `git checkout` counts only with an explicit `--`; without it the command is a
-    branch switch or creation, which destroys nothing.
-    """
+    """Path operands of the first destructive restore, or None if there is none."""
     for subcommand, args in git_calls(command):
         if subcommand == "restore":
             return [a for a in args if not a.startswith("-")]
-        if subcommand == "checkout" and "--" in args:
-            tail = args[args.index("--") + 1 :]
-            return [a for a in tail if not a.startswith("-")]
+        if subcommand == "checkout" and (targets := _checkout_targets(args)) is not None:
+            return targets
     return None
 
 
+# Options that make `git checkout` create a branch, which never restores a path.
+_BRANCH_CREATION = frozenset({"-b", "-B", "--orphan"})
+
+
+def _checkout_targets(args: list[str]) -> list[str] | None:
+    """The paths a `git checkout` restores, or None when it only switches branches.
+
+    Counting a checkout only when it carried `--` missed `git checkout f.txt`,
+    which overwrites the unstaged content from the index just the same
+    (agent-loopholes-152e6d90). Without `--` git reads a leading operand that
+    names a commit as the source and everything after it as paths, and an
+    operand that names no commit as a path; this follows the same rule.
+    """
+    if "--" in args:
+        tail = args[args.index("--") + 1 :]
+        return [a for a in tail if not a.startswith("-")]
+    if any(a in _BRANCH_CREATION for a in args):
+        return None
+    operands = [a for a in args if not a.startswith("-")]
+    if operands and _is_commit(operands[0]):
+        operands = operands[1:]
+    return operands or None
+
+
+def _is_commit(operand: str) -> bool:
+    """True when git resolves `operand` to a commit in this repository.
+
+    `--end-of-options` keeps the caller-derived operand from being read as an
+    option. When git cannot answer, the operand counts as a path: the guard then
+    asks rather than staying silent over a possible discard.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                f"{operand}^{{commit}}",
+            ],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _covers(target: str, entry: str) -> bool:
-    """Whether restoring `target` would touch the repo-relative `entry`."""
+    """Whether restoring `target` would touch the repo-relative `entry`.
+
+    Pathspec magic (`:/`, `:(top)`, …) and a glob reach entries no prefix test can
+    match, so they cover every entry: `_covers(":/", "src/a.py")` was False, and a
+    whole-tree restore over dirty files passed silently (agent-loopholes-152e6d90).
+    Over-asking on a narrow glob is the cheap direction for an `ask` hook.
+    """
     t = target.strip("\"'").rstrip("/")
+    if t.startswith(":") or any(char in t for char in "*?["):
+        return True
     if t.startswith("/"):
         try:
             t = str(Path(t).resolve().relative_to(Path(REPO_ROOT).resolve()))
@@ -160,7 +215,7 @@ def main() -> None:
     if data is None:
         return
 
-    command = (data.get("tool_input") or {}).get("command") or ""
+    command = event_command(data)
     targets = _targets(command) if command else None
     if targets is None:
         return

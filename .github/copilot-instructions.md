@@ -20,10 +20,8 @@ skills/nitpicker/
   commands/
     _conventions.md        # Shared conventions binding every command (severity, findings protocol)
     <command>.md           # One file per command, no frontmatter
-  scripts/                 # Shipped tools: findings.py, fetch-pr-comments.py,
-                           #   fetch-pr-status.py, pr_common.py + pr_{github,gitlab,bitbucket}.py,
-                           #   process-sarif.py, check-rules-anatomy.py,
-                           #   mcp_server.py, skill_catalog.py — stdlib-only, plain python3
+  scripts/                 # Shipped tools — stdlib-only, plain python3; the
+                           #   "## Bundled tools" table in SKILL.md lists them
 .claude/
   skills/                  # Internal dev skills (new-command, release-prep, skills, skill-tester,
                            #   validate-skills) — not shipped to consumers.
@@ -31,7 +29,8 @@ skills/nitpicker/
                            #   .claude/rules/vendored-skills.md) and nitpicker,
                            #   a symlink to skills/nitpicker
   rules/                   # Enforced conventions (skill-format, skill-style, use-uv-runner, …)
-  settings.json            # Shared PostToolUse hooks
+  settings.json            # Shared hooks: PostToolUse validators, PreToolUse guards that can
+                           #   block a call, a Stop hook — CLAUDE.md's Configuration lists them
   agents/                  # Sub-agent definitions — do NOT read or modify
 .claude-plugin/            # plugin.json + marketplace.json (plugin identity + version)
 scripts/                   # Internal dev tooling: validate-skill.py, bump-version.py, hooks, …
@@ -97,7 +96,7 @@ docs/audit/findings/
 Drive the store only through the shipped CLI:
 
 ```bash
-python3 skills/nitpicker/scripts/findings.py new|resolve|list|show|validate|index|baseline|migrate ...
+python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
 ```
 
 Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migrate` converts
@@ -118,12 +117,12 @@ error. Bad input fails non-zero — an empty-but-valid result at exit 0 reads as
 ## Validation — Run Before Every Commit
 
 ```bash
-make check     # validate skill+commands + evals + rules + version sync + lockfile + findings store + findings index + lint + format check + bandit security scan + typecheck + pytest + pre-commit
+make check     # the full gate; make help lists every target
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```
 
-CI runs the same checks on every push/PR touching skills, scripts, tests, rules, or version files.
+CI runs the same checks on every push to `main` and every pull request.
 
 ## Versioning — Every Manifest Must Stay in Sync
 
@@ -140,9 +139,8 @@ for manual bumps — never edit version fields by hand in individual files.
 out, or fails, it reports that and continues rather than aborting a bump whose
 manifests are already written.
 
-Run `uv lock` to resync — that is the supported way to move the version in the
-lockfile. Hand-edit `uv.lock` only where uv cannot run at all, and treat that as
-a stopgap: the next `uv lock` overwrites the value.
+Resyncing the lockfile after a failed re-lock is covered in
+`.claude/rules/version-bumps.md`.
 
 ## Commit Message Convention (Controls Release Automation)
 

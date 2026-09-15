@@ -41,8 +41,6 @@ A symbol reachable through **any** channel is live. A candidate with **any chann
 
 ## Process
 
-Run this as a task list — one entry per step, every step closed before reporting. An unexecuted step is a coverage gap, and silence is approval.
-
 1. **Enumerate the dead-code surface.** Scope: every file the project maintains; excluded are only vendored and generated code. Sweep repo-wide for each class — statements after `return`/`raise`, always-false branches, non-exported symbols, exports, importless files, unread parameters, unreferenced assets. Record counts per class. The task framing is not the category list; a hunt limited to what was pointed at is INCOMPLETE.
 2. **Rule out reachability for each candidate.** For every candidate symbol or file, run all applicable channels of the Reachability rule repo-wide — channels 1, 2, 3, and 5 for any symbol, additionally 4 and 7 for exports, with channel 6 the deletion-safety check rather than a liveness channel. A candidate that survives one unchecked applicable channel is not yet dead. Record which channels were checked and their results.
 3. **Classify and separate the risky removals.** A candidate with every channel negative and no off-repo surface is dead. A candidate that is a public export or has an unverifiable cross-package surface is `unused-export` — the finding names the surface, and removal is an owner/semver decision, not this command's to auto-apply.

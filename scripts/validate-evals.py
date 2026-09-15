@@ -119,8 +119,12 @@ def _check_resources(
 
 def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[str], None]) -> None:
     """Check one evals.json test case (id uniqueness handled by the caller)."""
+    # A string with text, not anything whose str() is non-blank: str(None) is
+    # 'None', so a null prompt, output or assertion passed as gradable text
+    # (audit-e639ffa3).
     for field in ("prompt", "expected_output"):
-        if not str(case.get(field, "")).strip():
+        value = case.get(field)
+        if not (isinstance(value, str) and value.strip()):
             err(f"eval {label} has an empty '{field}'")
 
     assertions = case.get("assertions")
@@ -128,7 +132,7 @@ def _check_case(case: dict, label: str | int, skill_dir: Path, err: Callable[[st
         # Without assertions there is nothing to grade, so the case contributes
         # no signal to the pass rate.
         err(f"eval {label} needs at least one assertion")
-    elif any(not str(a).strip() for a in assertions):
+    elif any(not (isinstance(a, str) and a.strip()) for a in assertions):
         err(f"eval {label} has an empty assertion")
 
     _check_files(case.get("files", []), label, skill_dir, err)

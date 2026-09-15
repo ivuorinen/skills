@@ -1,3 +1,10 @@
+---
+paths:
+  - "scripts/**"
+  - "skills/*/scripts/**"
+  - "tests/**"
+---
+
 # Script Execution
 
 Two script classes with different runners — never mix them up:

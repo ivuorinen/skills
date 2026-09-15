@@ -140,3 +140,11 @@ typeCheckingMode = "standard"
 pythonPlatform = "All"
 include = ["scripts", "skills", "tests"]
 exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]
+# types-851598e4: an unannotated parameter is an error in shipped tools and dev
+# scripts. Tests are exempt: pytest injects fixtures by name, and annotating
+# every `tmp_path`/`monkeypatch` parameter adds noise without catching anything.
+reportMissingParameterType = "error"
+executionEnvironments = [{ root = "tests", reportMissingParameterType = "none" }]
+# types-44e0e1c7: a suppression that suppresses nothing is an error, so a
+# stale `# type: ignore` cannot outlive the problem it once hid.
+reportUnnecessaryTypeIgnoreComment = "error"

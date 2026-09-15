@@ -280,6 +280,17 @@ def test_invalid_double_star_glob_reported_not_crashed(tmp_path):
     assert _has(errors, "not a valid pattern") or _has(warnings, "stale")
 
 
+def test_a_glob_that_raises_is_reported_on_every_python(tmp_path, monkeypatch):
+    # The test above only reaches the ValueError arm on CPython <3.13, so the
+    # coverage gate passed or failed by interpreter. Force the raise instead.
+    def _raise(*_a, **_k):
+        raise ValueError("Invalid pattern")
+
+    monkeypatch.setattr(Path, "glob", _raise)
+    content = '---\npaths:\n  - "src/*.ts"\n---\n\nBody.\n'
+    assert _has(_errors(tmp_path, content), "not a valid pattern: 'src/*.ts'")
+
+
 def test_blank_line_inside_paths_list_keeps_all_items():
     text = '---\npaths:\n  - "stale/removed/*"\n\n  - "src/*"\n---\nbody\n'
     fm, _ = _mod.parse_rules_frontmatter(text)
@@ -319,37 +330,20 @@ def test_skill_without_a_date_is_accepted(tmp_path):
     assert _repo_errors(tmp_path) == []
 
 
-def test_internal_script_without_uv_shebang_is_rejected(tmp_path):
+def test_the_shebang_rule_is_not_checked_here(tmp_path):
+    """audit-a4b2f181: check-stdlib-only.py is the one implementation; a copy
+    here gave a contradictory verdict on the same file."""
     _script(tmp_path, "thing.py", "#!/usr/bin/env python3\nprint(1)\n")
-    assert _has(_repo_errors(tmp_path), "must be first line") or _has(
-        _repo_errors(tmp_path), "uv run --quiet"
-    )
-
-
-def test_internal_script_with_uv_shebang_is_accepted(tmp_path):
-    _script(tmp_path, "thing.py", "#!/usr/bin/env -S uv run --quiet\nprint(1)\n")
-    assert _repo_errors(tmp_path) == []
-
-
-def test_import_only_modules_are_exempt_from_the_shebang_rule(tmp_path):
-    # common.py and _hooklib.py are imported, never executed — a shebang there
-    # would claim a runner they do not have.
-    _script(tmp_path, "common.py", '"""Shared utilities."""\n')
-    (tmp_path / "scripts" / "hooks").mkdir(parents=True)
-    (tmp_path / "scripts" / "hooks" / "_hooklib.py").write_text('"""Shared."""\n', encoding="utf-8")
     assert _repo_errors(tmp_path) == []
 
 
 def test_non_utf8_file_reports_error_not_traceback(tmp_path):
-    # A non-UTF-8 byte in a scanned .md or .py must produce a clean ERROR, not an
+    # A non-UTF-8 byte in a scanned .md must produce a clean ERROR, not an
     # uncaught UnicodeDecodeError crashing the whole validator.
     (tmp_path / "skills" / "demo").mkdir(parents=True)
     (tmp_path / "skills" / "demo" / "SKILL.md").write_bytes(b"\xff\xfe bad bytes")
-    (tmp_path / "scripts").mkdir(parents=True)
-    (tmp_path / "scripts" / "thing.py").write_bytes(b"\xff not utf-8")
     errors = _repo_errors(tmp_path)  # must not raise
-    assert _has(errors, "cannot read file")
-    assert sum("cannot read file" in e for e in errors) == 2
+    assert sum("cannot read file" in e for e in errors) == 1
 
 
 # ── validate() error paths and main() (tests-781e4953, tests-b4fcf9ec) ────────

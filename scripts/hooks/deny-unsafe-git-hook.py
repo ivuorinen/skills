@@ -14,6 +14,9 @@
    of commits carrying files the change never touched: scratch output, local
    config, editor artifacts. Explicit pathspecs and `git add -u` (tracked files
    only) stay allowed.
+4. Switching the hooks off outside a single git option: a `git config` write to
+   core.hooksPath or an alias, an alias already in git config whose body breaks
+   a mandate, `SKIP=`/`PRE_COMMIT_*` on a commit, and `pre-commit uninstall`.
 
 Tokenising lives in _hooklib.git_calls, shared with the sibling guards.
 
@@ -23,14 +26,17 @@ because a guard that exits 0 on exception enforces nothing.
 """
 
 import functools
+import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     _VALUE_OPTS,
+    event_command,
+    foreign_code,
     git_calls,
     load_event,
     repo_root,
@@ -88,6 +94,35 @@ def _norm_pathspec(arg: str) -> str:
     while s.startswith("./"):
         s = s[2:]
     return s.rstrip("/") or "."
+
+
+# Pathspec magic that anchors at the repository root, and magic that stages
+# everything except what it names. `$PWD` is the shell's spelling of the root,
+# on the assumption the guard already makes: a Bash call starts in the project.
+_TOP_MAGIC = (":/", ":(top)")
+_EXCLUDE_MAGIC = (":!", ":^", ":(exclude)")
+_PWD = frozenset({"$PWD", "${PWD}"})
+
+
+def _stages_whole_tree(arg: str) -> bool:
+    """True when this `git add` operand reaches the repository root.
+
+    Judged by what the operand resolves to, not by its spelling. Folding only
+    `.`, `./` prefixes and an exact `:/` let `git add ':/*'`, `'*'`, the absolute
+    root, `"$PWD"`, `../<repo dir>` and `':(top)'` stage everything
+    (agent-loopholes-c3a684c9). A lone exclude pathspec stages everything but
+    one path, so it counts too. Ceiling: a `cd` earlier in the command moves the
+    shell, and the operand is still resolved from the root.
+    """
+    if _norm_pathspec(arg) in _ADD_ALL or arg in _PWD or arg.startswith(_EXCLUDE_MAGIC):
+        return True
+    for magic in _TOP_MAGIC:
+        if arg.startswith(magic):
+            arg = "./" + arg.removeprefix(magic)
+            break
+    if _norm_pathspec(arg) == "*":
+        return True
+    return (REPO_ROOT / arg).resolve() == REPO_ROOT.resolve()
 
 
 # Push modes that name no refspec and update protected branches regardless of HEAD.
@@ -218,6 +253,11 @@ def _global_config(tokens: list[str], env: dict[str, str] | None = None) -> list
     never saw the protected-branch push. An unresolvable name keeps its literal
     spelling — the variable is then set outside this command's text, which is
     the same reach the guard's docstring already records as open.
+
+    `--config-env <key>=<var>` as two words is recorded the same way. It was
+    consumed as a value option without being read, so
+    `HP=/dev/null git --config-env core.hooksPath=HP commit` disabled the hooks
+    unjudged (agent-loopholes-f376faa5).
     """
     env = env or {}
     pairs: list[tuple[str, str]] = []
@@ -225,8 +265,10 @@ def _global_config(tokens: list[str], env: dict[str, str] | None = None) -> list
     while i < len(tokens):
         opt = tokens[i]
         if opt in _VALUE_OPTS:
-            if opt == "-c" and i + 1 < len(tokens) and "=" in tokens[i + 1]:
+            if opt in ("-c", "--config-env") and i + 1 < len(tokens) and "=" in tokens[i + 1]:
                 key, _, value = tokens[i + 1].partition("=")
+                if opt == "--config-env":
+                    value = env.get(value, value)
                 pairs.append((key.strip().lower(), value))
             i += 2
         elif opt.startswith("-"):
@@ -262,17 +304,129 @@ def _carries_no_verify(args: list[str]) -> bool:
     return False
 
 
+_CONFIG_WRITE_DENIAL = (
+    "  DENIED  `git config {key}` persists a setting that can disable the hooks.\n"
+    "          A hooksPath or alias written now is invisible to every later\n"
+    "          command's text. The pre-commit validators are not optional — see\n"
+    "          .claude/rules/commit-gate-integrity.md."
+)
+_SKIP_DENIAL = (
+    "  DENIED  {var} on `git commit` switches pre-commit hooks off.\n"
+    "          Commit without it and fix what fails — see\n"
+    "          .claude/rules/commit-gate-integrity.md."
+)
+_UNINSTALL_DENIAL = (
+    "  DENIED  `pre-commit uninstall` removes the hooks the commit gate runs.\n"
+    "          See .claude/rules/commit-gate-integrity.md."
+)
+# `git config` spellings that read or remove rather than write. Unsetting
+# core.hooksPath or an alias re-enables the default; it disables nothing.
+_CONFIG_NON_WRITES = frozenset(
+    {
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--list",
+        "-l",
+        "--unset",
+        "--unset-all",
+        "get",
+        "list",
+        "unset",
+    }
+)
+
+
+def _config_write_denial(args: list[str]) -> str | None:
+    """Denial for a `git config` write to core.hooksPath or an alias, or None.
+
+    The guard judged `-c core.hooksPath=…` and `-c alias.…` only inside the same
+    command, so `git config core.hooksPath /dev/null` — or an alias written in one
+    call and invoked in the next — switched the gate off in two steps
+    (agent-loopholes-f376faa5). Ceiling: `git config --edit` opens an editor
+    whose writes no command text shows.
+    """
+    if any(a in _CONFIG_NON_WRITES for a in args):
+        return None
+    for key in (a.lower() for a in args if not a.startswith("-")):
+        if key in _HOOKS_DISABLING or key.startswith("alias."):
+            return _CONFIG_WRITE_DENIAL.format(key=key)
+    return None
+
+
+def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
+    """Denial for switching pre-commit off around a commit, or None.
+
+    `SKIP=<hook ids>` and the `PRE_COMMIT_*` variables are read by pre-commit
+    itself, and `pre-commit uninstall` deletes the hook scripts; none of them
+    touches a git option, so the git-option checks never saw them
+    (agent-loopholes-f376faa5). Ceiling: a variable exported by an earlier call
+    carries no token in this one.
+    """
+    name = Path(tokens[0]).name
+    if name == "pre-commit" and "uninstall" in tokens[1:]:
+        return _UNINSTALL_DENIAL
+    index = skip_git_global_opts(tokens, 1)
+    if name != "git" or index >= len(tokens) or tokens[index] != "commit":
+        return None
+    skipped = [var for var in env if var == "SKIP" or var.startswith("PRE_COMMIT_")]
+    return _SKIP_DENIAL.format(var=skipped[0]) if skipped else None
+
+
+@functools.cache
+def _persistent_aliases() -> dict[str, str]:
+    """Every alias git config already holds, name to body; empty if git cannot say.
+
+    Aliases were resolved only from `-c alias.…` in the same command, so an alias
+    defined by an earlier call or outside the session — `alias.ci = commit
+    --no-verify`, then `git ci -m x` — ran its body unjudged
+    (agent-loopholes-f376faa5). Cached: this hook runs on every shell call.
+    Ceiling: `git -C <other repo>` reads that repo's aliases, not these.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get-regexp", r"^alias\."],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    aliases: dict[str, str] = {}
+    for line in result.stdout.splitlines() if result.returncode == 0 else []:
+        name, _, body = line.partition(" ")
+        aliases[name.removeprefix("alias.")] = body
+    return aliases
+
+
 def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
     if subcommand == "commit" and _carries_no_verify(args):
         return _COMMIT_DENIAL
+    if subcommand == "config" and (reason := _config_write_denial(args)):
+        return reason
     if subcommand == "add":
-        staged_all = [a for a in args if _norm_pathspec(a) in _ADD_ALL]
+        staged_all = [a for a in args if _stages_whole_tree(a)]
         if staged_all:
             return _ADD_DENIAL.format(arg=staged_all[0])
     if subcommand == "push" and _push_targets_protected(args):
         return _PUSH_DENIAL.format(branch=_current_branch() or "unknown")
     return None
+
+
+# Non-shell context-mode code cannot be tokenized, so a git write in it is found
+# by co-occurrence: `git` plus a word naming what this guard judges. Ceiling: a
+# harmless script using both words (`seen.add(x)` beside `.git`) is refused too,
+# and a name built at runtime passes (agent-loopholes-41c1b2f3).
+_GIT_WORD = re.compile(r"\bgit\b")
+_GIT_WRITE_WORD = re.compile(r"\b(?:commit|push|add|config|alias|hookspath|no-verify)\b", re.I)
+_FOREIGN_DENIAL = (
+    "  DENIED  non-shell code runs git with a write this guard judges.\n"
+    "          Code in another language cannot be tokenized, so the guard cannot\n"
+    "          check it. Run the git command through a shell call instead."
+)
 
 
 def _deny(reason: str) -> None:
@@ -335,6 +489,8 @@ def _global_denial(
     """
     if env and (reason := _env_denial(env)) is not None:
         return reason
+    if (reason := _hook_skip_denial(tokens, env or {})) is not None:
+        return reason
     if Path(tokens[0]).name != "git":
         return None
     config = _global_config(tokens, env)
@@ -351,7 +507,11 @@ def _global_denial(
     # matches nothing, so the call reached real git untouched. The call's own
     # arguments belong after the alias body — `push` alone targets no branch,
     # `push origin main` does.
-    aliases = {k.split(".", 1)[1]: v for k, v in config if k.startswith("alias.") and "." in k}
+    # Aliases already in git config count too; one set in this command wins, as
+    # it does for git.
+    aliases = _persistent_aliases() | {
+        k.split(".", 1)[1]: v for k, v in config if k.startswith("alias.") and "." in k
+    }
     return _alias_denial(aliases.get(subcommand, ""), args, depth)
 
 
@@ -369,7 +529,11 @@ def main() -> None:
     if data is None:
         return  # not a parseable event — nothing to judge
 
-    command = (data.get("tool_input") or {}).get("command") or ""
+    code = foreign_code(data)
+    if _GIT_WORD.search(code) and _GIT_WRITE_WORD.search(code):
+        _deny(_FOREIGN_DENIAL)
+
+    command = event_command(data)
     if not command:
         return
 

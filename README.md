@@ -207,23 +207,22 @@ management (`np_list_findings`, `np_show_finding`, `np_findings_index`,
 `np_validate_store`, `np_new_finding`, `np_resolve_finding`, `np_write_index`),
 scanner and rule analysis (`np_process_sarif`, `np_check_rules_anatomy`,
 `np_check_agent_instructions`), bounded repository context (`np_context_pack`),
-and
 pull-request reads (`np_pr_comments`, `np_pr_status` — GitHub, GitLab and
-Bitbucket Cloud in one shared JSON format). Every tool a command invokes is
-reachable this way, so a command runs its analysis without a shell; the
-`python3 scripts/…` form stays the documented fallback for Copilot, pi and CI,
-where no MCP server exists. Every tool is
-prefixed `np_` and publishes MCP annotations, so a client can tell the read-only
-tools from the ones that write — `np_new_finding` only adds, `np_write_index`
-rewrites a generated file, and `np_resolve_finding` is the one irreversible
-call — and the PR tools, the only ones that reach the network, from the rest,
-whose domain is the local filesystem.
-See the "MCP server" section of `skills/nitpicker/SKILL.md` for scope and the
-non-interactive mutate contract.
+Bitbucket Cloud in one shared JSON format), and session task tracking
+(`np_task_create`, `np_task_get`, `np_task_update`, `np_task_list`,
+`np_todo_write` — the same five operations as Claude Code's task tools, on
+every harness that runs the server). Most of what a command invokes is
+reachable this way; the `python3 skills/nitpicker/scripts/…` form stays the
+documented fallback for Copilot, pi and CI, where no MCP server exists. Every
+tool is prefixed `np_` and publishes MCP annotations, so a client can tell the
+read-only tools from the ones that write and which calls are destructive, and
+the PR tools, the only ones that reach the network, from the rest, whose domain
+is the local filesystem. The "MCP server" section of `skills/nitpicker/SKILL.md`
+lists each annotation, the scope and the non-interactive mutate contract.
 
-`baseline`, `migrate` and `migrate-resolved` are deliberately **not** exposed as
-tools. Each waives or rewrites the store behind a consent gate, and the mutate
-tools run without an interactive prompt, so they stay CLI-only.
+Some operations are deliberately **not** exposed as tools and always run
+through the CLI. `skills/nitpicker/commands/_findings-store.md` names the
+findings-store set and the reason for each.
 
 ### PR fetchers
 
@@ -250,7 +249,7 @@ is in `skills/nitpicker/commands/cr.md`.
 ## Development
 
 ```bash
-make check     # validate skill + commands, evals, rules, version sync, lockfile, findings store, findings index, lint, format, security, typecheck, tests, pre-commit
+make check     # the full gate; make help lists every target
 make list      # list the skill and its commands
 make test      # pytest suite for the tooling
 ```

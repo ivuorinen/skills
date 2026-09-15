@@ -63,6 +63,7 @@ class TestThisRepo:
         out = capsys.readouterr().out
         expected = {
             "scripts/common.py -> skills/nitpicker/scripts/findings.py",
+            "scripts/common.py -> skills/nitpicker/scripts/md_fences.py",
             "scripts/validate-rules.py -> skills/nitpicker/scripts/check-rules-anatomy.py",
             "scripts/bench-recall.py -> scripts/bench-retrieval.py",
         }
@@ -363,11 +364,141 @@ class TestDegenerateCalls:
         assert g.edges == [] and g.errors == []
 
 
-def test_an_edge_to_an_unknown_module_is_not_ranked():
-    """`violations` ranks by ring. An endpoint outside every ring has no rank,
-    and guessing one would invent a verdict."""
+def test_an_edge_to_a_module_outside_every_ring_is_reported():
+    """An endpoint outside every ring has no rank. Skipping it passed exactly
+    the dependency the gate cannot judge (audit-7d8bf871), so it is reported
+    rather than ranked."""
     g = rd.Graph(modules={"scripts/a.py": "internal"}, edges=[rd.Edge("scripts/a.py", "?", "path")])
-    assert rd.violations(g) == []
+    bad = rd.violations(g)
+    assert len(bad) == 1 and "outside every ring" in bad[0]
+
+
+# ── audit-7d8bf871: the load and import shapes the gate used to pass ─────────
+
+
+class TestAudit7d8bf871:
+    def test_a_parents_index_path_into_an_outer_ring_is_an_error(self, tmp_path):
+        """`.parents[3]` contains `.parent` once as text, so the old substring
+        count read it as the module's own directory."""
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/inner.py": (
+                    "import importlib.util\n"
+                    "from pathlib import Path\n"
+                    "_T = Path(__file__).resolve().parents[3] / 'scripts' / 'common.py'\n"
+                    "_s = importlib.util.spec_from_file_location('t', _T)\n"
+                ),
+                "scripts/common.py": "x = 1\n",
+            },
+        )
+        assert rd.main([str(tmp_path), "--check"]) == 1
+
+    def test_an_os_path_dirname_chain_into_hooks_is_an_error(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/inner.py": (
+                    "import importlib.util, os\n"
+                    "_T = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname("
+                    "os.path.dirname(os.path.abspath(__file__))))), 'scripts', 'hooks', '_hl.py')\n"
+                    "_s = importlib.util.spec_from_file_location('t', _T)\n"
+                ),
+                "scripts/hooks/_hl.py": "x = 1\n",
+            },
+        )
+        errors = rd.build(tmp_path).errors
+        assert len(errors) == 1 and "not statically resolvable" in errors[0]
+
+    @pytest.mark.parametrize(
+        "right",
+        ["f'../hooks/{stem}.py'", "f'sub/{stem}.py'", "name"],
+    )
+    def test_an_own_dir_anchor_with_an_unprovable_filename_is_an_error(self, tmp_path, right):
+        _tree(
+            tmp_path,
+            {
+                "scripts/helper.py": (
+                    "import importlib.util\n"
+                    "from pathlib import Path\n"
+                    "def load(stem, name):\n"
+                    f"    path = Path(__file__).parent / {right}\n"
+                    "    return importlib.util.spec_from_file_location(stem, path)\n"
+                ),
+                "skills/x/scripts/inner.py": "x = 1\n",
+            },
+        )
+        errors = rd.build(tmp_path).errors
+        assert len(errors) == 1 and "not statically resolvable" in errors[0]
+
+    def test_a_two_parent_anchor_is_not_own_directory(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "scripts/helper.py": (
+                    "import importlib.util\n"
+                    "from pathlib import Path\n"
+                    "def load(stem):\n"
+                    "    path = Path(__file__).parent.parent / f'{stem}.py'\n"
+                    "    return importlib.util.spec_from_file_location(stem, path)\n"
+                ),
+                "skills/x/scripts/inner.py": "x = 1\n",
+            },
+        )
+        assert len(rd.build(tmp_path).errors) == 1
+
+    @pytest.mark.parametrize(
+        "stmt",
+        ["from scripts.hooks import _hl\n", "import scripts.hooks._hl\n"],
+    )
+    def test_a_dotted_import_of_an_outer_ring_module_is_a_violation(self, tmp_path, stmt):
+        """The old code kept only the first segment, `scripts`, which names no
+        module stem, so the edge vanished."""
+        _tree(tmp_path, {"scripts/outer.py": stmt, "scripts/hooks/_hl.py": "x = 1\n"})
+        g = rd.build(tmp_path)
+        assert ("scripts/outer.py", "scripts/hooks/_hl.py") in [(e.src, e.dst) for e in g.edges]
+        assert len(rd.violations(g)) == 1
+
+    def test_a_dotted_import_of_a_package_resolves_to_its_init(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/inner.py": "import scripts.pkg\n",
+                "scripts/pkg/__init__.py": "x = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert [e.dst for e in g.edges] == ["scripts/pkg/__init__.py"]
+        assert len(rd.violations(g)) == 1
+
+    def test_a_dotted_import_outside_every_ring_is_reported(self, tmp_path):
+        _tree(
+            tmp_path,
+            {"scripts/outer.py": "from tests import util\n", "tests/util.py": "x = 1\n"},
+        )
+        bad = rd.violations(rd.build(tmp_path))
+        assert len(bad) == 1 and "outside every ring" in bad[0]
+
+    def test_a_dotted_stdlib_import_is_not_an_edge(self, tmp_path):
+        _tree(
+            tmp_path, {"scripts/outer.py": "import urllib.parse\nfrom collections.abc import X\n"}
+        )
+        assert rd.build(tmp_path).edges == []
+
+    def test_ring_globs_are_recursive(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/sub/a.py": "x = 1\n",
+                "scripts/sub/b.py": "x = 1\n",
+                "scripts/hooks/sub/c.py": "x = 1\n",
+            },
+        )
+        assert rd.build(tmp_path).modules == {
+            "skills/x/scripts/sub/a.py": "shipped",
+            "scripts/sub/b.py": "internal",
+            "scripts/hooks/sub/c.py": "hooks",
+        }
 
 
 def test_runs_as_a_script(capsys):

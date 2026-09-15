@@ -8,10 +8,12 @@ Two checks:
 
 1. Shipped skill tools (`skills/*/scripts/*.py`) import only the standard library.
 2. The script-runner contract: shipped tools begin with `#!/usr/bin/env python3`
-   and carry no `# /// script` block; internal tooling (`scripts/*.py`,
-   `scripts/hooks/*.py`) that is a runnable script (has a shebang or a
-   `# /// script` block) begins with `#!/usr/bin/env -S uv run --quiet`.
-   Shebang-less library modules (e.g. `common.py`, `_hooklib.py`) are exempt.
+   and carry no `# /// script` block; internal tooling (`scripts/**/*.py`)
+   that is a runnable script (has a shebang or a `# /// script` block) begins
+   with `#!/usr/bin/env -S uv run --quiet`. Shebang-less library modules (e.g.
+   `common.py`, `_hooklib.py`) are exempt. This is the only implementation of
+   the internal half: validate-rules.py carried a copy with a named exemption
+   list and a different glob, and the two disagreed (audit-a4b2f181).
 
 uv is not available on consumer machines, so a third-party import — or an
 internal-tooling shebang/metadata block — in a shipped tool breaks it under
@@ -277,11 +279,7 @@ def find_runner_violations(repo_root: Path, collected: Collected | None = None) 
                 f"  {rel}: shipped tool must carry no '# /// script' block "
                 "(uv is not available on consumer machines)"
             )
-    internal = [
-        *sorted(repo_root.glob("scripts/*.py")),
-        *sorted(repo_root.glob("scripts/hooks/*.py")),
-    ]
-    for script in internal:
+    for script in sorted(repo_root.glob("scripts/**/*.py")):
         rel = script.relative_to(repo_root)
         try:
             text = script.read_text(encoding="utf-8")

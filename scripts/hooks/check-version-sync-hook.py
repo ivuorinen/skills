@@ -13,13 +13,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
+    SHIPPED_ROOT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
+_HOOK = "check-version-sync-hook"
+_BY_HAND = "uv run --quiet scripts/check-version-sync.py"
 
 VERSION_FILES = {
     Path("package.json"),
@@ -47,9 +51,9 @@ def main() -> None:
     if path.relative_to(REPO_ROOT.resolve()) not in VERSION_FILES:
         return
 
-    checker = REPO_ROOT / "scripts" / "check-version-sync.py"
+    checker = SHIPPED_ROOT / "scripts" / "check-version-sync.py"
     if not checker.exists():
-        return
+        report_skip(_HOOK, "scripts/check-version-sync.py not found", _BY_HAND)
 
     try:
         result = subprocess.run(
@@ -59,8 +63,8 @@ def main() -> None:
             text=True,
             timeout=HOOK_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
-        return  # uv absent or the checker hung — CI remains the gate
+    except (OSError, subprocess.SubprocessError) as exc:
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", _BY_HAND)
     problems = [
         line for line in result.stdout.splitlines() if "MISMATCH" in line or "ERROR" in line
     ]

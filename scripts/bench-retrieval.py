@@ -39,6 +39,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TextIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "skills/nitpicker/scripts"))
 import context_pack
@@ -276,7 +277,7 @@ def failures(totals: dict, rows: list[dict]) -> list[str]:
     return out
 
 
-def render(rows: list[dict], totals: dict, verbose: bool, out=None) -> None:
+def render(rows: list[dict], totals: dict, verbose: bool, out: TextIO | None = None) -> None:
     out = out or sys.stdout
     if verbose:
         print(f"{'case':<30}{'lens':<12}{'rank':>5}{'cands':>7}{'noise':>8}{'prec':>8}", file=out)

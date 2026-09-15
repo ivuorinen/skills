@@ -19,7 +19,7 @@ live in `skills/nitpicker/commands/<command>.md`; shared conventions
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
 | `new-command`     | Orchestrates the full new-command lifecycle (RED → GREEN → REFACTOR → review → validate → PR review) |
 | `skill-tester`    | TDD pressure-testing: runs scenarios without/with the skill loaded to prove it changes behaviour     |
-| `validate-skills` | Validates the router + command files + internal skills and checks five-file version sync             |
+| `validate-skills` | Validates the router + command files + internal skills and checks version sync across manifests      |
 | `release-prep`    | Release-readiness gatekeeper; runs the audit gates, offers to open a PR, never tags or bumps         |
 | `skills`          | Launcher — routes a user request to the right `/nitpicker` command (Routing Guide in its SKILL.md)   |
 
@@ -63,11 +63,8 @@ the loop terminates when review, validation, and PR review are all clean
 
 ## Release Preparation
 
-`release-prep` runs `validate-skills`, then the **22 audit gates** as
-`/nitpicker` commands (`security`, `docs`, `arch`, `audit`, `agent-loopholes`,
-`agent-hooks`, `perf`, `tests`, `deps`, `errors`, `migrations`, `observability`,
-`contract`, `a11y`, `ci`, `commits`, `concurrency`, `i18n`, `leaks`,
-`config`, `privacy`, `unwired`), then `/nitpicker release-gate` as the backstop — it
+`release-prep` runs `validate-skills`, then each **audit gate** in its Step 2
+table as a `/nitpicker` command, then `/nitpicker release-gate` as the backstop — it
 fails if any open finding at or above the threshold (default High) remains
 in the store. Any failed gate stops the run. It never bumps versions or
 tags; release-please handles that from `main`.
@@ -82,7 +79,7 @@ tags; release-please handles that from `main`.
 | Bundled scripts (`skills/nitpicker/scripts/`) | store files, PR comments (`fetch-pr-comments.py`), SARIF (`process-sarif.py`), rules (`check-rules-anatomy.py`) | store mutations, stdout — plain `python3`, stdlib-only                                                                  |
 | `new-command`                                 | user intent                                                                                                     | `skills/nitpicker/commands/<name>.md` + registration edits                                                              |
 | `skill-tester`                                | scenario, skill under test                                                                                      | subagent output (stdout)                                                                                                |
-| `validate-skills`                             | router + command files, internal SKILL.md files, five version manifests                                         | stdout (errors/warnings)                                                                                                |
+| `validate-skills`                             | router + command files, internal SKILL.md files, the manifests `check-version-sync.py` checks                   | stdout (errors/warnings)                                                                                                |
 | `release-prep`                                | gate results, findings store, CI status                                                                         | none (optionally opens a PR on explicit approval)                                                                       |
 | `skills` launcher                             | user intent                                                                                                     | routes to one `/nitpicker` command                                                                                      |
 

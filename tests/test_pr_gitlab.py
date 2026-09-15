@@ -6,6 +6,7 @@ checks. Those mappings are where a caller silently gets the wrong answer, so eac
 is pinned here rather than inferred from the endpoint call.
 """
 
+import subprocess
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -17,8 +18,8 @@ _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import pr_common as c  # type: ignore[import-not-found]  # noqa: E402
-import pr_gitlab as gl  # type: ignore[import-not-found]  # noqa: E402
+import pr_common as c  # noqa: E402
+import pr_gitlab as gl  # noqa: E402
 
 _TARGET = c.Target("gitlab", "gitlab.com", "grp/proj")
 _SELF_HOSTED = c.Target("gitlab", "gitlab.acme.com", "grp/sub/proj")
@@ -77,6 +78,13 @@ class TestTokenHostGuard:
         monkeypatch.setenv("GITLAB_HOST", "gitlab.com")
         assert gl._token_for(_TARGET) == ""
 
+    def test_a_declared_host_carrying_a_port_matches_that_instance(self, monkeypatch):
+        # audit-b2706098: the target keeps an https port, so the declaration
+        # has to be compared with it rather than never matching.
+        monkeypatch.setenv("GITLAB_TOKEN", "tok")
+        monkeypatch.setenv("GITLAB_HOST", "https://gitlab.acme.com:8443")
+        assert gl._token_for(c.Target("gitlab", "gitlab.acme.com:8443", "g/p")) == "tok"
+
     def test_blank_declared_host_is_not_a_declaration(self, monkeypatch):
         monkeypatch.setenv("GITLAB_TOKEN", "tok")
         monkeypatch.setenv("GITLAB_HOST", "   ")
@@ -115,6 +123,51 @@ class TestTransport:
         assert cli.call_args[0][0][:4] == ["glab", "api", "--hostname", "gitlab.acme.com"]
         with patch.object(c, "cli_json", return_value={"iid": 2}):
             assert get_one("projects/x") == {"iid": 2}
+
+    def test_glab_on_an_undeclared_host_gets_no_env_token(self, monkeypatch):
+        """security-de2d288b: glab reads its token from the environment for any host.
+
+        `_token_for` withheld GITLAB_TOKEN with a warning, and the glab
+        fallback one line later ran with the inherited environment, so glab
+        sent the same token to the undeclared host anyway.
+        """
+        for name in gl._GLAB_TOKEN_VARS:
+            monkeypatch.setenv(name, "secret")
+        monkeypatch.setenv("KEEP_ME", "1")
+        monkeypatch.delenv("GITLAB_HOST", raising=False)
+        with patch.object(c, "cli_available", return_value=True):
+            list_all, get_one, label = gl._transport(_SELF_HOSTED)
+        assert label == "glab"
+        assert {"GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"} <= set(gl._GLAB_TOKEN_VARS)
+        with patch.object(
+            subprocess, "run", return_value=MagicMock(returncode=0, stdout=b"[]")
+        ) as run:
+            list_all("projects/x/y")
+            get_one("projects/x")
+        for call in run.call_args_list:
+            env = call[1]["env"]
+            assert not set(gl._GLAB_TOKEN_VARS) & set(env)
+            assert env["KEEP_ME"] == "1"
+
+    @pytest.mark.parametrize(
+        "target, declared",
+        [(_TARGET, None), (_SELF_HOSTED, "gitlab.acme.com")],
+        ids=["gitlab-com", "declared-self-hosted"],
+    )
+    def test_glab_on_a_declared_host_inherits_the_environment(self, target, declared, monkeypatch):
+        monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+        monkeypatch.setenv("GITLAB_ACCESS_TOKEN", "secret")
+        if declared:
+            monkeypatch.setenv("GITLAB_HOST", declared)
+        else:
+            monkeypatch.delenv("GITLAB_HOST", raising=False)
+        with patch.object(c, "cli_available", return_value=True):
+            list_all, _get, _label = gl._transport(target)
+        with patch.object(
+            subprocess, "run", return_value=MagicMock(returncode=0, stdout=b"[]")
+        ) as run:
+            list_all("projects/x/y")
+        assert run.call_args[1]["env"] is None
 
     @pytest.mark.parametrize("result, expected", [(None, []), ({"id": 1}, [{"id": 1}])])
     def test_glab_non_list_results_are_normalised(self, result, expected, monkeypatch):

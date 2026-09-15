@@ -29,8 +29,6 @@ A defect whose confirmation depends on information off the reviewed diff — a r
 
 ## Process
 
-Run this as a task list — one entry per step, every step closed before reporting. An unexecuted step is a coverage gap, and silence is approval.
-
 1. **Enumerate the cache surface.** Scope: every file the project maintains; excluded are only vendored and generated code. Inventory every cache read, every populate/write, every invalidation, every key construction, every TTL/eviction policy, and every recompute-on-miss-or-expiry. Record counts per category. The first two defects found do not end the audit — a hunt that stops once it has enough to reject is INCOMPLETE.
 2. **Check every key.** For each cached value, confirm the key includes every dimension the value depends on — tenant, user, locale, currency, auth scope, version. A missing dimension is `key-collision`; when the collision crosses a tenant or user boundary it is a data leak, filed Critical and routed to `/nitpicker security` (or `/nitpicker privacy`).
 3. **Trace every write to its invalidation.** For each mutation of underlying data, confirm the cache entry is invalidated or updated, and that the invalidation reaches every instance — a per-process invalidation that does not fan out is `incoherent-cache`, not out of scope because a shared backend is a larger change. `missing-invalidation` requires that the underlying data is known to mutate — the writer in the diff or named off it; a cached value whose underlying data is not known to mutate and has no TTL is `unbounded-cache` (unbounded staleness), not `missing-invalidation`.

@@ -1,10 +1,17 @@
 # Making `nitpicker` a Token-Efficient, Best-in-Class Codebase Analysis Skill
 
+Status: INPUT REPORT, SUPERSEDED IN PART — not the current design. Commit 61ebbad
+implemented its context-discipline direction differently: `_conventions.md`
+stays the core file and four protocols load on a trigger (`_findings-store`,
+`_committing`, `_documentation`, `_audit-coverage`), with `context_pack.py` and
+`check-context-tokens.py` as the tools. The `_conventions-core.md` file and the
+other file layouts proposed below were never created.
+
 ## Executive summary
 
 The strongest way to reduce token consumption in coding agents is **not prompt shortening alone**. The largest gains come from preventing irrelevant repository bytes, tool output, repeated instructions, and already-understood state from entering the model context in the first place.
 
-That observation fits `nitpicker` unusually well. The repository already contains several architectural decisions that point in the right direction: commands are loaded on demand, scanner instructions were split into per-tool references, `triage` performs one repository sweep before selecting relevant commands, findings persist outside the conversation, and the `context-mode` rule explicitly tries to keep raw command output outside the model context. fileciteturn3file0L2-L2 fileciteturn5file0L2-L2 fileciteturn9file0L2-L2
+That observation fits `nitpicker` unusually well. The repository already contains several architectural decisions that point in the right direction: commands are loaded on demand, scanner instructions were split into per-tool references, `triage` performs one repository sweep before selecting relevant commands, findings persist outside the conversation, and the `context-mode` rule explicitly tries to keep raw command output outside the model context.
 
 The biggest remaining opportunity is to make **context efficiency a first-class architectural property of nitpicker itself rather than a Claude/context-mode convention**.
 
@@ -16,9 +23,9 @@ rather than:
 
 > **read repository → put large outputs in context → reason over everything**
 
-This is supported directly by recent coding-agent research. SWE-Pruner reports **23–54% token reductions on agent tasks** through adaptive pruning, with minimal performance impact and sometimes higher success rates. citeturn13view8 RepoDistill reports input-context reductions of **up to 66% while maintaining comparable performance** using repository-aware compression. citeturn13view9 AIRCoder shows that combining lexical, dependency, and structural retrieval can improve accuracy while substantially improving retrieval efficiency. citeturn13view12 Late Code Chunking finds that retrieving compact representations first and expanding context only afterwards improves repository-level code completion accuracy. citeturn13view13
+This is supported directly by recent coding-agent research. SWE-Pruner reports **23–54% token reductions on agent tasks** through adaptive pruning, with minimal performance impact and sometimes higher success rates. RepoDistill reports input-context reductions of **up to 66% while maintaining comparable performance** using repository-aware compression. AIRCoder shows that combining lexical, dependency, and structural retrieval can improve accuracy while substantially improving retrieval efficiency. Late Code Chunking finds that retrieving compact representations first and expanding context only afterwards improves repository-level code completion accuracy.
 
-Conversely, **blind source minification should not be nitpicker's default optimization**. A 2026 study reduced average coding-agent input by 42% through minification but lost **12 percentage points of resolution rate**. citeturn13view10turn13view11 For a tool whose value proposition is finding defects others miss, that is a poor default trade.
+Conversely, **blind source minification should not be nitpicker's default optimization**. A 2026 study reduced average coding-agent input by 42% through minification but lost **12 percentage points of resolution rate**. For a tool whose value proposition is finding defects others miss, that is a poor default trade.
 
 My highest-priority recommendations are therefore:
 
@@ -59,13 +66,13 @@ That gives nitpicker permission to be aggressively economical while preserving i
 
 The current design is much better than a typical “giant system prompt plus repository dump” agent.
 
-`SKILL.md` acts as a router and explicitly loads `_conventions.md` followed by only the resolved command; specialist commands are deliberately described as cheaper and deeper than the catch-all audit. Scanner-specific instructions have already been moved into individual files that are loaded only if the corresponding scanner is found. fileciteturn3file0L2-L2 That is exactly the progressive-disclosure pattern I would extend throughout the system.
+`SKILL.md` acts as a router and explicitly loads `_conventions.md` followed by only the resolved command; specialist commands are deliberately described as cheaper and deeper than the catch-all audit. Scanner-specific instructions have already been moved into individual files that are loaded only if the corresponding scanner is found. That is exactly the progressive-disclosure pattern I would extend throughout the system.
 
-Your instruction-budget rule also recognizes an important distinction: content needed on every turn belongs in the always-loaded set; path-specific material belongs in scoped rules; task-specific material belongs in skills; reference material should be loaded on demand. It currently gates the whole instruction set by directive count rather than individual file size. fileciteturn4file0L2-L2
+Your instruction-budget rule also recognizes an important distinction: content needed on every turn belongs in the always-loaded set; path-specific material belongs in scoped rules; task-specific material belongs in skills; reference material should be loaded on demand. It currently gates the whole instruction set by directive count rather than individual file size.
 
-The `context-mode` rule is another strong foundation. It says that repository listings, grep results, diffs, tests, build output and other inspection results should be processed inside a sandbox so that only selected output enters the model context. fileciteturn5file0L2-L2 Recent research strongly reinforces this design: adaptive pruning of coding-agent read operations is precisely where SWE-Pruner obtains its large reductions. citeturn13view8
+The `context-mode` rule is another strong foundation. It says that repository listings, grep results, diffs, tests, build output and other inspection results should be processed inside a sandbox so that only selected output enters the model context. Recent research strongly reinforces this design: adaptive pruning of coding-agent read operations is precisely where SWE-Pruner obtains its large reductions.
 
-And `triage` already implements an important retrieval principle: **sweep once, decide from evidence, inspect command details only where needed**. It places every public command into Recommended, Not applicable, or Unprovable and only opens a command file to disambiguate a trigger. fileciteturn9file0L2-L2
+And `triage` already implements an important retrieval principle: **sweep once, decide from evidence, inspect command details only where needed**. It places every public command into Recommended, Not applicable, or Unprovable and only opens a command file to disambiguate a trigger.
 
 ### The main structural inefficiency: the shared convention payload
 
@@ -80,11 +87,11 @@ GitHub currently reports:
 | `commands/audit.md` | **4,622 bytes** | Audit only |
 | `commands/_audit-coverage.md` | **10,328 bytes** | Audit only |
 
-The sizes come directly from current `main`. fileciteturn17file0L2-L2 fileciteturn16file0L1-L2
+The sizes come directly from current `main`.
 
 Raw byte size cannot be translated exactly into tokens without choosing a provider/model tokenizer, but nearly 20 KB of `_conventions.md` on every command is large enough to deserve treatment as a first-class budget.
 
-More importantly, much of `_conventions.md` is **reference information rather than immediate behavioral control**. Its findings-store protocol, MCP/CLI comparison, examples, stale-server discussion and detailed edge cases are useful, but every invocation does not need all of them simultaneously. fileciteturn6file0L2-L2
+More importantly, much of `_conventions.md` is **reference information rather than immediate behavioral control**. Its findings-store protocol, MCP/CLI comparison, examples, stale-server discussion and detailed edge cases are useful, but every invocation does not need all of them simultaneously.
 
 I would retain a very small mandatory file containing only invariants:
 
@@ -113,7 +120,7 @@ references/protocols/
 └── pr-provider.md
 ```
 
-This extends the scanner-reference architecture already present in nitpicker rather than introducing a new philosophy. fileciteturn3file0L2-L2
+This extends the scanner-reference architecture already present in nitpicker rather than introducing a new philosophy.
 
 A conceptual patch:
 
@@ -173,11 +180,11 @@ new file mode 100644
 +- Modifying shipped nitpicker code → load `modification-and-verification`.
 ```
 
-The important part is not merely making Markdown shorter. Your own instruction-budget rule correctly notes that splitting content **without changing when it loads does not save anything**. fileciteturn4file0L2-L2 The conditional references must genuinely stay outside context until their trigger fires.
+The important part is not merely making Markdown shorter. Your own instruction-budget rule correctly notes that splitting content **without changing when it loads does not save anything**. The conditional references must genuinely stay outside context until their trigger fires.
 
 ### Task tracking is probably duplicating context
 
-`_conventions.md` currently says to copy numbered procedures into the task tracker, while `audit` loads `_audit-coverage.md` and copies its coverage tasks into that tracker. fileciteturn6file0L2-L2 fileciteturn7file0L2-L2
+`_conventions.md` currently says to copy numbered procedures into the task tracker, while `audit` loads `_audit-coverage.md` and copies its coverage tasks into that tracker.
 
 That is excellent for coverage accountability, but copying prose into another model-visible structure can duplicate the very instructions already present.
 
@@ -217,15 +224,15 @@ risk = "high"
 trigger = ["ui"]
 ```
 
-The current coverage checklist deliberately requires every lens to be accounted for and distinguishes `clean`, `N/A`, and `out of scope`. That is a valuable invariant and should remain untouched. fileciteturn8file0L2-L2 Only its representation needs to become cheaper.
+The current coverage checklist deliberately requires every lens to be accounted for and distinguishes `clean`, `N/A`, and `out of scope`. That is a valuable invariant and should remain untouched. Only its representation needs to become cheaper.
 
 ### The crucial architectural gap: context-mode is external
 
-At present, context containment depends partly on the context-mode plugin and is explicitly documented as best-effort when that plugin is unavailable. fileciteturn5file0L2-L2
+At present, context containment depends partly on the context-mode plugin and is explicitly documented as best-effort when that plugin is unavailable.
 
 For nitpicker to be genuinely best-in-class across Claude Code, Codex, Copilot, Gemini CLI, pi, Cursor and other harnesses, **context filtering should move into nitpicker's own MCP/CLI surface**.
 
-The existing MCP server already provides bundled-file reading such as `np_read_command`; that tool returns the command's full text. fileciteturn13file6L83-L92
+The existing MCP server already provides bundled-file reading such as `np_read_command`; that tool returns the command's full text.
 
 The next major primitive should be something like:
 
@@ -308,7 +315,7 @@ Conflating these makes benchmarks misleading.
 | Streaming | **0 intrinsic token reduction** | Low | Protocol complexity | UX improvement |
 | Multi-agent decomposition | Can increase or decrease tokens | Medium | Repeated context | Only with narrow context contracts |
 
-The SWE-Pruner result supplies the strongest directly relevant empirical range: **23–54% lower token use** across coding-agent tasks. citeturn13view8 RepoDistill demonstrates that considerably stronger compression is possible with a specialized repository compressor, reporting **up to 66% input reduction at comparable performance**. citeturn13view9 These should be treated as research results rather than promises for nitpicker.
+The SWE-Pruner result supplies the strongest directly relevant empirical range: **23–54% lower token use** across coding-agent tasks. RepoDistill demonstrates that considerably stronger compression is possible with a specialized repository compressor, reporting **up to 66% input reduction at comparable performance**. These should be treated as research results rather than promises for nitpicker.
 
 ### Prompt engineering: make “what may enter context” explicit
 
@@ -348,7 +355,7 @@ A finding may be filed only after Level C or D evidence has been checked
 against the current original file.
 ```
 
-The requirement to verify original code protects you from the failure mode demonstrated by aggressive minification. citeturn13view10
+The requirement to verify original code protects you from the failure mode demonstrated by aggressive minification.
 
 Prompt for **bounded outputs**, too:
 
@@ -363,7 +370,7 @@ Return:
 
 Then remediation can be generated only for verified candidates.
 
-This is better than asking for one giant audit report because generated tokens are expensive in both latency and usually price. OpenAI's latency guidance states that generation is generally the dominant LLM latency component and gives the heuristic that cutting output by 50% can approximately cut generation latency by 50%. citeturn13view5
+This is better than asking for one giant audit report because generated tokens are expensive in both latency and usually price. OpenAI's latency guidance states that generation is generally the dominant LLM latency component and gives the heuristic that cutting output by 50% can approximately cut generation latency by 50%.
 
 Another useful pattern is **facts rather than narrative** between agent stages:
 
@@ -389,7 +396,7 @@ Narrative belongs in the final finding, not intermediate state.
 
 Model choice should be **risk-adaptive rather than command-wide**.
 
-As of September 10, 2026, OpenAI's model guidance recommends GPT-6 Astra for its hardest coding/reasoning work, GPT-5.6 Terra where intelligence/cost balance matters, and GPT-5.6 Luna for high-volume cost-sensitive work. Those families also expose reasoning-effort controls. citeturn15search0turn15search2turn15search3 Model names will continue moving, so nitpicker should describe **capability tiers**, not hard-code vendor names into command prose.
+As of September 10, 2026, OpenAI's model guidance recommends GPT-6 Astra for its hardest coding/reasoning work, GPT-5.6 Terra where intelligence/cost balance matters, and GPT-5.6 Luna for high-volume cost-sensitive work. Those families also expose reasoning-effort controls. Model names will continue moving, so nitpicker should describe **capability tiers**, not hard-code vendor names into command prose.
 
 I recommend four execution tiers:
 
@@ -400,7 +407,7 @@ I recommend four execution tiers:
 | Analyst | ordinary specialist analysis | Balanced coding model | medium |
 | Verifier | Critical/High candidates, ambiguous flows, conflicting evidence | Frontier | high/xhigh only when justified |
 
-Anthropic explicitly describes lower effort as reducing token expenditure and making tool calls fewer/terser, while warning that capability can decline; its docs recommend tuning effort against eval results. citeturn15search6 Google's Gemini documentation similarly exposes a `thinking_level` control and recommends lower thinking when complex reasoning is unnecessary. citeturn15search10
+Anthropic explicitly describes lower effort as reducing token expenditure and making tool calls fewer/terser, while warning that capability can decline; its docs recommend tuning effort against eval results. Google's Gemini documentation similarly exposes a `thinking_level` control and recommends lower thinking when complex reasoning is unnecessary.
 
 For nitpicker this suggests:
 
@@ -460,14 +467,14 @@ with metadata:
 }
 ```
 
-Recent repository-level retrieval work strongly favors this direction. AIRCoder combines textual similarity, dependency information and structural hierarchy and reports both higher exact-match accuracy and 10.2× higher retrieval efficiency than its best baseline. citeturn13view12 DraCo builds repository-specific dataflow relations and reported improvements in both exact match and identifier F1 compared with its evaluated state of the art. citeturn13view14
+Recent repository-level retrieval work strongly favors this direction. AIRCoder combines textual similarity, dependency information and structural hierarchy and reports both higher exact-match accuracy and 10.2× higher retrieval efficiency than its best baseline. DraCo builds repository-specific dataflow relations and reported improvements in both exact match and identifier F1 compared with its evaluated state of the art.
 
 Most relevant to nitpicker is **late expansion**. Late Code Chunking separates:
 
 - a compact **retrieval representation**, and
 - a larger **comprehension representation** expanded only after retrieval.
 
-That design improved exact-match accuracy 19.7% over the best chunking method in its CrossCodeEval experiments. citeturn13view13
+That design improved exact-match accuracy 19.7% over the best chunking method in its CrossCodeEval experiments.
 
 For nitpicker:
 
@@ -512,7 +519,7 @@ def transfer(user: User, amount: Decimal) -> Receipt:
 
 Comments can contain security properties, operational assumptions, compatibility constraints and explanations of deliberately unusual code. Removing them before final reasoning can destroy exactly the evidence an auditor needs.
 
-The empirical warning is strong: source minification has been measured to reduce coding-agent input substantially while also reducing successful resolution. citeturn13view10
+The empirical warning is strong: source minification has been measured to reduce coding-agent input substantially while also reducing successful resolution.
 
 Therefore:
 
@@ -553,7 +560,7 @@ For:
 - scanner reports,
 - dependency metadata,
 
-semantic compression can work well. LLMLingua demonstrated very high prompt-compression ratios on general NLP workloads, including up to 20× compression with little loss in its evaluated datasets. citeturn13view15 Those results are not a guarantee for code auditing, so I would restrict such compressors to **navigation/context material**, not proof.
+semantic compression can work well. LLMLingua demonstrated very high prompt-compression ratios on general NLP workloads, including up to 20× compression with little loss in its evaluated datasets. Those results are not a guarantee for code auditing, so I would restrict such compressors to **navigation/context material**, not proof.
 
 A particularly valuable pattern for nitpicker is hierarchical state:
 
@@ -625,7 +632,7 @@ analysis:    reuse only where scope/model policy permits
 
 Do **not** indiscriminately reuse previous audit verdicts; a dependency or caller may have changed even when the file did not. Cache the evidence/index aggressively; cache correctness conclusions with dependency fingerprints.
 
-Provider prompt caching should be treated separately. OpenAI's current prompt cache reuses an unchanged prompt prefix, can discount reused input by up to 90%, and requires the rendered prefix to match; OpenAI specifically recommends stable prefixes and cache breakpoints around reusable content. citeturn13view0turn14view1turn14view0 Usage exposes cached and cache-write token counts, so this is directly measurable. citeturn13view2
+Provider prompt caching should be treated separately. OpenAI's current prompt cache reuses an unchanged prompt prefix, can discount reused input by up to 90%, and requires the rendered prefix to match; OpenAI specifically recommends stable prefixes and cache breakpoints around reusable content. Usage exposes cached and cache-write token counts, so this is directly measurable.
 
 Therefore order requests like this:
 
@@ -658,7 +665,7 @@ tool definitions
 
 Putting changing material early destroys prefix reuse.
 
-Anthropic likewise exposes cache-creation and cache-read usage counters and explicit prompt-cache boundaries. citeturn14view5 Provider rate-limit semantics differ: OpenAI says cached prompt tokens still count toward token-per-minute limits, whereas Anthropic currently excludes cache-read input from ITPM for most models. citeturn14view1turn16search0 Your abstraction therefore needs distinct:
+Anthropic likewise exposes cache-creation and cache-read usage counters and explicit prompt-cache boundaries. Provider rate-limit semantics differ: OpenAI says cached prompt tokens still count toward token-per-minute limits, whereas Anthropic currently excludes cache-read input from ITPM for most models. Your abstraction therefore needs distinct:
 
 ```text
 logical_input_tokens
@@ -767,7 +774,7 @@ diff --git a/skills/nitpicker/scripts/mcp_server.py b/skills/nitpicker/scripts/m
 +    return json.dumps(result, separators=(",", ":"))
 ```
 
-Notice `separators=(",", ":")`: pretty-printed JSON is useful for humans, but machine-facing tool results do not need indentation. Your existing `np_list_commands` path currently serializes JSON with indentation; compact serialization is a tiny optimization individually but worth making a convention because tool results recur many times. fileciteturn15file0L1-L2
+Notice `separators=(",", ":")`: pretty-printed JSON is useful for humans, but machine-facing tool results do not need indentation. Your existing `np_list_commands` path currently serializes JSON with indentation; compact serialization is a tiny optimization individually but worth making a convention because tool results recur many times.
 
 The first `context_pack.py` version can remain compatible with nitpicker's stdlib-only philosophy:
 
@@ -904,7 +911,7 @@ Then `triage`, `audit` and standalone commands all consume the same machine-read
 
 This distinction is central.
 
-Your current `audit` contract explicitly makes exhaustiveness depend on addressing every coverage lens. fileciteturn8file0L2-L2 I would **not** weaken that to save tokens.
+Your current `audit` contract explicitly makes exhaustiveness depend on addressing every coverage lens. I would **not** weaken that to save tokens.
 
 Instead:
 
@@ -930,11 +937,11 @@ only relevant original source enters reasoning context
 
 A security lens needs proof that it considered the entire relevant attack surface; it does not need every CSS file in context. An a11y lens needs proof that UI surfaces were enumerated; it does not need Python scanner-provider internals.
 
-`triage` already demonstrates the underlying concept by deriving applicability from concrete repository signals. fileciteturn9file0L2-L2 I would extract that inventory engine into code and let both `triage` and `audit` consume it.
+`triage` already demonstrates the underlying concept by deriving applicability from concrete repository signals. I would extract that inventory engine into code and let both `triage` and `audit` consume it.
 
 ### Persistent incremental state
 
-Nitpicker already has a strong primitive that many agents lack: a persistent findings store. fileciteturn6file0L2-L2 Extend that idea to analysis state.
+Nitpicker already has a strong primitive that many agents lack: a persistent findings store. Extend that idea to analysis state.
 
 For example:
 
@@ -967,7 +974,7 @@ The agent never needs to reproduce the entire history in prose. A new context ca
 
 ### Streaming and incremental outputs
 
-Streaming should be implemented, but classify it correctly: **streaming does not inherently reduce token count**. It improves time-to-first-useful-output and perceived responsiveness. OpenAI's current latency guidance calls streaming one of the strongest ways to reduce perceived waiting time. citeturn14view8
+Streaming should be implemented, but classify it correctly: **streaming does not inherently reduce token count**. It improves time-to-first-useful-output and perceived responsiveness. OpenAI's current latency guidance calls streaming one of the strongest ways to reduce perceived waiting time.
 
 The token-saving opportunity comes from **incremental semantics**, not SSE itself.
 
@@ -1006,7 +1013,7 @@ large scheduled repository audits
 
 It is not appropriate for an interactive “review this diff now” path.
 
-OpenAI's Batch API currently offers a **50% cost discount**, a separate higher-rate-limit pool and completion within 24 hours; a batch can contain up to 50,000 requests. citeturn13view3turn13view4 Anthropic likewise currently documents a 50% Batch discount. citeturn16search7 This is a price optimization, not a token optimization.
+OpenAI's Batch API currently offers a **50% cost discount**, a separate higher-rate-limit pool and completion within 24 hours; a batch can contain up to 50,000 requests. Anthropic likewise currently documents a 50% Batch discount. This is a price optimization, not a token optimization.
 
 A provider abstraction should therefore expose:
 
@@ -1023,15 +1030,15 @@ class Usage:
     latency_ms: int
 ```
 
-and scheduling should account separately for RPM, input-token and output-token constraints. Anthropic, for example, currently rate-limits Messages by RPM, ITPM and OTPM and treats cached input differently from ordinary input on most models. citeturn16search0
+and scheduling should account separately for RPM, input-token and output-token constraints. Anthropic, for example, currently rate-limits Messages by RPM, ITPM and OTPM and treats cached input differently from ordinary input on most models.
 
-API call count also matters. OpenAI's latency guidance recommends combining sequential calls where possible and parallelizing truly independent operations. citeturn14view6turn14view7 For nitpicker, however, do not combine unrelated lenses into one giant prompt merely to save round trips: that reintroduces the context pollution you are trying to eliminate.
+API call count also matters. OpenAI's latency guidance recommends combining sequential calls where possible and parallelizing truly independent operations. For nitpicker, however, do not combine unrelated lenses into one giant prompt merely to save round trips: that reintroduces the context pollution you are trying to eliminate.
 
 ## CI, benchmarks and cost-versus-quality controls
 
 This is the part I consider non-negotiable.
 
-You already have behavioral evals under `skills/nitpicker/evals/evals.json`, including command selection, changed-files behavior, unknown-command fallback, severity filtering and no-invented-findings behavior. fileciteturn10file0L2-L2 What the eval suite currently lacks is **resource accounting**.
+You already have behavioral evals under `skills/nitpicker/evals/evals.json`, including command selection, changed-files behavior, unknown-command fallback, severity filtering and no-invented-findings behavior. What the eval suite currently lacks is **resource accounting**.
 
 Token optimization without a quality baseline will eventually optimize nitpicker into a cheaper, worse auditor.
 
@@ -1123,7 +1130,7 @@ fixed revision  → same finding forbidden
 
 These answer: *does nitpicker find realistic defects without inventing them?*
 
-Finally, **adversarial large-repository cases** should place the relevant evidence among large amounts of irrelevant but superficially similar code. This specifically tests retrieval and long-context behavior. That matters because long-context models do not necessarily use all positions equally well; the “Lost in the Middle” work found substantial degradation when relevant material was buried in the middle of long contexts. citeturn13view16
+Finally, **adversarial large-repository cases** should place the relevant evidence among large amounts of irrelevant but superficially similar code. This specifically tests retrieval and long-context behavior. That matters because long-context models do not necessarily use all positions equally well; the “Lost in the Middle” work found substantial degradation when relevant material was buried in the middle of long contexts.
 
 ### Add differential context-budget tests
 
@@ -1178,7 +1185,7 @@ Do not permit a token win to automatically compensate for a Critical-recall loss
 
 ### Measure instruction tokens, not only instruction counts
 
-Your existing `check-agent-instructions.py` is a good semantic guard: it warns above its instruction threshold and fails above its hard limit. fileciteturn4file0L2-L2 Keep it.
+Your existing `check-agent-instructions.py` is a good semantic guard: it warns above its instruction threshold and fails above its hard limit. Keep it.
 
 Add a complementary tokenizer-aware check:
 
@@ -1249,7 +1256,7 @@ frontier / high / 24k
 
 The best configuration is not necessarily the cheapest point. It is the cheapest point meeting the quality floor.
 
-This is especially important because current provider models expose multiple cost/effort tiers. OpenAI's model catalog currently spans cost-sensitive GPT-5.6 Luna, balanced Terra, flagship Sol and higher-end Astra-class reasoning. citeturn15search0turn15search2turn15search3turn15search7 Anthropic likewise explicitly recommends changing effort according to measured workload requirements rather than assuming maximum effort everywhere. citeturn15search6
+This is especially important because current provider models expose multiple cost/effort tiers. OpenAI's model catalog currently spans cost-sensitive GPT-5.6 Luna, balanced Terra, flagship Sol and higher-end Astra-class reasoning. Anthropic likewise explicitly recommends changing effort according to measured workload requirements rather than assuming maximum effort everywhere.
 
 ## Beyond token savings: what would make nitpicker genuinely best-in-class
 
@@ -1324,7 +1331,7 @@ bytes read from disk
 tokens exposed to model
 ```
 
-CodeRAG research broadly warns that retrieval quality and the generator's ability to exploit retrieved context are separate failure points; repository retrieval should therefore be evaluated independently rather than only through final model output. Recent structural retrieval results such as AIRCoder, DraCo and Late Code Chunking further support treating this as its own system component. citeturn13view12turn13view13turn13view14
+CodeRAG research broadly warns that retrieval quality and the generator's ability to exploit retrieved context are separate failure points; repository retrieval should therefore be evaluated independently rather than only through final model output. Recent structural retrieval results such as AIRCoder, DraCo and Late Code Chunking further support treating this as its own system component.
 
 ### Add a “known-positive” philosophy to every analyzer
 
@@ -1359,7 +1366,7 @@ This makes “clean” an evidenced claim rather than an empty output.
 
 ### Export standard formats
 
-The current findings store is a good human-reviewable project artifact. fileciteturn6file0L2-L2 Keep it, but add machine exports:
+The current findings store is a good human-reviewable project artifact. Keep it, but add machine exports:
 
 ```text
 np_export_findings --format sarif
@@ -1439,7 +1446,7 @@ bottom:
     exact question to answer
 ```
 
-The rationale is empirical: long-context experiments have repeatedly observed poorer utilization of information buried in the middle than information placed near the beginning or end. citeturn13view16
+The rationale is empirical: long-context experiments have repeatedly observed poorer utilization of information buried in the middle than information placed near the beginning or end.
 
 Do not duplicate entire source snippets at both ends; duplicate only tiny identifiers or the analytical question.
 
@@ -1488,7 +1495,7 @@ The benchmark criterion I would use for declaring the token-efficiency work succ
 
 > **At least the same Critical/High defect recall as the full-context baseline, with materially fewer uncached input and output tokens, lower cost per verified finding, and no degradation in evidence accuracy.**
 
-A stretch goal of roughly **30–50% lower end-to-end input context** is defensible given current coding-agent pruning research, but should remain a measured target rather than a design assumption. SWE-Pruner's 23–54% agent-task reduction gives that target empirical grounding; RepoDistill suggests greater compression may eventually be possible with repository-specialized learned components. citeturn13view8turn13view9
+A stretch goal of roughly **30–50% lower end-to-end input context** is defensible given current coding-agent pruning research, but should remain a measured target rather than a design assumption. SWE-Pruner's 23–54% agent-task reduction gives that target empirical grounding; RepoDistill suggests greater compression may eventually be possible with repository-specialized learned components.
 
 The resulting design has an important competitive advantage: **nitpicker can become more exhaustive while reading less into the model**. Exhaustiveness is then provided by deterministic inventory, coverage accounting and selective expansion—not by hoping a model attends correctly to a giant context window.
 
@@ -1496,8 +1503,8 @@ That is the direction I would pursue for the project: not merely “use fewer to
 
 ### Primary sources and research basis
 
-The most directly relevant research is **SWE-Pruner: Self-Adaptive Context Pruning for Coding Agents**, which reports 23–54% token reductions on agentic coding tasks. citeturn13view8 **RepoDistill** demonstrates repository-specific learned context compression with input reductions up to 66% while maintaining comparable performance. citeturn13view9 **AIRCoder** supports hybrid textual/dependency/structural retrieval. citeturn13view12 **Late Code Chunking** supports compact retrieval followed by context expansion. citeturn13view13 **DraCo** provides evidence for dataflow-guided repository retrieval. citeturn13view14 **Reducing Token Usage of State-in-Context Agents using Minification** provides the strongest warning against blind code compression, measuring a 42% input reduction alongside a 12 percentage-point resolution loss. citeturn13view10 **LLMLingua** provides the semantic-compression foundation for prose and other non-evidence context. citeturn13view15 **Lost in the Middle** motivates careful context packing rather than equating large context windows with reliable information utilization. citeturn13view16
+The most directly relevant research is **SWE-Pruner: Self-Adaptive Context Pruning for Coding Agents**, which reports 23–54% token reductions on agentic coding tasks. **RepoDistill** demonstrates repository-specific learned context compression with input reductions up to 66% while maintaining comparable performance. **AIRCoder** supports hybrid textual/dependency/structural retrieval. **Late Code Chunking** supports compact retrieval followed by context expansion. **DraCo** provides evidence for dataflow-guided repository retrieval. **Reducing Token Usage of State-in-Context Agents using Minification** provides the strongest warning against blind code compression, measuring a 42% input reduction alongside a 12 percentage-point resolution loss. **LLMLingua** provides the semantic-compression foundation for prose and other non-evidence context. **Lost in the Middle** motivates careful context packing rather than equating large context windows with reliable information utilization.
 
-For production implementation, the relevant current provider documentation is OpenAI's **Prompt Caching**, which documents prefix matching, cached usage and discounts. citeturn14view1turn13view2 OpenAI's **Batch API** documents its 50% asynchronous discount and batch limits. citeturn13view3turn13view4 OpenAI's **Latency Optimization** guidance covers shorter generation, request consolidation, parallelization and streaming. citeturn13view5turn14view6turn14view7turn14view8 Current OpenAI model-selection guidance provides the cost/capability tiering used above. citeturn15search0 Anthropic's current **Effort** documentation directly supports risk-adaptive effort control, and its rate-limit documentation explains cache-aware token accounting. citeturn15search6turn16search0 Google's current Gemini documentation likewise exposes model thinking-level controls for latency/cost tradeoffs. citeturn15search10
+For production implementation, the relevant current provider documentation is OpenAI's **Prompt Caching**, which documents prefix matching, cached usage and discounts. OpenAI's **Batch API** documents its 50% asynchronous discount and batch limits. OpenAI's **Latency Optimization** guidance covers shorter generation, request consolidation, parallelization and streaming. Current OpenAI model-selection guidance provides the cost/capability tiering used above. Anthropic's current **Effort** documentation directly supports risk-adaptive effort control, and its rate-limit documentation explains cache-aware token accounting. Google's current Gemini documentation likewise exposes model thinking-level controls for latency/cost tradeoffs.
 
 The strongest conclusion across those sources is remarkably consistent: **do not solve repository-scale agent efficiency by giving the model a bigger pile of text and asking it to work harder. Route, retrieve, compress, cache and verify.**

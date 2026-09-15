@@ -351,6 +351,18 @@ class TestIterRules:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
+def test_iter_rules_returns_an_escaping_directory_link_unwalked(tmp_path):
+    """A rules subdirectory linked outside `contain` is reported, never enumerated."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("x", encoding="utf-8")
+    rules = tmp_path / "proj" / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "shared").symlink_to(outside)
+    found = _iter_rules(rules, contain=(tmp_path / "proj").resolve())
+    assert found == [rules / "shared"]
+
+
 class TestMain:
     def _setup_rules(self, tmp_path: Path, rules: dict[str, str]) -> None:
         rules_dir = tmp_path / ".claude" / "rules"
@@ -371,6 +383,21 @@ class TestMain:
         monkeypatch.setattr(sys, "argv", ["prog", flag])
         _mod.main()
         assert "Usage:" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("args", [["--bogus"], ["a", "b"], [".", "-x"]])
+    def test_a_flag_or_extra_positional_is_a_usage_error(self, args, tmp_path, capsys, monkeypatch):
+        """contract-c3333311: read as a root, `--bogus` exited 1 — the blocking code."""
+        self._setup_rules(tmp_path, {"ok.md": "# Ok\n\nNever do it.\n"})
+        monkeypatch.chdir(tmp_path)
+        assert self._main(monkeypatch, ["prog", *args]) == 2
+        assert "Usage:" in capsys.readouterr().err
+
+    def test_help_documents_every_rule_directory_and_exit_two(self):
+        """docs-b0920198: --help claimed `.claude/rules/` only."""
+        doc = _mod.__doc__ or ""
+        missing = [rel for rel, _, _ in _mod._RULE_DIRS if rel not in doc]
+        assert not missing, missing
+        assert "2 = usage error" in doc
 
     def test_explicit_path_without_rules_dir_exits_1(self, tmp_path, capsys, monkeypatch):
         # The argument is a project root. A supplied path with no rules directory
@@ -649,6 +676,33 @@ class TestAdditionalCoverage:
         assert "real-section" not in by_code["dead_anchor"]["detail"], (
             "a link to a heading that exists must not be reported"
         )
+
+    def test_a_hedged_word_quoted_in_a_code_span_is_not_hedging(self, tmp_path):
+        """audit-52e3cf3b: a rule forbidding `might` by name blocked the commit."""
+        f = tmp_path / "quoted.md"
+        f.write_text("# Q\n\nNever write `might` or `try to` in a rule.\n", encoding="utf-8")
+        assert not _has(_check_file(f, tmp_path), "hedged_language")
+
+    def test_an_inline_span_at_line_start_opens_no_fence(self, tmp_path):
+        """audit-9e264670: the span read as an unterminated fence and hid the hedge below."""
+        f = tmp_path / "span.md"
+        f.write_text("# S\n\n```x``` is a span.\n\nYou might do it.\n", encoding="utf-8")
+        findings = _check_file(f, tmp_path)
+        assert not _has(findings, "unterminated_fence")
+        assert _has(findings, "hedged_language")
+
+    def test_anchor_slugs_follow_github(self, tmp_path):
+        """audit-41dfc7f7: GitHub keeps each space, underscores and code-span text."""
+        f = tmp_path / "slugs.md"
+        f.write_text(
+            "# S\n\n## Foo — Bar\n\n## `code` word\n\n## snake_case name\n\n"
+            "See [a](#foo--bar), [b](#code-word) and [c](#snake_case-name).\n"
+            "Not [d](#snake_case-ghost).\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        dead = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "dead_anchor"]
+        assert len(dead) == 1 and "snake_case-ghost" in dead[0], dead
 
     def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
         """The negative half: these checks must stay quiet on a healthy file.

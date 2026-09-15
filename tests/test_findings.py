@@ -5,8 +5,11 @@ import json
 import os
 import re
 import runpy
+import shutil
 import stat
+import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import ClassVar
 
@@ -1603,6 +1606,18 @@ class TestRedactVendorCoverage:
         ("atlassian api token", "ATATT" + "A" * 180),
         ("atlassian scoped token", "ATCTT" + "A" * 180),
         ("openai", "sk-" + "A" * 40),
+        # security-20a7426d: `_` inside the body stopped the match at the first
+        # underscore, leaving the rest of the key readable.
+        ("anthropic", "sk-ant-api03-" + "A" * 20 + "_" + "B" * 40),
+        ("openai project", "sk-proj-" + "A" * 12 + "_" + "B" * 30),
+        ("gitlab deploy token", "gldt-" + "A" * 20),
+        ("gitlab oauth application secret", "gloas-" + "A" * 20),
+        ("gitlab ci build token", "glcbt-" + "A" * 20),
+        ("gitlab pipeline trigger token", "glptt-" + "A" * 20),
+        ("gitlab scim token", "glsoat-" + "A" * 20),
+        ("gitlab feed token", "glft-" + "A" * 20),
+        ("gitlab incoming mail token", "glimt-" + "A" * 20),
+        ("gitlab agent token", "glagent-" + "A" * 20),
         ("aws key id", "AKIA" + "B" * 16),
         ("google api key", "AIza" + "A" * 35),
         ("npm token", "npm_" + "A" * 36),
@@ -1613,6 +1628,11 @@ class TestRedactVendorCoverage:
     @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
     def test_vendor_token_never_survives_redaction(self, label, token):
         assert token not in findings.redact(f"found in config: {token}"), label
+
+    @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
+    def test_vendor_token_is_masked_whole(self, label, token):
+        """`token not in` passes when only a prefix is masked; the tail must go too."""
+        assert findings.redact(token) == findings._mask(token), label
 
     @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
     def test_vendor_token_redacted_on_every_write_path(self, label, token, tmp_path):
@@ -2419,3 +2439,493 @@ def test_module_runs_as_a_script(monkeypatch, capsys, tmp_path):
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0
     assert "nothing to check" in capsys.readouterr().out
+
+
+# ── audit fix pass: store integrity ───────────────────────────────────────────
+
+
+def _victim(tmp_path: Path, name: str = "victim.txt", text: str = "PRECIOUS\n") -> Path:
+    """A file outside the store that no store operation may touch."""
+    victim = tmp_path / "outside" / name
+    victim.parent.mkdir(exist_ok=True)
+    victim.write_text(text, encoding="utf-8")
+    return victim
+
+
+class TestStoreRefusesSymlinks:
+    """security-3fbe26a3: the store lives inside the repository under audit.
+
+    Every fixed name in it is therefore attacker-controlled, and `git clone`
+    preserves symlinks — so a committed link must never carry a store read or
+    write outside the store.
+    """
+
+    def test_a_symlinked_lock_file_is_not_truncated(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        victim = _victim(tmp_path)
+        (store / ".lock").symlink_to(victim)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.write_index(store)
+        assert victim.read_text(encoding="utf-8") == "PRECIOUS\n"
+
+    def test_a_symlinked_ledger_is_neither_appended_nor_chmodded(self, tmp_path):
+        store = tmp_path / "store"
+        path = _new(store)
+        victim = _victim(tmp_path)
+        victim.chmod(0o644)
+        findings.ledger_path(store).symlink_to(victim)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.resolve_finding(store, path.stem, "fixed", "done")
+        assert victim.read_text(encoding="utf-8") == "PRECIOUS\n"
+        assert stat.S_IMODE(victim.stat().st_mode) == 0o644
+        assert path.exists(), "a refused resolve must not delete the open finding"
+
+    def test_a_symlinked_ledger_is_not_read(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        victim = _victim(tmp_path, text='{"id": "audit-00000001", "title": "leak"}\n')
+        findings.ledger_path(store).symlink_to(victim)
+        errors: list[str] = []
+        assert findings.read_ledger(store, errors) == []
+        assert any("symlink" in e for e in errors)
+        assert findings._ledger_summary(store) == {}
+        assert any("symlink" in e for e in findings.validate_store(store))
+
+    def test_a_symlinked_open_finding_is_not_read(self, tmp_path):
+        store = tmp_path / "store"
+        victim = _victim(tmp_path, text="PRIVATE KEY MATERIAL\n")
+        entry = store / "security" / "open" / "security-0000000a.md"
+        entry.parent.mkdir(parents=True)
+        entry.symlink_to(victim)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.show_finding(store, entry.stem)
+        errors: list[str] = []
+        assert findings.iter_open(store, errors) == []
+        assert any("symlink" in e for e in errors)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.resolve_finding(store, entry.stem, "fixed", "n")
+        assert entry.is_symlink()
+
+    def test_a_symlinked_directory_inside_the_store_is_not_followed(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        outside = tmp_path / "outside" / "open"
+        outside.mkdir(parents=True)
+        (outside / "security-0000000a.md").write_text("SECRET\n", encoding="utf-8")
+        (store / "security").symlink_to(outside.parent)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.show_finding(store, "security-0000000a")
+        assert findings.iter_open(store, []) == []
+
+    def test_a_store_reached_through_a_symlinked_directory_is_refused(self, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        # A `.git` at the link target must not end the walk before the link
+        # itself is inspected, or linking `docs` at another repository escapes.
+        (elsewhere / ".git").mkdir(parents=True)
+        (repo / "docs").symlink_to(elsewhere)
+        store = repo / "docs" / "audit" / "findings"
+        with pytest.raises(findings.FindingError, match="symlink"):
+            _new(store)
+        assert not (elsewhere / "audit").exists()
+        errors: list[str] = []
+        assert findings.iter_open(store, errors) == []
+        assert any("symlink" in e for e in errors)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings.show_finding(store, "security-0000000a")
+
+    def test_the_store_walk_stops_at_the_repository_root(self, tmp_path):
+        """A symlink ABOVE the repository is the user's layout, not the audited tree's."""
+        real = tmp_path / "real"
+        (real / "repo" / ".git").mkdir(parents=True)
+        (tmp_path / "link").symlink_to(real)
+        store = tmp_path / "link" / "repo" / "docs" / "audit" / "findings"
+        assert _new(store).exists()
+
+    def test_symlinked_hygiene_files_are_not_written_through(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        gi_victim = _victim(tmp_path, "gi.txt")
+        ga_victim = _victim(tmp_path, "ga.txt")
+        (store / ".gitignore").symlink_to(gi_victim)
+        (store / ".gitattributes").symlink_to(ga_victim)
+        findings.ensure_store_gitattributes(store)
+        assert gi_victim.read_text(encoding="utf-8") == "PRECIOUS\n"
+        assert ga_victim.read_text(encoding="utf-8") == "PRECIOUS\n"
+
+    def test_the_cli_reports_a_refused_store_instead_of_a_traceback(self, tmp_path, capsys):
+        store = tmp_path / "store"
+        store.mkdir()
+        (store / ".lock").symlink_to(_victim(tmp_path))
+        assert findings.main(["index", "--root", str(store)]) == 1
+        assert "symlink" in capsys.readouterr().err
+
+
+def test_store_lock_excludes_a_second_holder(tmp_path):
+    """tests-fb5eb5f2: the lock's exclusion itself, not merely that it was entered.
+
+    Probing with a SHARED non-blocking lock is what makes this catch both
+    regressions: it is refused only while the holder has the lock EXCLUSIVELY,
+    so a `LOCK_EX` weakened to `LOCK_SH`, or the flock removed, both let it in.
+    """
+    fcntl = pytest.importorskip("fcntl")
+    with (
+        findings.store_lock(tmp_path),
+        (tmp_path / ".lock").open("rb") as other,
+        pytest.raises(BlockingIOError),
+    ):
+        fcntl.flock(other, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    with (tmp_path / ".lock").open("rb") as other:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(other, fcntl.LOCK_UN)
+
+
+def test_store_lock_creates_the_lock_owner_only(tmp_path):
+    """CodeQL py/overly-permissive-file: the lock was created 0o644, world-readable.
+
+    The umask is pinned to 0o022 because a stricter one narrows 0o644 to 0o600
+    and the test would pass against the permissive mode it exists to catch.
+    """
+    pytest.importorskip("fcntl")
+    old = os.umask(0o022)
+    try:
+        with findings.store_lock(tmp_path):
+            pass
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE((tmp_path / ".lock").stat().st_mode) == 0o600
+
+
+class TestAtomicStoreWrites:
+    """reliability-ce1b17bb: every store writer goes through one mkstemp helper."""
+
+    def test_a_failed_finding_write_leaves_no_temp_file(self, tmp_path):
+        body = "## Problem\n\ud800\n\n## Evidence\ne\n\n## Impact\ni\n\n## Fix\nf\n"
+        with pytest.raises(UnicodeEncodeError):
+            _new(tmp_path, body=body)
+        assert [p for p in tmp_path.rglob("*") if p.name.endswith(".tmp")] == []
+
+    def test_a_planted_pid_temp_symlink_is_not_followed_by_any_writer(self, tmp_path):
+        pid = os.getpid()
+        root = tmp_path / "store"
+        root.mkdir()
+        victims = []
+
+        def plant(target: Path) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            victim = _victim(tmp_path, f"v{len(victims)}.txt")
+            target.with_name(f"{target.name}.{pid}.tmp").symlink_to(victim)
+            victims.append(victim)
+
+        fid = findings.finding_id("security", "src/auth.py", "Token compared with ==")
+        plant(root / "security" / "open" / f"{fid}.md")
+        _new(root)
+        plant(root / "INDEX.md")
+        findings.write_index(root)
+        plant(findings.baseline_path(root))
+        findings.write_baseline(root, [fid], "2026-07-08")
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(V1_DOC, encoding="utf-8")
+        plant(root / "audit" / "open" / "N-090.md")
+        findings.migrate_v1(src, root)
+        for victim in victims:
+            assert victim.read_text(encoding="utf-8") == "PRECIOUS\n", victim
+
+    def test_a_symlinked_destination_is_refused(self, tmp_path):
+        victim = _victim(tmp_path)
+        (tmp_path / "INDEX.md").symlink_to(victim)
+        with pytest.raises(findings.FindingError, match="symlink"):
+            findings._atomic_write(tmp_path / "INDEX.md", "x")
+        assert victim.read_text(encoding="utf-8") == "PRECIOUS\n"
+
+    def test_the_data_is_fsynced_before_the_rename(self, tmp_path, monkeypatch):
+        calls: list[str] = []
+        real_fsync, real_replace = os.fsync, os.replace
+        monkeypatch.setattr(
+            findings.os, "fsync", lambda fd: calls.append("fsync") or real_fsync(fd)
+        )
+        monkeypatch.setattr(
+            findings.os, "replace", lambda a, b: calls.append("replace") or real_replace(a, b)
+        )
+        findings._atomic_write(tmp_path / "f.md", "text\n")
+        assert calls.index("fsync") < calls.index("replace")
+        assert (tmp_path / "f.md").read_text(encoding="utf-8") == "text\n"
+
+
+def test_validate_store_waits_for_a_writer_holding_the_store_lock(tmp_path):
+    """concurrency-b0349752: validation must not interleave with a resolve's move.
+
+    The resolve below appends the ledger record and unlinks the open file while
+    holding the lock; a validation that ran in between reported both halves of
+    that one move as corruption.
+    """
+    path = _new(tmp_path)
+    result: list[list[str]] = []
+    with findings.store_lock(tmp_path):
+        worker = threading.Thread(target=lambda: result.append(findings.validate_store(tmp_path)))
+        worker.start()
+        worker.join(0.3)
+        assert worker.is_alive(), "validate_store read the store while a writer held the lock"
+        fm, title, body = findings.parse_finding(path.read_text(encoding="utf-8"))
+        rec = findings._record_from_finding(fm, title, body, "fixed", "2026-07-09", path.stem)
+        findings.append_ledger(tmp_path, rec)
+        path.unlink()
+    worker.join(10)
+    assert result == [[]]
+
+
+def test_validate_store_on_a_missing_root_creates_nothing(tmp_path):
+    assert findings.validate_store(tmp_path / "nope") == []
+    assert not (tmp_path / "nope").exists()
+
+
+class TestMigrationsValidateBeforeWriting:
+    """migrations-0078af5d: the ledger is append-only and migrate-resolved deletes
+    its sources, so a record `validate` rejects must never be written."""
+
+    def test_migrate_resolved_refuses_a_malformed_legacy_id(self, tmp_path):
+        legacy = tmp_path / "security" / "resolved" / "sec_001.md"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(
+            "---\nauditor: security\nstatus: fixed\nfound: 2026-07-08\n---\n\n# Old\n\nbody\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(findings.FindingError, match="malformed id 'sec_001'"):
+            findings.migrate_resolved(tmp_path)
+        assert legacy.exists()
+        assert not findings.ledger_path(tmp_path).exists()
+
+    def test_migrate_v1_takes_the_date_out_of_a_prose_fixed_field(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(
+            V1_DOC.replace("Fixed: 2026-07-06", "Fixed: in commit abc1234 on 2026-07-05"),
+            encoding="utf-8",
+        )
+        root = tmp_path / "findings"
+        findings.migrate_v1(src, root)
+        assert findings.resolved_records(root)["N-102"]["resolved"] == "2026-07-05"
+        assert findings.validate_store(root) == []
+
+    def test_migrate_v1_falls_back_when_fixed_holds_no_date(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(V1_DOC.replace("Fixed: 2026-07-06", "Fixed: in commit abc1234"), "utf-8")
+        root = tmp_path / "findings"
+        findings.migrate_v1(src, root)
+        assert findings.resolved_records(root)["N-102"]["resolved"] == "2026-07-06"
+        assert findings.validate_store(root) == []
+
+    def test_migrate_v1_refuses_an_open_finding_validate_would_reject(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(V1_DOC.replace("Category: conventions", "Category: nonsense"), "utf-8")
+        root = tmp_path / "findings"
+        with pytest.raises(findings.FindingError, match="invalid category"):
+            findings.migrate_v1(src, root)
+        assert not (root / "audit" / "open" / "N-090.md").exists()
+        assert not findings.ledger_path(root).exists()
+
+    def test_migrate_v1_refuses_a_resolved_record_validate_would_reject(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(V1_DOC.replace("[N-014]", "[bad-id]"), "utf-8")
+        root = tmp_path / "findings"
+        with pytest.raises(findings.FindingError, match="malformed id 'bad-id'"):
+            findings.migrate_v1(src, root)
+        assert not findings.ledger_path(root).exists()
+
+
+def test_resolve_keeps_a_fenced_resolution_heading_quoted_in_evidence(tmp_path):
+    """audit-85ca46a6: only a Resolution heading outside every fence is the tool's own."""
+    body = (
+        "## Problem\np\n\n## Evidence\n```markdown\n## Resolution\nquoted\n```\n\n"
+        "## Impact\nimpact text\n\n## Fix\nfix text\n"
+    )
+    path = _new(tmp_path, body=body)
+    findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
+    rec_body = findings.resolved_records(tmp_path)[path.stem]["body"]
+    assert "impact text" in rec_body and "fix text" in rec_body
+    assert rec_body.rstrip().endswith("## Resolution\ndone")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "uses actions/checkout@v4.1.1",
+        "lodash@4.17.21",
+        "node_modules/.pnpm/lodash@4.17.21/node_modules",
+        "pkg@1.2.3-beta.rc",
+    ],
+)
+def test_redact_leaves_a_name_at_version_alone(text):
+    """audit-348cfdf9: a version pin is not an email address."""
+    assert findings.redact(text) == text
+
+
+def test_redact_still_masks_an_email():
+    assert findings.redact("mail alice.o@example.co.uk now") == "mail <email> now"
+
+
+@pytest.mark.parametrize("sep", ["\r", "\x0b", "\x0c", "\x1c", "\x85", chr(0x2028), chr(0x2029)])
+def test_new_rejects_every_line_separator_the_parser_splits_on(tmp_path, sep):
+    """audit-fc9b0529: `parse_frontmatter` splits on every `str.splitlines` boundary."""
+    with pytest.raises(findings.FindingError, match="single-line"):
+        _new(tmp_path, area=f"src/x.py{sep}severity: critical", severity="low")
+    with pytest.raises(findings.FindingError, match="single-line"):
+        _new(tmp_path, title=f"t{sep}status: fixed")
+
+
+def test_index_is_identical_for_a_relative_and_an_absolute_root(tmp_path, monkeypatch):
+    """audit-5c6e99aa: the MCP server passes an absolute root, the CLI a relative one."""
+    (tmp_path / ".git").mkdir()
+    store = tmp_path / "docs" / "audit" / "findings"
+    _new(store)
+    monkeypatch.chdir(tmp_path)
+    relative = findings.build_index(Path("docs/audit/findings"))
+    absolute = findings.build_index(store)
+    assert relative == absolute
+    assert str(tmp_path) not in absolute
+    assert "(docs/audit/findings/security/open/" in absolute
+
+
+def test_index_escapes_markdown_in_titles_outside_code_spans(tmp_path):
+    """A title is data: `__file__` rendered bold, and markdownlint --fix then
+    rewrote the generated index to `**file**`. Code spans stay as written."""
+    _new(tmp_path, title="paths from __file__ or *env* via <name> and [x](y) in `a_b*c`")
+    out = findings.build_index(tmp_path)
+    assert r"paths from \_\_file\_\_ or \*env\* via \<name> and \[x](y) in `a_b*c`" in out
+
+
+_needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+
+
+@_needs_git
+def test_gitignore_negation_that_reincludes_the_store_is_honoured(tmp_path):
+    """audit-8afd787c: git decides what is ignored, negations included."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("docs/audit/*\n!docs/audit/findings/\n", encoding="utf-8")
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    assert findings.is_store_gitignored(store) is False
+    findings.ensure_store_gitattributes(store)
+    assert (store / ".gitattributes").exists()
+
+
+@_needs_git
+def test_a_store_git_ignores_is_reported_ignored(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("docs/audit/\n", encoding="utf-8")
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    assert findings.is_store_gitignored(store) is True
+
+
+def test_gitignore_detection_falls_back_when_git_cannot_run(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".gitignore").write_text("docs/audit/\n", encoding="utf-8")
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+
+    def _missing(*_a, **_k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(findings.subprocess, "run", _missing)
+    assert findings.is_store_gitignored(store) is True
+
+
+def test_gitignore_query_disables_the_audited_repos_command_config(tmp_path, monkeypatch):
+    """security-02c0e5c1: the audited tree's .git/config must not pick a command.
+
+    `--no-index` happens to skip the fsmonitor refresh today; the overrides make
+    that a decision rather than a side effect of a flag chosen for another reason.
+    """
+    (tmp_path / ".git").mkdir()
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    seen = []
+
+    def _record(argv, **_k):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(findings.subprocess, "run", _record)
+    findings.is_store_gitignored(store)
+    argv = seen[0]
+    sub = argv.index("check-ignore")
+    overrides = [argv[i + 1] for i in range(sub) if argv[i] == "-c"]
+    assert "core.fsmonitor=false" in overrides
+    assert "core.hooksPath=/dev/null" in overrides
+
+
+def test_migrate_v1_refuses_an_open_id_already_open_under_another_auditor(tmp_path):
+    """audit-c29fa56c: legacy ids recur across v1 documents."""
+    doc = (
+        "# Findings\nGenerated: 2026-04-24\n\n## Open Findings\n\n### High\n\n"
+        "#### [N-1] Something\nCategory: security\nArea: src/a.py\n"
+        "Problem: p\nEvidence: e\nImpact: i\nFix: f\n"
+    )
+    first = tmp_path / "security-findings.md"
+    second = tmp_path / "doc-auditor-findings.md"
+    first.write_text(doc, encoding="utf-8")
+    second.write_text(doc, encoding="utf-8")
+    root = tmp_path / "findings"
+    assert findings.migrate_v1(first, root) == 1
+    with pytest.raises(findings.FindingError, match="duplicate id N-1"):
+        findings.migrate_v1(second, root)
+    assert not (root / "docs" / "open" / "N-1.md").exists()
+    assert findings.validate_store(root) == []
+
+
+def test_normalize_body_does_not_treat_an_issue_reference_as_a_heading():
+    """audit-53e314fa: CommonMark needs `#`{1,6} then a space or end of line."""
+    text = "Tracked in\n#123 upstream issue\nand more"
+    assert findings._normalize_body(text) == text
+    assert findings._normalize_body("a\n#\nb") == "a\n\n#\n\nb"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["show", "NOT_AN_ID!"], ["resolve", "NOT_AN_ID!", "--status", "fixed", "--notes", "n"]],
+)
+def test_cli_malformed_id_is_a_usage_error(tmp_path, capsys, argv):
+    """contract-c3333311: 2 means the invocation was wrong, per the module docstring."""
+    assert findings.main([*argv, "--root", str(tmp_path)]) == 2
+    assert "malformed finding id" in capsys.readouterr().err
+
+
+def test_module_docstring_lists_every_subcommand(capsys):
+    """docs-b0920198: `--help` prints the docstring, which is how an agent finds a command."""
+    with pytest.raises(SystemExit):
+        findings.main(["--help"])
+    choices = re.search(r"\{([a-z,-]+)\}", capsys.readouterr().out)
+    assert choices
+    listed = re.findall(r"^    ([a-z-]+)\s", findings.__doc__ or "", re.MULTILINE)
+    assert sorted(choices.group(1).split(",")) == sorted(listed)
+
+
+def test_parse_frontmatter_without_a_closing_fence_is_all_body():
+    text = "---\nid: N-1\nno closing fence\n"
+    assert findings.parse_frontmatter(text) == ({}, text)
+
+
+def test_parse_frontmatter_unquotes_a_quoted_value():
+    fm, body = findings.parse_frontmatter("---\nid: \"N-1\"\narea: 'a b'\n---\nbody\n")
+    assert fm == {"id": "N-1", "area": "a b"}
+    assert body == "body\n"
+
+
+def test_validate_store_reports_a_symlinked_store_instead_of_locking_through_it(tmp_path):
+    """security-3fbe26a3 via concurrency-b0349752: the lock would be created in the target."""
+    real = tmp_path / "real"
+    real.mkdir()
+    store = tmp_path / "store"
+    store.symlink_to(real)
+    errors = findings.validate_store(store)
+    assert len(errors) == 1 and "symlink" in errors[0]
+    assert not (real / ".lock").exists()
+
+
+def test_gather_findings_limit_truncates_and_clamps_negative_to_empty(tmp_path):
+    _new(tmp_path)
+    assert len(findings.gather_findings(tmp_path)) == 1
+    assert findings.gather_findings(tmp_path, limit=0) == []
+    assert findings.gather_findings(tmp_path, limit=-3) == []

@@ -11,6 +11,7 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 # `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
 # A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose
@@ -59,7 +60,13 @@ _WRAPPERS = frozenset(
 # anchor the engine can retry, and `re.sub` restarts a match attempt at every
 # position, which is the polynomial blow-up CodeQL reports (py/polynomial-redos)
 # on a hook payload. The character class cannot retry.
-_COMMENT = re.compile(r"#[^\n]*")
+#
+# The lookbehind makes `#` a comment only where bash starts one: at the start of
+# a word. Cutting at every `#` turned `git commit -m issue#12 --no-verify` into
+# `git commit -m issue` and allowed it (agent-loopholes-0c18e6b9). A quoted span
+# is masked before this runs, so its placeholder's NUL is what precedes `#` in
+# `'a'#b`, which bash also reads as one word. Still a character class, no retry.
+_COMMENT = re.compile(r"(?<![^\s;&|()])#[^\n]*")
 # Single-quoted spans are literal; double-quoted spans honour backslash escapes.
 # Possessive quantifiers (`*+`, Python 3.11+). The two inner alternatives are
 # already disjoint, so a *terminated* quote never backtracks — but an
@@ -70,6 +77,16 @@ _COMMENT = re.compile(r"#[^\n]*")
 # answer for an unterminated span.
 _QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
 _MASK = re.compile("\x00(\\d+)\x00")
+# The escapes bash removes before a command sees its argv. A guard comparing
+# tokens that still carry them read `\-\-no-verify` and `$'--no-verify'` as
+# something other than the option git receives (agent-loopholes-0c18e6b9).
+_UNQUOTED_ESCAPE = re.compile(r"\\(.)", re.DOTALL)
+_DOUBLE_QUOTED_ESCAPE = re.compile(r"\\([$`\"\\\n])")
+_ANSI_C_ESCAPE = re.compile(
+    r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)", re.DOTALL
+)
+_ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n"}
+_ANSI_C_SIMPLE |= {"r": "\r", "t": "\t", "v": "\v"}
 # A backslash-newline is a line continuation, not a stage boundary. Splitting on
 # it made `git push \<newline> origin main` parse as ('push', ['\\']) — no second
 # operand, so the push guard fell through to HEAD and allowed a push to main from
@@ -93,6 +110,33 @@ _MAX_SPLIT_STRING_DEPTH = 4
 # enough that a hung gate surfaces as a failure instead of a frozen session.
 # deny-unsafe-git-hook.py uses 10 for a bare `git rev-parse`.
 HOOK_TIMEOUT = 120
+
+
+def report_skip(hook: str, reason: str, command: str) -> NoReturn:
+    """Say that a hook's validation did not run, and how to run it by hand; exit 1.
+
+    A validator that was missing, hung or could not start used to end its hook
+    with exit 0 and no output — the same signal as a pass, so an agent kept
+    building on a file nothing had judged (observability-879596c7). Exit 1 is
+    Claude Code's non-blocking error: the tool call stands and the line is shown,
+    so the skip is visible without blocking an edit the gate never saw. CI
+    remains the binding gate.
+    """
+    print(
+        f"  {hook}: validation did not run ({reason}); run `{command}` by hand",
+        file=sys.stderr,
+        flush=True,
+    )
+    sys.exit(1)
+
+
+# The checkout these hooks ship in, derived from `__file__`. Every validator a
+# hook EXECUTES comes from here; `repo_root()` is only the tree being validated
+# and the subprocess `cwd`. Deriving executed paths from the environment let a
+# CLAUDE_PROJECT_DIR naming another checkout that carries `_hooklib.py` choose
+# which validators ran, and was reported as py/command-line-injection
+# (audit-1e48d360). A path built from `__file__` no environment can move.
+SHIPPED_ROOT = Path(__file__).resolve().parents[2]
 
 
 def repo_root() -> Path:
@@ -147,6 +191,56 @@ def event_path() -> Path | None:
     return _edited_path(data) if data is not None else None
 
 
+def _tool_input(data: dict) -> dict:
+    """The event's `tool_input`, or an empty dict when it is absent or not an object."""
+    tool_input = data.get("tool_input")
+    return tool_input if isinstance(tool_input, dict) else {}
+
+
+def event_command(data: dict) -> str:
+    """The shell text a tool call will run, whichever tool carries it.
+
+    Bash carries it in `command`. The context-mode tools carry it in `code` when
+    `language` is `shell`, and a batch in each `commands[].command`. Every shell
+    guard read `command` alone, so none of them saw a context-mode call — the
+    very tool `.claude/rules/use-context-mode.md` sends shell work to, and the
+    one whose failed `cd` once staged 61 paths with `git add -A`
+    (agent-loopholes-41c1b2f3).
+
+    A `cwd` is rendered as a leading `cd`, so a guard resolving paths against a
+    `cd` target resolves from it. Batch commands are joined as separate lines;
+    a `cd` in one then seems to carry into the next, which only adds a base a
+    path is checked from. A value that is not a string is ignored, not raised on.
+    """
+    tool_input = _tool_input(data)
+    parts = [tool_input.get("command")]
+    if tool_input.get("language") == "shell":
+        parts.append(tool_input.get("code"))
+    commands = tool_input.get("commands")
+    if isinstance(commands, list):
+        parts += [c.get("command") for c in commands if isinstance(c, dict)]
+    text = "\n".join(p for p in parts if isinstance(p, str) and p)
+    cwd = tool_input.get("cwd")
+    if text and isinstance(cwd, str) and cwd:
+        text = f"cd {shlex.quote(cwd)}\n{text}"
+    return text
+
+
+def foreign_code(data: dict) -> str:
+    """Code a context-mode call runs in a language other than shell, else "".
+
+    It cannot be tokenized as shell, so no guard can tell which command it runs.
+    Each guard therefore refuses it wherever it merely names what that guard
+    protects. Ceiling: a name assembled at runtime (`'.cla' + 'ude'`) carries no
+    such token and passes.
+    """
+    tool_input = _tool_input(data)
+    code = tool_input.get("code")
+    if tool_input.get("language") in (None, "shell") or not isinstance(code, str):
+        return ""
+    return code
+
+
 def _mask_quoted(command: str) -> tuple[str, list[str]]:
     """Replace each quoted span with an opaque placeholder, keeping the originals.
 
@@ -172,9 +266,48 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
     return _QUOTED.sub(take, command), spans
 
 
+def _ansi_c(match: re.Match[str]) -> str:
+    """Decode one `$'...'` escape the way bash does.
+
+    `$'\\x2d\\x2dno-verify'` reaches git as `--no-verify`, so leaving the escape
+    in the token let the option past every membership test. Code points past
+    Unicode's range clamp rather than raise: a guard that crashes on a hostile
+    escape allows the call. `\\cX` control escapes are not decoded — the ceiling.
+    """
+    esc = match.group(1)
+    if len(esc) > 1 and esc[0] in "xuU":
+        code = int(esc[1:], 16)
+    elif esc[0] in "01234567":
+        code = int(esc, 8)
+    else:
+        return _ANSI_C_SIMPLE.get(esc, esc)
+    return chr(min(code, 0x10FFFF))
+
+
 def _unmask(token: str, spans: list[str]) -> str:
-    """Restore masked spans in one token, dropping the surrounding quote marks."""
-    return _MASK.sub(lambda m: spans[int(m.group(1))][1:-1], token)
+    """Restore one token to the word bash passes on: quotes dropped, escapes removed.
+
+    Outside quotes a backslash escapes any character; inside double quotes only
+    the characters bash lists; inside single quotes none. A `$` directly before a
+    quoted span is quoting, not content — `$'...'` additionally decodes its
+    escapes. Before agent-loopholes-0c18e6b9 the escapes stayed in the token, so
+    `\\-\\-no-verify` never compared equal to the option git actually receives.
+    """
+    out: list[str] = []
+    pos = 0
+    for match in _MASK.finditer(token):
+        lead, span = token[pos : match.start()], spans[int(match.group(1))]
+        body = span[1:-1]
+        ansi = lead.endswith("$")
+        lead = lead.removesuffix("$")
+        if span[0] == '"':
+            body = _DOUBLE_QUOTED_ESCAPE.sub(r"\1", body)
+        elif ansi:
+            body = _ANSI_C_ESCAPE.sub(_ansi_c, body)
+        out += [_UNQUOTED_ESCAPE.sub(r"\1", lead), body]
+        pos = match.end()
+    out.append(_UNQUOTED_ESCAPE.sub(r"\1", token[pos:]))
+    return "".join(out)
 
 
 def _split_string_payload(tokens: list[str], depth: int = 0) -> list[str]:
@@ -270,29 +403,36 @@ def _wrapper_variants(tokens: list[str]) -> list[tuple[dict[str, str], list[str]
     Each wrapper has its own option grammar — `nice -n 10 git push` puts two
     tokens between the wrapper and the command, `env -u FOO git push` two more —
     so stripping a fixed prefix models one spelling and misses the rest. Emitting
-    every suffix that begins at a `git` token models none of them and misses no
-    spelling. Bounded by the stage's own length.
+    every suffix that begins at a word which is neither an option nor an
+    assignment models none of them and misses no spelling. Bounded by the
+    stage's own length.
+
+    Every such word, not only `git`: the first version emitted a suffix only at
+    a `git` token, so `env rm -f scripts/hooks/ruff-hook.py` reached the
+    protected-write guard as a stage whose verb was `env`, and one wrapper word
+    deleted a guard (agent-loopholes-77938d26). An option's value (`10` in
+    `nice -n 10`) also starts a suffix; its verb matches nothing, so every
+    caller ignores it.
 
     The original stage is kept as well, never replaced: `env` alone is a read
     command the ctx-ok guard must still judge, and an unrecognised wrapped verb
-    must still fail closed.
+    must still fail closed. That guard already denies every wrapper verb, so
+    the extra suffixes cannot turn one of its denials into an allow.
 
-    A stage that merely mentions `git` after a wrapper (`sudo apt install git`)
-    yields a suffix with no subcommand, which every caller ignores. The residual
-    false positive — a wrapper-led stage whose operands literally read `git push`
-    — blocks one command rather than admitting one, which is the direction a
-    guard should err in.
+    The residual false positive — a wrapper-led stage whose operands literally
+    read `git push` or `rm scripts/hooks/x` as data — blocks one command rather
+    than admitting one, which is the direction a guard should err in.
     """
     if Path(tokens[0]).name not in _WRAPPERS:
         return [({}, tokens)]
-    # The scan runs over the `-S`-expanded form so a payload-carried git call is
+    # The scan runs over the `-S`-expanded form so a payload-carried call is
     # reachable, while the original stage is kept unexpanded: it is what the
     # ctx-ok guard and the unrecognised-verb path must still judge.
     expanded = _split_string_payload(tokens)
     return [({}, tokens)] + [
         (_assignments(expanded[:i]), expanded[i:])
         for i in range(1, len(expanded))
-        if Path(expanded[i]).name == "git"
+        if not expanded[i].startswith("-") and "=" not in expanded[i]
     ]
 
 

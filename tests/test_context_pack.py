@@ -120,6 +120,54 @@ def test_tracked_files_falls_back_to_a_walk_outside_a_repository(tmp_path):
     assert "dep.js" not in found
 
 
+def test_a_git_failing_inside_a_repository_raises_instead_of_walking_ignore_blind(tmp_path, capsys):
+    """errors-f3991c07: any git failure fell back to a walk that ignores `.gitignore`.
+
+    A truncated index makes git exit 128. The pack then listed the gitignored
+    `.env`, exited 0 and said nothing — the file universe changed silently.
+    """
+    root = _repo(tmp_path, {".gitignore": ".env\n", "a.py": PY})
+    (root / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    index = root / ".git" / "index"
+    index.write_bytes(index.read_bytes()[:20])
+
+    with pytest.raises(cp.PackEnvironmentError, match="index"):
+        cp._tracked_files(root)
+    assert cp.main(["--root", str(root), "--mode", "inventory"]) == 1
+    captured = capsys.readouterr()
+    assert ".env" not in captured.out
+    assert "git ls-files" in captured.err
+
+
+def test_git_runs_with_the_audited_trees_command_hooks_disabled(tmp_path, monkeypatch):
+    """security-02c0e5c1 and errors-f3991c07: the argv and locale `_git` runs under.
+
+    The overrides are pinned on the argv because a hook that never fires in the
+    probe below would also pass on a git too old to have that hook. `LC_ALL=C`
+    is pinned here because `_tracked_files` matches git's English stderr, and no
+    translated locale is installed on the machines this suite runs on.
+    """
+    seen: dict = {}
+
+    def capture(argv, **kwargs):
+        seen["argv"], seen["env"] = argv, kwargs["env"]
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cp.subprocess, "run", capture)
+    cp._git(tmp_path, "status")
+    assert seen["argv"][:7] == [
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.quotePath=false",
+    ]
+    assert seen["argv"][-1] == "status"
+    assert seen["env"]["LC_ALL"] == "C"
+
+
 def test_walk_skips_a_directory_it_cannot_read(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     real = Path.iterdir
@@ -275,10 +323,15 @@ def test_inventory_line_count_matches_the_file_exactly(tmp_path):
     it with `> 1`, which no off-by-one can fail — and the error was systematic
     rather than random, so it survived any averaging a caller did.
     """
-    root = _repo(tmp_path, {"three.py": "a = 1\nb = 2\nc = 3\n", "noeol.py": "x = 1"})
+    root = _repo(
+        tmp_path, {"three.py": "a = 1\nb = 2\nc = 3\n", "noeol.py": "x = 1", "empty.py": ""}
+    )
     rows = {f["path"]: f for f in cp.build(root=root, goal="", mode="inventory")["files"]}
     assert rows["three.py"]["lines"] == 3
-    assert rows["noeol.py"]["lines"] == 0  # no newline at all, so no line terminator
+    # audit-029db16b: a last line with no terminator is still a line; this
+    # assertion was `== 0`, which reported a one-line file as empty.
+    assert rows["noeol.py"]["lines"] == 1
+    assert rows["empty.py"]["lines"] == 0
 
 
 def test_line_count_returns_none_when_the_file_cannot_be_opened(tmp_path):
@@ -351,6 +404,22 @@ def test_diff_ignores_a_content_line_that_looks_like_a_file_header(tmp_path):
     assert {c["path"] for c in pack["candidates"]} == {"doc.md"}
 
 
+def test_a_header_shaped_content_line_does_not_drop_the_files_later_hunks(tmp_path):
+    """audit-d308a1c1: the `diff --git` anchor reset state but accepted headers anywhere.
+
+    The added line `++ b/foo` renders as `+++ b/foo` inside the hunk, which
+    re-pointed `current` at a file outside the scope, so every later hunk of
+    `doc.md` was dropped. Headers are now accepted only before the first `@@`.
+    """
+    body = [f"line {n}\n" for n in range(1, 11)]
+    root = _repo(tmp_path, {"doc.md": "".join(body)})
+    body[1] = "++ b/foo\n"
+    body[7] = "changed 8\n"
+    (root / "doc.md").write_text("".join(body), encoding="utf-8")
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert [(c["path"], c["start"]) for c in pack["candidates"]] == [("doc.md", 2), ("doc.md", 8)]
+
+
 def test_diff_parses_hunks_under_a_mnemonic_prefix_config(tmp_path):
     """A user with `diff.mnemonicPrefix` gets c/ and w/, not a/ and b/.
 
@@ -361,6 +430,66 @@ def test_diff_parses_hunks_under_a_mnemonic_prefix_config(tmp_path):
     subprocess.run(["git", "config", "diff.mnemonicPrefix", "true"], cwd=root, check=True)
     (root / "a.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
     assert cp.build(root=root, goal="", mode="diff")["candidates"]
+
+
+def test_diff_reaches_a_change_under_a_subdirectory_root(tmp_path):
+    """audit-90ca5e17: `--name-only` printed top-level paths, joined onto a subdirectory root.
+
+    `pkg/mod.py` became `pkg/pkg/mod.py`, matched nothing, and a monorepo
+    package review read as having nothing to review.
+    """
+    root = _repo(tmp_path, {"pkg/mod.py": PY, "top.py": PY})
+    (root / "pkg" / "mod.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+    (root / "top.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+    pkg = root / "pkg"
+    assert {c["path"] for c in cp.build(root=pkg, goal="", mode="diff")["candidates"]} == {"mod.py"}
+    evidence = cp.build(root=pkg, goal="method", mode="evidence", changed_only=True)
+    assert {c["path"] for c in evidence["candidates"]} == {"mod.py"}
+
+
+def test_diff_reaches_a_change_to_a_non_ascii_file_name(tmp_path):
+    """audit-90ca5e17: `core.quotePath` printed the name as a quoted octal escape."""
+    root = _repo(tmp_path, {"näme.py": PY})
+    (root / "näme.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert {c["path"] for c in pack["candidates"]} == {"näme.py"}
+    assert {c["symbol"] for c in pack["candidates"]} == {"method"}
+
+
+def test_diff_reaches_a_staged_deletion(tmp_path):
+    """audit-90ca5e17: `git rm` removes the path from `ls-files`, so the intersection lost it.
+
+    Only an unstaged deletion — still in the index — reached `deleted-file`; a
+    PR removing an auth check read as having nothing to review.
+    """
+    root = _repo(tmp_path, {"keep.py": PY, "old.py": "def goner():\n    return 2\n"})
+    subprocess.run(["git", "rm", "-q", "old.py"], cwd=root, check=True)
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert [(c["path"], list(c["reason"])) for c in pack["candidates"]] == [
+        ("old.py", ["deleted-file"])
+    ]
+
+
+def test_the_audited_trees_git_config_runs_no_command(tmp_path):
+    """security-02c0e5c1: git honoured the audited repository's own `.git/config`.
+
+    A tree delivered with its `.git` directory (an archive, a shared directory)
+    could name `core.fsmonitor`, `diff.external` or a textconv driver, and git
+    ran it with the auditor's privileges during `ls-files` and both diffs.
+    """
+    root = _repo(tmp_path / "repo", {".gitattributes": "*.py diff=conv\n", "a.py": PY})
+    marker = tmp_path / "ran"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f'#!/bin/sh\necho "$0" >> "{marker}"\ncat "$1" 2>/dev/null\n', "utf-8")
+    hook.chmod(0o755)
+    for key in ("core.fsmonitor", "diff.external", "diff.conv.textconv"):
+        subprocess.run(["git", "config", key, str(hook)], cwd=root, check=True)
+    (root / "a.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+
+    for mode in ("inventory", "diff"):
+        cp.build(root=root, goal="", mode=mode)
+    cp.build(root=root, goal="method", mode="evidence", changed_only=True)
+    assert not marker.exists()
 
 
 def test_diff_ignores_a_hunk_in_a_file_outside_the_requested_paths(tmp_path):

@@ -6,6 +6,8 @@ Load this when the user ran `/graphify add <url>` or passed `--watch`. Neither i
 
 Fetch a URL and add it to the corpus, then update the graph.
 
+Before fetching, show the user the exact URL and ask the owner to confirm it (local modification — see NOTICE). A fetched page is untrusted text that the extraction pass will read, so fetch only after an explicit yes for that URL, and ask again for every URL.
+
 ```bash
 $(cat graphify-out/.graphify_python) -c "
 import sys
@@ -27,7 +29,7 @@ except RuntimeError as e:
 Replace `URL` with the actual URL, `AUTHOR` with the user's name if provided, `CONTRIBUTOR` likewise. If the command exits with an error, tell the user what went wrong - do not silently continue. After a successful save, automatically run the `--update` pipeline on `./raw` to merge the new file into the existing graph.
 
 Supported URL types (auto-detected):
-- YouTube / any video URL → audio downloaded via yt-dlp, transcribed to `.txt` on next run (requires `pip install 'graphifyy[video]'`)
+- YouTube / any video URL → audio downloaded via yt-dlp, transcribed to `.txt` on next run (requires `pip install "graphifyy[video]==$(cat .claude/skills/graphify/.graphify_version)"`)
 - Twitter/X → fetched via oEmbed, saved as `.md` with tweet text and author
 - arXiv → abstract + metadata saved as `.md`
 - PDF → downloaded as `.pdf`

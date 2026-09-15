@@ -2,17 +2,19 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""PostToolUse hook — revalidate the governed trees after a Bash tool call.
+"""PostToolUse hook — revalidate the governed trees after a shell tool call.
 
-The five Write|Edit validators never see a Bash-mediated mutation (`sed -i`,
+The Write|Edit validators never see a shell-mediated mutation (`sed -i`,
 `>` redirection, `git mv`, `cp`, `patch`), so those edits bypassed the whole
-enforcement surface. A Bash event carries no file_path, so this hook asks git
-what is dirty instead, and runs the whole-tree gates only when something under
-a governed path is dirty. On a clean tree a read-only Bash call costs one
-`git status`; while a governed path stays dirty the gates re-run on each Bash
-call. That over-validation is deliberate and fail-safe: a `git status` snapshot
-cannot distinguish a fresh mutation from a pre-existing dirty file without
-per-file content hashing, so the hook prefers redundant work over missing an edit.
+enforcement surface. A shell event carries no file_path, so this hook asks git
+what is dirty instead, and runs the whole-tree gates only when a porcelain entry
+names a governed path. On a clean tree a read-only call costs one `git status`:
+the ignored entries every checkout carries — bytecode caches, the store lock —
+do not count (perf-74e03db5). While a governed path stays dirty the gates re-run
+on each call. That over-validation is deliberate and fail-safe: a `git status`
+snapshot cannot distinguish a fresh mutation from a pre-existing dirty file
+without per-file content hashing, so the hook prefers redundant work over
+missing an edit.
 """
 
 import shutil
@@ -21,13 +23,18 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import HOOK_TIMEOUT, repo_root  # type: ignore[import-not-found]
+from _hooklib import (
+    HOOK_TIMEOUT,
+    SHIPPED_ROOT,
+    repo_root,
+    report_skip,
+)
 
 REPO_ROOT = repo_root()
 
-# Substring markers — a porcelain line mentioning any of these is governed.
-# ponytail: substring match, not per-entry parsing; a false positive only costs
-# one validator run, and rename entries stay covered either way.
+# Substring markers — a porcelain entry whose path mentions any of these is
+# governed, subject to the per-entry rules in `_governed`. A substring match
+# keeps rename entries (`old -> new`) covered on either side.
 # `.claude/agents/` is deliberately absent: no gate here validates agent-definition
 # content, so listing it would imply a re-check that does not happen. Bash edits to
 # that tree are blocked upstream by deny-agents-path-hook.py instead.
@@ -41,6 +48,10 @@ GOVERNED = (
     # "scripts/" also covers the validators the gates below invoke.
     "scripts/",
     ".claude/settings.json",
+    # Merged over settings.json and able to set `disableAllHooks`
+    # (agent-loopholes-bbe241dd). It is gitignored here, so it surfaces only
+    # where a checkout tracks it; no ignored entry re-runs the gates.
+    ".claude/settings.local.json",
     ".claude/rules/",
     "docs/audit/findings/",
     "package.json",
@@ -57,15 +68,49 @@ FINDINGS = "skills/nitpicker/scripts/findings.py"
 # reaches the hook that shells out most, while the failure messages below still
 # read as a gate timeout.
 GATE_TIMEOUT = HOOK_TIMEOUT
+_UV = ["uv", "run", "--quiet"]
 # (script it needs on disk, argv) — a missing script is skipped, not a traceback.
-GATES = (
-    ("scripts/validate-skill.py", ["uv", "run", "--quiet", "scripts/validate-skill.py"]),
-    ("scripts/validate-rules.py", ["uv", "run", "--quiet", "scripts/validate-rules.py"]),
-    ("scripts/check-version-sync.py", ["uv", "run", "--quiet", "scripts/check-version-sync.py"]),
-    ("scripts/check-stdlib-only.py", ["uv", "run", "--quiet", "scripts/check-stdlib-only.py"]),
-    (FINDINGS, ["python3", FINDINGS, "validate"]),
-    (FINDINGS, ["python3", FINDINGS, "index"]),
+# The script in argv is an absolute path under SHIPPED_ROOT: repo-relative argv
+# under cwd=REPO_ROOT ran whichever gates the environment's tree held
+# (audit-1e48d360). REPO_ROOT stays the `cwd`, the tree the gates judge.
+GATES = tuple(
+    (script, [*prefix, str(SHIPPED_ROOT / script), *suffix])
+    for script, prefix, suffix in (
+        ("scripts/validate-skill.py", _UV, []),
+        ("scripts/validate-rules.py", _UV, []),
+        ("scripts/check-version-sync.py", _UV, []),
+        ("scripts/check-stdlib-only.py", _UV, []),
+        # Eval sets are validated on Write|Edit only; without this a Bash edit to
+        # one reached no in-session gate (audit-38801f60).
+        ("scripts/validate-evals.py", _UV, []),
+        (FINDINGS, ["python3"], ["validate"]),
+        (FINDINGS, ["python3"], ["index"]),
+    )
 )
+
+_STORE = "docs/audit/findings/"
+
+
+def _governed(entry: str) -> bool:
+    """True when one `git status --porcelain --ignored` entry names a governed path.
+
+    Matching GOVERNED against the whole output ran every gate after every call on
+    a clean tree: `!! docs/audit/findings/.lock` and each `__pycache__/` directory
+    contain a governed substring and exist on every checkout. That cost 1.21 s per
+    call against 0.08 s, plus a store-lock take and an INDEX.md rewrite
+    (perf-74e03db5).
+
+    A bytecode cache never counts. An ignored entry counts only inside the
+    findings store, which may be gitignored, and not for its lock or temp files.
+    Ceiling: a fully ignored store is listed as one `!! docs/audit/findings/`
+    entry, which still re-runs the gates on each call.
+    """
+    path = entry[3:]
+    if "__pycache__/" in path:
+        return False
+    if entry.startswith("!!"):
+        return path.startswith(_STORE) and not path.endswith((".lock", ".tmp"))
+    return any(marker in path for marker in GOVERNED)
 
 
 def main() -> None:  # noqa: C901
@@ -87,18 +132,19 @@ def main() -> None:  # noqa: C901
             text=True,
             timeout=GATE_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
         # git absent, or a tree slow enough that status timed out. A PostToolUse
-        # hook that blocks has no user-visible recovery, so bound it and skip.
-        return
+        # hook that blocks has no user-visible recovery, so bound it and skip —
+        # out loud, since a silent skip reads as every gate passing.
+        report_skip("post-bash-revalidate", f"{type(exc).__name__}: {exc}", "make check")
     if status.returncode != 0:
         return  # not a git tree — nothing to scope against
-    if not any(marker in status.stdout for marker in GOVERNED):
+    if not any(_governed(entry) for entry in status.stdout.splitlines()):
         return
 
     failures = []
     for script, cmd in GATES:
-        if not (REPO_ROOT / script).exists():
+        if not (SHIPPED_ROOT / script).exists():
             # gate script absent (partial checkout) — CI remains the gate, but a
             # silently skipped gate is indistinguishable from a passing one.
             print(f"  post-bash-revalidate: gate skipped, {script} not found", file=sys.stderr)
@@ -126,9 +172,9 @@ def main() -> None:  # noqa: C901
             # unreachable index made that block forever with no output.
             #
             # Stop the run rather than continuing to the next gate. GATE_TIMEOUT
-            # bounds each gate on its own, so continuing let six hung gates hold
-            # this PostToolUse hook for 6 * GATE_TIMEOUT — twelve minutes of
-            # silence, the exact failure the per-gate bound exists to prevent.
+            # bounds each gate on its own, so continuing let every hung gate hold
+            # this PostToolUse hook for len(GATES) * GATE_TIMEOUT of silence, the
+            # exact failure the per-gate bound exists to prevent.
             # Whatever wedges one `uv run` wedges the rest, so the remaining
             # gates buy no coverage and cost a full GATE_TIMEOUT each.
             failures.append(

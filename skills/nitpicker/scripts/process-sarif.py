@@ -5,12 +5,16 @@ Usage:
     process-sarif.py <sarif-file> [<sarif-file>...]
 
 Reads one or more SARIF 2.1.0 files (e.g. from semgrep, grype, trivy, checkov, gitleaks),
-deduplicates findings by (tool + rule_id + uri + start_line), normalizes severity
-to the five-level scale, and outputs grouped JSON.
+deduplicates findings by (tool + rule_id + uri:start_line:start_column) — or, for
+a result with no uri, (tool + rule_id + cve_or_rule:start_line:start_column:message) —
+keeping the most severe copy, normalizes severity to the five-level scale, and
+outputs grouped JSON. Suppressed results (an accepted suppression) and results
+whose `kind` is present and not `fail` are not findings.
 
 Output JSON:
     {
-        "meta": {source_files, total_raw, unique, duplicates_removed, severity_counts},
+        "meta": {source_files, total_raw, unique, duplicates_removed, severity_counts,
+                 errors},
         "by_severity": {"Critical": [...], "High": [...], "Medium": [...],
                        "Low": [...], "Advisory": [...]},
         "by_tool": {"toolName": [...]},
@@ -21,12 +25,18 @@ Each finding:
     {rule_id, rule_name, tool, severity, message, uri, start_line, start_column, cve_or_rule,
      fingerprint, help_uri, source_file}
 
-Severity normalization:
-    CVSS security-severity property → score ≥9.0=Critical, ≥7.0=High, ≥4.0=Medium, else Low
-    SARIF level → error=High, warning=Medium, note/none=Low
-    Tool-specific severity string → maps to normalized scale
+`meta.errors` lists every input that was missing or unparseable and skipped; a
+non-empty list means the report is incomplete, never a clean scan.
 
-Exit codes: 0 = success, 1 = parse/IO error, 2 = usage error.
+Severity normalization — the most severe of these two signals wins:
+    CVSS security-severity property → score ≥9.0=Critical, ≥7.0=High, ≥4.0=Medium, else Low
+    Tool-specific severity string → maps to normalized scale (unrecognised → High)
+Only when neither is usable, the SARIF level decides: the result's `level`, else
+the rule's `defaultConfiguration.level`, else `warning` →
+error=High, warning=Medium, note/none=Low.
+
+Exit codes: 0 = success, 1 = parse/IO error (an input was skipped),
+2 = usage error (no file given, or an unknown `-`-prefixed option).
 """
 
 import contextlib
@@ -152,11 +162,16 @@ def _extract_rules(run: dict) -> dict[str, dict]:
                 continue
             rid = rule.get("id", "")
             props = rule.get("properties") or {}
+            # A result without `level` inherits this (SARIF 2.1.0 §3.27.10);
+            # ignoring it reported a scanner's rule-level errors as Low
+            # (audit-331e8d4d).
+            config = rule.get("defaultConfiguration")
             rules[rid] = {
                 "name": rule.get("name", rid),
                 "short_description": (rule.get("shortDescription") or {}).get("text", ""),
                 "help_uri": rule.get("helpUri", ""),
                 "security_severity": props.get("security-severity"),
+                "default_level": config.get("level") if isinstance(config, dict) else None,
             }
     return rules
 
@@ -234,7 +249,10 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
         return []  # a `runs` entry from untrusted JSON need not be an object
     driver = (run.get("tool") or {}).get("driver") or {}
     tool_name = driver.get("name", "unknown")
-    driver_rules = driver.get("rules") or []
+    # Only a list can be indexed by `ruleIndex`; an object here raised KeyError
+    # out of the whole run instead of costing this one file (audit-c5d5a652).
+    raw_rules = driver.get("rules")
+    driver_rules = raw_rules if isinstance(raw_rules, list) else []
     rules = _extract_rules(run)
     findings: list[dict] = []
 
@@ -250,6 +268,11 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
         # The empty array is the separate claim "considered, not suppressed".
         if _is_suppressed(result.get("suppressions")):
             continue
+        # `kind` defaults to `fail`; `pass`, `notApplicable`, `informational`,
+        # `open` and `review` are not defects, and counting them inflated the
+        # report (audit-331e8d4d).
+        if result.get("kind", "fail") != "fail":
+            continue
         rule_id = result.get("ruleId", "")
         # SARIF allows referencing the rule by ruleIndex into driver.rules[]
         # instead of ruleId; recover the id (and thus its metadata) from there.
@@ -264,7 +287,9 @@ def _extract_findings(run: object, source_file: str) -> list[dict]:  # noqa: C90
 
         tool_severity = props.get("severity") or props.get("issue_severity")
         security_sev = rule_meta.get("security_severity") or props.get("security-severity")
-        severity = _normalize_severity(result.get("level"), security_sev, tool_severity)
+        # SARIF's resolution order: the result, then its rule, then `warning`.
+        level = result.get("level") or rule_meta.get("default_level") or "warning"
+        severity = _normalize_severity(level, security_sev, tool_severity)
 
         # Message
         msg_raw = result.get("message") or {}
@@ -470,8 +495,12 @@ def main() -> None:
         print(__doc__)
         return
 
-    if not sys.argv[1:]:
-        print("Usage: process-sarif.py <sarif-file> [<sarif-file>...]", file=sys.stderr)
+    # An unknown flag is a wrong invocation (exit 2), not a missing file (exit 1,
+    # which also means "an input was skipped") — contract-c3333311.
+    flags = [a for a in sys.argv[1:] if a.startswith("-")]
+    if not sys.argv[1:] or flags:
+        received = f" Unknown option(s): {' '.join(flags)}." if flags else ""
+        print(f"Usage: process-sarif.py <sarif-file> [<sarif-file>...].{received}", file=sys.stderr)
         sys.exit(2)
 
     report, errors = process([Path(a) for a in sys.argv[1:]])

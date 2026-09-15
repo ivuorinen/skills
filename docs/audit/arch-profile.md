@@ -111,9 +111,10 @@ Evidence:
   `write_baseline`, `clear_baseline`, `store_lock`, `validate_store`.
 - No other module opens store files. Verified by search: outside `findings.py`
   the only references to `resolved.jsonl` / `docs/audit/findings/` / `INDEX.md`
-  are `mcp_server.py` tool *descriptions*, a path prefix in
-  `post-bash-revalidate.py:45`, and `validate-audit-findings-hook.py`, which
-  delegates back into `findings.py`.
+  are `mcp_server.py` tool *descriptions*, the `GOVERNED` entry and `_STORE`
+  prefix in `post-bash-revalidate.py`, and `validate-audit-findings-hook.py`,
+  which takes the store root from `findings.DEFAULT_ROOT` and delegates back
+  into `findings.py`.
 - `skill_catalog.py` imports `findings`; the MCP findings tools go through it;
   `findings_export.py` is a downstream renderer, not a second access path
   (its own header: "the store's read/write primitives stay one concern and the
@@ -128,13 +129,13 @@ Evidence:
 Governs: the code layer.
 
 Evidence — three rings, verified acyclic and inward-only across the full static
-import graph of 72 Python modules:
+import graph `make ring-deps` prints:
 
 | Ring | Path | Runtime contract |
 | --- | --- | --- |
-| Inner | `skills/*/scripts/` (16 modules) | stdlib-only, `#!/usr/bin/env python3` |
-| Middle | `scripts/` (11 modules) | uv, PEP-723 inline metadata |
-| Outer | `scripts/hooks/` (14 modules) | uv, invoked by the harness |
+| Inner | `skills/*/scripts/` | stdlib-only, `#!/usr/bin/env python3` |
+| Middle | `scripts/` | uv, PEP-723 inline metadata |
+| Outer | `scripts/hooks/` | uv, invoked by the harness |
 
 - **No inner→outer edge exists.** The shipped ring imports nothing from
   `scripts/` or `scripts/hooks/`; its only non-stdlib imports are its own

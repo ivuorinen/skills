@@ -1,5 +1,14 @@
 # Agent Instructions
 
+- Never hand-edit the generated findings index or
+  `docs/audit/findings/resolved.jsonl` (append-only ledger); regenerate the
+  index and append to the ledger through `findings.py` instead, and escalate
+  to the owner when the store needs a repair `findings.py` cannot make.
+- Never read or modify anything under `.claude/agents/` — sub-agent
+  definitions are trusted configuration that gates releases, and an agent
+  must not rewrite its own reviewer. Denied in `.claude/settings.json` and
+  owned in `.github/CODEOWNERS`.
+
 This repository ships **nitpicker** — a hostile audit skill dispatching a
 categorized deck of commands, invoked as
 `/nitpicker <command> [extra instructions]` — in the
@@ -24,16 +33,11 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
   every subcommand) — the CLI is the only interface in Copilot, pi and CI.
   `commands/_findings-store.md` maps every operation to its interface and names
   the ones no tool wraps; do not keep a second copy of that list here.
-  Never hand-edit `INDEX.md` or `resolved.jsonl`.
 - Command files live in `skills/nitpicker/commands/<command>.md`; each must
   have a row in one of the command tables of `skills/nitpicker/SKILL.md`
   (`## Commands` or `## Internal commands`), 1:1
   (enforced by `scripts/validate-skill.py`). Shared audit conventions live
   in `commands/_conventions.md` — never duplicate them into command files.
-- Never read or modify anything under `.claude/agents/` — sub-agent
-  definitions are trusted configuration that gates releases, and an agent
-  must not rewrite its own reviewer. Denied in `.claude/settings.json` and
-  owned in `.github/CODEOWNERS`.
 - Third-party content carries its upstream license: a vendored skill ships
   its own `LICENSE` and every vendored or "Adapted from" work has an entry in
   the root `NOTICE`. See `.claude/rules/vendored-skills.md`.

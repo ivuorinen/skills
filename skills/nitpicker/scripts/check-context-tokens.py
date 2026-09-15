@@ -10,7 +10,7 @@ identically and cost several times as much. This tool measures the other half.
 
 Two payloads matter and they are measured separately:
 
-    always-loaded   CLAUDE.md, AGENTS.md, .claude/CLAUDE.md, .claude/rules/*.md
+    always-loaded   CLAUDE.md, AGENTS.md, .claude/CLAUDE.md, .claude/rules/**/*.md
                     — read every turn whether or not the turn needs them.
     invocation      the router plus the always-loaded shared conventions plus
                     one command file — what a single `/nitpicker <cmd>` costs
@@ -34,6 +34,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TextIO
 
 # Four characters per token. Every printed number carries the word "est" for
 # this reason; see the module docstring for why nothing gates on it.
@@ -43,7 +44,9 @@ CHARS_PER_TOKEN = 4
 # a convention rather than a directory: a stray markdown file next to CLAUDE.md
 # is not loaded and must not be counted as though it were.
 ALWAYS_LOADED = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md", ".github/copilot-instructions.md")
-RULES_GLOB = ".claude/rules/*.md"
+# Recursive: Claude Code loads rules from subdirectories, and a one-level glob
+# dropped them from the report (audit-9efa98a4).
+RULES_GLOB = ".claude/rules/**/*.md"
 
 
 class UsageError(Exception):
@@ -70,7 +73,9 @@ def _measure(path: Path, root: Path) -> dict:
     return {
         "path": path.relative_to(root).as_posix(),
         "bytes": len(raw),
-        "lines": text.count("\n") + 1,
+        # Not `count("\n") + 1`, which overstated every newline-terminated
+        # file by one (audit-029db16b).
+        "lines": len(text.splitlines()),
         "est_tokens": estimate_tokens(text),
     }
 
@@ -154,7 +159,7 @@ def report(root: Path, skill: str, command: str) -> dict:
     }
 
 
-def _render_set(name: str, block: dict, out) -> None:
+def _render_set(name: str, block: dict, out: TextIO) -> None:
     print(f"\n{name}  ({len(block['files'])} files)", file=out)
     for row in sorted(block["files"], key=lambda r: -r["est_tokens"]):
         print(f"  {row['est_tokens']:>7,} est  {row['bytes']:>7,} B  {row['path']}", file=out)
@@ -162,7 +167,7 @@ def _render_set(name: str, block: dict, out) -> None:
     print(f"  {totals['est_tokens']:>7,} est  {totals['bytes']:>7,} B  TOTAL", file=out)
 
 
-def render(data: dict, out=None) -> None:
+def render(data: dict, out: TextIO | None = None) -> None:
     """Human-readable form: one line per file, biggest first, then the total.
 
     `out` resolves at call time rather than defaulting to `sys.stdout` in the
@@ -170,11 +175,11 @@ def render(data: dict, out=None) -> None:
     caller that replaced `sys.stdout` afterwards — a test harness, a wrapper
     capturing output — gets nothing and no error.
     """
-    out = out or sys.stdout
-    print(f"Context payload — {data['skill']} / {data['command']}", file=out)
-    print(f"Unit: {data['unit']}", file=out)
+    stream: TextIO = out or sys.stdout
+    print(f"Context payload — {data['skill']} / {data['command']}", file=stream)
+    print(f"Unit: {data['unit']}", file=stream)
     for name, block in data["sets"].items():
-        _render_set(name, block, out)
+        _render_set(name, block, stream)
 
 
 def _delta(current: int, previous: int) -> str:
@@ -183,7 +188,7 @@ def _delta(current: int, previous: int) -> str:
     return f"{(current - previous) / previous:+.1%}"
 
 
-def render_delta(data: dict, baseline: dict, out=None) -> None:
+def render_delta(data: dict, baseline: dict, out: TextIO | None = None) -> None:
     """The change against a previous `--json` run — the reading this tool is for.
 
     An absolute estimate is worth little; the same estimator applied to two

@@ -18,8 +18,8 @@ _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import pr_bitbucket as bb  # type: ignore[import-not-found]  # noqa: E402
-import pr_common as c  # type: ignore[import-not-found]  # noqa: E402
+import pr_bitbucket as bb  # noqa: E402
+import pr_common as c  # noqa: E402
 
 _TARGET = c.Target("bitbucket", "bitbucket.org", "ws/repo")
 

@@ -14,6 +14,18 @@ The project's own code is licensed under the MIT License; see `LICENSE`.
 - Upstream: https://github.com/Graphify-Labs/graphify
 - Author: Safi Shamsi
 - License: MIT (SPDX: MIT)
+- Local modifications (not in upstream):
+  - `SKILL.md` Step 1, and the extras tips in `SKILL.md` and
+    `references/add-watch.md`, install `graphifyy` only at the version in
+    `.claude/skills/graphify/.graphify_version`, with no `--upgrade` and no
+    `--break-system-packages` fallback. Setup stops and asks the owner when the
+    pin is missing or the pinned install fails (skill-safety-59f9427a).
+  - Semantic extraction dispatches read-only subagents that return their JSON
+    as text for the parent to write, instead of general-purpose subagents
+    holding Write and Bash, and `/graphify add` asks the owner to confirm each
+    URL before fetching it (skill-safety-5f9c118a). Ceiling: where the
+    harness's read-only subagent type still carries a shell, the instruction
+    not to run shell commands is prompt-level only.
 
 ```
 MIT License
