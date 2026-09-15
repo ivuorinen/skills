@@ -41,6 +41,10 @@ review surface the skill offers.
      (`audit.md` step 3), naming what the scope excluded. Distinct from N/A on
      purpose: N/A says there was nothing to look at, this says there was and
      the user chose not to. Reading them as one hides the second.
+
+  Record the state on the task itself, as `metadata.closed` through
+  `np_task_update`, so the readback `_conventions.md` requires before reporting
+  shows every lens's state in one call.
 - A task in none of those states is a silently skipped lens. Silence =
   approval: an unaddressed task is an accepted blind spot. Do not close the
   audit while any task is open, and list every task's outcome in the run

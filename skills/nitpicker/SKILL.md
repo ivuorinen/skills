@@ -264,8 +264,9 @@ server — Claude Code provides its own only on some models, and Copilot, pi and
 other Agent Skills hosts provide none. Their state is the server process, not
 the audited tree: nothing is written to disk, ids are never reused, the list is
 gone when the server restarts, and the two registered servers hold separate
-lists. They answer with `structuredContent` against a published `outputSchema`,
-with the same JSON in the text block for clients that predate it.
+lists, so a run keeps to one server's copy. They answer with
+`structuredContent` against a published `outputSchema`, with the same JSON in
+the text block for clients that predate it.
 
 `np_context_pack` is the portable half of the context discipline: it answers
 with coordinates — path, line range, enclosing symbol, why it matched — never

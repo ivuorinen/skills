@@ -42,7 +42,13 @@ Severity reflects actual risk, never preference.
   begins — one `np_task_create` entry per step where the session exposes the
   nitpicker MCP tools (`np_task_update` closes it), else the harness's own
   tracker (`TaskCreate`/`TodoWrite` in Claude Code) — and closes every step
-  before reporting. **Where the session exposes no task tracker, print the numbered
+  before reporting. Keep one list for the whole run: drive it through one server
+  (the project-scope one when two expose the tools), and once seeded change it
+  only with `np_task_create` and `np_task_update` — `np_todo_write` replaces the
+  whole list, and `TodoWrite` must resend every entry on each call. Before
+  reporting, read the list back (`np_task_list`, else the tracker's own list),
+  confirm no entry is `pending` or `in_progress`, and cite that count in the run
+  summary. **Where the session exposes no task tracker, print the numbered
   steps with a one-line outcome each in the response instead, before
   reporting.** A tracker is the preferred form, never the condition: naming a
   tool as the only way to satisfy a rule means the rule disappears in a session
