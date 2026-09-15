@@ -1,6 +1,6 @@
 # Agent Instructions
 
-- Never hand-edit `docs/audit/findings/INDEX.md` (generated) or
+- Never hand-edit the generated findings index or
   `docs/audit/findings/resolved.jsonl` (append-only ledger); regenerate the
   index and append to the ledger through `findings.py` instead, and escalate
   to the owner when the store needs a repair `findings.py` cannot make.

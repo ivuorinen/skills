@@ -257,7 +257,10 @@ end.
 | `.claude-plugin/plugin.json`      | Plugin name, version, author, keywords   |
 | `.claude-plugin/marketplace.json` | Marketplace listing (used by `/plugins`) |
 
-Version must stay in sync across `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.release-please-manifest.json`, and `pyproject.toml`; `uv.lock` holds one more copy.
+The version is recorded in `package.json`, `.claude-plugin/plugin.json`,
+`.claude-plugin/marketplace.json`, `.release-please-manifest.json` and
+`pyproject.toml`, and `scripts/check-version-sync.py` fails the build when
+they disagree; `uv.lock` holds one more copy.
 `.claude/rules/version-bumps.md` loads with those files and covers both bump
 paths and resyncing the lockfile.
 
