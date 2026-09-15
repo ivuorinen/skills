@@ -78,6 +78,17 @@
         "A scanner that returns zero findings is reported as unverified unless a known-positive control is named",
         "The run summary states what was not read and why, rather than implying whole-repo coverage"
       ]
+    },
+    {
+      "id": 8,
+      "prompt": "/nitpicker reverify",
+      "expected_output": "The reverify command runs its numbered Process as a task list: one tracker entry per step before the first step starts, every entry closed, the list read back before reporting, and a run summary that gives each step's outcome.",
+      "assertions": [
+        "A task-list entry exists for every numbered Process step before the first step runs",
+        "Each entry carries the step's number and title, not a restatement of the step",
+        "The task list is read back before reporting, and the summary states that no entry is pending or in progress",
+        "The run summary lists every Process step with a one-line outcome"
+      ]
     }
   ]
 }
