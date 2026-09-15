@@ -489,7 +489,9 @@ def store_lock(root: Path):
         yield
         return
     root.mkdir(parents=True, exist_ok=True)
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o644)
+    # 0o600, not 0o644: the lock holds no data, but nothing outside the owner
+    # needs to open it, and CodeQL's py/overly-permissive-file flags the wider mode.
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:

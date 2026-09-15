@@ -2582,6 +2582,22 @@ def test_store_lock_excludes_a_second_holder(tmp_path):
         fcntl.flock(other, fcntl.LOCK_UN)
 
 
+def test_store_lock_creates_the_lock_owner_only(tmp_path):
+    """CodeQL py/overly-permissive-file: the lock was created 0o644, world-readable.
+
+    The umask is pinned to 0o022 because a stricter one narrows 0o644 to 0o600
+    and the test would pass against the permissive mode it exists to catch.
+    """
+    pytest.importorskip("fcntl")
+    old = os.umask(0o022)
+    try:
+        with findings.store_lock(tmp_path):
+            pass
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE((tmp_path / ".lock").stat().st_mode) == 0o600
+
+
 class TestAtomicStoreWrites:
     """reliability-ce1b17bb: every store writer goes through one mkstemp helper."""
 
