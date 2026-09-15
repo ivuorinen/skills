@@ -34,12 +34,6 @@
       "rule": "clarity/escape-hatch-missing",
       "file": "AGENTS.md",
       "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"Never hand-edit `INDEX.md` or `resolved.jsonl`.\""
-    },
-    {
-      "rule": "clarity/escape-hatch-missing",
-      "file": "AGENTS.md",
-      "severity": "warning",
       "message": "Absolute rule without escape hatch: \"Version must stay in sync across package.json, pyproject.toml,\""
     },
     {
@@ -76,31 +70,7 @@
       "rule": "clarity/escape-hatch-missing",
       "file": "CLAUDE.md",
       "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"- Never duplicate `_conventions.md` content (severity table, findings \""
-    },
-    {
-      "rule": "clarity/escape-hatch-missing",
-      "file": "CLAUDE.md",
-      "severity": "warning",
       "message": "Absolute rule without escape hatch: \"4. `make check` must pass (the validator enforces table ↔ file sync).\""
-    },
-    {
-      "rule": "clarity/escape-hatch-missing",
-      "file": "CLAUDE.md",
-      "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"Version must stay in sync across `package.json`, `.claude-plugin/plugi\""
-    },
-    {
-      "rule": "clarity/escape-hatch-missing",
-      "file": "CLAUDE.md",
-      "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so t\""
-    },
-    {
-      "rule": "clarity/undefined-term",
-      "file": "AGENTS.md",
-      "severity": "info",
-      "message": "Undefined acronym \"INDEX\" — define on first use or add to glossary."
     },
     {
       "rule": "clarity/undefined-term",
@@ -161,18 +131,6 @@
       "file": "CLAUDE.md",
       "severity": "critical",
       "message": "Referenced section \".claude/rules/use-uv-runner.md\" not found in any file."
-    },
-    {
-      "rule": "consistency/outdated-cross-references",
-      "file": "CLAUDE.md",
-      "severity": "critical",
-      "message": "Referenced section \"audit-9bc6eb39\" not found in any file."
-    },
-    {
-      "rule": "consistency/referenced-files-exist",
-      "file": "AGENTS.md",
-      "severity": "critical",
-      "message": "Referenced file \"INDEX.md\" not found in workspace."
     },
     {
       "rule": "consistency/referenced-files-exist",
