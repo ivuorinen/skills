@@ -17,13 +17,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
+    SHIPPED_ROOT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
+_HOOK = "validate-evals-hook"
 
 
 def is_eval_file(path: Path, root: Path) -> bool:
@@ -59,11 +62,11 @@ def main() -> None:
     if not is_eval_file(path, root):
         return
 
-    validator = REPO_ROOT / "scripts" / "validate-evals.py"
+    validator = SHIPPED_ROOT / "scripts" / "validate-evals.py"
     if not validator.exists():
-        # A checkout without the validator is not a failure to report here;
-        # the commit-time gate still covers it.
-        return
+        # Not a failure to block on — the commit-time gate still covers it —
+        # but a skip that says nothing reads as a pass.
+        report_skip(_HOOK, "scripts/validate-evals.py not found", "make validate-evals")
 
     try:
         # argv is the resolved validator path plus the skill directory derived
@@ -75,11 +78,10 @@ def main() -> None:
             text=True,
             timeout=HOOK_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
-        # Returning beats raising: a hook that raises replaces its diagnosable
-        # message with a traceback, and the commit-time gate is still in front
-        # of anything landing.
-        return
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Reporting beats raising: a hook that raises replaces its diagnosable
+        # message with a traceback.
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "make validate-evals")
 
     if result.returncode != 0:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.

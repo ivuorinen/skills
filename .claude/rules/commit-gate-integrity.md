@@ -2,9 +2,9 @@
 
 The CI `Validate` job is the authoritative enforcement gate. PostToolUse hooks
 now cover both surfaces — `Write|Edit` validators on edited files, and
-`post-bash-revalidate.py` on `Bash`, which re-runs the whole-tree gates when
-`git status` shows a governed path dirty after a Bash edit (`sed -i`,
-redirection, `git mv`). But a hook runs only inside an agent session and
+`post-bash-revalidate.py` on Bash and the context-mode shell tools, which
+re-runs the whole-tree gates when `git status` shows a governed path dirty after
+a shell edit (`sed -i`, redirection, `git mv`). But a hook runs only inside an agent session and
 pre-commit is skippable, so CI is still the only check that binds every change
 on its way into a protected branch.
 
@@ -12,10 +12,13 @@ Never pass `--no-verify` when committing changes to skill files, version
 manifests, or the findings store — it skips the pre-commit validators that guard
 them. A PreToolUse hook (`deny-unsafe-git-hook.py`) denies `--no-verify` and
 `-n` including stacked clusters (`-nm`) and abbreviations git accepts
-(`--no-veri`), `-c core.hooksPath=` and `--config-env=`, the same assignment
-made through `GIT_CONFIG_*` in the environment, and an alias body that resolves
-to a denied call — including a `!`-prefixed body, which is a shell command
-rather than a git subcommand. A command nested in `$(...)`, backticks or a
+(`--no-veri`), `-c core.hooksPath=` and `--config-env` in either form, the same
+assignment made through `GIT_CONFIG_*` in the environment, a `git config` write
+to `core.hooksPath` or `alias.*`, and an alias body that resolves to a denied
+call — spelled in the command or already in git config, and including a
+`!`-prefixed body, which is a shell command rather than a git subcommand. It
+also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit`, and
+`pre-commit uninstall`. A command nested in `$(...)`, backticks or a
 subshell is judged as its own stage, and so is a git call behind a wrapper
 (`env`, `sudo`, `xargs`, …). Five bypasses of these shapes were closed together;
 `tests/test_hooks.py::test_git_guard_denies_the_reopened_bypass_classes` holds

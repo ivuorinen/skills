@@ -116,17 +116,33 @@ def test_validate_json_invalid_file_exits_2_with_stderr(monkeypatch, tmp_path, c
     assert "INVALID JSON" in capsys.readouterr().err
 
 
-def test_validate_json_unreadable_path_fails_open(monkeypatch, tmp_path, capsys):
+def _reports_skip(mod, payload: str, monkeypatch, capsys) -> str:
+    """Drive a hook whose validator cannot run; return the stderr of its skip report.
+
+    The hook used to return with exit 0 and print nothing — the same signal as a
+    pass, so an agent kept building on an unvalidated file (observability-879596c7).
+    Exit 1 is Claude Code's non-blocking error: the edit stands, and the line is
+    shown instead of swallowed. `did not run` plus the command to run by hand is
+    the contract every such arm shares.
+    """
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, payload, monkeypatch)
+    assert exc.value.code == 1
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "did not run" in out.err and "by hand" in out.err
+    return out.err
+
+
+def test_validate_json_unreadable_path_reports_the_skip(monkeypatch, tmp_path, capsys):
     # A directory named like a .json file: path.exists() passes but read_text raises
-    # OSError (IsADirectoryError). The hook must fail open — no SystemExit, no output.
-    """An unreadable path is not this hook's defect, so it must not block the edit."""
+    # OSError (IsADirectoryError).
+    """An unreadable path does not block the edit, but it must not read as valid JSON."""
     mod = _load("validate-json-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     (tmp_path / "config.json").mkdir()
     payload = {"tool_input": {"file_path": str(tmp_path / "config.json")}}
-    _run(mod, json.dumps(payload), monkeypatch)  # must return cleanly, no SystemExit
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    assert "validate-json-hook" in _reports_skip(mod, json.dumps(payload), monkeypatch, capsys)
 
 
 # ── the three subprocess-driven hooks: a genuinely bad input must reach exit 2 ─
@@ -153,6 +169,8 @@ def test_validate_skill_bad_structure_exits_2(monkeypatch, tmp_path, capsys):
     """A malformed SKILL.md must be reported at the edit, not left for CI."""
     mod = _load("validate-skill-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    # The hook executes the validator under SHIPPED_ROOT, so point it at the copy.
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copy(SCRIPTS_DIR / "validate-skill.py", scripts / "validate-skill.py")
@@ -175,6 +193,8 @@ def test_version_sync_mismatch_exits_2(monkeypatch, tmp_path, capsys):
     """The five manifests drift silently; only this hook reads them together at edit time."""
     mod = _load("check-version-sync-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    # The hook executes the checker under SHIPPED_ROOT, so point it at the copy.
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     # check-version-sync.py resolves its own repo via __file__.parent.parent, so a
@@ -218,8 +238,8 @@ def test_ruff_hook_lint_error_exits_2(monkeypatch, tmp_path, capsys):
     assert "F821" in capsys.readouterr().err
 
 
-def test_ruff_hook_missing_binary_is_silent_noop(monkeypatch, tmp_path, capsys):
-    """No ruff on PATH: fail open like every sibling, not a FileNotFoundError traceback."""
+def test_ruff_hook_missing_binary_reports_the_skip(monkeypatch, tmp_path, capsys):
+    """No ruff on PATH: no traceback and no block, but a line saying lint never ran."""
     mod = _load("ruff-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(mod.shutil, "which", lambda _: None)
@@ -233,9 +253,7 @@ def test_ruff_hook_missing_binary_is_silent_noop(monkeypatch, tmp_path, capsys):
     f = tmp_path / "bad.py"
     f.write_text("x = undefined_name\n", encoding="utf-8")
     payload = {"tool_name": "Write", "tool_input": {"file_path": str(f)}}
-    _run(mod, json.dumps(payload), monkeypatch)  # returns cleanly, no SystemExit
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    assert "ruff-hook" in _reports_skip(mod, json.dumps(payload), monkeypatch, capsys)
 
 
 # ── _hooklib.repo_root: empty env vars must not win the fallback chain ────────
@@ -1660,33 +1678,33 @@ VALIDATOR_HOOKS = [
 
 
 @pytest.mark.parametrize(("name", "rel"), VALIDATOR_HOOKS)
-def test_missing_validator_script_is_a_silent_noop(name, rel, monkeypatch, tmp_path, capsys):
-    """A checkout without the validator must not traceback — the hook returns."""
+def test_missing_validator_script_reports_the_skip(name, rel, monkeypatch, tmp_path, capsys):
+    """A checkout without the validator must not traceback, and must say so.
+
+    SHIPPED_ROOT is what gets emptied: validators are executed from the checkout
+    the hook ships in, never from REPO_ROOT (audit-1e48d360).
+    """
     mod = _load(name)
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path / "empty")
     target = tmp_path / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("whatever\n", encoding="utf-8")
-    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    payload = json.dumps({"tool_input": {"file_path": str(target)}})
+    assert name in _reports_skip(mod, payload, monkeypatch, capsys)
 
 
-def test_validate_rules_hook_noops_when_its_shipped_scripts_are_absent(
+def test_validate_rules_hook_reports_when_its_shipped_scripts_are_absent(
     monkeypatch, tmp_path, capsys
 ):
-    """`_SHIPPED_ROOT`, not `REPO_ROOT`, is what has to be emptied to reach this.
+    """`SHIPPED_ROOT`, not `REPO_ROOT`, is what has to be emptied to reach this.
 
-    The generic `test_missing_validator_script_is_a_silent_noop` case for this
-    hook repoints `REPO_ROOT`, which no longer decides where the validators live:
-    they are resolved from `__file__` so the hook always runs the copies that
-    ship beside it. That made the existing case stop exercising this branch
-    without failing — it still passes, just against a real validator. This one
-    empties the directory the hook actually looks in.
+    Beyond the generic missing-validator case, this pins that the hook never
+    shells out when the scripts shipped beside it are absent.
     """
     mod = _load("validate-rules-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(mod, "_SHIPPED_ROOT", tmp_path / "empty")
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path / "empty")
     target = tmp_path / ".claude" / "rules" / "a-rule.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("whatever\n", encoding="utf-8")
@@ -1696,9 +1714,8 @@ def test_validate_rules_hook_noops_when_its_shipped_scripts_are_absent(
         raise AssertionError("subprocess ran despite the shipped scripts being absent")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
-    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    payload = json.dumps({"tool_input": {"file_path": str(target)}})
+    assert "validate-rules-hook" in _reports_skip(mod, payload, monkeypatch, capsys)
 
 
 @pytest.mark.parametrize(
@@ -1754,6 +1771,7 @@ def test_version_sync_surfaces_checker_output_when_it_fails_without_problems(
     the agent — silence here would report a desync as clean."""
     mod = _load("check-version-sync-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check-version-sync.py").write_text("", encoding="utf-8")
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
@@ -1996,6 +2014,7 @@ def test_version_sync_hook_silent_when_versions_agree(monkeypatch, tmp_path, cap
     """Matching manifests produce no output."""
     mod = _load("check-version-sync-hook")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check-version-sync.py").write_text("", encoding="utf-8")
     monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _Result(stdout="  OK  all\n"))
@@ -2085,6 +2104,8 @@ def _revalidate(monkeypatch, tmp_path, *, status, gate=None, gates_on_disk=True,
     """
     mod = _load("post-bash-revalidate")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    # Gate presence is checked under SHIPPED_ROOT, so that is what the fixture fills.
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
     if gates_on_disk:
         for script, _cmd in mod.GATES:
             p = tmp_path / script
@@ -2193,16 +2214,14 @@ def test_revalidate_records_a_gate_that_cannot_run_as_a_failure(monkeypatch, tmp
     assert "could not run" in capsys.readouterr().err
 
 
-def test_revalidate_returns_when_git_status_cannot_run(monkeypatch, tmp_path, capsys):
+def test_revalidate_reports_when_git_status_cannot_run(monkeypatch, tmp_path, capsys):
     """git absent or the status call timing out means nothing to scope against —
-    return rather than block or raise."""
+    neither block nor raise, but say the gates did not run."""
     mod, calls = _revalidate(
         monkeypatch, tmp_path, status=subprocess.TimeoutExpired(["git", "status"], 120)
     )
-    mod.main()
+    assert "post-bash-revalidate" in _reports_skip(mod, "", monkeypatch, capsys)
     assert _gate_calls(calls) == []
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
 
 
 # ── reliability-397b7fec: every hook subprocess call is bounded ───────────────
@@ -2267,14 +2286,12 @@ def test_every_hook_subprocess_call_passes_a_timeout():
         ("validate-evals-hook", {"tool_input": {"file_path": "skills/x/evals/evals.json"}}),
     ],
 )
-def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsys):
+def test_hook_reports_when_its_gate_cannot_run(name, event, monkeypatch, capsys):
     """uv absent (FileNotFoundError) or the gate hung (TimeoutExpired): the hook
-    must return, not raise a traceback and not block the edit.
+    must not raise a traceback and not block the edit, and must say it skipped.
 
-    `ran` is asserted because silence alone does not prove the arm was reached:
-    every one of these hooks returns early and silently for a path it does not
-    own, so a guard tightening upstream would leave this passing while testing
-    nothing.
+    `ran` is asserted because the report alone does not prove the arm was
+    reached: a missing validator reports a skip before any shell-out too.
     """
     mod = _load(name)
     ran = []
@@ -2285,13 +2302,12 @@ def test_hook_is_silent_when_its_gate_cannot_run(name, event, monkeypatch, capsy
         raise FileNotFoundError("uv")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
-    _run(mod, json.dumps(event), monkeypatch)
-    out = capsys.readouterr()
+    err = _reports_skip(mod, json.dumps(event), monkeypatch, capsys)
     assert ran, "the hook returned before shelling out — the except arm was never reached"
-    assert out.out == "" and out.err == ""
+    assert name in err
 
 
-def test_ruff_hook_is_silent_when_ruff_hangs(monkeypatch, tmp_path, capsys):
+def test_ruff_hook_reports_when_ruff_hangs(monkeypatch, tmp_path, capsys):
     """ruff-hook fires on every .py edit and shells out three times, so it is the
     likeliest place for an unbounded call to freeze a session."""
     mod = _load("ruff-hook")
@@ -2305,13 +2321,13 @@ def test_ruff_hook_is_silent_when_ruff_hangs(monkeypatch, tmp_path, capsys):
         raise subprocess.TimeoutExpired(["ruff"], 120)
 
     monkeypatch.setattr(mod.subprocess, "run", _hang)
-    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    payload = json.dumps({"tool_input": {"file_path": str(target)}})
+    assert "ruff-hook" in _reports_skip(mod, payload, monkeypatch, capsys)
 
 
-def test_stop_reminder_is_silent_when_git_cannot_run(monkeypatch, tmp_path, capsys):
-    """A Stop hook that raises replaces the reminder with a traceback."""
+def test_stop_reminder_reports_when_git_cannot_run(monkeypatch, tmp_path, capsys):
+    """A Stop hook that raises replaces the reminder with a traceback, and one that
+    returns silently reads as "nothing pending"."""
     mod = _load("stop-reminder")
     monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
 
@@ -2320,9 +2336,7 @@ def test_stop_reminder_is_silent_when_git_cannot_run(monkeypatch, tmp_path, caps
         raise FileNotFoundError("git")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
-    _run(mod, json.dumps({}), monkeypatch)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    assert "stop-reminder" in _reports_skip(mod, json.dumps({}), monkeypatch, capsys)
 
 
 # ── agent-loopholes-338dfd70: the protected-write half of the guard ──────────
@@ -2528,8 +2542,8 @@ def test_ruff_hook_keeps_a_completed_failure_when_a_later_call_errors(
     assert len(calls) == 2, "the second ruff call never ran; the timeout arm was not exercised"
 
 
-def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, capsys):
-    """With no completed failure to preserve, a tool error stays silent."""
+def test_ruff_hook_reports_when_nothing_had_failed_yet(monkeypatch, tmp_path, capsys):
+    """With no completed failure to preserve, a tool error reports the skip."""
     mod = _load("ruff-hook")
     target = tmp_path / "x.py"
     target.write_text("x = 1\n", encoding="utf-8")
@@ -2544,12 +2558,11 @@ def test_ruff_hook_returns_when_nothing_had_failed_yet(monkeypatch, tmp_path, ca
         raise FileNotFoundError("ruff")
 
     monkeypatch.setattr(mod.subprocess, "run", _boom)
-    _run(mod, json.dumps({"tool_input": {"file_path": str(target)}}), monkeypatch)
-    out = capsys.readouterr()
-    # Silence alone does not prove the arm was reached: an early return before the
-    # hook ever shells out is just as quiet.
+    payload = json.dumps({"tool_input": {"file_path": str(target)}})
+    assert "ruff-hook" in _reports_skip(mod, payload, monkeypatch, capsys)
+    # The report alone does not prove the arm was reached: the missing-binary arm
+    # before the hook ever shells out reports a skip too.
     assert ran, "the hook returned before shelling out — the except arm was never reached"
-    assert out.out == "" and out.err == ""
 
 
 def test_ruff_hook_reports_a_failed_fix_when_the_check_passes(monkeypatch, tmp_path, capsys):
@@ -4013,6 +4026,858 @@ def test_validate_evals_hook_passes_the_skill_dir_not_the_json(monkeypatch, tmp_
     assert seen[0][-1] == str(repo / "skills" / "foo")
 
 
+# ── agent-loopholes-0c18e6b9: the tokenizer judges the command bash runs ─────
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        ("deny-unsafe-git-hook", "git commit -m issue#12 --no-verify"),
+        ("deny-unsafe-git-hook", "git commit -m wip \\-\\-no-verify"),
+        ("deny-unsafe-git-hook", "git commit -m wip $'--no-verify'"),
+        ("deny-unsafe-git-hook", "git commit -m wip $'\\x2d\\055no-verify'"),
+        ("deny-unsafe-git-hook", "git push origin feat#1 main"),
+        ("deny-agents-path-hook", "sed -i s/a/b/ x#y scripts/hooks/ruff-hook.py"),
+        ("guard-ctx-ok-hook", "echo a#b; cat secret.txt # ctx-ok"),
+    ],
+)
+def test_a_mid_word_hash_or_an_escape_does_not_hide_the_command(hook, command, monkeypatch, capsys):
+    """Each probe exited 0 before the fix: bash starts a comment only at the start
+    of a word and removes escapes and `$'...'` quoting, while the tokenizer cut at
+    every `#` and kept the escapes, so the guard judged a command bash never runs."""
+    mod = _load(hook)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m 'fix #12'",
+        "git commit -m wip # --no-verify was considered and rejected",
+        "git commit -m wip\n# git push origin main",
+        "git push origin feat#1",
+        'git commit -m "say \\"no\\""',
+    ],
+)
+def test_a_real_comment_still_hides_nothing_it_should_not(command, monkeypatch):
+    """Controls: a word-initial `#` is still a comment and quoted text is still
+    content, so ordinary commits and a feature push stay allowed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature")
+    _run(mod, _bash(command), monkeypatch)
+
+
+def test_shell_stages_decodes_what_bash_decodes():
+    """Pins the decoding itself: escapes outside quotes, the double-quote escape
+    set, single quotes as literal, and every `$'...'` escape family."""
+    stages = _hooklib().shell_stages(
+        'x a#b \\-n "q\\"\\z" \'l\\t\' $\'\\x41\\101\\u0041\\t\\q\' $"d"'
+    )
+    assert stages == [["x", "a#b", "-n", 'q"\\z', "l\\t", "AAA\tq", "d"]]
+
+
+# ── agent-loopholes-77938d26: a wrapper word no longer hides a write ─────────
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env rm -f scripts/hooks/ruff-hook.py",
+        "nice cp /tmp/x scripts/hooks/ruff-hook.py",
+        "command rm .claude/settings.json",
+        "nice -n 10 sed -i s/a/b/ scripts/hooks/ruff-hook.py",
+        "timeout 5 truncate -s 0 .claude/settings.json",
+        "sudo -u root rm scripts/hooks/_hooklib.py",
+        "env FOO=1 nice rm scripts/hooks/_hooklib.py",
+    ],
+)
+def test_guard_blocks_a_write_behind_a_wrapper(command):
+    """Each exited 0 before the fix: `_stage_is_mutating` read only `tokens[0]`,
+    and the wrapper unwrapping emitted a variant only where `git` followed."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["env rm -f /tmp/x", "nice cat scripts/hooks/ruff-hook.py", "timeout 5 make test"],
+)
+def test_guard_allows_wrapped_reads_and_unrelated_writes(command):
+    """Controls: unwrapping the wrapper must not turn a read into a write."""
+    assert not _guard_blocks(command)
+
+
+# ── agent-loopholes-41c1b2f3: the guards judge context-mode shell calls too ──
+
+
+def _ctx(tool: str = "ctx_execute", **tool_input) -> str:
+    """Wrap `tool_input` in a PreToolUse event for a context-mode tool."""
+    name = f"mcp__plugin_context-mode_context-mode__{tool}"
+    return json.dumps({"tool_name": name, "tool_input": tool_input})
+
+
+_BATCH = [
+    {"label": "a", "command": "git status"},
+    {"label": "b", "command": "git push origin main"},
+]
+
+
+@pytest.mark.parametrize(
+    ("hook", "payload"),
+    [
+        ("deny-unsafe-git-hook", _ctx(language="shell", code="git commit --no-verify -m x")),
+        ("deny-unsafe-git-hook", _ctx("ctx_batch_execute", commands=_BATCH, queries=["x"])),
+        ("deny-agents-path-hook", _ctx(language="shell", code="rm scripts/hooks/ruff-hook.py")),
+        (
+            "deny-agents-path-hook",
+            _ctx(
+                "ctx_execute_file", path="README.md", language="shell", code="cat .claude/agents/x"
+            ),
+        ),
+        (
+            "deny-agents-path-hook",
+            _ctx(language="shell", code="sed -i s/a/b/ ruff-hook.py", cwd="scripts/hooks"),
+        ),
+        ("deny-agents-path-hook", _ctx(language="python", code="open('.claude/agents/x.md')")),
+        (
+            "deny-agents-path-hook",
+            _ctx(language="python", code="open('scripts/hooks/ruff-hook.py', 'w')"),
+        ),
+        (
+            "deny-unsafe-git-hook",
+            _ctx(language="python", code="subprocess.run(['git', 'commit', '--no-verify'])"),
+        ),
+    ],
+)
+def test_shell_guards_judge_context_mode_calls(hook, payload, monkeypatch, capsys):
+    """Each exited 0 before the fix: the guards read `tool_input.command` only,
+    and a context-mode call carries its shell text in `code` or `commands`.
+    Code in another language cannot be tokenized as shell, so naming a protected
+    path or a git write in it is refused outright."""
+    mod = _load(hook)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, payload, monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+def test_restore_guard_judges_a_context_mode_call(monkeypatch, tmp_path, capsys):
+    """The restore guard asks on a context-mode restore exactly as on a Bash one."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit):
+        _run(mod, _ctx(language="shell", code="git restore README.md"), monkeypatch)
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize(
+    ("hook", "payload"),
+    [
+        ("deny-unsafe-git-hook", _ctx(language="shell", code="git status && git log -1")),
+        ("deny-unsafe-git-hook", _ctx(language="python", code="subprocess.run(['git', 'log'])")),
+        ("deny-agents-path-hook", _ctx(language="python", code="print(open('README.md').read())")),
+        ("deny-agents-path-hook", _ctx(language="shell", code="cat scripts/hooks/ruff-hook.py")),
+        ("deny-agents-path-hook", _ctx("ctx_batch_execute", commands="not a list")),
+        ("deny-agents-path-hook", json.dumps({"tool_input": "not an object"})),
+    ],
+)
+def test_shell_guards_allow_ordinary_context_mode_calls(hook, payload, monkeypatch, capsys):
+    """Controls: reads, harmless git and malformed input stay allowed."""
+    mod = _load(hook)
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature", raising=False)
+    _run(mod, payload, monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-02f83e02: the agents/protected-write guard fails closed ──
+
+
+def _symlink_loop(tmp_path: Path, monkeypatch) -> Path:
+    """A two-link symlink loop whose `resolve()` raises as it does on 3.11/3.12.
+
+    Python 3.13+ resolves a loop without raising, so the raise is installed
+    explicitly: the hook declares `requires-python >= 3.11`, and on those
+    interpreters the probe made it exit 1.
+    """
+    loop = tmp_path / "loop"
+    loop.mkdir()
+    (loop / "a").symlink_to(loop / "b")
+    (loop / "b").symlink_to(loop / "a")
+    real_resolve = Path.resolve
+
+    def _resolve(self, *a, **k):
+        """Raise the 3.11/3.12 loop error for the two loop entries only."""
+        if self.parent == loop:
+            raise RuntimeError(f"Symlink loop from {self!r}")
+        return real_resolve(self, *a, **k)
+
+    monkeypatch.setattr(Path, "resolve", _resolve)
+    return loop
+
+
+def test_deny_agents_treats_an_unresolvable_glob_hit_as_a_match(monkeypatch, tmp_path, capsys):
+    """The probe exited 1 before the fix, and Claude Code lets a call through on
+    any exit but 2: `ln` is unguarded, so a loop plus a glob disabled both halves."""
+    loop = _symlink_loop(tmp_path, monkeypatch)
+    command = f"cd {loop} && ls * ; sed -i s/a/b/ scripts/hooks/_hooklib.py"
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_protected_path_treats_an_unresolvable_path_as_protected(monkeypatch, tmp_path):
+    """The write half resolves paths too; an error there must not read as outside."""
+    loop = _symlink_loop(tmp_path, monkeypatch)
+    assert _load("deny-agents-path-hook")._protected_path(loop / "a")
+
+
+def test_deny_agents_allows_a_glob_over_an_ordinary_directory(monkeypatch, tmp_path, capsys):
+    """Control: resolving glob hits normally still allows an unrelated listing."""
+    (tmp_path / "plain.txt").write_text("x", encoding="utf-8")
+    _run(_load("deny-agents-path-hook"), _bash(f"cd {tmp_path} && ls *"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_deny_agents_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
+    """An internal error must deny: exit 1 is non-blocking, so it allowed the call."""
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-agents-path-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
+# ── agent-hooks-8c634b79: a spelled-out count in prose gets flagged on write ──
+
+
+def _count_hook(monkeypatch, tmp_path, rel: str, on_disk: str, **tool_input):
+    """Load the count-in-prose hook against a tmp repo holding `rel`, plus its event."""
+    mod = _load("count-in-prose-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(on_disk, encoding="utf-8")
+    return mod, json.dumps({"tool_input": {"file_path": str(target), **tool_input}})
+
+
+_PY_WITH_COUNT = '"""Module.\n\nThe five Write|Edit validators never see a Bash edit.\n"""\n'
+
+
+@pytest.mark.parametrize(
+    ("rel", "on_disk", "tool_input", "flagged"),
+    [
+        ("scripts/hooks/x.md", "", {"new_string": "The five Write|Edit validators run."}, "five"),
+        ("CLAUDE.md", "", {"content": "All thirteen read tools carry the hint."}, "thirteen"),
+        ("README.md", "", {"new_string": "It ships 30+ commands today."}, "30+ commands"),
+        ("docs/a.md", "", {"edits": [{"new_string": "Six gates run in CI."}]}, "Six gates"),
+        ("docs/b.md", "We keep eight manifests in sync.\n", {}, "eight manifests"),
+        ("scripts/x.py", _PY_WITH_COUNT, {"new_string": _PY_WITH_COUNT}, "five Write|Edit"),
+    ],
+)
+def test_count_in_prose_hook_flags_a_spelled_out_count(
+    rel, on_disk, tool_input, flagged, monkeypatch, tmp_path, capsys
+):
+    """Stale counts were a recurring defect class with no gate: each shape above
+    is one the resolved ledger records drifting. Exit 2 is how a PostToolUse hook
+    reaches the agent; the write itself has already happened."""
+    mod, payload = _count_hook(monkeypatch, tmp_path, rel, on_disk, **tool_input)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, payload, monkeypatch)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert flagged in err
+    assert "counts-in-prose.md" in err
+
+
+@pytest.mark.parametrize(
+    ("rel", "on_disk", "tool_input"),
+    [
+        ("docs/a.md", "", {"new_string": "One file per open finding."}),
+        ("docs/a.md", "", {"new_string": "Every read tool carries the hint."}),
+        ("scripts/x.py", "# five tools\nx = 1\n", {"new_string": "# five tools"}),
+        ("scripts/x.py", "def (:\n", {"new_string": "five tools"}),
+        ("docs/audit/findings/a/open/a-1.md", "", {"new_string": "Five hooks drifted."}),
+        ("notes.txt", "", {"new_string": "Five hooks drifted."}),
+    ],
+)
+def test_count_in_prose_hook_stays_quiet_where_no_count_drifts(
+    rel, on_disk, tool_input, monkeypatch, tmp_path, capsys
+):
+    """Controls: a structural `one`, a named set, a code comment, unparseable
+    Python (ruff-hook reports that), the findings store quoting a finding, and a
+    file type the rule does not govern."""
+    mod, payload = _count_hook(monkeypatch, tmp_path, rel, on_disk, **tool_input)
+    _run(mod, payload, monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("payload", ["", "null", '{"tool_input": {}}'])
+def test_count_in_prose_hook_ignores_an_event_without_a_path(payload, monkeypatch, capsys):
+    """No path means nothing to judge."""
+    _run(_load("count-in-prose-hook"), payload, monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_count_in_prose_hook_ignores_a_path_outside_the_repo(monkeypatch, tmp_path, capsys):
+    """Containment: a file outside the repo is not this repo's prose."""
+    mod = _load("count-in-prose-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path / "repo")
+    outside = tmp_path / "elsewhere.md"
+    outside.write_text("Five hooks.\n", encoding="utf-8")
+    _run(mod, json.dumps({"tool_input": {"file_path": str(outside)}}), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_count_in_prose_hook_runs_as_a_script(monkeypatch, tmp_path, capsys):
+    """The `__main__` wiring, proven by an outcome only main() produces."""
+    repo = _script_repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "x.md").write_text("Seven validators run.\n", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("REPO_ROOT", str(repo))
+    event = {"tool_input": {"file_path": "docs/x.md"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "count-in-prose-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "Seven validators" in capsys.readouterr().err
+
+
+# ── agent-loopholes-bbe241dd / -8c3cdf74: two more files on the owner-only surface
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo {} > .claude/settings.local.json",
+        "sed -i s/a/b/ .claude/settings.local.json",
+        "echo 9.9.9 > .claude/skills/graphify/.graphify_version",
+        "rm .claude/skills/graphify/.graphify_version",
+    ],
+)
+def test_guard_blocks_a_write_to_local_settings_and_the_graphify_pin(command):
+    """Each exited 0 before the fix. settings.local.json can set `disableAllHooks`;
+    the pin decides which graphify binary the guards trust."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat .claude/settings.local.json", "cat .claude/skills/graphify/.graphify_version"],
+)
+def test_guard_allows_reading_local_settings_and_the_graphify_pin(command):
+    """Controls: only a write is refused, as for the rest of the surface."""
+    assert not _guard_blocks(command)
+
+
+def test_governed_covers_local_settings():
+    """A Bash edit to settings.local.json re-runs the gates like one to settings.json."""
+    assert ".claude/settings.local.json" in _load("post-bash-revalidate").GOVERNED
+
+
+# ── agent-loopholes-c7170a25: an isolation worktree is not the agents tree ───
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C .claude/worktrees/agent-a79572a0c34809bc4 diff --cached",
+        "ls .claude/worktrees/agent-abc/scripts",
+        "cd .claude/worktrees/agent-abc && git status",
+        "ls .claude/worktrees/my-feature",
+    ],
+)
+def test_deny_agents_allows_an_isolation_worktree_path(command):
+    """Claude Code names isolation worktrees `.claude/worktrees/agent-<id>`, and
+    `/agent-` matched the variable-built-path pattern: every command naming one
+    was denied as a reference to `.claude/agents` (the first shape exited 2)."""
+    assert not _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -C .claude/agents status",
+        "cat .claude/a*/x.md",
+        "cat .claude/a[g]ents/x.md",
+        "D=.claude; cat $D/agents/x.md",
+        "cat .claude/worktrees/agent-abc/.claude/agents/x.md",
+        "ls .claude/worktrees/agent-abc/../../agents",
+        "A=agents; ls .claude/worktrees/agent-abc/../../$A",
+    ],
+)
+def test_deny_agents_still_denies_the_agents_tree_near_a_worktree(command):
+    """Controls: the exemption covers the worktree segment alone, so the agents
+    tree stays denied, including a worktree's own copy and a `..` escape."""
+    assert _load("deny-agents-path-hook")._references_agents(command)
+
+
+# ── agent-loopholes-f376faa5: hook-disabling config written outside the call ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "HP=/dev/null git --config-env core.hooksPath=HP commit -m x",
+        "git --config-env core.hooksPath=HP commit -m x",
+        "git config core.hooksPath /dev/null",
+        "git config --local core.hooksPath /dev/null",
+        "git config --global core.hookspath ''",
+        "git config set core.hooksPath /dev/null",
+        "git config alias.ci 'commit --no-verify'",
+        "git config --add alias.p push",
+        "SKIP=ruff,validate git commit -m x",
+        "PRE_COMMIT_ALLOW_NO_CONFIG=1 git commit -m x",
+        "env SKIP=ruff git commit -m x",
+        "pre-commit uninstall && git commit -m x",
+        "pre-commit uninstall -t commit-msg",
+    ],
+)
+def test_git_guard_denies_hook_disabling_config_and_skips(command, monkeypatch, capsys):
+    """Each exited 0 before the fix: the separate `--config-env` form was consumed
+    as a value, `git config` persisted a hooksPath or alias no later call showed,
+    and `SKIP=`, `PRE_COMMIT_*` and `pre-commit uninstall` switch the gate off."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --get core.hooksPath",
+        "git config --unset core.hooksPath",
+        "git config --list",
+        "git config user.name 'Ismo'",
+        "git config get alias.ci",
+        "pre-commit run --all-files",
+        "SKIP=ruff make check",
+        "git --config-env user.name=ME commit -m x",
+    ],
+)
+def test_git_guard_allows_config_reads_and_unrelated_settings(command, monkeypatch, capsys):
+    """Controls: reading or unsetting the keys, other keys, and a `SKIP=` that
+    reaches no commit stay allowed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def _alias_repo(monkeypatch, tmp_path: Path, **aliases: str):
+    """A real git repo carrying `aliases`, with global and system config isolated."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, timeout=30)
+    for name, body in aliases.items():
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "config", f"alias.{name}", body], check=True, timeout=30
+        )
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    return mod
+
+
+@pytest.mark.parametrize(
+    ("aliases", "command"),
+    [
+        ({"ci": "commit --no-verify"}, "git ci -m x"),
+        ({"shipit": "!git push origin main"}, "git shipit"),
+    ],
+)
+def test_git_guard_judges_a_persistent_alias_by_its_body(
+    aliases, command, monkeypatch, tmp_path, capsys
+):
+    """An alias set by an earlier call, or outside the session, never appeared in
+    the command text, so `git ci -m x` ran `commit --no-verify` unjudged."""
+    mod = _alias_repo(monkeypatch, tmp_path, **aliases)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "alias" in capsys.readouterr().err
+
+
+def test_git_guard_allows_a_harmless_persistent_alias(monkeypatch, tmp_path, capsys):
+    """Control: an alias whose body breaks no mandate is allowed."""
+    mod = _alias_repo(monkeypatch, tmp_path, st="status")
+    _run(mod, _bash("git st"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_persistent_aliases_is_empty_when_git_cannot_answer(monkeypatch, tmp_path):
+    """No readable config means no aliases to resolve, not a crash."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod.subprocess, "run", _oserror)
+    assert mod._persistent_aliases() == {}
+
+
+# ── agent-loopholes-c3a684c9: staging everything, judged by what it reaches ──
+
+
+def _whole_tree_mod(monkeypatch, tmp_path: Path):
+    """The git guard with its repo root pinned to `tmp_path` and no aliases."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    return mod
+
+
+@pytest.mark.parametrize(
+    "operand",
+    [
+        "':/*'",
+        "'*'",
+        "./*",
+        "':(top)'",
+        "':(top)*'",
+        "{root}",
+        "{root}/",
+        '"$PWD"',
+        "${{PWD}}",
+        "../{name}",
+        "':!README.md'",
+    ],
+)
+def test_git_guard_denies_every_spelling_that_stages_the_root(
+    operand, monkeypatch, tmp_path, capsys
+):
+    """Each exited 0 before the fix: the check compared spellings, so only `.`,
+    `./`-prefixed forms and an exact `:/` were recognised as the whole tree."""
+    mod = _whole_tree_mod(monkeypatch, tmp_path)
+    arg = operand.format(root=tmp_path, name=tmp_path.name)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(f"git add {arg}"), monkeypatch)
+    assert exc.value.code == 2
+    assert "stages the whole tree" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "operand", ["README.md", "':/src'", "'*.py'", "../other", "{root}/src", "-u"]
+)
+def test_git_guard_allows_staging_below_the_root(operand, monkeypatch, tmp_path, capsys):
+    """Controls: a named path, a subtree, a glob narrower than `*`, and `-u`."""
+    mod = _whole_tree_mod(monkeypatch, tmp_path)
+    _run(mod, _bash(f"git add {operand.format(root=tmp_path)}"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-152e6d90: checkout of a path without `--`, pathspec magic ─
+
+
+def _dirty_repo(monkeypatch, tmp_path: Path):
+    """A real repo with `f.txt` committed then changed unstaged, plus a `feature`
+    branch; the restore guard is pointed at it with global config isolated."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def git(*args: str) -> None:
+        """Run one git command in the temp repo with a throwaway identity."""
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                *list(args),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    git("init", "-q")
+    (tmp_path / "f.txt").write_text("committed\n", encoding="utf-8")
+    git("add", "f.txt")
+    git("commit", "-qm", "init")
+    git("branch", "feature")
+    (tmp_path / "f.txt").write_text("unstaged work\n", encoding="utf-8")
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    return mod
+
+
+@pytest.mark.parametrize(
+    "command", ["git checkout f.txt", "git checkout HEAD f.txt", "git checkout ."]
+)
+def test_restore_guard_asks_on_a_checkout_of_paths_without_dashes(
+    command, monkeypatch, tmp_path, capsys
+):
+    """`git checkout f.txt` replaced the unstaged content from the index while
+    `_targets` returned None, because only a checkout carrying `--` counted."""
+    mod = _dirty_repo(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    payload = _ask_payload(capsys)
+    assert payload["permissionDecision"] == "ask"
+    assert "f.txt" in payload["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout feature",
+        "git checkout -b other",
+        "git checkout -B other HEAD",
+        "git checkout --orphan other",
+    ],
+)
+def test_restore_guard_stays_silent_on_a_branch_switch(command, monkeypatch, tmp_path, capsys):
+    """Controls: switching or creating a branch keeps the unstaged change, so the
+    guard stays silent even with a dirty tree."""
+    mod = _dirty_repo(monkeypatch, tmp_path)
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("target", [":/", ":/.", ":(top)", "*.py", "src/*"])
+def test_restore_guard_treats_magic_and_glob_pathspecs_as_covering(target, monkeypatch, tmp_path):
+    """`_covers(":/", "src/a.py")` and `_covers("*.py", "a.py")` returned False, so
+    a whole-tree or glob restore over dirty files passed silently."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    assert mod._covers(target, "src/a.py")
+    assert not mod._covers("lib", "src/a.py")
+
+
+def test_restore_guard_counts_an_operand_as_a_path_when_git_cannot_answer(monkeypatch):
+    """No answer from git must lead to asking, never to silence."""
+    mod = _load("ask-destructive-restore-hook")
+    monkeypatch.setattr(mod.subprocess, "run", _oserror)
+    assert not mod._is_commit("feature")
+
+
+# ── perf-74e03db5 / audit-38801f60: revalidation scoped per porcelain entry ──
+
+
+@pytest.mark.parametrize(
+    "porcelain",
+    [
+        "!! docs/audit/findings/.lock\n!! scripts/__pycache__/\n"
+        "!! scripts/hooks/__pycache__/\n!! skills/nitpicker/scripts/__pycache__/\n",
+        "!! docs/audit/findings/tests/open/tests-abcd1234.md.tmp\n",
+        " M scripts/hooks/__pycache__/x.cpython-314.pyc\n",
+    ],
+)
+def test_revalidate_ignores_the_entries_every_clean_checkout_carries(
+    porcelain, monkeypatch, tmp_path, capsys
+):
+    """On a clean tree `git status --ignored` lists the store lock and the bytecode
+    caches, each holding a GOVERNED substring, so every gate ran after every Bash
+    call: 1.21 s against 0.08 s, plus a store-lock take and an INDEX.md rewrite."""
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=porcelain))
+    mod.main()
+    assert _gate_calls(calls) == []
+    assert capsys.readouterr().err == ""
+
+
+def test_revalidate_still_runs_for_an_ignored_findings_store_edit(monkeypatch, tmp_path):
+    """Control: the store may be gitignored, so an ignored finding file still counts."""
+    porcelain = "!! docs/audit/findings/tests/open/tests-abcd1234.md\n"
+    mod, calls = _revalidate(monkeypatch, tmp_path, status=_Result(stdout=porcelain))
+    mod.main()
+    assert len(_gate_calls(calls)) == len(mod.GATES)
+
+
+def test_revalidate_runs_the_eval_set_validator():
+    """An eval set edited through Bash reached no in-session gate: validate-evals
+    fires only on Write|Edit, and GATES had no entry for it."""
+    gates = [" ".join(cmd) for _script, cmd in _load("post-bash-revalidate").GATES]
+    assert any("scripts/validate-evals.py" in gate for gate in gates)
+
+
+def test_revalidate_docstring_names_no_count_of_its_sibling_hooks():
+    """It said "five Write|Edit validators" while seven were registered."""
+    doc = _load("post-bash-revalidate").__doc__
+    assert not _load("count-in-prose-hook")._COUNT.search(doc)
+
+
+# ── agent-hooks-eaa13a08: no store write through a server running stale code ──
+
+
+def _mcp_event(tool: str) -> str:
+    """A PreToolUse event for an MCP findings-store tool."""
+    return json.dumps({"tool_name": tool, "tool_input": {"id": "x"}})
+
+
+def _stale_guard(monkeypatch, tmp_path, result):
+    """Load the stale-write guard with `git status` answering `result` (or raising it)."""
+    mod = _load("deny-stale-mcp-write-hook")
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    calls = []
+
+    def _fake_run(cmd, *a, **k):
+        """Record the argv, then answer or raise as `result` says."""
+        calls.append((list(cmd), k.get("cwd")))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(mod.subprocess, "run", _fake_run)
+    return mod, calls
+
+
+@pytest.mark.parametrize(
+    ("tool", "cli"),
+    [
+        ("mcp__nitpicker__np_new_finding", "findings.py new"),
+        ("mcp__plugin_ivuorinen-skills_nitpicker__np_resolve_finding", "findings.py resolve"),
+        ("mcp__nitpicker__np_write_index", "findings.py index"),
+        ("mcp__plugin_ivuorinen-skills_nitpicker__np_process_sarif", "process-sarif.py"),
+    ],
+)
+def test_stale_write_guard_denies_while_shipped_scripts_are_dirty(
+    tool, cli, monkeypatch, tmp_path, capsys
+):
+    """The running MCP server keeps the modules it imported at startup, so a
+    store write after an edit runs the old code: a stale `redact()` once wrote an
+    unredacted credential into the append-only ledger (audit-9bc6eb39). Only a
+    `[warn]` prefix stood in the way, and `np_process_sarif` had none."""
+    dirty = _Result(stdout=" M skills/nitpicker/scripts/findings.py\n")
+    mod, calls = _stale_guard(monkeypatch, tmp_path, dirty)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _mcp_event(tool), monkeypatch)
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert cli in err
+    assert "skills/nitpicker/scripts/findings.py" in err
+    assert calls == [
+        (["git", "status", "--porcelain", "--", "skills/nitpicker/scripts"], str(tmp_path))
+    ]
+
+
+def test_stale_write_guard_allows_a_clean_tree(monkeypatch, tmp_path, capsys):
+    """Control: with nothing edited, the server's code is the tree's code."""
+    mod, _ = _stale_guard(monkeypatch, tmp_path, _Result(stdout=""))
+    _run(mod, _mcp_event("mcp__nitpicker__np_new_finding"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "result",
+    [OSError("git missing"), subprocess.TimeoutExpired("git", 10), _Result(returncode=128)],
+)
+def test_stale_write_guard_denies_when_git_cannot_prove_clean(
+    result, monkeypatch, tmp_path, capsys
+):
+    """A store write is permanent; unproven freshness is refused, not assumed."""
+    mod, _ = _stale_guard(monkeypatch, tmp_path, result)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _mcp_event("mcp__nitpicker__np_write_index"), monkeypatch)
+    assert exc.value.code == 2
+    assert "findings.py index" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload", ["", _mcp_event("mcp__nitpicker__np_list_findings")])
+def test_stale_write_guard_ignores_what_it_does_not_guard(payload, monkeypatch, tmp_path, capsys):
+    """Controls: an unparseable event and a read tool pass untouched."""
+    dirty = _Result(stdout=" M skills/nitpicker/scripts/findings.py\n")
+    mod, calls = _stale_guard(monkeypatch, tmp_path, dirty)
+    _run(mod, payload, monkeypatch)
+    assert calls == []
+    assert capsys.readouterr().err == ""
+
+
+def test_stale_write_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
+    """Both the `__main__` wiring — a denial from `main()` passes through — and
+    the fail-closed arm: an internal error must deny, like every other guard."""
+    import subprocess as _subprocess
+
+    dirty = _Result(stdout=" M skills/nitpicker/scripts/findings.py\n")
+    monkeypatch.setattr(_subprocess, "run", lambda *_a, **_k: dirty)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_mcp_event("mcp__nitpicker__np_new_finding")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-stale-mcp-write-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "findings.py new" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-stale-mcp-write-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
+# ── agent-hooks-da747c0c: a context-mode script must guard the cd it mutates behind ──
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _ctx(
+            language="shell", code="cd /no/such/repo\ngit init\ngit config user.email x\ngit add -A"
+        ),
+        _ctx(language="shell", code="cd /tmp/x; rm -rf build"),
+        _ctx(language="shell", code="cd /tmp/x\nGIT_DIR=.git git add -A"),
+        _ctx(language="shell", code="cd /tmp/x && make; git add -A"),
+        _ctx(language="shell", code="pushd /tmp/x\nenv GIT_DIR=.git git commit -m x"),
+        _ctx(language="shell", code="cd /tmp/x\necho hi > out.txt"),
+        _ctx(language="shell", code="cd /tmp/x\nsed -i s/a/b/ f"),
+        _ctx(language="shell", code="cd /tmp/x\nperl -pi -e s/a/b/ f"),
+        _ctx("ctx_batch_execute", commands=[{"label": "a", "command": "cd /tmp/x; mv a b"}]),
+        _ctx("ctx_execute_file", path="f", language="shell", code="cd /tmp/x; touch f"),
+    ],
+)
+def test_unguarded_cd_guard_denies_a_mutation_after_a_cd_that_can_fail(
+    payload, monkeypatch, capsys
+):
+    """Shell code sent to context-mode continues after a failed `cd`: a probe
+    script once ran `git init`, `git config` and `git add -A` in the real
+    repository that way. The project memory mandates `cd <dir> || exit 1`, and
+    nothing checked it."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _ctx(language="shell", code="cd /tmp/x || exit 1\ngit add -A"),
+        _ctx(language="shell", code="cd /tmp/x && git add -A && git commit -m x"),
+        _ctx(language="shell", code="set -euo pipefail\ncd /tmp/x\ngit add -A"),
+        _ctx(language="shell", code="set -o errexit\ncd /tmp/x\nrm f"),
+        _ctx(language="shell", code="cd /tmp/x\ngit status\ngit --version\ncat f >/dev/null 2>&1"),
+        _ctx(language="shell", code="(cd /tmp/x; ls); git add f"),
+        _ctx(language="shell", code="echo 'cd x; rm y'\n# cd x\nrm y"),
+        _ctx(language="shell", code="rm y\ncd /tmp/x"),
+        _ctx(language="shell", code="cd /tmp/x\nFOO=1\ngit status"),
+        _ctx(language="python", code="import os; os.chdir('x'); os.remove('y')"),
+        _ctx("ctx_batch_execute", commands=[{"command": "cd /tmp/x"}, {"command": "rm f"}]),
+        _bash("cd /tmp/x; rm f"),
+        "",
+    ],
+)
+def test_unguarded_cd_guard_allows_a_guarded_or_harmless_script(payload, monkeypatch, capsys):
+    """Controls: a handled failure, errexit, reads, a cd confined to a subshell
+    or a batch command of its own, text that only mentions `cd`, non-shell code,
+    and Bash (whose working directory is the project) all pass."""
+    _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+def test_unguarded_cd_guard_runs_as_a_script_and_fails_closed(monkeypatch, capsys):
+    """The `__main__` wiring passes a denial through, and an internal error denies."""
+    payload = _ctx(language="shell", code="cd /tmp/x; rm f")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-unguarded-cd-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "deny-unguarded-cd-hook.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
 # ── skill-safety-59f9427a: the vendored graphify skill installs only the pinned version ──
 
 GRAPHIFY_DIR = SCRIPTS_DIR.parent / ".claude" / "skills" / "graphify"
@@ -4095,3 +4960,78 @@ def test_notice_records_the_graphify_subagent_deviation():
     notice = (SCRIPTS_DIR.parent / "NOTICE").read_text(encoding="utf-8")
     section = next(s for s in notice.split("\n## ") if s.startswith("graphify"))
     assert "skill-safety-5f9c118a" in section
+
+
+# ── audit-1e48d360: executed validators come from this checkout, not the environment ──
+
+_EXECUTED_VALIDATORS = [
+    ("validate-skill-hook", "skills/foo/SKILL.md", "scripts/validate-skill.py"),
+    ("check-version-sync-hook", "package.json", "scripts/check-version-sync.py"),
+    ("validate-evals-hook", "skills/foo/evals/evals.json", "scripts/validate-evals.py"),
+    ("validate-rules-hook", ".claude/rules/a-rule.md", "scripts/validate-rules.py"),
+    (
+        "validate-audit-findings-hook",
+        "docs/audit/findings/a/open/a-11111111.md",
+        "skills/nitpicker/scripts/findings.py",
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "rel", "validator"), _EXECUTED_VALIDATORS)
+def test_hooks_execute_the_validators_shipped_beside_them(
+    name, rel, validator, monkeypatch, tmp_path
+):
+    """REPO_ROOT follows CLAUDE_PROJECT_DIR, so with it pointing at another checkout
+    that carries `scripts/hooks/_hooklib.py`, four hooks ran that checkout's
+    validators while the rules hook ran its own. The decoy validator here is what
+    they used to execute; the tree under validation stays the subprocess `cwd`."""
+    other = tmp_path / "other-checkout"
+    for decoy in (validator, rel):
+        (other / decoy).parent.mkdir(parents=True, exist_ok=True)
+        (other / decoy).write_text("x\n", encoding="utf-8")
+    mod = _load(name)
+    monkeypatch.setattr(mod, "REPO_ROOT", other)
+    seen: list[tuple[list[str], str]] = []
+
+    def _record(cmd, *_a, **k):
+        """Record argv and cwd, then report success."""
+        seen.append(([str(arg) for arg in cmd], str(k.get("cwd"))))
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _record)
+    _run(mod, json.dumps({"tool_input": {"file_path": str(other / rel)}}), monkeypatch)
+    executed = [arg for cmd, _cwd in seen for arg in cmd if arg.endswith(Path(validator).name)]
+    assert executed, f"{name} never ran {validator}"
+    assert all(Path(arg) == SCRIPTS_DIR.parent / validator for arg in executed), executed
+    assert all(cwd == str(other) for _cmd, cwd in seen)
+
+
+def test_revalidate_executes_the_gates_shipped_beside_it(monkeypatch, tmp_path):
+    """The gates ran as repo-relative argv under cwd=REPO_ROOT, so they came from
+    whatever tree the environment named, and their presence was checked there too."""
+    mod, calls = _revalidate(
+        monkeypatch, tmp_path, status=_Result(stdout=" M skills/x/SKILL.md\n"), gates_on_disk=False
+    )
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", SCRIPTS_DIR.parent, raising=False)
+    mod.main()
+    ran = _gate_calls(calls)
+    assert len(ran) == len(mod.GATES)
+    for (script, _argv), cmd in zip(mod.GATES, ran, strict=True):
+        assert str(SCRIPTS_DIR.parent / script) in cmd, cmd
+
+
+# ── types-44e0e1c7: no blanket type-ignore in the hooks ───────────────────────
+
+
+def test_hooks_carry_no_blanket_type_ignore():
+    """Pyright does not honour the bracketed code in a mypy-style
+    `# type: ignore[import-not-found]`: the comment silenced every diagnostic on
+    its line, including a renamed `_hooklib` helper. Where a suppression is
+    genuinely needed it is rule-scoped (`# pyright: ignore[<rule>]`) instead."""
+    blanket = [
+        f"{path.name}:{number}"
+        for path in sorted(HOOKS_DIR.glob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "# type: ignore" in line
+    ]
+    assert blanket == []

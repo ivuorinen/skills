@@ -11,10 +11,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
     event_path,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
@@ -37,7 +38,7 @@ def main() -> None:
         return
 
     if shutil.which("ruff") is None:
-        return  # ruff unavailable — CI's ruff steps remain the gate
+        report_skip("ruff-hook", "ruff not on PATH", f"ruff check {path}")
 
     # auto-fix what ruff can, then format. Capture both: a fix/format pass that
     # itself fails (bad config, syntax error) otherwise leaves the check below
@@ -63,7 +64,7 @@ def main() -> None:
             text=True,
             timeout=HOOK_TIMEOUT,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
         # ruff vanished between the which() above and here, or hung mid-run.
         # This hook fires on every .py edit and shells out three times, so an
         # unbounded call here is the likeliest place to freeze a session.
@@ -75,7 +76,8 @@ def main() -> None:
         if prior.strip():
             print(prior.rstrip(), file=sys.stderr, flush=True)
             sys.exit(2)
-        return  # nothing had failed yet — CI's ruff steps remain the gate
+        # Nothing had failed yet, so the skip is the whole result.
+        report_skip("ruff-hook", f"{type(exc).__name__}: {exc}", f"ruff check {path}")
     # Every completed call counts, not just the last. A fix or format pass that
     # failed on its own (bad config, a syntax error) is reported even when the
     # final check comes back clean: its output is the only place that cause

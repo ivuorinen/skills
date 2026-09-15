@@ -243,8 +243,8 @@ end.
 - `commit-types.md` (author discipline; the CI `commit-lint` job gates only the
   CI-only-diff-with-a-breaking-marker case)
 - `write-surgical-code.md` (agent discipline; no gate)
-- `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash only,
-  not a `git checkout --` inside a script)
+- `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash and
+  context-mode shell calls only, not a `git checkout` inside a script)
 - `vendored-skills.md`
 - Path-scoped, loaded with the files they govern: `mcp-stale-server.md`,
   `suppression-markers.md`, `agentlinter-baseline.md`, `version-bumps.md`,
@@ -287,17 +287,27 @@ Merge to `main` → release-please opens a Release PR → merging it creates the
 - `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
 - `validate-rules-hook.py` — validates any edited `.claude/rules/*.md` file (`validate-rules.py` + `check-rules-anatomy.py`)
 - `validate-evals-hook.py` — validates the eval set of any edited `skills/*/evals/*.json`
+- `count-in-prose-hook.py` — reports a spelled-out count of a growing set in written Markdown or docstrings; feedback via exit 2, not a gate (`.claude/rules/counts-in-prose.md`)
 
-Plus a **Bash** PostToolUse hook, `post-bash-revalidate.py`: Write/Edit matchers
-never see a Bash-mediated edit (`sed -i`, redirection, `git mv`), so this one
-re-runs the whole-tree gates when `git status` shows a governed path dirty.
+When a validator behind one of these hooks is missing, hangs or cannot start,
+the hook exits 1 with a line naming what did not run and the command to run by
+hand, rather than exiting 0 in silence: exit 1 is non-blocking, so the edit
+stands and the skip is visible. CI stays the binding gate.
+
+Plus a shell PostToolUse hook (Bash and the context-mode shell tools),
+`post-bash-revalidate.py`: an edit made through a shell (`sed -i`, redirection,
+`git mv`) is invisible to the Write/Edit matchers, so this one re-runs the whole-tree gates when
+`git status` shows a governed path dirty. Ignored entries count only inside the
+findings store, so a clean tree costs one `git status`.
 
 Plus the **PreToolUse** hooks below, which can *block* a tool call before it
 runs — the most behaviour-changing entries in the file. `.claude/settings.json`
 holds the authoritative list; `tests/test_settings.py` fails when one of them is
 configured and unnamed here:
 
-- matcher `Bash` — `deny-agents-path-hook.py`, which blocks a Bash command whose
+- matcher `Bash` and the context-mode shell tools (`ctx_execute`,
+  `ctx_execute_file`, `ctx_batch_execute`) — `deny-agents-path-hook.py`, which
+  blocks a shell command whose
   text names `.claude/agents/` **or a full protected agent filename** —
   literally, quoted, escaped, variable-built, or glob-spelled (the
   `permissions.deny` block binds file tools only, not Bash — it names `Read`,
@@ -312,18 +322,26 @@ configured and unnamed here:
   token and passes — the one token it does carry, `review`, is a nitpicker
   command name that appears in ordinary commands constantly, so matching it
   would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
-  the binding control, not this hook. The same hook also blocks a Bash **write**
-  to `scripts/hooks/` or `.claude/settings.json` (`PROTECTED_WRITE`), where
-  reading stays allowed — so the enforcement surface cannot be edited around via
+  the binding control, not this hook. The same hook also blocks a shell
+  **write** to any `PROTECTED_WRITE` path — `scripts/hooks/`,
+  `.claude/settings.json`, `.claude/settings.local.json`,
+  `.claude/skills/graphify/.graphify_version` — and refuses context-mode code in
+  another language that names one of them or the agents tree, where reading
+  stays allowed — so the enforcement surface cannot be edited around via
   `sed -i` or a redirect. `.claude/rules/enforcement-surface-owner.md` says who
   makes those edits.
-- matcher `Bash` — `deny-unsafe-git-hook.py`, which blocks `git` with
-  `--no-verify` or `-n` (stacked clusters and the abbreviations git accepts
-  included), a `-c core.hooksPath=`, `--config-env=` or `GIT_CONFIG_*` override
-  that disables the repository's hooks, an alias whose body resolves to any of
-  those (a `!` shell body included), and a push to a protected branch. It reads
-  a command nested in `$(...)`, backticks or a subshell as its own stage, and
-  looks through a wrapper (`env`, `sudo`, `xargs`, …) to the git call behind it.
+- matcher `Bash` and the context-mode shell tools — `deny-unsafe-git-hook.py`,
+  which blocks `git` with `--no-verify` or `-n` (stacked clusters and the
+  abbreviations git accepts included), a `-c core.hooksPath=`, `--config-env`
+  (either form) or `GIT_CONFIG_*` override that disables the repository's hooks,
+  a `git config` write to `core.hooksPath` or `alias.*`, an alias whose body
+  resolves to any of those (a `!` shell body included, and aliases already in
+  git config judged by their body), a pre-commit skip variable on `git commit`
+  (`.claude/rules/commit-gate-integrity.md` names them), `pre-commit uninstall`,
+  a `git add` whose pathspec reaches the whole tree
+  however it is spelled, and a push to a protected branch. It reads a command
+  nested in `$(...)`, backticks or a subshell as its own stage, and judges the
+  command behind a wrapper (`env`, `sudo`, `xargs`, …) as well as the wrapper.
   Per `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
   optional; commit without the flag and fix what fails. That rule also states
   what remains open — the guard matches command text, so a request carrying no
@@ -334,12 +352,28 @@ configured and unnamed here:
   verb outside its allowlist, including every read verb. Fails closed on an
   unrecognised verb, so a denial usually means route the command through
   context-mode instead — not that the marker was spelled wrong.
-- matcher `Bash` — `ask-destructive-restore-hook.py`, which asks before a
-  `git checkout --` or `git restore` that would discard uncommitted tracked
-  changes. See `.claude/rules/snapshot-before-mutating.md`: snapshot with `cp`
+- matcher `Bash` and the context-mode shell tools —
+  `ask-destructive-restore-hook.py`, which asks before a `git checkout` of paths
+  (with or without `--`) or a `git restore` that would discard uncommitted
+  tracked changes, treating pathspec magic and globs as covering every dirty
+  path. See `.claude/rules/snapshot-before-mutating.md`: snapshot with `cp`
   instead.
 - matcher `Bash` — `graphify hook-guard search`
 - matcher `Read|Glob` — `graphify hook-guard read`
+- matcher `mcp__(plugin_…_)?nitpicker__np_(new_finding|resolve_finding|write_index|process_sarif)`
+  — `deny-stale-mcp-write-hook.py`, which denies a findings-store or SARIF MCP
+  write while `git status -- skills/nitpicker/scripts` is non-empty or
+  unreadable, and names the CLI command to use instead
+  (`.claude/rules/mcp-stale-server.md`).
+- matcher the context-mode shell tools only — `deny-unguarded-cd-hook.py`,
+  which denies a script that writes (a git write, a file-changing command,
+  `sed -i`, a redirect into a file) after a `cd` or `pushd` that can fail. A
+  `cd` counts as guarded by `|| …`, an `&&` chain reaching the write, or an
+  earlier `set -e`. Bash is out of scope, since its working directory is the
+  project; `cd x || true` still counts as guarded.
+
+Every repo guard's registered command maps any exit other than 0 or 2 to 2, so a
+guard that fails to run denies (`.claude/rules/hooks-fail-closed.md`).
 
 Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
 clone without graphify installed it exits 0 and is a no-op. When graphify is on
@@ -347,7 +381,9 @@ the executable search path (`$PATH`), the guard's own exit code propagates and
 can block the call.
 
 Between those two it **pins the binary**: it compares `graphify --version`
-against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch.
+against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch,
+telling the agent to ask the owner. The pin file is on `permissions.deny` and
+`PROTECTED_WRITE`, so an agent cannot re-pin it.
 Without that, a different or compromised `graphify` earlier on `$PATH` silently
 takes over the permit/deny decision for every file read, glob and shell command
 in the session — the one executing component the vendored-skill trust model left
@@ -368,6 +404,12 @@ the reminder repeats once per turn for as long as skill edits stay
 uncommitted. That is the observed behaviour, not a broken guard.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
+
+That root picks the tree being validated and the working directory, not the
+code doing the validating. The validators a hook runs, and the findings store
+location, come from the checkout the hook ships in (`SHIPPED_ROOT` in
+`_hooklib.py`). Pointing the environment at another checkout changes what is
+checked, not what checks it.
 
 `.claude/skills/nitpicker` is a symlink to `../../skills/nitpicker` so Claude Code discovers the shipped public skill alongside the internal dev skills.
 

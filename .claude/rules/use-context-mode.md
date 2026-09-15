@@ -32,4 +32,7 @@ Enforcement of this rule is best-effort: it depends on the context-mode
 plugin's PreToolUse hook being installed in the session (there is no committed
 in-repo gate, and nothing validates that `# ctx-ok` marks only a mutation).
 Where the plugin is absent — a fresh clone, CI, or a different agent — treat the
-rule as guidance the agent applies by discipline, not a hard gate.
+rule as guidance the agent applies by discipline, not a hard gate. The repo's
+own shell guards run on the context-mode shell tools as well as Bash, so routing
+a command through context-mode does not step around them; the `# ctx-ok` guard
+stays Bash-only, since the marker means nothing on a context-mode call.

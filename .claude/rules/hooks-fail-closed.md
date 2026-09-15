@@ -24,13 +24,13 @@ if __name__ == "__main__":
         sys.exit(2)
 ```
 
-`deny-unsafe-git-hook.py` and `guard-ctx-ok-hook.py` carry this form. A guard
+Every repo guard carries this form, `deny-agents-path-hook.py` included. A guard
 whose decision is *ask* rather than *deny* answers ask from the same arm —
 `ask-destructive-restore-hook.py` does — and never allow.
 
-The same holds one layer out: a `.claude/settings.json` hook command that
-cannot start its interpreter exits 2, as the deny-agents entry does when `uv`
-is missing.
+The same holds one layer out. Each repo guard's `.claude/settings.json` command
+exits 2 when `uv` is missing, and maps any exit of the guard other than 0 or 2
+to 2, so a guard that cannot start, or dies before its own wrapper runs, denies.
 
 ## Enforcement
 

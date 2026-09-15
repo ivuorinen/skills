@@ -6,6 +6,8 @@ as valid, so a deleted registration was previously invisible.
 """
 
 import json
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,8 @@ WRITE_EDIT_HOOKS = [
     "ruff-hook.py",
     "validate-audit-findings-hook.py",
     "validate-rules-hook.py",
+    "validate-evals-hook.py",
+    "count-in-prose-hook.py",
 ]
 
 
@@ -43,15 +47,27 @@ EXPECTED_DENY = [
     "Write(./scripts/hooks/**)",
     "Edit(./.claude/settings.json)",
     "Write(./.claude/settings.json)",
+    "Edit(./.claude/settings.local.json)",
+    "Write(./.claude/settings.local.json)",
+    "Edit(./.claude/skills/graphify/.graphify_version)",
+    "Write(./.claude/skills/graphify/.graphify_version)",
 ]
 
 # Every path the deny list exists to protect, and the tools it names for each.
 # The agents tree adds Read because its contents are what must not be seen, not
 # merely what must not change.
+#
+# settings.local.json is merged over the project settings and can set
+# `disableAllHooks`, so one write there turned off every hook
+# (agent-loopholes-bbe241dd). The graphify pin decides which binary the
+# Bash/Read/Glob guards trust, so rewriting it re-trusts whatever is installed
+# (agent-loopholes-8c3cdf74).
 PROTECTED_PATHS = {
     "./.claude/agents/**": {"Read", "Edit", "Write"},
     "./scripts/hooks/**": {"Edit", "Write"},
     "./.claude/settings.json": {"Edit", "Write"},
+    "./.claude/settings.local.json": {"Edit", "Write"},
+    "./.claude/skills/graphify/.graphify_version": {"Edit", "Write"},
 }
 
 
@@ -77,11 +93,21 @@ def test_every_protected_path_is_denied_for_its_declared_tools():
 
 
 def test_the_enforcement_surface_paths_are_all_represented():
-    """The three trees an agent must not rewrite: its own agents, the hook
-    scripts, and the settings file wiring them. A new one added to the config
-    without a line here would pass unnoticed."""
+    """The paths an agent must not rewrite: its own agents, the hook scripts, the
+    settings files wiring them, and the graphify pin the guards trust. A new one
+    added to the config without a line here would pass unnoticed."""
     denied_paths = {r[r.index("(") + 1 : r.rindex(")")] for r in _deny()}
     assert denied_paths == set(PROTECTED_PATHS)
+
+
+def test_graphify_pin_mismatch_sends_the_agent_to_the_owner():
+    """The mismatch message used to name the pin file and nothing else, which
+    pointed a blocked agent at the one edit that silently re-trusts any installed
+    binary (agent-loopholes-8c3cdf74)."""
+    guards = [c for c in _registered_commands() if "graphify hook-guard" in c]
+    assert guards, "no graphify hook-guard registered"
+    for cmd in guards:
+        assert "ask the owner" in cmd, cmd
 
 
 def _commands(event: str, matcher: str | None = None) -> str:
@@ -101,7 +127,55 @@ def test_write_edit_hook_registered(name):
 
 
 def test_bash_revalidate_hook_registered():
-    assert "post-bash-revalidate.py" in _commands("PostToolUse", "Bash")
+    assert _matchers_for("PostToolUse", "post-bash-revalidate.py")
+
+
+# The tools that execute shell text. `.claude/rules/use-context-mode.md` sends
+# shell work to the context-mode tools, and a guard registered for `Bash` alone
+# never saw those calls: a failed `cd` inside ctx_execute once let `git add -A`
+# stage 61 paths in the real repository (agent-loopholes-41c1b2f3).
+SHELL_TOOLS = [
+    "Bash",
+    "mcp__plugin_context-mode_context-mode__ctx_execute",
+    "mcp__plugin_context-mode_context-mode__ctx_execute_file",
+    "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+]
+
+# The guards that judge what a shell command does. guard-ctx-ok-hook.py is absent
+# on purpose: `# ctx-ok` is the marker for opting OUT of context-mode, so on a
+# context-mode call it claims nothing, and judging one would tell the agent to
+# route through the tool it is already using.
+SHELL_GUARDS = [
+    ("PreToolUse", "deny-agents-path-hook.py"),
+    ("PreToolUse", "deny-unsafe-git-hook.py"),
+    ("PreToolUse", "ask-destructive-restore-hook.py"),
+    ("PostToolUse", "post-bash-revalidate.py"),
+]
+
+
+def _matchers_for(event: str, script: str) -> list[str]:
+    """Every matcher under which `script` is registered for `event`."""
+    return [
+        entry.get("matcher", "")
+        for entry in _settings()["hooks"].get(event, [])
+        if any(script in h.get("command", "") for h in entry.get("hooks", []))
+    ]
+
+
+@pytest.mark.parametrize("tool", SHELL_TOOLS)
+@pytest.mark.parametrize(("event", "script"), SHELL_GUARDS)
+def test_every_shell_guard_matches_every_shell_tool(event, script, tool):
+    """A guard that a shell-running tool never reaches enforces nothing on it."""
+    matchers = _matchers_for(event, script)
+    assert matchers, f"{script} is not registered for {event}"
+    assert any(re.fullmatch(m, tool) for m in matchers), f"{script} never sees {tool}"
+
+
+@pytest.mark.parametrize(("event", "script"), SHELL_GUARDS)
+def test_shell_guard_matchers_do_not_widen_past_shell_tools(event, script):
+    """Control: the widened matcher must not start firing on file tools."""
+    for tool in ("Read", "Write", "Edit", "mcp__plugin_context-mode_context-mode__ctx_search"):
+        assert not any(re.fullmatch(m, tool) for m in _matchers_for(event, script)), tool
 
 
 def test_stop_reminder_registered():
@@ -188,6 +262,83 @@ def test_every_pretooluse_hook_is_documented_in_claude_md():
                 pytest.fail(f"cannot name this PreToolUse hook for the docs check: {cmd!r}")
             if name not in documented:
                 undocumented.append(name)
-    assert undocumented == [], (
-        f"PreToolUse hooks configured but not named in CLAUDE.md: {sorted(set(undocumented))}"
+    missing = sorted(set(undocumented) - PENDING_CLAUDE_MD)
+    assert missing == [], f"PreToolUse hooks configured but not named in CLAUDE.md: {missing}"
+    expired = sorted(PENDING_CLAUDE_MD - set(undocumented))
+    assert expired == [], f"now named in CLAUDE.md (or unregistered); drop from PENDING: {expired}"
+
+
+# PreToolUse hooks whose CLAUDE.md bullet is delivered separately from the patch
+# that adds them: the enforcement surface ships as owner-applied patches, and
+# CLAUDE.md is edited in another change. The second assertion above fails the
+# moment CLAUDE.md names an entry, so this list empties itself rather than
+# outliving its reason. Adding to it is an owner decision, like the deny list.
+PENDING_CLAUDE_MD: frozenset[str] = frozenset()
+
+
+@pytest.mark.parametrize("tool", SHELL_TOOLS[1:])
+def test_unguarded_cd_guard_matches_every_context_mode_shell_tool(tool):
+    """The guard exists for context-mode shell code (agent-hooks-da747c0c)."""
+    matchers = _matchers_for("PreToolUse", "deny-unguarded-cd-hook.py")
+    assert any(re.fullmatch(m, tool) for m in matchers), tool
+    assert not any(re.fullmatch(m, "Read") for m in matchers)
+
+
+_STORE_WRITE_TOOLS = [
+    "mcp__nitpicker__np_new_finding",
+    "mcp__plugin_ivuorinen-skills_nitpicker__np_resolve_finding",
+    "mcp__nitpicker__np_write_index",
+    "mcp__plugin_ivuorinen-skills_nitpicker__np_process_sarif",
+]
+
+
+@pytest.mark.parametrize("tool", _STORE_WRITE_TOOLS)
+def test_stale_write_guard_matches_every_store_write_tool(tool):
+    """Both server spellings: `.mcp.json` registers `nitpicker`, the plugin
+    registers the plugin-scoped name (agent-hooks-eaa13a08)."""
+    matchers = _matchers_for("PreToolUse", "deny-stale-mcp-write-hook.py")
+    assert any(re.fullmatch(m, tool) for m in matchers), tool
+
+
+def test_stale_write_guard_leaves_read_tools_alone():
+    """Control: reading the store never runs stale code into a permanent record."""
+    matchers = _matchers_for("PreToolUse", "deny-stale-mcp-write-hook.py")
+    assert matchers
+    assert not any(re.fullmatch(m, "mcp__nitpicker__np_list_findings") for m in matchers)
+
+
+def _repo_guard_commands() -> list[tuple[str, str]]:
+    """(script name, registered command) for every PreToolUse guard this repo ships."""
+    return [
+        (Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name, cmd)
+        for entry in _settings()["hooks"]["PreToolUse"]
+        for h in entry.get("hooks", [])
+        if "$CLAUDE_PROJECT_DIR/scripts/hooks/" in (cmd := h.get("command", ""))
+    ]
+
+
+@pytest.mark.parametrize(("name", "command"), _repo_guard_commands())
+@pytest.mark.parametrize(("hook_exit", "expected"), [(1, 2), (0, 0), (2, 2)])
+def test_a_guard_that_fails_to_run_blocks_the_call(name, command, hook_exit, expected, tmp_path):
+    """Claude Code blocks a PreToolUse call on exit 2 only; any other non-zero exit
+    lets it through. An import error, a crash before `main()`'s own handler, or a
+    `uv` failure all exit 1, so each guard failed OPEN (agent-loopholes-02f83e02).
+
+    A fake `uv` stands in for the guard, so this pins the registered command's
+    own exit handling: a failure becomes 2, while an allow (0) and a deny (2)
+    pass through unchanged.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text(f"#!/bin/sh\nexit {hook_exit}\n", encoding="utf-8")
+    fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["sh", "-c", command],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
     )
+    assert result.returncode == expected, f"{name}: {result.stderr}"

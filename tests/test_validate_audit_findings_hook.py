@@ -24,6 +24,20 @@ def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
     return path
 
 
+def test_store_root_follows_findings_default_root(tmp_path, monkeypatch):
+    """The hook's docstring promised one definition of where the store lives, but
+    it returned its own literal path: changing `findings.DEFAULT_ROOT` would have
+    stopped the hook validating store edits, silently (audit-a2f8f189)."""
+    monkeypatch.setattr(hook.findings, "DEFAULT_ROOT", Path("elsewhere") / "store")
+    assert hook.store_root(tmp_path) == tmp_path / "elsewhere" / "store"
+
+
+def test_store_root_matches_the_shipped_findings_module(tmp_path):
+    """Control: unpatched, the hook and findings.py name the same directory."""
+    assert hook.findings.__file__ == str(FINDINGS_PATH.resolve())
+    assert hook.store_root(tmp_path) == tmp_path / "docs" / "audit" / "findings"
+
+
 def test_should_check_accepts_finding_file(tmp_path):
     """An open finding file is the case the hook validates."""
     path = _store_file(tmp_path, "docs/audit/findings/security/open/security-1a2b3c4d.md")
@@ -75,11 +89,12 @@ def test_main_ignores_invalid_json(monkeypatch, capsys):
         ("docs/audit/findings/INDEX.md", "x"),
     ],
 )
-def test_main_is_silent_when_findings_py_cannot_run(rel, text, tmp_path, monkeypatch, capsys):
+def test_main_reports_when_findings_py_cannot_run(rel, text, tmp_path, monkeypatch, capsys):
     """python3/findings.py absent, or the call hung past its timeout: the hook
-    must return rather than raise a traceback or block the edit. Each of the
-    three shell-outs (per-file validate, store validate, index) is covered.
-    `make check` and CI remain the gate."""
+    must not raise a traceback or block the edit, and must say validation did
+    not run — exit 0 with no output read as a valid store
+    (observability-879596c7). Each of the three shell-outs (per-file validate,
+    store validate, index) is covered."""
     path = _store_file(tmp_path, rel, text)
     monkeypatch.setattr(hook, "REPO_ROOT", tmp_path)
 
@@ -90,9 +105,12 @@ def test_main_is_silent_when_findings_py_cannot_run(rel, text, tmp_path, monkeyp
     monkeypatch.setattr(hook.subprocess, "run", _boom)
     event = json.dumps({"tool_input": {"file_path": str(path)}})
     monkeypatch.setattr(sys, "stdin", io.StringIO(event))
-    hook.main()
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 1
     out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    assert out.out == ""
+    assert "validate-audit-findings-hook" in out.err and "did not run" in out.err
 
 
 def test_main_reports_invalid_finding_from_real_payload(monkeypatch, tmp_path, capsys):

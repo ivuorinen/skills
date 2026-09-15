@@ -22,7 +22,9 @@ import sys
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
+    event_command,
+    foreign_code,
     load_event,
     repo_root,
     shell_stages,
@@ -52,6 +54,15 @@ _REPO_ROOT = repo_root()
 _DENIED_RE = re.compile(r"\.claude/agents\b")
 _CLAUDE_RE = re.compile(r"\.claude\b")
 _AGENTS_INDIRECT_RE = re.compile(r"[=/$]agents?\b|\.claude/a")
+# Claude Code names isolation worktrees `.claude/worktrees/agent-<id>`, and
+# `/agent-` meets `[=/$]agents?\b` (the hyphen is a word boundary), so every
+# command naming a worktree was denied as a reference to the agents tree
+# (agent-loopholes-c7170a25). The textual pass drops that one segment first.
+# Deliberately exact: a name may not start with `.`, so `.claude/worktrees/..`
+# is never dropped, and a name followed by `/..` is kept so an escape back out
+# of the worktree still reads as `.claude` plus `agents`. The possessive
+# quantifier stops the lookahead from being satisfied by a shorter name.
+_WORKTREE_RE = re.compile(r"\.claude/worktrees/[^./\s;&|<>()][^/\s;&|<>()]*+(?!/\.\.)")
 _GLOB_META_RE = re.compile(r"[*?\[]")
 DENIED = ".claude/agents"
 
@@ -85,7 +96,18 @@ _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
 # through a symlink is not matched. As with the agents half, CODEOWNERS plus
 # branch protection remains the binding control; this raises the cost of the
 # bypass, it does not close it.
-PROTECTED_WRITE = ("scripts/hooks", ".claude/settings.json")
+#
+# `.claude/settings.local.json` is merged over the project settings and can set
+# `disableAllHooks`, so one redirect there turned off every hook
+# (agent-loopholes-bbe241dd). The graphify pin decides which installed binary the
+# Bash/Read/Glob guards trust, so rewriting it re-trusts any binary
+# (agent-loopholes-8c3cdf74).
+PROTECTED_WRITE = (
+    "scripts/hooks",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/skills/graphify/.graphify_version",
+)
 
 _REDIR_RE = re.compile(r">{1,2}\s*([^\s;&|<>()]+)")
 _WRITE_VERBS = frozenset(
@@ -163,9 +185,16 @@ def _under_protected(rel: str) -> bool:
 
 
 def _protected_path(path: Path) -> bool:
-    """True if a filesystem path resolves inside a protected-write root."""
+    """True if a filesystem path resolves inside a protected-write root.
+
+    A path that cannot be resolved at all (a symlink loop on 3.11/3.12) counts
+    as protected rather than outside: the error used to escape and exit 1, which
+    Claude Code treats as an allow (agent-loopholes-02f83e02).
+    """
     try:
         rel = path.resolve().relative_to(_REPO_ROOT.resolve()).as_posix()
+    except RuntimeError:
+        return True
     except (OSError, ValueError):
         return False
     return _under_protected(rel)
@@ -262,6 +291,18 @@ def _stage_writes_protected(tokens: list[str], c: str) -> bool:
     if PurePosixPath(tokens[0]).name == "git" and _git_rewrites_worktree(tokens):
         return True
     return any(_token_writes_protected(a, c) for a in _written_operands(tokens))
+
+
+def _names_protected(code: str) -> bool:
+    """True if non-shell code names a protected-write path at all.
+
+    A context-mode call in Python or JavaScript cannot be tokenized into stages,
+    so a read cannot be told from a write and naming the path is the only signal
+    left (agent-loopholes-41c1b2f3). Over-blocks a read spelled that way, which
+    a shell `cat` still performs.
+    """
+    c = _canonicalize(code)
+    return any(root in c for root in PROTECTED_WRITE)
 
 
 def _writes_protected(command: str) -> bool:
@@ -364,11 +405,23 @@ def _glob_reaches_agents(command: str) -> bool:
                 except ValueError:
                     continue  # absolute but outside the repo — nothing to check
             for base in bases:
-                for hit in _shell_glob(base, rel):
-                    resolved = hit.resolve()
-                    if resolved == agents_dir or agents_dir in resolved.parents:
-                        return True
+                if any(_hit_in_agents(hit, agents_dir) for hit in _shell_glob(base, rel)):
+                    return True
     return False
+
+
+def _hit_in_agents(hit: Path, agents_dir: Path) -> bool:
+    """True if one glob hit resolves at or under the agents tree.
+
+    A hit that cannot be resolved counts as inside. A symlink loop raises here on
+    3.11/3.12; uncaught, that exited 1 and Claude Code let the call through, so a
+    loop plus a glob disabled the whole guard (agent-loopholes-02f83e02).
+    """
+    try:
+        resolved = hit.resolve()
+    except (OSError, RuntimeError):
+        return True
+    return resolved == agents_dir or agents_dir in resolved.parents
 
 
 def _names_agent_file(command: str) -> bool:
@@ -391,7 +444,11 @@ def _references_agents(command: str) -> bool:
     """True if the command reaches .claude/agents/ by any spelling the shell would
     resolve there — literal, quoted, escaped, variable-built, or glob."""
     c = _canonicalize(command)
-    if _DENIED_RE.search(c) or (_CLAUDE_RE.search(c) and _AGENTS_INDIRECT_RE.search(c)):
+    # The worktree segment is dropped for the textual pass only; the filename
+    # and glob passes still see it, and a worktree's own `.claude/agents` keeps
+    # its literal spelling after the drop.
+    text = _WORKTREE_RE.sub("", c)
+    if _DENIED_RE.search(text) or (_CLAUDE_RE.search(text) and _AGENTS_INDIRECT_RE.search(text)):
         return True
     if _names_agent_file(c):
         return True
@@ -410,10 +467,21 @@ def main() -> None:
     if data is None:
         return
 
-    command = (data.get("tool_input") or {}).get("command") or ""
-    if _references_agents(command):
+    command = event_command(data)
+    code = foreign_code(data)
+    if _references_agents(command) or _references_agents(code):
         # PreToolUse: exit 2 blocks the call and surfaces stderr to the agent.
         print(f"  DENIED  Bash command references {DENIED}", file=sys.stderr, flush=True)
+        sys.exit(2)
+    if _names_protected(code):
+        print(
+            "  DENIED  non-shell code names the enforcement surface "
+            f"({', '.join(PROTECTED_WRITE)}).\n"
+            "          Code in another language cannot be judged as a read or a\n"
+            "          write, so it is refused. Read these paths with a shell call.",
+            file=sys.stderr,
+            flush=True,
+        )
         sys.exit(2)
     if _writes_protected(command):
         print(
@@ -428,4 +496,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:  # fail closed — exit 1 would let the call through
+        print(f"  DENIED  agents-path guard failed internally: {exc}", file=sys.stderr, flush=True)
+        sys.exit(2)

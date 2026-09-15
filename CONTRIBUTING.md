@@ -131,6 +131,7 @@ Do not pass `--no-verify` when committing skill files, version manifests, or the
 findings store (`.claude/rules/commit-gate-integrity.md`). It skips the
 pre-commit validators that guard them. PostToolUse hooks cover both surfaces —
 `Write|Edit` validators on edited files, and `post-bash-revalidate.py` on
-Bash-mediated edits (`sed -i`, redirection, `git mv`) — but a hook runs only
+edits made through Bash or the context-mode shell tools (`sed -i`, redirection,
+`git mv`) — but a hook runs only
 inside an agent session and pre-commit is skippable, so CI `Validate` is still
 the only check that binds every change on its way into a protected branch.

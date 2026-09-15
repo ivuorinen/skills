@@ -30,6 +30,11 @@ tools carry no such prefix, so an edit to `process-sarif.py` or
 else: `np_process_sarif` will consolidate a security scan with code that is not
 on disk and say nothing. This is a backstop, not the control: the rule above is.
 
+`scripts/hooks/deny-stale-mcp-write-hook.py` closes the write half before the
+call runs. It denies `np_new_finding`, `np_resolve_finding`, `np_write_index`
+and `np_process_sarif` while `git status --porcelain -- skills/nitpicker/scripts`
+is non-empty or cannot be read, and names the CLI command to run instead.
+
 This is not hypothetical. A stale `redact()` wrote an unredacted credential into
 `resolved.jsonl` during the audit that added the redaction, and only a
 `detect-private-key` commit hook caught it — see `audit-9bc6eb39`.

@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     load_event,
     shell_stages,
     skip_git_global_opts,

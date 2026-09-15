@@ -22,10 +22,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import (  # type: ignore[import-not-found]
+from _hooklib import (
     HOOK_TIMEOUT,
     load_event,
     repo_root,
+    report_skip,
 )
 
 REPO_ROOT = repo_root()
@@ -68,8 +69,10 @@ def main() -> None:
                 text=True,
                 timeout=HOOK_TIMEOUT,
             )
-        except (OSError, subprocess.SubprocessError):
-            return  # git absent or hung — no reminder is better than a frozen stop
+        except (OSError, subprocess.SubprocessError) as exc:
+            # git absent or hung: no reminder is better than a frozen stop, but a
+            # silent return reads as "nothing pending".
+            report_skip("stop-reminder", f"{type(exc).__name__}: {exc}", "git status")
         if result.returncode != 0:
             return
         paths += [p for p in result.stdout.split("\0") if p and p not in paths]
