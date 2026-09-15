@@ -158,7 +158,7 @@ bench-recall:
 # Zero floor: any pyright error fails the gate. A count threshold could mask a
 # new error by fixing an old one, so the tolerated set must stay empty.
 typecheck:
-	uv run --with pyright==1.1.411 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
+	uv run --with pyright==1.1.414 pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
 
 lint:
 	uv run --extra dev ruff check scripts/ tests/ skills/
