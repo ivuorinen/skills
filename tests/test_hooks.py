@@ -4659,8 +4659,10 @@ def test_restore_guard_counts_an_operand_as_a_path_when_git_cannot_answer(monkey
 @pytest.mark.parametrize(
     "porcelain",
     [
-        "!! docs/audit/findings/.lock\n!! scripts/__pycache__/\n"
-        "!! scripts/hooks/__pycache__/\n!! skills/nitpicker/scripts/__pycache__/\n",
+        (
+            "!! docs/audit/findings/.lock\n!! scripts/__pycache__/\n"
+            "!! scripts/hooks/__pycache__/\n!! skills/nitpicker/scripts/__pycache__/\n"
+        ),
         "!! docs/audit/findings/tests/open/tests-abcd1234.md.tmp\n",
         " M scripts/hooks/__pycache__/x.cpython-314.pyc\n",
     ],
