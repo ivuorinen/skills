@@ -1968,6 +1968,8 @@ def test_task_create_get_update_list_round_trip():
     assert updated["metadata"] == {"lens": "S0"}
 
     listed = _structured(_call(mod, "np_task_list", {}))
+    # audit-cf5f40bd: metadata is in the row, so one readback shows how every
+    # task closed instead of one np_task_get per task.
     assert listed == {
         "tasks": [
             {
@@ -1976,6 +1978,7 @@ def test_task_create_get_update_list_round_trip():
                 "status": "in_progress",
                 "owner": "audit",
                 "blocked_by": [],
+                "metadata": {"lens": "S0"},
             }
         ]
     }
@@ -2098,6 +2101,22 @@ def test_todo_write_validates_each_item():
         in (short["content"][0]["text"])
     )
     # Neither call touched the list.
+    assert _structured(_call(mod, "np_task_list", {})) == {"tasks": []}
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("np_task_create", {"subject": "  "}),
+        ("np_todo_write", {"todos": [{"content": "", "status": "pending", "active_form": "x"}]}),
+    ],
+)
+def test_task_tools_refuse_a_blank_subject(tool, args):
+    """audit-3db25f1e: an untitled entry cannot be matched to the step it tracks."""
+    mod = _load()
+    result = _call(mod, tool, args)
+    assert result["isError"] is True
+    assert "must not be blank" in result["content"][0]["text"]
     assert _structured(_call(mod, "np_task_list", {})) == {"tasks": []}
 
 

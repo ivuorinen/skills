@@ -1313,8 +1313,15 @@ def _add_task(
 
 
 def _summary(task: dict) -> dict:
-    """The listing row: what a caller scans to pick the next step, no bodies."""
-    return {k: task[k] for k in ("id", "subject", "status", "owner", "blocked_by")}
+    """The listing row: what a caller scans to pick the next step, no bodies.
+
+    `metadata` rides along because it is where a run records how each task
+    closed (`_audit-coverage.md`'s `metadata.closed`). Without it the readback
+    before reporting showed every closed task as bare `completed`, so a lens
+    closed `out of scope` read the same as one that ran clean (audit-cf5f40bd).
+    """
+    keys = ("id", "subject", "status", "owner", "blocked_by", "metadata")
+    return {k: task[k] for k in keys}
 
 
 def _link(blocker: dict, blocked: dict) -> None:
@@ -1367,6 +1374,14 @@ def _delete_task(task: dict) -> dict:
     },
 )
 def _task_create(args: dict) -> dict:
+    """Add one task; a blank subject is refused.
+
+    The task-list rule identifies an entry by its step's id and title, so an
+    untitled entry cannot be matched to any step and closes without saying what
+    it covered (audit-3db25f1e).
+    """
+    if not args["subject"].strip():
+        raise ValueError("subject must not be blank")
     task = _add_task(
         args["subject"],
         description=args.get("description", ""),
@@ -1394,8 +1409,8 @@ def _task_get(args: dict) -> dict:
 
 @tool(
     "np_task_list",
-    "List this session's tasks: id, subject, status, owner and what each is blocked by. "
-    "np_task_get returns one in full.",
+    "List this session's tasks: id, subject, status, owner, what each is blocked by, "
+    "and metadata. np_task_get returns one in full.",
     _NO_ARGS,
     {**_READ_ONLY, "title": "List tasks"},
     output_schema=_TASK_LIST,
@@ -1483,6 +1498,15 @@ def _task_update(args: dict) -> dict:
     output_schema=_TASK_LIST,
 )
 def _todo_write(args: dict) -> dict:
+    """Replace the list; every item is checked before the old list is cleared.
+
+    A blank `content` is refused for the reason `_task_create` gives
+    (audit-3db25f1e), and the check runs first so a rejected call leaves the
+    existing list intact rather than half-replaced.
+    """
+    for i, todo in enumerate(args["todos"]):
+        if not todo["content"].strip():
+            raise ValueError(f"todos[{i}]: content must not be blank")
     _TASKS.clear()
     for todo in args["todos"]:
         _add_task(todo["content"], active_form=todo["active_form"], status=todo["status"])
