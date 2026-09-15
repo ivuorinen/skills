@@ -483,8 +483,6 @@ def test_skill_md_documents_every_tool_the_server_exposes():
     a tool is added — the same failure that left `_teach-formats` reachable but
     undocumented in `np_read_reference`'s description.
     """
-    import re
-
     mod = _load()
     names = {t["name"] for t in mod.TOOLS}
     skill_md = (Path(__file__).parent.parent / "skills" / "nitpicker" / "SKILL.md").read_text(
