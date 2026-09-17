@@ -40,7 +40,6 @@ WRITE_EDIT_HOOKS = [
 # resting on client behaviour no gate here can see. Naming both is redundant if
 # Edit does cover Write, and load-bearing if it does not.
 EXPECTED_DENY = [
-    "Read(./.claude/agents/**)",
     "Edit(./.claude/agents/**)",
     "Write(./.claude/agents/**)",
     "Edit(./scripts/hooks/**)",
@@ -54,8 +53,9 @@ EXPECTED_DENY = [
 ]
 
 # Every path the deny list exists to protect, and the tools it names for each.
-# The agents tree adds Read because its contents are what must not be seen, not
-# merely what must not change.
+# The agents tree is denied for Edit and Write only: the owner allows reading
+# agent definitions so their language can be audited in-session. Changing them
+# stays owner-only.
 #
 # settings.local.json is merged over the project settings and can set
 # `disableAllHooks`, so one write there turned off every hook
@@ -63,7 +63,7 @@ EXPECTED_DENY = [
 # Bash/Read/Glob guards trust, so rewriting it re-trusts whatever is installed
 # (agent-loopholes-8c3cdf74).
 PROTECTED_PATHS = {
-    "./.claude/agents/**": {"Read", "Edit", "Write"},
+    "./.claude/agents/**": {"Edit", "Write"},
     "./scripts/hooks/**": {"Edit", "Write"},
     "./.claude/settings.json": {"Edit", "Write"},
     "./.claude/settings.local.json": {"Edit", "Write"},
