@@ -41,13 +41,14 @@ Execution order, always:
    `commands/<command>.md` directly.
 3. Execute it with the extra instructions applied.
 
-Four protocols are **not** loaded at step 1. Each binds some commands and not
+These protocols are **not** loaded at step 1. Each binds some commands and not
 others, so each is loaded when its trigger fires — the same
 progressive-disclosure split `references/tools/<tool>.md` uses for scanners, and
 for the same reason: a `triage` run that files nothing and commits nothing
 should not pay for the protocols governing filing and committing.
-`_conventions.md` names each trigger, and the four are named here so every one
-stays reachable one level from this file:
+`_conventions.md` names the trigger for every protocol except `_teach-formats`,
+which binds `teach` alone, and all of them are named here so every one stays
+reachable one level from this file:
 
 | Reference | Loaded when |
 | --- | --- |
@@ -264,7 +265,9 @@ server — Claude Code provides its own only on some models, and Copilot, pi and
 other Agent Skills hosts provide none. Their state is the server process, not
 the audited tree: nothing is written to disk, ids are never reused, the list is
 gone when the server restarts, and the two registered servers hold separate
-lists, so a run keeps to one server's copy. They answer with
+lists, so a run keeps to one server's copy. That copy is shared by every run
+against that server — a concurrent run's entries interleave with yours — so a
+run tracks the ids it created rather than the whole list. They answer with
 `structuredContent` against a published `outputSchema`, with the same JSON in
 the text block for clients that predate it.
 

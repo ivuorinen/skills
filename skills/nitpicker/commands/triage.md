@@ -14,8 +14,8 @@ nothing itself.
 - Before a release gate, to run the relevant subset instead of all of them or
   the catch-all `audit`
 
-Like `arch-profile` and `teach`, this command overrides the **Findings store**
-section of `_conventions.md` in full — no findings are filed, no store is
+Like `teach`, this command overrides the **Findings** section (`## Findings`)
+of `_conventions.md` in full — no findings are filed, no store is
 touched, the deliverable is the run-plan on stdout. Two `_conventions.md` rules
 carry over: run the Process below as a task list (one tracker entry per step),
 and preflight any external tool with `command -v` before invoking it.
