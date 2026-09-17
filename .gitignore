@@ -8,6 +8,11 @@ __pycache__
 .coverage
 *.sarif
 
+# Owner-review patches: an agent writes changes to owner-only paths here as a
+# diff for the owner to read and apply by hand. Never committed — the patch is
+# the delivery mechanism, the commit comes from applying it.
+*.patch
+
 # findings.py's flock file — must stay on disk for locking, never committed
 docs/audit/findings/.lock
 

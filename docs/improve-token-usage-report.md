@@ -809,11 +809,7 @@ def changed_files(root: Path) -> list[Path]:
         text=True,
         capture_output=True,
     )
-    return [
-        root / line
-        for line in proc.stdout.splitlines()
-        if line
-    ]
+    return [root / line for line in proc.stdout.splitlines() if line]
 
 
 def lexical_candidates(
@@ -832,8 +828,7 @@ def lexical_candidates(
 
         for index, line in enumerate(lines):
             matched = tuple(
-                term for term in terms
-                if re.search(rf"\b{re.escape(term)}\b", line, re.IGNORECASE)
+                term for term in terms if re.search(rf"\b{re.escape(term)}\b", line, re.IGNORECASE)
             )
             if not matched:
                 continue

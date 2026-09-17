@@ -78,6 +78,15 @@ class BenchError(Exception):
 # name attached.
 _REQUIRED_KEYS = frozenset({"id", "lens", "class", "severity_floor", "goal", "file", "lines"})
 
+# Optional, and read by bench-recall alone. A pressure case measures the half no
+# gate in this repo tests: whether a lens's consent and coverage gates hold when
+# the invocation tells it to cut corners. `pressure` is the corner-cutting
+# instruction handed to the agent alongside the goal; `must_keep` names what the
+# run must NOT have removed — the deterministic half of "did the gate hold",
+# checked against the audited copy rather than against a transcript. Absent keys
+# mean an ordinary recall case, so the existing corpus is unaffected.
+_OPTIONAL_STRING_KEYS = frozenset({"pressure"})
+
 # Every required key except `lines` is consumed as a string by one of the two
 # scorers, so every one of them is checked as a string. Naming only the keys
 # that happen to crash today would close two of six: `file` raises TypeError at
@@ -129,6 +138,30 @@ def _case_meta(path: Path) -> dict:
             f"{path.parent.name}: expected.json needs a string for "
             f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped)}"
         )
+    # The optional keys are checked on the same terms as the required ones. A
+    # `"pressure": 42` would reach the prompt substitution in bench-recall and a
+    # malformed `must_keep` would reach the grader — both outside the BenchError
+    # contract, and the second silently: an entry that is not a {file, contains}
+    # object cannot be checked, so the gate it encodes would score as held.
+    mistyped_optional = sorted(
+        k for k in _OPTIONAL_STRING_KEYS if k in meta and not isinstance(meta[k], str)
+    )
+    if mistyped_optional:
+        raise BenchError(
+            f"{path.parent.name}: expected.json needs a string for "
+            f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped_optional)}"
+        )
+    keep = meta.get("must_keep", [])
+    if not isinstance(keep, list) or not all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("file"), str)
+        and isinstance(entry.get("contains"), str)
+        for entry in keep
+    ):
+        raise BenchError(
+            f"{path.parent.name}: 'must_keep' must be a list of "
+            "{file, contains} objects, both strings"
+        )
     # Element types too, not just the shape. `["1", "2"]` is a two-element list,
     # so a shape-only check passes it through to `1 <= start`, which raises
     # TypeError — outside the BenchError contract again, one line further down
@@ -145,15 +178,22 @@ def _case_meta(path: Path) -> dict:
     return meta
 
 
-def load_cases(case_id: str = "") -> list[dict]:
+def load_cases(case_id: str = "", root: Path | None = None) -> list[dict]:
     """Every case's expected.json, or the one named.
 
     A case whose expected range does not exist in its own file is an error, not
     a zero: scoring retrieval against lines that are not there would report a
     broken corpus as a broken retriever.
+
+    `root` defaults to the retrieval corpus. `bench-recall.py` passes
+    `benchmarks/pressure` as well, because a pressure case is scored on whether a
+    gate held and is nearly all signal to a packer — folding one into the
+    retrieval mean drags a precision floor pinned where it was measured, and that
+    floor is not to be lowered to make a red build green.
     """
+    root = root or CORPUS
     found = []
-    for path in sorted(CORPUS.glob("*/expected.json")):
+    for path in sorted(root.glob("*/expected.json")):
         meta = _case_meta(path)
         meta["dir"] = path.parent
         target = path.parent / meta["file"]

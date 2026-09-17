@@ -21,7 +21,7 @@ finding open and records its current location in the report; it never files a
 new finding.
 
 `reverify` **uses** the findings store — it drives `np_list_findings` /
-`np_resolve_finding` (else `findings.py list` / `resolve`) and the commit gate
+`np_resolve_finding` (else `python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list` / `resolve`) and the commit gate
 exactly as `_conventions.md` defines. Two parts of that protocol are overridden:
 it files **no new findings** (Run-protocol step 2 does not apply), and it applies
 **no code fixes** (the `Apply fixes?` prompt does not apply — its only mutations
@@ -91,6 +91,8 @@ Evidence, never by the stale line number — and assign exactly one:
    ```bash
    python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" recheck
    ```
+
+   Non-Claude agents resolve the path relative to this skill's directory.
 
    Each row comes back `unchanged`, `changed`, `missing` (the cited file or
    range is gone) or `unfingerprinted` (the finding recorded no location).

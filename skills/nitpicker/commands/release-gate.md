@@ -9,8 +9,9 @@ Release readiness checks, CI gates, "can we ship", "run the release gate".
 ## Behavior
 
 ```text
-1. np_list_findings with status: "open", else python3 findings.py list
-   --status open
+1. np_list_findings with status: "open", else
+   python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list --status open
+   (non-Claude agents resolve the path relative to this skill's directory)
    If docs/audit/findings/baseline.json exists, add exclude_baseline: true
    (CLI: --exclude-baseline) so
    findings accepted by `/nitpicker baseline` are waived (they stay open). If

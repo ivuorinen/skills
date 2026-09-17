@@ -1264,6 +1264,141 @@ def test_ensure_store_gitattributes_skips_when_gitignored(tmp_path):
     assert not (store / ".gitattributes").exists()
 
 
+# ── audit-141e9b71: `--root` is the store directory, not the repository. Three
+#    separate runs passed a repo root, which built a store there and replaced the
+#    repository's own .gitattributes/.gitignore ──────────────────────────────────
+
+
+def test_store_lock_refuses_a_project_root(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    with (
+        pytest.raises(findings.FindingError, match="looks like a project root"),
+        findings.store_lock(tmp_path),
+    ):
+        pass
+    assert not (tmp_path / ".lock").exists()
+
+
+def test_store_lock_allows_an_existing_store_beside_project_markers(tmp_path):
+    # A real store that happens to sit next to a marker is not the mistake.
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "INDEX.md").write_text("# Findings\n", encoding="utf-8")
+    with findings.store_lock(tmp_path):
+        pass
+
+
+def test_store_lock_allows_a_store_that_does_not_exist_yet(tmp_path):
+    # The first finding in a fresh repo: the store dir is absent, not a repo root.
+    (tmp_path / ".git").mkdir()
+    with findings.store_lock(tmp_path / "docs" / "audit" / "findings"):
+        pass
+
+
+def test_ensure_store_gitattributes_never_clobbers_a_foreign_file(tmp_path):
+    (tmp_path / ".git").mkdir()
+    store = tmp_path / "docs" / "audit" / "findings"
+    store.mkdir(parents=True)
+    ga = store / ".gitattributes"
+    ga.write_text("*.py text eol=lf\n", encoding="utf-8")
+    findings.ensure_store_gitattributes(store)
+    assert ga.read_text(encoding="utf-8") == "*.py text eol=lf\n"
+
+
+def test_root_flag_documents_that_it_is_the_store_directory(capsys):
+    with pytest.raises(SystemExit):
+        findings.main(["new", "--help"])
+    assert "store directory" in capsys.readouterr().out
+
+
+# ── overlap notice: several lenses audit one file, and the store was the only
+#    place the overlap showed up — after both findings were already open ───────
+
+
+def _file(store, auditor, area, title="A defect"):
+    return findings.new_finding(
+        root=store,
+        auditor=auditor,
+        severity="medium",
+        category="maintainability",
+        area=area,
+        title=title,
+        body="## Problem\n\nx\n\n## Evidence\n\nx\n\n## Impact\n\nx\n\n## Fix\n\nx\n",
+    )
+
+
+def test_an_open_finding_from_another_auditor_on_the_same_area_is_reported(tmp_path):
+    store = tmp_path / "store"
+    _file(store, "dead-code", "src/handlers.py", "Unreferenced helper")
+    lines = findings.overlapping_open_findings(store, "unwired", "src/handlers.py")
+    assert lines and "dead-code" in "\n".join(lines)
+    assert "Unreferenced helper" in "\n".join(lines)
+
+
+def test_the_filing_auditor_does_not_overlap_itself(tmp_path):
+    store = tmp_path / "store"
+    _file(store, "unwired", "src/handlers.py")
+    assert findings.overlapping_open_findings(store, "unwired", "src/handlers.py") == []
+
+
+def test_a_different_area_is_not_an_overlap(tmp_path):
+    store = tmp_path / "store"
+    _file(store, "dead-code", "src/other.py")
+    assert findings.overlapping_open_findings(store, "unwired", "src/handlers.py") == []
+
+
+def test_the_finding_just_filed_is_excluded(tmp_path):
+    """Passing the path it just wrote, a run must not report itself as an overlap."""
+    store = tmp_path / "store"
+    path = _file(store, "unwired", "src/handlers.py")
+    assert findings.overlapping_open_findings(store, "dead-code", "src/handlers.py", path) == []
+
+
+def test_an_absent_store_reports_nothing_rather_than_raising(tmp_path):
+    """Advisory output must never turn a successful filing into a failure."""
+    assert findings.overlapping_open_findings(tmp_path / "gone", "unwired", "src/x.py") == []
+
+
+def test_an_unreadable_store_reports_nothing_rather_than_raising(tmp_path, monkeypatch):
+    """A race with a concurrent run must not fail the filing that already succeeded."""
+
+    def _boom(_root):
+        raise OSError("vanished mid-scan")
+
+    monkeypatch.setattr(findings, "iter_open", _boom)
+    assert findings.overlapping_open_findings(tmp_path, "unwired", "src/x.py") == []
+
+
+def test_the_cli_prints_the_overlap_notice_on_stderr(tmp_path, capsys):
+    """stderr, not stdout: `new` prints the filed path, and a caller parsing that
+    must not receive an advisory notice in the same stream."""
+    store = tmp_path / "store"
+    body = "## Problem\n\nx\n\n## Evidence\n\nx\n\n## Impact\n\nx\n\n## Fix\n\nx\n"
+    _file(store, "dead-code", "src/handlers.py", "Unreferenced helper")
+    code = findings.main(
+        [
+            "new",
+            "--root",
+            str(store),
+            "--auditor",
+            "unwired",
+            "--severity",
+            "medium",
+            "--category",
+            "maintainability",
+            "--area",
+            "src/handlers.py",
+            "--body",
+            body,
+            "Handler never registered",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "already has" in captured.err and "dead-code" in captured.err
+    assert "already has" not in captured.out
+
+
 # ── ledger durability: resolve deletes the open file on the strength of the
 #    ledger write, so every way that write can silently not-happen is a test ───
 

@@ -164,9 +164,7 @@ def plugin_root() -> Path:
 
 
 def _skill_files(root: Path) -> list[Path]:
-    return sorted(root.glob("skills/*/SKILL.md")) + sorted(
-        root.glob(".claude/skills/*/SKILL.md")
-    )
+    return sorted(root.glob("skills/*/SKILL.md")) + sorted(root.glob(".claude/skills/*/SKILL.md"))
 
 
 def _nitpicker_dir(root: Path) -> Path:
@@ -348,8 +346,12 @@ def test_unknown_tool_is_error_result():
     mod = _load()
     (resp,) = _rpc(
         mod,
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "nope", "arguments": {}}},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "nope", "arguments": {}},
+        },
     )
     assert resp["result"]["isError"] is True
 
@@ -440,11 +442,7 @@ def _handle(method: str, params: dict):
             "serverInfo": SERVER_INFO,
         }
     if method == "tools/list":
-        return {
-            "tools": [
-                {k: t[k] for k in ("name", "description", "inputSchema")} for t in TOOLS
-            ]
-        }
+        return {"tools": [{k: t[k] for k in ("name", "description", "inputSchema")} for t in TOOLS]}
     if method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
@@ -527,8 +525,12 @@ Append to `tests/test_mcp_server.py`:
 def _call(mod, name, arguments):
     (resp,) = _rpc(
         mod,
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-         "params": {"name": name, "arguments": arguments}},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
     )
     return resp["result"]
 
@@ -551,9 +553,12 @@ def test_read_command_tool_and_traversal():
 
 def test_list_commands_tool_registered():
     mod = _load()
-    names = {t["name"] for t in _rpc(
-        mod, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-    )[0]["result"]["tools"]}
+    names = {
+        t["name"]
+        for t in _rpc(mod, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})[0][
+            "result"
+        ]["tools"]
+    }
     assert {"list_skills", "read_skill", "read_command", "list_commands"} <= names
 ```
 
@@ -656,8 +661,13 @@ def _seed(tmp_path):
     f = _load_findings()
     store = tmp_path / "docs" / "audit" / "findings"
     f.new_finding(
-        store, auditor="review", severity="high", category="correctness",
-        area="src/a.py", title="Boom", body="## Problem\nx\n## Evidence\ny\n## Impact\nz\n## Fix\nw\n",
+        store,
+        auditor="review",
+        severity="high",
+        category="correctness",
+        area="src/a.py",
+        title="Boom",
+        body="## Problem\nx\n## Evidence\ny\n## Impact\nz\n## Fix\nw\n",
     )
     return store
 
@@ -834,11 +844,19 @@ def test_mutate_round_trip_and_stdout_clean(tmp_path):
     mod = _load()
     # new_finding
     created = _call(
-        mod, "new_finding",
+        mod,
+        "new_finding",
         {
-            "project_dir": str(tmp_path), "auditor": "review", "severity": "high",
-            "category": "correctness", "area": "src/x.py", "title": "Kaboom",
-            "problem": "p", "evidence": "e", "impact": "i", "fix": "f",
+            "project_dir": str(tmp_path),
+            "auditor": "review",
+            "severity": "high",
+            "category": "correctness",
+            "area": "src/x.py",
+            "title": "Kaboom",
+            "problem": "p",
+            "evidence": "e",
+            "impact": "i",
+            "fix": "f",
         },
     )
     fid = json.loads(created["content"][0]["text"])["id"]
@@ -851,7 +869,8 @@ def test_mutate_round_trip_and_stdout_clean(tmp_path):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         resolved = _call(
-            mod, "resolve_finding",
+            mod,
+            "resolve_finding",
             {"project_dir": str(tmp_path), "id": fid, "status": "fixed", "note": "done"},
         )
     assert buf.getvalue() == ""

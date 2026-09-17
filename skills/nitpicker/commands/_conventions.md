@@ -47,8 +47,11 @@ Severity reflects actual risk, never preference.
   only with `np_task_create` and `np_task_update` — `np_todo_write` replaces the
   whole list, and `TodoWrite` must resend every entry on each call. Before
   reporting, read the list back (`np_task_list`, else the tracker's own list),
-  confirm no entry is `pending` or `in_progress`, and cite that count in the run
-  summary. **Where the session exposes no task tracker, print the numbered
+  confirm no entry **this run created** is `pending` or `in_progress`, and cite
+  that count in the run summary. Record the ids returned when seeding and read
+  back exactly those: the tracker's list belongs to the server process, not to
+  the run, so a concurrent run's entries interleave with yours — an unscoped
+  readback either blocks on work that is not this run's or passes on it. **Where the session exposes no task tracker, print the numbered
   steps with a one-line outcome each in the response instead, before
   reporting.** A tracker is the preferred form, never the condition: naming a
   tool as the only way to satisfy a rule means the rule disappears in a session
@@ -57,7 +60,12 @@ Severity reflects actual risk, never preference.
   approval. An entry carries the step's id and title, never a restatement of
   what the step says — the definition is already loaded, and copying it in pays
   for it twice. `_audit-coverage.md` is this rule's cross-command form, and its
-  lens ids exist for exactly that reason.
+  lens ids exist for exactly that reason. A command that files findings also
+  seeds the Run protocol (§ Findings) as entries of its own — steps 0–1 before
+  its Process, steps 3–6 after it — unless its body overrides § Findings; a step
+  its Process already names is not seeded twice. Unseeded, re-validation and the
+  fix and commit prompts sit outside the tracked list, and the readback passes
+  with them never run.
 - **Standalone or in the default flow.** Every command runs either standalone
   or as part of the default `audit` flow; a command file states scope only
   where it differs from this.

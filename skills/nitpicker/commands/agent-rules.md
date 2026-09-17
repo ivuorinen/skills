@@ -51,7 +51,7 @@ If no artifacts exist at all, run `/nitpicker arch-profile` first — it is the 
    - If no rules directory exists, or every one found is empty, record this as a finding and continue.
    - Collect every available artifact from the Prerequisite Artifacts table
      (`np_list_findings` with `auditor: <name>`, else
-     `findings.py list --auditor <name>`, for store-backed artifacts).
+     `python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list --auditor <name>`, for store-backed artifacts).
    - Claude Code only: read `.claude/settings.json`, `.claude/settings.local.json`
      and `~/.claude/settings.json` for `claudeMdExcludes` patterns. Any rule file
      whose absolute path matches an exclusion glob is flagged Advisory: "Rule
@@ -134,7 +134,8 @@ Either way the output is JSON. Checks: kebab-case filenames, non-empty bodies, v
 
 A second tool covers what no per-file check can see — the always-loaded **set**:
 `np_check_agent_instructions`, no arguments. Without the nitpicker MCP tools, the
-same code runs through the bundled CLI:
+same code runs through the bundled CLI (non-Claude agents resolve the path
+relative to the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-agent-instructions.py" [<project_root>]
@@ -145,7 +146,8 @@ It reads every instruction file the detected harnesses load — both roles in th
 Both tools count directives, and neither measures size. Ten terse directives
 rewritten as ten long paragraphs score identically and cost several times as
 much, so prose bloat in the always-loaded set is invisible to both. A third,
-CLI-only tool measures that half:
+CLI-only tool measures that half (non-Claude agents resolve the path relative to
+the nitpicker skill directory):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/check-context-tokens.py" [<project_root>] \
