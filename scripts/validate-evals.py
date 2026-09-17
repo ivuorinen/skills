@@ -254,12 +254,27 @@ def validate_skill_evals(skill_dir: Path, errors: list[str]) -> bool:
     return checked
 
 
-def _target_dirs(args: list[str]) -> list[Path]:
-    """Skill directories to check: the supplied paths, else every skills/*/evals."""
+def _target_dirs(args: list[str], repo_root: Path | None = None) -> list[Path]:
+    """Skill directories to check: the supplied paths, else every skill with evals.
+
+    Both trees are swept. The internal dev skills under `.claude/skills/` were
+    outside the glob, so an eval set there was never validated — a malformed one
+    would sit unnoticed rather than failing the gate, which is the rot this
+    validator exists to prevent. Skills with no eval set are still fine: the
+    files are optional, and only a *supplied* path that yields nothing fails.
+    """
     if args:
         return [Path(a) for a in args]
-    repo_root = Path(__file__).parent.parent
-    return sorted(p.parent for p in repo_root.glob("skills/*/evals"))
+    # Injectable so the sweep itself is testable: with the root hardcoded, a test
+    # could only assert against this repo's own layout, where the one internal
+    # skill with evals is a symlink to the public tree and collapses into it —
+    # the sweep would look correct while covering nothing new.
+    repo_root = repo_root or Path(__file__).parent.parent
+    globs = ("skills/*/evals", ".claude/skills/*/evals")
+    found = {p.parent.resolve(): p.parent for g in globs for p in repo_root.glob(g)}
+    # .claude/skills/nitpicker is a symlink to skills/nitpicker: resolve() keys the
+    # dict so the same skill is not validated twice under two names.
+    return sorted(found.values())
 
 
 def _report_missing(missing: list[Path]) -> None:
