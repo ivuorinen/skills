@@ -436,6 +436,78 @@ class TestCommandValidation:
         validate(skill_dir / "SKILL.md", errors, [])
         assert _has(errors, "appears in more than one Commands-table row")
 
+    # Pattern rules moved out of the skill-consistency-enforcer agent, which
+    # answered them differently run to run on identical files (agent-rules-a40d97d1).
+
+    def test_bare_findings_cli_call_rejected(self, tmp_path):
+        bad = _cmd("alpha") + "\nRun `findings.py list --status open`.\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "line 9: bare `findings.py` call")
+
+    def test_bare_findings_cli_call_inside_a_fence_rejected(self, tmp_path):
+        # A fenced Procedure step is still an instruction the agent runs.
+        bad = _cmd("alpha") + "\n```text\n1. python3 findings.py baseline\n```\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "bare `findings.py` call")
+
+    def test_findings_cli_with_a_path_or_named_without_a_subcommand_passes(self, tmp_path):
+        ok = _cmd("alpha") + (
+            '\nRun `python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list`.\n'
+            "\n`scripts/findings.py baseline` refuses to overwrite.\n"
+            "\nNeither `findings.py` nor the MCP tools touch the store.\n"
+        )
+        errors = _run_commands(tmp_path, {"alpha.md": ok, "beta.md": _cmd("beta")})
+        assert not _has(errors, "bare `findings.py`")
+
+    def test_severity_row_outside_the_shared_levels_rejected(self, tmp_path):
+        bad = _cmd("alpha") + (
+            "\n## Severity guide\n\n| Severity | Condition |\n| --- | --- |\n"
+            "| Critical | core flow blocked |\n| Blocker | login page |\n"
+        )
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "severity table row 'Blocker'")
+        assert not _has(errors, "severity table row 'Critical'")
+
+    def test_skill_dir_call_without_a_non_claude_note_rejected(self, tmp_path):
+        bad = (
+            _cmd("alpha")
+            + '\n```bash\npython3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" recheck\n```\n'
+        )
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "no note for non-Claude agents")
+
+    def test_skill_dir_call_with_a_note_passes(self, tmp_path):
+        ok = _cmd("alpha") + (
+            '\n```bash\npython3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" recheck\n```\n'
+            "\n(non-Claude agents resolve the path relative to this skill's directory)\n"
+        )
+        errors = _run_commands(tmp_path, {"alpha.md": ok, "beta.md": _cmd("beta")})
+        assert not _has(errors, "no note for non-Claude agents")
+
+    def test_rows_of_other_tables_are_not_severity_checked(self, tmp_path):
+        ok = _cmd("alpha") + "\n| Class | Hunt |\n| --- | --- |\n| Blocker | not a severity |\n"
+        errors = _run_commands(tmp_path, {"alpha.md": ok, "beta.md": _cmd("beta")})
+        assert not _has(errors, "severity table row")
+
+    def test_override_naming_a_missing_conventions_heading_rejected(self, tmp_path):
+        conventions = "# Shared\n\n## Findings\n\nRules.\n"
+        bad = (
+            _cmd("alpha")
+            + "\nThe entire `_conventions.md` **Findings store** section is overridden.\n"
+        )
+        # Title before the file name, split across lines — the triage.md shape.
+        ok = _cmd("beta") + (
+            "\nLike `teach`, this overrides the **Findings** section\n"
+            "of `_conventions.md` in full.\n"
+        )
+        errors = _run_commands(
+            tmp_path,
+            {"alpha.md": bad, "beta.md": ok, "_conventions.md": conventions},
+            skill_md=COMMANDS_SKILL + "\nEvery command is bound by `_conventions.md`.\n",
+        )
+        assert _has(errors, "has no '## Findings store' heading")
+        assert not any("beta.md" in e for e in errors)
+
     def test_commands_table_without_a_commands_directory(self, tmp_path):
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
