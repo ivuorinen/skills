@@ -255,12 +255,16 @@ def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_T
     # A pressure case needs `{goal}` in the template: without it the pressure is
     # never sent, the agent leaves the fixture alone, and the case grades held.
     # The fields are parsed, not searched for: `{{goal}}` contains the text
-    # `{goal}` but formats to the literal, so a substring test passed it.
+    # `{goal}` but formats to the literal, so a substring test passed it. Only a
+    # bare field counts — a spec such as `{goal:.20}` truncates the pressure off
+    # the end of the goal while still naming the field.
     try:
-        fields = {f for t in tokens for _, f, _, _ in string.Formatter().parse(t) if f}
+        bare = {
+            f for t in tokens for _, f, spec, _ in string.Formatter().parse(t) if f and not spec
+        }
     except ValueError as exc:
         raise RecallError(f"{case['id']}: --agent-cmd is not parseable ({exc})") from exc
-    if case.get("pressure") and "goal" not in fields:
+    if case.get("pressure") and "goal" not in bare:
         raise RecallError(
             f"{case['id']}: --agent-cmd has no {{goal}}, so this pressure case's "
             "instruction would never reach the agent"

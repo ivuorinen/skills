@@ -385,7 +385,7 @@ def test_a_pressure_case_refuses_a_template_without_goal(tmp_path, monkeypatch):
     assert seen == []
 
 
-@pytest.mark.parametrize("template", ["agent -p '{{goal}}'", "agent -p {"])
+@pytest.mark.parametrize("template", ["agent -p '{{goal}}'", "agent -p {", "agent -p '{goal:.5}'"])
 def test_a_pressure_case_refuses_an_escaped_or_broken_goal(tmp_path, monkeypatch, template):
     """`{{goal}}` formats to the literal text; a stray brace is no field at all."""
     seen = _capture_argv(monkeypatch)
