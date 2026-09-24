@@ -619,13 +619,27 @@ def _bare_findings_cli_errors(text: str) -> list[str]:
     """One message per line calling `findings.py <subcommand>` without a path.
 
     Fenced blocks are scanned too: a Procedure step in a ```text fence is still an
-    instruction the agent runs.
+    instruction the agent runs. A trailing `\\` joins the next line first, so
+    `python3 findings.py \\` followed by `list` is one command, reported at the
+    line it starts on.
     """
+    commands: list[tuple[int, str]] = []
+    pending, start = "", 0
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not pending:
+            start = lineno
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        commands.append((start, pending + line))
+        pending = ""
+    if pending:
+        commands.append((start, pending))
     return [
         f"line {lineno}: bare `findings.py` call does not resolve outside the skill "
         'directory — use python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py"'
-        for lineno, line in enumerate(text.splitlines(), 1)
-        if _BARE_FINDINGS_CLI.search(line)
+        for lineno, command in commands
+        if _BARE_FINDINGS_CLI.search(command)
     ]
 
 

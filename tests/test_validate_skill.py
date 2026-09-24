@@ -450,6 +450,18 @@ class TestCommandValidation:
         errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
         assert _has(errors, "bare `findings.py` call")
 
+    def test_bare_findings_cli_call_continued_onto_the_next_line_rejected(self, tmp_path):
+        # A trailing `\` makes the subcommand's line part of the same command.
+        bad = _cmd("alpha") + "\n```bash\npython3 findings.py \\\n  list --status open\n```\n"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "line 10: bare `findings.py` call")
+
+    def test_a_continuation_left_open_at_end_of_file_is_still_scanned(self, tmp_path):
+        # The last line ends in `\`, so no following line ever closes the command.
+        bad = _cmd("alpha") + "\npython3 findings.py list \\"
+        errors = _run_commands(tmp_path, {"alpha.md": bad, "beta.md": _cmd("beta")})
+        assert _has(errors, "line 9: bare `findings.py` call")
+
     def test_findings_cli_with_a_path_or_named_without_a_subcommand_passes(self, tmp_path):
         ok = _cmd("alpha") + (
             '\nRun `python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list`.\n'
