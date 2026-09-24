@@ -101,6 +101,46 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] <= b[1] and b[0] <= a[1]
 
 
+def _pressure_keys(path: Path, meta: dict) -> list[dict]:
+    """Check a pressure case's optional keys; return its `must_keep` entries.
+
+    The optional keys are checked on the same terms as the required ones. A
+    `"pressure": 42` would reach the prompt substitution in bench-recall and a
+    malformed `must_keep` would reach the grader — both outside the BenchError
+    contract, and the second silently: an entry that is not a {file, contains}
+    object cannot be checked, so the gate it encodes would score as held.
+    Split out of `_case_meta` only to keep each function under the complexity
+    limit; the path containment of each `file` stays there, beside `file`'s own.
+    """
+    mistyped_optional = sorted(
+        k for k in _OPTIONAL_STRING_KEYS if k in meta and not isinstance(meta[k], str)
+    )
+    if mistyped_optional:
+        raise BenchError(
+            f"{path.parent.name}: expected.json needs a string for "
+            f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped_optional)}"
+        )
+    # Present means meant: `"pressure": ""` is falsy, so bench-recall skipped both
+    # the pressure and its `{goal}` check and graded an untested gate as held.
+    if "pressure" in meta and not meta["pressure"].strip():
+        raise BenchError(f"{path.parent.name}: expected.json 'pressure' must not be blank")
+    keep = meta.get("must_keep", [])
+    if not isinstance(keep, list) or not all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("file"), str)
+        and isinstance(entry.get("contains"), str)
+        # Blank never fails: `"" in text` holds for every file, and whitespace
+        # survives the removal it is meant to detect — a held gate by default.
+        and entry["contains"].strip()
+        for entry in keep
+    ):
+        raise BenchError(
+            f"{path.parent.name}: 'must_keep' must be a list of "
+            "{file, contains} objects, both strings, contains not blank"
+        )
+    return keep
+
+
 def _case_meta(path: Path) -> dict:
     """One case's `expected.json`, decoded and shape-checked.
 
@@ -138,30 +178,7 @@ def _case_meta(path: Path) -> dict:
             f"{path.parent.name}: expected.json needs a string for "
             f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped)}"
         )
-    # The optional keys are checked on the same terms as the required ones. A
-    # `"pressure": 42` would reach the prompt substitution in bench-recall and a
-    # malformed `must_keep` would reach the grader — both outside the BenchError
-    # contract, and the second silently: an entry that is not a {file, contains}
-    # object cannot be checked, so the gate it encodes would score as held.
-    mistyped_optional = sorted(
-        k for k in _OPTIONAL_STRING_KEYS if k in meta and not isinstance(meta[k], str)
-    )
-    if mistyped_optional:
-        raise BenchError(
-            f"{path.parent.name}: expected.json needs a string for "
-            f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped_optional)}"
-        )
-    keep = meta.get("must_keep", [])
-    if not isinstance(keep, list) or not all(
-        isinstance(entry, dict)
-        and isinstance(entry.get("file"), str)
-        and isinstance(entry.get("contains"), str)
-        for entry in keep
-    ):
-        raise BenchError(
-            f"{path.parent.name}: 'must_keep' must be a list of "
-            "{file, contains} objects, both strings"
-        )
+    keep = _pressure_keys(path, meta)
     # Inside the case tree, or the case measures something else. An absolute
     # path makes `dir / file` discard `dir`, and `..` climbs out of it, so the
     # scorer reads unrelated local content and the grader can mark a pressure

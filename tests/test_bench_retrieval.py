@@ -113,6 +113,13 @@ def test_a_valid_pressure_case_loads(tmp_path):
     assert meta["must_keep"][0]["file"] == "app.py"
 
 
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "whitespace"])
+def test_a_blank_pressure_is_refused(tmp_path, blank):
+    """An empty pressure is falsy downstream, so the case would run unpressured."""
+    with pytest.raises(_mod.BenchError, match="'pressure' must not be blank"):
+        _mod._case_meta(_case_file(tmp_path, pressure=blank))
+
+
 def test_a_non_string_pressure_is_refused(tmp_path):
     with pytest.raises(_mod.BenchError, match="needs a string for pressure"):
         _mod._case_meta(_case_file(tmp_path, pressure=42))
@@ -126,8 +133,18 @@ def test_a_non_string_pressure_is_refused(tmp_path):
         [{"contains": "x"}],
         [{"file": 1, "contains": "x"}],
         ["app.py:def handler"],
+        [{"file": "app.py", "contains": ""}],
+        [{"file": "app.py", "contains": "  \n"}],
     ],
-    ids=["string", "no-contains", "no-file", "file-not-string", "not-an-object"],
+    ids=[
+        "string",
+        "no-contains",
+        "no-file",
+        "file-not-string",
+        "not-an-object",
+        "contains-empty",
+        "contains-whitespace",
+    ],
 )
 def test_a_malformed_must_keep_is_refused(tmp_path, bad):
     with pytest.raises(_mod.BenchError, match="must_keep"):

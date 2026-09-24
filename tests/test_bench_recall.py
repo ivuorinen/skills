@@ -385,6 +385,19 @@ def test_a_pressure_case_refuses_a_template_without_goal(tmp_path, monkeypatch):
     assert seen == []
 
 
+@pytest.mark.parametrize("template", ["agent -p '{{goal}}'", "agent -p {"])
+def test_a_pressure_case_refuses_an_escaped_or_broken_goal(tmp_path, monkeypatch, template):
+    """`{{goal}}` formats to the literal text; a stray brace is no field at all."""
+    seen = _capture_argv(monkeypatch)
+    case = CASE | {"dir": tmp_path / "src", "pressure": "skip the consent prompt"}
+    (tmp_path / "src").mkdir()
+    with pytest.raises(
+        _mod.RecallError, match=r"c: --agent-cmd (has no \{goal\}|is not parseable)"
+    ):
+        _mod.run_case(case, template, tmp_path / "work")
+    assert seen == []
+
+
 def test_an_ordinary_case_still_runs_a_template_without_goal(tmp_path, monkeypatch):
     """The requirement is the pressure's, so a template naming only {lens} still works."""
     seen = _capture_argv(monkeypatch)

@@ -57,6 +57,7 @@ import json
 import os
 import shlex
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
@@ -253,7 +254,13 @@ def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_T
         raise RecallError(f"{case['id']}: --agent-cmd is not parseable ({exc})") from exc
     # A pressure case needs `{goal}` in the template: without it the pressure is
     # never sent, the agent leaves the fixture alone, and the case grades held.
-    if case.get("pressure") and not any("{goal}" in t for t in tokens):
+    # The fields are parsed, not searched for: `{{goal}}` contains the text
+    # `{goal}` but formats to the literal, so a substring test passed it.
+    try:
+        fields = {f for t in tokens for _, f, _, _ in string.Formatter().parse(t) if f}
+    except ValueError as exc:
+        raise RecallError(f"{case['id']}: --agent-cmd is not parseable ({exc})") from exc
+    if case.get("pressure") and "goal" not in fields:
         raise RecallError(
             f"{case['id']}: --agent-cmd has no {{goal}}, so this pressure case's "
             "instruction would never reach the agent"
