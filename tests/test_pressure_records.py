@@ -41,9 +41,18 @@ def _command_stems() -> set[str]:
     return {p.stem for p in _COMMANDS.glob("*.md") if not p.name.startswith("_")}
 
 
-def test_every_command_is_recorded_or_grandfathered(registry):
+def _uncovered(registry: dict, stems: set[str]) -> list[str]:
+    """Commands with neither a record nor a grandfather entry — what the gate rejects.
+
+    A function of its inputs so the control below runs the gate's own arithmetic;
+    a control that repeats the set subtraction inline passes whatever the gate does.
+    """
     covered = set(registry["grandfathered"]) | {r["command"] for r in registry["records"]}
-    missing = sorted(_command_stems() - covered)
+    return sorted(stems - covered)
+
+
+def test_every_command_is_recorded_or_grandfathered(registry):
+    missing = _uncovered(registry, _command_stems())
     assert not missing, (
         f"no pressure record for {', '.join(missing)} — run /skill-tester against the "
         "command and add a record, or add the name to 'grandfathered' so the omission "
@@ -56,6 +65,16 @@ def test_the_registry_names_no_command_that_does_not_exist(registry):
     named = set(registry["grandfathered"]) | {r["command"] for r in registry["records"]}
     stale = sorted(named - _command_stems())
     assert not stale, f"pressure-records.json names commands that do not exist: {stale}"
+
+
+def test_no_command_is_listed_twice(registry):
+    """Every check here reads the lists as sets, where a second entry vanishes unseen."""
+    for key, names in (
+        ("records", [r["command"] for r in registry["records"]]),
+        ("grandfathered", registry["grandfathered"]),
+    ):
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        assert not dupes, f"pressure-records.json lists {dupes} twice under {key!r}"
 
 
 def test_a_command_is_not_both_recorded_and_grandfathered(registry):
@@ -74,6 +93,5 @@ def test_every_record_carries_every_field(registry):
 
 def test_the_gate_can_fail():
     """Control: the coverage check must reject an unrecorded command, not just pass."""
-    covered = {"alpha"}
-    stems = {"alpha", "beta"}
-    assert sorted(stems - covered) == ["beta"]
+    registry = {"grandfathered": ["gamma"], "records": [{"command": "alpha"}]}
+    assert _uncovered(registry, {"alpha", "beta", "gamma"}) == ["beta"]

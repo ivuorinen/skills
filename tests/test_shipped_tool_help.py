@@ -19,13 +19,26 @@ import pytest
 _SHIPPED = sorted((Path(__file__).parent.parent / "skills").glob("*/scripts/*.py"))
 
 
+def _usable_help(value: ast.expr) -> bool:
+    """False for a help= that still leaves the flag unexplained in --help.
+
+    `None` and a blank string print nothing, and `argparse.SUPPRESS` drops the
+    flag from the listing altogether, so each passed a keyword-presence check
+    while hiding the flag exactly as a missing help= does. Any other expression
+    (a variable, an f-string) is accepted: its value is not knowable statically.
+    """
+    if isinstance(value, ast.Constant):
+        return isinstance(value.value, str) and bool(value.value.strip())
+    return getattr(value, "attr", getattr(value, "id", "")) != "SUPPRESS"
+
+
 def _undocumented(path: Path) -> list[str]:
-    """`<flag>:<line>` for every add_argument call in `path` with no help=."""
+    """`<flag>:<line>` for every add_argument call in `path` with no usable help=."""
     missing: list[str] = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"):
             continue
-        if any(keyword.arg == "help" for keyword in node.keywords):
+        if any(keyword.arg == "help" and _usable_help(keyword.value) for keyword in node.keywords):
             continue
         first = node.args[0] if node.args else None
         name = first.value if isinstance(first, ast.Constant) else "<computed>"
@@ -54,6 +67,37 @@ def test_the_probe_catches_a_missing_help(tmp_path):
         encoding="utf-8",
     )
     assert _undocumented(sample) == ["--bare:4"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["None", "''", "'   '", "argparse.SUPPRESS", "SUPPRESS"],
+    ids=["none", "empty", "blank", "suppress", "suppress-imported"],
+)
+def test_the_probe_catches_an_unusable_help(tmp_path, value):
+    """Each of these hides the flag from --help as surely as a missing help=."""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import argparse\n"
+        "from argparse import SUPPRESS\n"
+        "p = argparse.ArgumentParser()\n"
+        f"p.add_argument('--hidden', help={value})\n",
+        encoding="utf-8",
+    )
+    assert _undocumented(sample) == ["--hidden:4"]
+
+
+def test_the_probe_accepts_a_computed_help(tmp_path):
+    """A help= built at runtime cannot be judged statically, so it is not flagged."""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import argparse\n"
+        "TEXT = 'x'\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--computed', help=TEXT)\n",
+        encoding="utf-8",
+    )
+    assert _undocumented(sample) == []
 
 
 def test_the_sweep_actually_found_tools():
