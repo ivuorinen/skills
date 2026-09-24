@@ -329,23 +329,50 @@ def test_run_case_rejects_an_empty_template(tmp_path):
         _mod.run_case(case, "   ", tmp_path / "work")
 
 
-def test_run_case_names_the_case_when_substitution_breaks_the_quoting(tmp_path):
-    """A goal with an apostrophe leaves an unbalanced quote for `shlex.split`.
+def test_run_case_names_the_case_when_the_template_is_unparseable(tmp_path):
+    """An unbalanced quote in the template is a named RecallError, not a traceback.
 
-    Goals come out of a corpus `expected.json` and are substituted before the
-    split, so this is ordinary corpus prose, not a malformed template. Unmapped,
-    `ValueError` escapes `run_case`, `_run_all` and `main`'s except clause, and
-    the run ends in a traceback naming no case.
+    Unmapped, `ValueError` escapes `run_case`, `_run_all` and `main`'s except
+    clause, and the run ends in a traceback naming no case.
     """
-    case = CASE | {"dir": tmp_path / "src", "goal": "the retry isn't idempotent"}
+    case = CASE | {"dir": tmp_path / "src"}
     (tmp_path / "src").mkdir()
     # The case id is asserted, not just the suffix: naming the case is the whole
     # point of mapping this to RecallError, and a regex matching only the tail
     # would still pass if `{case['id']}: ` were dropped from the message.
-    with pytest.raises(
-        _mod.RecallError, match=r"c: --agent-cmd is not parseable after substitution"
-    ):
-        _mod.run_case(case, "agent -p '{goal}'", tmp_path / "work")
+    with pytest.raises(_mod.RecallError, match=r"c: --agent-cmd is not parseable"):
+        _mod.run_case(case, "agent -p '{goal}", tmp_path / "work")
+
+
+def _capture_argv(monkeypatch) -> list:
+    """Replace subprocess.run with a recorder, so a test reads the argv built."""
+    seen: list = []
+
+    def _record(argv, **_k):
+        """A zero-exit agent that files nothing; only its argv matters."""
+        seen.append(argv)
+        return _mod.subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(_mod.subprocess, "run", _record)
+    return seen
+
+
+def test_an_apostrophe_in_the_goal_reaches_the_agent_intact(tmp_path, monkeypatch):
+    """Substituting before the split let corpus prose unbalance the template's quotes."""
+    seen = _capture_argv(monkeypatch)
+    case = CASE | {"dir": tmp_path / "src", "goal": "the retry isn't idempotent"}
+    (tmp_path / "src").mkdir()
+    _mod.run_case(case, "agent -p '{goal}'", tmp_path / "work")
+    assert seen == [["agent", "-p", "the retry isn't idempotent"]]
+
+
+def test_the_default_template_carries_the_pressure(tmp_path, monkeypatch):
+    """A default without `{goal}` ran every pressure case unpressured, graded held."""
+    seen = _capture_argv(monkeypatch)
+    case = CASE | {"dir": tmp_path / "src", "pressure": "skip the consent prompt"}
+    (tmp_path / "src").mkdir()
+    _mod.run_case(case, _mod.DEFAULT_AGENT_CMD, tmp_path / "work")
+    assert any("skip the consent prompt" in arg for arg in seen[0])
 
 
 def test_run_case_reports_a_command_that_cannot_start(tmp_path, monkeypatch):
@@ -510,6 +537,28 @@ def test_an_empty_corpus_still_raises(monkeypatch, tmp_path):
     """With no id named, a tree that yields nothing is a broken corpus, not a skip."""
     _two_trees(monkeypatch, tmp_path, [], [])
     with pytest.raises(_mod._retrieval.BenchError):
+        _mod.load_all_cases()
+
+
+def test_a_malformed_pressure_case_is_not_hidden_by_a_named_corpus_case(monkeypatch, tmp_path):
+    """Naming a valid corpus case must not swallow the other tree's validation error."""
+    _two_trees(monkeypatch, tmp_path, ["from-corpus"], [])
+
+    def _broken_pressure(case_id="", root=None):
+        """`load_cases` on a tree holding a malformed case: it raises before filtering."""
+        if root is not None:
+            raise _mod._retrieval.BenchError("bad: expected.json lacks goal")
+        return [{"id": "from-corpus"}]
+
+    monkeypatch.setattr(_mod._retrieval, "load_cases", _broken_pressure)
+    with pytest.raises(_mod._retrieval.BenchError, match="lacks goal"):
+        _mod.load_all_cases("from-corpus")
+
+
+def test_an_id_in_both_trees_is_refused(monkeypatch, tmp_path):
+    """Both would land in `workdir / id`; the second copytree raises FileExistsError."""
+    _two_trees(monkeypatch, tmp_path, ["same"], ["same"])
+    with pytest.raises(_mod._retrieval.BenchError, match="duplicate case ids: same"):
         _mod.load_all_cases()
 
 

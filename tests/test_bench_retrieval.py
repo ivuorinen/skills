@@ -134,6 +134,29 @@ def test_a_malformed_must_keep_is_refused(tmp_path, bad):
         _mod._case_meta(_case_file(tmp_path, must_keep=bad))
 
 
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"must_keep": [{"file": "/etc/hostname", "contains": "x"}]},
+        {"must_keep": [{"file": "../elsewhere.py", "contains": "x"}]},
+        {"file": "/etc/hostname"},
+        {"file": "sub/../../elsewhere.py"},
+    ],
+    ids=["keep-absolute", "keep-parent", "file-absolute", "file-parent"],
+)
+def test_a_file_outside_the_case_tree_is_refused(tmp_path, over):
+    """An absolute join discards the case dir; `..` climbs out of it."""
+    with pytest.raises(_mod.BenchError, match="outside the case tree"):
+        _mod._case_meta(_case_file(tmp_path, **over))
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "../x", "/tmp/x", "a/b"])
+def test_an_id_that_is_not_a_plain_name_is_refused(tmp_path, bad):
+    """bench-recall joins `id` onto its workdir; a path there copies outside it."""
+    with pytest.raises(_mod.BenchError, match="plain name"):
+        _mod._case_meta(_case_file(tmp_path, id=bad))
+
+
 # ── corpus integrity ─────────────────────────────────────────────────────────
 
 

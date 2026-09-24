@@ -81,7 +81,10 @@ _spec.loader.exec_module(_retrieval)  # pyright: ignore[reportOptionalMemberAcce
 # nothing else is, so a template cannot reach values this tool did not choose.
 # Overridable because the harness must not hard-code one vendor's CLI — the
 # thing being measured is the lens, not the runner.
-DEFAULT_AGENT_CMD = "claude -p '/nitpicker {lens}' --permission-mode acceptEdits"
+#
+# `{goal}` is in the default because the pressure instruction rides in it: a
+# default without it ran every pressure case unpressured and graded it held.
+DEFAULT_AGENT_CMD = "claude -p '/nitpicker {lens} {goal}' --permission-mode acceptEdits"
 
 # Seconds per agent invocation when BENCH_RECALL_TIMEOUT is unset.
 DEFAULT_TIMEOUT = 900
@@ -234,24 +237,21 @@ def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_T
     goal = case["goal"]
     if case.get("pressure"):
         goal = f"{goal}. {case['pressure']}"
-    command = agent_cmd.format(lens=case["lens"], goal=goal, dir=str(target))
     # `shlex.split`, never `shell=True`. The template is operator-supplied and a
     # shell would make every substituted value — a lens name, a goal sentence
     # out of expected.json — something that can escape into it. Splitting honours
     # the quoting an agent CLI actually needs (`-p '/nitpicker security'`) and
     # leaves nothing to escape into. A template that genuinely needs a pipeline
     # belongs in a script the template then names.
+    #
+    # Split first, substitute into each token after: substituting before the
+    # split let an apostrophe in a goal ("the retry isn't idempotent") unbalance
+    # the template's own quoting, so a goal could not be passed at all.
     try:
-        argv = shlex.split(command)
+        tokens = shlex.split(agent_cmd)
     except ValueError as exc:
-        # `goal` comes out of a corpus `expected.json` and is substituted into
-        # the template before the split, so an apostrophe in a goal sentence
-        # ("the retry isn't idempotent") leaves an unbalanced quote and
-        # `shlex.split` refuses the whole string. Unmapped, that ends the run in
-        # a traceback where every other failure in this module names its case.
-        raise RecallError(
-            f"{case['id']}: --agent-cmd is not parseable after substitution ({exc})"
-        ) from exc
+        raise RecallError(f"{case['id']}: --agent-cmd is not parseable ({exc})") from exc
+    argv = [t.format(lens=case["lens"], goal=goal, dir=str(target)) for t in tokens]
     if not argv:
         raise RecallError(f"{case['id']}: --agent-cmd is empty after substitution")
     try:
@@ -376,21 +376,26 @@ def load_all_cases(case_id: str = "") -> list[dict]:
     measured (benchmarks/README.md). Recall grades both, so this is where they
     rejoin — one seam, so a caller asks for cases rather than for two roots.
 
-    A named case may sit in either tree, so an unknown id is an error only once
-    neither holds it: `load_cases` raises per tree, and a per-tree miss is
-    swallowed only when an id was named.
+    A named case may sit in either tree, so both trees load whole and the name
+    filters here. Filtering per tree meant swallowing that tree's BenchError to
+    tolerate the miss — and `load_cases` validates before it filters, so a
+    malformed pressure case vanished behind a valid corpus name.
     """
     cases: list[dict] = []
     for root in (None, PRESSURE):
         if root is not None and not root.is_dir():
             continue
-        try:
-            cases += _retrieval.load_cases(case_id, root=root)
-        except _retrieval.BenchError:
-            if not case_id:
-                raise
-    if not cases:
-        raise _retrieval.BenchError(f"unknown case {case_id!r}")
+        cases += _retrieval.load_cases(root=root)
+    # One id per case, across and within both trees: `--run` copies each into `workdir / id`,
+    # so a repeat dies in `copytree`, and `--grade` scores one directory twice.
+    ids = [c["id"] for c in cases]
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    if dupes:
+        raise _retrieval.BenchError(f"duplicate case ids: {', '.join(dupes)}")
+    if case_id:
+        cases = [c for c in cases if c["id"] == case_id]
+        if not cases:
+            raise _retrieval.BenchError(f"unknown case {case_id!r}")
     return cases
 
 

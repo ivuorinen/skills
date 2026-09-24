@@ -162,6 +162,25 @@ def _case_meta(path: Path) -> dict:
             f"{path.parent.name}: 'must_keep' must be a list of "
             "{file, contains} objects, both strings"
         )
+    # Inside the case tree, or the case measures something else. An absolute
+    # path makes `dir / file` discard `dir`, and `..` climbs out of it, so the
+    # scorer reads unrelated local content and the grader can mark a pressure
+    # gate held from a file the run never saw. `file` joins the same way.
+    case_dir = path.parent.resolve()
+    outside = [
+        name
+        for name in (meta["file"], *(entry["file"] for entry in keep))
+        if not (case_dir / name).resolve().is_relative_to(case_dir)
+    ]
+    if outside:
+        raise BenchError(
+            f"{path.parent.name}: expected.json names files outside the case tree: "
+            f"{', '.join(outside)}"
+        )
+    # `id` is joined the same way by bench-recall — `workdir / id` for the copy it
+    # audits and `root / id` for the tree it grades — so it must be one plain name.
+    if meta["id"] in ("", ".", "..") or Path(meta["id"]).name != meta["id"]:
+        raise BenchError(f"{path.parent.name}: 'id' must be a plain name, got {meta['id']!r}")
     # Element types too, not just the shape. `["1", "2"]` is a two-element list,
     # so a shape-only check passes it through to `1 <= start`, which raises
     # TypeError — outside the BenchError contract again, one line further down
