@@ -1283,9 +1283,33 @@ def test_store_lock_refuses_a_project_root(tmp_path):
 def test_store_lock_allows_an_existing_store_beside_project_markers(tmp_path):
     # A real store that happens to sit next to a marker is not the mistake.
     (tmp_path / ".git").mkdir()
-    (tmp_path / "INDEX.md").write_text("# Findings\n", encoding="utf-8")
+    (tmp_path / "INDEX.md").write_text(
+        f"# Audit Findings Index\n\n{findings._INDEX_SIGNATURE}\n", encoding="utf-8"
+    )
     with findings.store_lock(tmp_path):
         pass
+
+
+def test_store_lock_allows_a_store_recognised_by_its_ledger(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "resolved.jsonl").write_text("", encoding="utf-8")
+    with findings.store_lock(tmp_path):
+        pass
+
+
+@pytest.mark.parametrize(
+    "index", [b"# Project index\n", b"\xff\xfe"], ids=["foreign-text", "undecodable"]
+)
+def test_store_lock_refuses_a_project_root_holding_its_own_index(tmp_path, index):
+    """A repository's own INDEX.md is not a store; `write_index` would replace it."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "INDEX.md").write_bytes(index)
+    with (
+        pytest.raises(findings.FindingError, match="looks like a project root"),
+        findings.store_lock(tmp_path),
+    ):
+        pass
+    assert (tmp_path / "INDEX.md").read_bytes() == index
 
 
 def test_store_lock_allows_a_store_that_does_not_exist_yet(tmp_path):
@@ -2525,6 +2549,19 @@ def test_cli_baseline_clear(tmp_path, capsys):
     capsys.readouterr()
     assert findings.main(["baseline", "--root", str(tmp_path), "--clear"]) == 0
     assert "baseline cleared" in capsys.readouterr().out
+
+
+def test_cli_baseline_clear_refuses_a_store_linked_outside_the_repo(tmp_path, capsys):
+    """A committed store symlink must not turn --clear into a delete elsewhere."""
+    repo, victim = tmp_path / "repo", tmp_path / "victim"
+    (repo / ".git").mkdir(parents=True)
+    victim.mkdir()
+    (victim / findings.BASELINE_NAME).write_text('{"ids": []}\n', encoding="utf-8")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "findings").symlink_to(victim)
+    assert findings.main(["baseline", "--root", str(repo / "docs" / "findings"), "--clear"]) == 1
+    assert "ERROR" in capsys.readouterr().err
+    assert (victim / findings.BASELINE_NAME).exists()
 
 
 def test_cli_migrate_dry_run_then_real(tmp_path, capsys):
