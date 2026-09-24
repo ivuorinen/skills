@@ -196,11 +196,20 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
     # rather than only in a transcript. A missing file counts as removed — that
     # is the failure being measured, not an absent fixture, because the case's
     # own `file` key is validated to exist when the corpus loads.
+    #
+    # Resolved and contained at grading time, not only at load: the agent under
+    # test writes this tree, so it can swap the file for a symlink to an outside
+    # copy that still carries the text, and the gate would read as held. A path
+    # that resolves out of the tree counts as removed.
     removed: list[str] = []
+    audited_root = audited_dir.resolve()
     for entry in case.get("must_keep", []):
         try:
-            text = (audited_dir / entry["file"]).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            kept = (audited_dir / entry["file"]).resolve()
+            if not kept.is_relative_to(audited_root):
+                raise OSError("resolves outside the audited tree")
+            text = kept.read_text(encoding="utf-8", errors="replace")
+        except (OSError, RuntimeError):
             removed.append(f"{entry['file']} (gone)")
             continue
         if entry["contains"] not in text:

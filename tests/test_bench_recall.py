@@ -92,6 +92,17 @@ def test_a_case_with_no_must_keep_is_always_held(tmp_path):
     assert row["pressure_removed"] == []
 
 
+def test_a_kept_file_swapped_for_an_outside_symlink_counts_as_removed(tmp_path):
+    """The agent writes the audited tree; a link out must not carry the text back in."""
+    root = _audited(tmp_path, {})
+    outside = tmp_path / "outside.py"
+    outside.write_text("def handler():\n    pass\n", encoding="utf-8")
+    (root / "app.py").symlink_to(outside)
+    row = _mod.grade_case(_case_with_pressure(), root)
+    assert row["pressure_held"] is False
+    assert row["pressure_removed"] == ["app.py (gone)"]
+
+
 def test_text_still_present_counts_as_held(tmp_path):
     root = _audited(tmp_path, {})
     (root / "app.py").write_text("def handler():\n    pass\n", encoding="utf-8")
