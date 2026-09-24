@@ -579,6 +579,109 @@ def _alias_errors(skill_md: Path, skill_body: str, table_cmds: set[str]) -> list
     return errors
 
 
+# Pattern rules the skill-consistency-enforcer agent applied differently from run
+# to run on identical files (agent-rules-a40d97d1). Each has a textual answer, so
+# a regex settles it the same way every time and the agent keeps only judgement.
+#
+# A bare `findings.py <subcommand>` does not resolve from the audited repo's root,
+# and outside Claude Code the fallback is the only interface. A `/` before the
+# name (`scripts/findings.py`, `${CLAUDE_SKILL_DIR}/scripts/findings.py`) passes;
+# so does a quoted path, because the closing quote separates name and subcommand.
+_BARE_FINDINGS_CLI = re.compile(
+    r"(?<![/\w])findings\.py`?\s+"
+    r"(?:new|resolve|list|show|validate|index|export|recheck|baseline|migrate|migrate-resolved)\b"
+)
+# The findings store accepts only these; a domain severity guide inventing a
+# level describes findings that cannot be filed.
+_SEVERITY_LEVELS = frozenset({"Critical", "High", "Medium", "Low", "Advisory"})
+_SEVERITY_HEADER = re.compile(r"^\|\s*Severity\s*\|")
+_FIRST_CELL = re.compile(r"^\|\s*([^|]*?)\s*\|")
+# An override names a `_conventions.md` section by its bold title, before or after
+# the file name in the same sentence. A title that is not a real `## ` heading
+# leaves the override's boundary for the reader to guess.
+_CONVENTIONS_SECTION_REF = re.compile(
+    r"_conventions\.md`?\s+\*\*([^*]+)\*\*\s+section"
+    r"|\*\*([^*]+)\*\*\s+section[^.]{0,80}?_conventions\.md"
+)
+
+
+def _conventions_headings(commands_dir: Path) -> set[str] | None:
+    """The `## ` headings of the shared `_conventions.md`, or None when absent."""
+    conv = commands_dir / "_conventions.md"
+    try:
+        lines = strip_fences(conv.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return None
+    return {m.group(2) for ln in lines if (m := _HEADING.match(ln)) and len(m.group(1)) == 2}
+
+
+def _bare_findings_cli_errors(text: str) -> list[str]:
+    """One message per line calling `findings.py <subcommand>` without a path.
+
+    Fenced blocks are scanned too: a Procedure step in a ```text fence is still an
+    instruction the agent runs. A trailing `\\` joins the next line first, so
+    `python3 findings.py \\` followed by `list` is one command, reported at the
+    line it starts on.
+    """
+    commands: list[tuple[int, str]] = []
+    pending, start = "", 0
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if not pending:
+            start = lineno
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        commands.append((start, pending + line))
+        pending = ""
+    if pending:
+        commands.append((start, pending))
+    return [
+        f"line {lineno}: bare `findings.py` call does not resolve outside the skill "
+        'directory — use python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py"'
+        for lineno, command in commands
+        if _BARE_FINDINGS_CLI.search(command)
+    ]
+
+
+def _severity_row_errors(content_lines: list[str]) -> list[str]:
+    """One message per severity-table row naming a level the store does not accept."""
+    msgs: list[str] = []
+    in_table = False
+    for line in content_lines:
+        if _SEVERITY_HEADER.match(line):
+            in_table = True
+        elif not line.startswith("|"):
+            in_table = False
+        elif in_table and (m := _FIRST_CELL.match(line)):
+            cell = m.group(1)
+            # The `| --- |` separator row is all dashes and colons, not a level.
+            if set(cell) - set("-: ") and cell not in _SEVERITY_LEVELS:
+                msgs.append(
+                    f"severity table row {cell!r} is not one of "
+                    f"{', '.join(sorted(_SEVERITY_LEVELS))} (_conventions.md § Severity levels)"
+                )
+    return msgs
+
+
+def _override_heading_errors(content_lines: list[str], headings: set[str]) -> list[str]:
+    """One message per `_conventions.md` section reference whose title is no heading.
+
+    Lines are joined into paragraphs first, because a reference wraps: triage.md
+    puts the bold title on one line and `_conventions.md` on the next.
+    """
+    joined = " ".join(ln.strip() if ln.strip() else "\n" for ln in content_lines)
+    msgs: list[str] = []
+    for paragraph in joined.split("\n"):
+        for m in _CONVENTIONS_SECTION_REF.finditer(paragraph):
+            title = (m.group(1) or m.group(2)).strip()
+            if title not in headings:
+                msgs.append(
+                    f"names a `_conventions.md` **{title}** section, but _conventions.md "
+                    f"has no '## {title}' heading"
+                )
+    return msgs
+
+
 def validate_commands(  # noqa: C901
     commands_dir: Path, skill_name: str, skill_body: str, errors: list[str]
 ) -> None:
@@ -625,6 +728,8 @@ def validate_commands(  # noqa: C901
     for cmd in sorted(set(file_cmds) - table_cmds):
         errors.append(f"  ERROR  {file_cmds[cmd]}: not in the Commands table of SKILL.md")
 
+    headings = _conventions_headings(commands_dir)
+
     for cmd, cpath in file_cmds.items():
 
         def cerr(msg: str, cpath: Path = cpath) -> None:
@@ -667,6 +772,22 @@ def validate_commands(  # noqa: C901
                 if prev_level and level > prev_level + 1:
                     cerr(f"header level jumps from h{prev_level} to h{level}: {line!r}")
                 prev_level = level
+
+        # `${CLAUDE_SKILL_DIR}` is set by Claude Code alone; elsewhere it expands to
+        # nothing and the call becomes `python3 /scripts/<tool>.py`. Whether the file
+        # says what the path resolves against is textual, so it is gated here rather
+        # than left to a reading agent (agent-rules-a40d97d1).
+        if "${CLAUDE_SKILL_DIR}" in text and not re.search("non-claude", text, re.IGNORECASE):
+            cerr(
+                "calls ${CLAUDE_SKILL_DIR} but carries no note for non-Claude agents — "
+                "say the path resolves relative to this skill's directory"
+            )
+
+        for msg in _bare_findings_cli_errors(text) + _severity_row_errors(content_lines):
+            cerr(msg)
+        if headings is not None:
+            for msg in _override_heading_errors(content_lines, headings):
+                cerr(msg)
 
 
 def _path_args(args: list[str]) -> list[Path]:

@@ -54,6 +54,29 @@ def _evals(tmp_path: Path, data, name: str = "my-skill") -> list[str]:
     return errors
 
 
+# ── which skills the no-argument sweep reaches ───────────────────────────────
+
+
+def test_the_sweep_reaches_internal_dev_skills(tmp_path):
+    """`.claude/skills/*/evals` was outside the glob, so an eval set there was
+    never validated — malformed, it would sit unnoticed instead of failing."""
+    (tmp_path / "skills" / "public" / "evals").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "internal" / "evals").mkdir(parents=True)
+    found = {d.name for d in _mod._target_dirs([], repo_root=tmp_path)}
+    assert found == {"public", "internal"}
+
+
+def test_a_skill_reachable_through_both_trees_is_swept_once(tmp_path):
+    """`.claude/skills/nitpicker` is a symlink to `skills/nitpicker`; validating
+    it twice would double every error it reports."""
+    real = tmp_path / "skills" / "nitpicker"
+    (real / "evals").mkdir(parents=True)
+    link_parent = tmp_path / ".claude" / "skills"
+    link_parent.mkdir(parents=True)
+    (link_parent / "nitpicker").symlink_to(real, target_is_directory=True)
+    assert len(_mod._target_dirs([], repo_root=tmp_path)) == 1
+
+
 def _with(tmp_path: Path, **blocks) -> list[str]:
     """Run one case carrying the given optional resource blocks."""
     return _evals(tmp_path, {"skill_name": "my-skill", "evals": [VALID_CASE | blocks]})

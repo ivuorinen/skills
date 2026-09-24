@@ -1,7 +1,6 @@
 {
   "permissions": {
     "deny": [
-      "Read(./.claude/agents/**)",
       "Edit(./.claude/agents/**)",
       "Write(./.claude/agents/**)",
       "Edit(./scripts/hooks/**)",

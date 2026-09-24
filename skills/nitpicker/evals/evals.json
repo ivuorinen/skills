@@ -89,6 +89,39 @@
         "The task list is read back before reporting, and the summary states that no entry is pending or in progress",
         "The run summary lists every Process step with a one-line outcome"
       ]
+    },
+    {
+      "id": 9,
+      "prompt": "there's a function in our events module that nobody calls any more, can you get rid of it?",
+      "expected_output": "The dead-code command is selected — the symbol is complete and simply unreferenced — and the deletion waits on the reachability rule rather than on a grep.",
+      "assertions": [
+        "The dead-code command is selected, not unwired and not complexity",
+        "Every applicable reachability channel is ruled out before the symbol is called dead",
+        "A grep returning no callers is treated as channel 1 alone, never as the verdict",
+        "Deleting a public export or an orphaned file is asked per change, not covered by a blanket yes"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "we wrote a webhook handler last sprint but I don't think it ever got hooked up to the router — can you check and just delete it if so",
+      "expected_output": "The unwired command is selected — the implementation exists but was never reached — and nothing is removed without the per-finding consent answer.",
+      "assertions": [
+        "The unwired command is selected, not dead-code",
+        "The wiring evidence bar is walked before the handler is called unwired",
+        "The per-finding (w)ire/(t)ransfer/(r)emove/(k)eep question is asked, and 'just delete it if so' is not treated as that answer",
+        "Silence or the absence of an answer leaves the finding open rather than removing the handler"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "this storage module has an abstract base class with exactly one implementation and a factory that builds it — is that worth keeping?",
+      "expected_output": "The complexity command is selected: a single-implementation abstraction is dead flexibility, not dead code, and the audit reports without applying anything.",
+      "assertions": [
+        "The complexity command is selected, not dead-code and not unwired",
+        "The finding is tagged yagni and names the rung its replacement sits on",
+        "The report is delivered with nothing applied, since an audit's requested change is the report",
+        "Correctness defects noticed in the same file are routed in one line rather than reviewed here"
+      ]
     }
   ]
 }

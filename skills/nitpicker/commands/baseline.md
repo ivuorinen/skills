@@ -28,20 +28,23 @@ re-opening.
 
 ```text
 1. Set the baseline:
-     python3 findings.py baseline
+     python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" baseline
+   (non-Claude agents resolve the path relative to this skill's directory)
    Writes docs/audit/findings/baseline.json = every currently-open finding id
-   plus the date. Commit it: `chore: baseline pre-existing findings`.
+   plus the date. Ask "Commit the baseline to git? (y/n)" — never commit
+   silently. On yes, load `_committing` and commit with
+   `chore: baseline pre-existing findings`.
 2. Gate on new findings only:
      np_list_findings with status: "open", exclude_baseline: true
-     (else python3 findings.py list --status open --exclude-baseline)
+     (else python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list --status open --exclude-baseline)
    release-gate reads this: any open finding at or above the threshold whose id
    is NOT baselined fails the gate; baselined debt is waived.
 3. Pay down debt: resolve each as `fixed` (`np_resolve_finding`, else
-   `findings.py resolve <id> --status fixed`) as it is truly
+   `python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" resolve <id> --status fixed`) as it is truly
    fixed — it leaves open/ and drops out of the gate on its own.
 4. Do not re-baseline to "clean up". A resolved finding drops from the gate
    whether or not it stays in the baseline (step 3), but its id stays waived
-   if the finding is ever re-opened (see Mindset). `findings.py baseline` refuses to overwrite an existing baseline —
+   if the finding is ever re-opened (see Mindset). `scripts/findings.py baseline` refuses to overwrite an existing baseline —
    reset only via `--clear` then a fresh baseline, or `--force` after reviewing
    the baseline.json diff.
 ```
@@ -52,7 +55,7 @@ re-opening.
   area, or body. A baselined finding is still `open` and still in the store.
 - Adding an id to the baseline is a committed, diffable change a human reviews.
   Waiving a finding is possible but never silent and never automatic.
-- The ratchet only tightens. `findings.py baseline` refuses to overwrite an
+- The ratchet only tightens. `scripts/findings.py baseline` refuses to overwrite an
   existing baseline; resetting it (`--clear`, or `--force` on a reviewed diff)
   is a deliberate human act, never an automatic re-run.
 - The gate threshold is orthogonal to the baseline. Do not lower or raise the

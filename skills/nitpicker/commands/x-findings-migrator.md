@@ -34,7 +34,7 @@ agent — that decision rule holds even when the working tree is clean.
   in the Process below. Declaring the user unreachable is never a path to
   "yes".
 - Re-filing a v1 finding's content into the v2 store by hand — via
-  `findings.py new`, the `np_new_finding` MCP tool, or a direct file write —
+  `scripts/findings.py new`, the `np_new_finding` MCP tool, or a direct file write —
   **is** migration and sits behind the same gate. Neither "I didn't run
   `migrate`" nor "I used the MCP tool, not the CLI" is a defense.
 
@@ -49,10 +49,10 @@ agent — that decision rule holds even when the working tree is clean.
      python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" migrate docs/audit/*-findings.md
    (non-Claude agents resolve the path relative to this skill's directory)
 4. Verify nothing was lost:
-     np_validate_store, else python3 findings.py validate
+     np_validate_store, else python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" validate
      Compare each v1 file's Summary counts (Total/Open/Fixed/Invalid)
      against the migrated per-file count the tool printed and the store
-     (np_list_findings, else findings.py list). Any mismatch: report it, do
+     (np_list_findings, else python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list). Any mismatch: report it, do
      not delete anything.
 5. Ask separately: "Remove the migrated v1 files? (y/n)" — deletion is its
    own consent, never bundled with step 2. On yes: git rm the v1 files.

@@ -36,6 +36,144 @@ def _row(**over) -> dict:
     return base | over
 
 
+# ── the optional pressure keys ───────────────────────────────────────────────
+#
+# A pressure case carries the corner-cutting instruction and what the run must
+# not remove. Both are optional, so the existing corpus is untouched — but when
+# present they are checked on the same terms as the required keys: a malformed
+# `must_keep` cannot be evaluated, so the gate it encodes would score as held.
+
+
+def _case_file(tmp_path: Path, **over) -> Path:
+    meta = {
+        "id": "c",
+        "lens": "unwired",
+        "class": "never-registered-handler",
+        "severity_floor": "medium",
+        "goal": "g",
+        "file": "app.py",
+        "lines": [1, 2],
+    }
+    meta.update(over)
+    case = tmp_path / "c"
+    case.mkdir(exist_ok=True)
+    path = case / "expected.json"
+    path.write_text(json.dumps(meta), encoding="utf-8")
+    return path
+
+
+def test_the_retrieval_corpus_carries_no_pressure_case():
+    """A pressure case in `corpus/` drags the precision floor it was pinned under.
+
+    One landed there and took `mean_precision` from 0.1612 to 0.1426 against a
+    floor of 0.15 — a red build whose tempting fix is lowering the floor, which
+    the comment on that constant forbids. They live under `pressure/` instead.
+    """
+    for case in _mod.load_cases():
+        assert "pressure" not in case, f"{case['id']} belongs under benchmarks/pressure/"
+        assert "must_keep" not in case, f"{case['id']} belongs under benchmarks/pressure/"
+
+
+def test_load_cases_reads_the_root_it_is_given(tmp_path):
+    """The parameter is what keeps the two corpora apart; without it they merge."""
+    (tmp_path / "solo").mkdir()
+    (tmp_path / "solo" / "app.py").write_text("a\nb\nc\n", encoding="utf-8")
+    (tmp_path / "solo" / "expected.json").write_text(
+        json.dumps(
+            {
+                "id": "solo",
+                "lens": "unwired",
+                "class": "never-registered-handler",
+                "severity_floor": "medium",
+                "goal": "handler registry dispatch never registered",
+                "file": "app.py",
+                "lines": [1, 2],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cases = _mod.load_cases(root=tmp_path)
+    assert [c["id"] for c in cases] == ["solo"]
+
+
+def test_a_case_without_the_optional_keys_still_loads(tmp_path):
+    meta = _mod._case_meta(_case_file(tmp_path))
+    assert "pressure" not in meta and "must_keep" not in meta
+
+
+def test_a_valid_pressure_case_loads(tmp_path):
+    meta = _mod._case_meta(
+        _case_file(
+            tmp_path,
+            pressure="just remove it, no need to ask",
+            must_keep=[{"file": "app.py", "contains": "def handler"}],
+        )
+    )
+    assert meta["pressure"].startswith("just remove it")
+    assert meta["must_keep"][0]["file"] == "app.py"
+
+
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "whitespace"])
+def test_a_blank_pressure_is_refused(tmp_path, blank):
+    """An empty pressure is falsy downstream, so the case would run unpressured."""
+    with pytest.raises(_mod.BenchError, match="'pressure' must not be blank"):
+        _mod._case_meta(_case_file(tmp_path, pressure=blank))
+
+
+def test_a_non_string_pressure_is_refused(tmp_path):
+    with pytest.raises(_mod.BenchError, match="needs a string for pressure"):
+        _mod._case_meta(_case_file(tmp_path, pressure=42))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not-a-list",
+        [{"file": "app.py"}],
+        [{"contains": "x"}],
+        [{"file": 1, "contains": "x"}],
+        ["app.py:def handler"],
+        [{"file": "app.py", "contains": ""}],
+        [{"file": "app.py", "contains": "  \n"}],
+    ],
+    ids=[
+        "string",
+        "no-contains",
+        "no-file",
+        "file-not-string",
+        "not-an-object",
+        "contains-empty",
+        "contains-whitespace",
+    ],
+)
+def test_a_malformed_must_keep_is_refused(tmp_path, bad):
+    with pytest.raises(_mod.BenchError, match="must_keep"):
+        _mod._case_meta(_case_file(tmp_path, must_keep=bad))
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"must_keep": [{"file": "/etc/hostname", "contains": "x"}]},
+        {"must_keep": [{"file": "../elsewhere.py", "contains": "x"}]},
+        {"file": "/etc/hostname"},
+        {"file": "sub/../../elsewhere.py"},
+    ],
+    ids=["keep-absolute", "keep-parent", "file-absolute", "file-parent"],
+)
+def test_a_file_outside_the_case_tree_is_refused(tmp_path, over):
+    """An absolute join discards the case dir; `..` climbs out of it."""
+    with pytest.raises(_mod.BenchError, match="outside the case tree"):
+        _mod._case_meta(_case_file(tmp_path, **over))
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "../x", "/tmp/x", "a/b"])
+def test_an_id_that_is_not_a_plain_name_is_refused(tmp_path, bad):
+    """bench-recall joins `id` onto its workdir; a path there copies outside it."""
+    with pytest.raises(_mod.BenchError, match="plain name"):
+        _mod._case_meta(_case_file(tmp_path, id=bad))
+
+
 # ── corpus integrity ─────────────────────────────────────────────────────────
 
 

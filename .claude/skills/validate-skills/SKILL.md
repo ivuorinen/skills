@@ -64,6 +64,10 @@ description: Validates every SKILL.md and command file in this repository agains
 | Command file has `## When to use`                                                                                  | Error   |
 | Command file has no YAML frontmatter                                                                               | Error   |
 | Command file header level progression                                                                              | Error   |
+| Command file calls `findings.py <subcommand>` without a path                                                       | Error   |
+| Command file severity table row outside Critical/High/Medium/Low/Advisory                                          | Error   |
+| Command file names a `_conventions.md` section that has no `##` heading                                            | Error   |
+| Command file calls `${CLAUDE_SKILL_DIR}` with no note for non-Claude agents                                        | Error   |
 | Frontmatter key outside the Agent Skills spec (use `metadata`)                                                     | Error   |
 | Legacy output paths (`./codereview.md` etc.)                                                                       | Warning |
 | Body exceeds 500 lines                                                                                             | Warning |

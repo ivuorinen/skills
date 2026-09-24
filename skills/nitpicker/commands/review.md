@@ -37,13 +37,13 @@ Work through these categories in order. Skip a category only if the code under r
 2. Trace the unhappy paths. What happens when things go wrong?
 3. Look for implicit assumptions. What does this code believe about its inputs that isn't enforced?
 4. Check the boundaries between components. Where does trust transfer happen?
-5. Write up findings. If you found nothing, say "No bugs found" and stop. Don't manufacture issues to seem thorough.
+5. Write up findings, preceded by a `Categories applied:` line carrying every checklist category as `applied` or `n/a: <reason>`. If you found nothing, say "No bugs found" and stop — permitted only with that line present, since without it a run that swept two categories and one that swept nine emit the same verdict. Don't manufacture issues to seem thorough.
 
 ## Output
 
 File each bug via the store protocol in `_conventions.md`, under the `review` auditor key. Map the bug into the finding fields: Problem = what's wrong (one or two sentences, no filler), Evidence = the concrete trigger scenario, Impact = what breaks and for whom, Fix = the minimal code change — don't rewrite the function. Name the checklist category in the finding body.
 
-With the `inline` modifier (or for a quick conversational review), present the same per-bug structure in the response instead, ordered Critical first.
+With the `inline` modifier, present the same per-bug structure in the response instead, ordered Critical first. `inline` is the user's to grant: it is a modifier they type, never a mode this command elects for itself.
 
 ## What this review is NOT
 

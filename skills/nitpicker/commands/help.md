@@ -19,10 +19,8 @@ No command        → full repository audit (audit)
 inline            → findings in the response only, nothing written
 changed-files     → limit scope to modified files + direct dependencies
 release-gate [th] → fail if open findings at/above threshold (default High)
-help [category]   → one category's table only (Review and fixing, Planning,
-                    Learning, Security and data, Runtime behavior, Structure
-                    and contracts, Quality surfaces, Coding-agent enforcement,
-                    Meta)
+help [category]   → one category's table only (any `###` category under
+                    SKILL.md's `## Commands`)
 ```
 
 When the extra instructions name a category, print that table only: pass the

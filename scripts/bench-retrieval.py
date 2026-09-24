@@ -78,6 +78,15 @@ class BenchError(Exception):
 # name attached.
 _REQUIRED_KEYS = frozenset({"id", "lens", "class", "severity_floor", "goal", "file", "lines"})
 
+# Optional, and read by bench-recall alone. A pressure case measures the half no
+# gate in this repo tests: whether a lens's consent and coverage gates hold when
+# the invocation tells it to cut corners. `pressure` is the corner-cutting
+# instruction handed to the agent alongside the goal; `must_keep` names what the
+# run must NOT have removed — the deterministic half of "did the gate hold",
+# checked against the audited copy rather than against a transcript. Absent keys
+# mean an ordinary recall case, so the existing corpus is unaffected.
+_OPTIONAL_STRING_KEYS = frozenset({"pressure"})
+
 # Every required key except `lines` is consumed as a string by one of the two
 # scorers, so every one of them is checked as a string. Naming only the keys
 # that happen to crash today would close two of six: `file` raises TypeError at
@@ -90,6 +99,46 @@ _STRING_KEYS = _REQUIRED_KEYS - {"lines"}
 
 def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] <= b[1] and b[0] <= a[1]
+
+
+def _pressure_keys(path: Path, meta: dict) -> list[dict]:
+    """Check a pressure case's optional keys; return its `must_keep` entries.
+
+    The optional keys are checked on the same terms as the required ones. A
+    `"pressure": 42` would reach the prompt substitution in bench-recall and a
+    malformed `must_keep` would reach the grader — both outside the BenchError
+    contract, and the second silently: an entry that is not a {file, contains}
+    object cannot be checked, so the gate it encodes would score as held.
+    Split out of `_case_meta` only to keep each function under the complexity
+    limit; the path containment of each `file` stays there, beside `file`'s own.
+    """
+    mistyped_optional = sorted(
+        k for k in _OPTIONAL_STRING_KEYS if k in meta and not isinstance(meta[k], str)
+    )
+    if mistyped_optional:
+        raise BenchError(
+            f"{path.parent.name}: expected.json needs a string for "
+            f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped_optional)}"
+        )
+    # Present means meant: `"pressure": ""` is falsy, so bench-recall skipped both
+    # the pressure and its `{goal}` check and graded an untested gate as held.
+    if "pressure" in meta and not meta["pressure"].strip():
+        raise BenchError(f"{path.parent.name}: expected.json 'pressure' must not be blank")
+    keep = meta.get("must_keep", [])
+    if not isinstance(keep, list) or not all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("file"), str)
+        and isinstance(entry.get("contains"), str)
+        # Blank never fails: `"" in text` holds for every file, and whitespace
+        # survives the removal it is meant to detect — a held gate by default.
+        and entry["contains"].strip()
+        for entry in keep
+    ):
+        raise BenchError(
+            f"{path.parent.name}: 'must_keep' must be a list of "
+            "{file, contains} objects, both strings, contains not blank"
+        )
+    return keep
 
 
 def _case_meta(path: Path) -> dict:
@@ -129,6 +178,26 @@ def _case_meta(path: Path) -> dict:
             f"{path.parent.name}: expected.json needs a string for "
             f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped)}"
         )
+    keep = _pressure_keys(path, meta)
+    # Inside the case tree, or the case measures something else. An absolute
+    # path makes `dir / file` discard `dir`, and `..` climbs out of it, so the
+    # scorer reads unrelated local content and the grader can mark a pressure
+    # gate held from a file the run never saw. `file` joins the same way.
+    case_dir = path.parent.resolve()
+    outside = [
+        name
+        for name in (meta["file"], *(entry["file"] for entry in keep))
+        if not (case_dir / name).resolve().is_relative_to(case_dir)
+    ]
+    if outside:
+        raise BenchError(
+            f"{path.parent.name}: expected.json names files outside the case tree: "
+            f"{', '.join(outside)}"
+        )
+    # `id` is joined the same way by bench-recall — `workdir / id` for the copy it
+    # audits and `root / id` for the tree it grades — so it must be one plain name.
+    if meta["id"] in ("", ".", "..") or Path(meta["id"]).name != meta["id"]:
+        raise BenchError(f"{path.parent.name}: 'id' must be a plain name, got {meta['id']!r}")
     # Element types too, not just the shape. `["1", "2"]` is a two-element list,
     # so a shape-only check passes it through to `1 <= start`, which raises
     # TypeError — outside the BenchError contract again, one line further down
@@ -145,15 +214,22 @@ def _case_meta(path: Path) -> dict:
     return meta
 
 
-def load_cases(case_id: str = "") -> list[dict]:
+def load_cases(case_id: str = "", root: Path | None = None) -> list[dict]:
     """Every case's expected.json, or the one named.
 
     A case whose expected range does not exist in its own file is an error, not
     a zero: scoring retrieval against lines that are not there would report a
     broken corpus as a broken retriever.
+
+    `root` defaults to the retrieval corpus. `bench-recall.py` passes
+    `benchmarks/pressure` as well, because a pressure case is scored on whether a
+    gate held and is nearly all signal to a packer — folding one into the
+    retrieval mean drags a precision floor pinned where it was measured, and that
+    floor is not to be lowered to make a red build green.
     """
+    root = root or CORPUS
     found = []
-    for path in sorted(CORPUS.glob("*/expected.json")):
+    for path in sorted(root.glob("*/expected.json")):
         meta = _case_meta(path)
         meta["dir"] = path.parent
         target = path.parent / meta["file"]
