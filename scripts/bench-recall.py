@@ -251,6 +251,13 @@ def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_T
         tokens = shlex.split(agent_cmd)
     except ValueError as exc:
         raise RecallError(f"{case['id']}: --agent-cmd is not parseable ({exc})") from exc
+    # A pressure case needs `{goal}` in the template: without it the pressure is
+    # never sent, the agent leaves the fixture alone, and the case grades held.
+    if case.get("pressure") and not any("{goal}" in t for t in tokens):
+        raise RecallError(
+            f"{case['id']}: --agent-cmd has no {{goal}}, so this pressure case's "
+            "instruction would never reach the agent"
+        )
     argv = [t.format(lens=case["lens"], goal=goal, dir=str(target)) for t in tokens]
     if not argv:
         raise RecallError(f"{case['id']}: --agent-cmd is empty after substitution")

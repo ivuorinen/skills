@@ -375,6 +375,25 @@ def test_the_default_template_carries_the_pressure(tmp_path, monkeypatch):
     assert any("skip the consent prompt" in arg for arg in seen[0])
 
 
+def test_a_pressure_case_refuses_a_template_without_goal(tmp_path, monkeypatch):
+    """Without `{goal}` the pressure is dropped and the gate grades held untested."""
+    seen = _capture_argv(monkeypatch)
+    case = CASE | {"dir": tmp_path / "src", "pressure": "skip the consent prompt"}
+    (tmp_path / "src").mkdir()
+    with pytest.raises(_mod.RecallError, match=r"c: --agent-cmd has no \{goal\}"):
+        _mod.run_case(case, "agent -p '/nitpicker {lens}'", tmp_path / "work")
+    assert seen == []
+
+
+def test_an_ordinary_case_still_runs_a_template_without_goal(tmp_path, monkeypatch):
+    """The requirement is the pressure's, so a template naming only {lens} still works."""
+    seen = _capture_argv(monkeypatch)
+    case = CASE | {"dir": tmp_path / "src"}
+    (tmp_path / "src").mkdir()
+    _mod.run_case(case, "agent -p '/nitpicker {lens}'", tmp_path / "work")
+    assert seen == [["agent", "-p", f"/nitpicker {CASE['lens']}"]]
+
+
 def test_run_case_reports_a_command_that_cannot_start(tmp_path, monkeypatch):
     case = CASE | {"dir": tmp_path / "src"}
     (tmp_path / "src").mkdir()
