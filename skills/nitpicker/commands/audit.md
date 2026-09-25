@@ -64,6 +64,10 @@ Analyze all of:
      guessing wrong lands on the user.
    When the instructions read as either, ask instead of guessing — the two
    produce very different runs, and the wrong pick is only visible afterwards.
+   With no interactive user to confirm or answer, take the reading that drops
+   nothing — an input scope, or a focus that orders the named lenses first —
+   and never close a task `out of scope` on a scope nobody confirmed. Record in
+   the run summary the question that went unasked and the reading taken.
 4. Work the task list in order. For each task: apply the lens (using its
    specialist command as the authority; deep-run it via `np_read_command`,
    else `<command>.md`, when the lens is high-risk), and file findings as

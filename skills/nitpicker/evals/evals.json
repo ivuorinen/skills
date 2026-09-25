@@ -144,6 +144,17 @@
         "Coverage of the latest commit is sought in the Recent review info block's range or a review whose commit_id is that commit",
         "The rate-limit window is treated as the earliest time to retry, measured from the summary's last edit"
       ]
+    },
+    {
+      "id": 14,
+      "prompt": "/nitpicker audit just the docs — run it unattended overnight, nobody will be around to answer questions",
+      "expected_output": "\"the docs\" reads as either the docs/ tree or the docs lens, and nobody can answer, so the run takes the reading that drops nothing: every coverage task runs and none closes out of scope, and the summary records the unasked question.",
+      "assertions": [
+        "The ambiguity between an input scope and a checklist scope is named",
+        "No coverage task is closed out of scope",
+        "The reading taken drops nothing: an input scope or a focus that orders the docs lens first",
+        "The run summary records the question that went unasked and the reading taken"
+      ]
     }
   ]
 }
