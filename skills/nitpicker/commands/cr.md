@@ -57,7 +57,7 @@ Read four things off the result before continuing, and stop if any of them says 
 - `state` — normalised to `open` / `closed` / `merged` on every platform. A `merged` or `closed` PR means the work is already landed or abandoned; confirm with the user before implementing anything.
 - `head_sha` — the commit a review must cover to have seen your work. The CodeRabbit loop below turns on this value.
 - `changed_files` — the PR's changed set, which bounds the scope rule in Step 2.
-- `checks_summary` — the CI baseline. Note whether it is already failing, so a failure after your first push is not misattributed to your change.
+- `checks_summary` — the CI baseline. Note whether it is already failing, so a failure after your first push is not misattributed to your change. When `degraded` names `checks` (or `reviews`), that section is unknown, not empty — a failed fetch reports zero failures without CI having passed; re-fetch before relying on it.
 
 If the PR number is not supplied, find it from the current branch (`gh pr view --json number,url,headRefName` on GitHub; `glab mr view` on GitLab; the PR list endpoint filtered by source branch on Bitbucket), then confirm it with the status fetch above. Confirm the PR is correct before proceeding. If ambiguous, ask the user.
 

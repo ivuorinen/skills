@@ -48,8 +48,13 @@ Outputs a JSON object to stdout:
       "checks_summary": {"total", "success", "failure", "neutral", "pending"},
       "reviews": [{"author", "state", "submitted_at", "commit_id"}],
       "review_summary": {"approved", "changes_requested", "commented"},
-      "changed_files": ["src/foo.py", ...]
+      "changed_files": ["src/foo.py", ...],
+      "degraded": ["reviews: HTTPError: ..."]
     }
+
+`degraded` names each secondary fetch (checks, reviews, files) that failed and
+is `[]` when none did. A section it names is unknown, not empty: a failed checks
+fetch leaves `checks_summary.failure` at 0 without meaning CI passed.
 
 `state` is normalised to open/closed/merged across platforms — GitLab spells open
 `opened` and Bitbucket spells it `OPEN`, and `is_draft` is carried separately, so

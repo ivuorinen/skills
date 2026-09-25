@@ -963,10 +963,12 @@ class TestEnvelopes:
             "threads",
             "review_bodies",
             "summary_comments",
+            "degraded",
         }
         # A platform without the concept reports it empty, never absent — a caller
         # must not have to branch on key existence to learn which platform answered.
         assert out["review_bodies"] == []
+        assert out["degraded"] == []
 
     def test_status_envelope_keys_are_stable(self):
         out = c.status_envelope(c.Target("github", "github.com", "o/r"), 1)
@@ -992,7 +994,45 @@ class TestEnvelopes:
             "reviews",
             "review_summary",
             "changed_files",
+            "degraded",
         }
+
+    def test_a_failed_secondary_fetch_is_named_in_the_envelope(self):
+        """errors-bc7067eb: through MCP, stderr is the server's log, so the envelope
+        itself must say a section is unknown rather than empty."""
+
+        def boom():
+            """A reviews fetch that dies on a parser bug."""
+            raise KeyError("state")
+
+        reviews = c.best_effort("reviews", boom, [])
+        out = c.status_envelope(c.Target("github", "github.com", "o/r"), 1, reviews=reviews)
+        assert out["reviews"] == []
+        assert out["degraded"] == ["reviews: KeyError: 'state'"]
+
+    def test_the_record_is_drained_so_the_next_envelope_starts_clean(self):
+        c.best_effort("checks", lambda: 1 / 0, [])
+        target = c.Target("github", "github.com", "o/r")
+        assert c.status_envelope(target, 1)["degraded"] == [
+            "checks: ZeroDivisionError: division by zero"
+        ]
+        assert c.status_envelope(target, 1)["degraded"] == []
+
+    def test_fetch_discards_failures_left_by_a_fetch_that_raised(self, monkeypatch):
+        """A long-lived MCP server must not report one PR's failures on the next."""
+        c._DEGRADED[:] = ["reviews: RuntimeError: stale"]
+
+        class _Provider:
+            """Stands in for a provider module whose fetch builds an envelope."""
+
+            @staticmethod
+            def fetch_status(target, pr_number):
+                """A fetch whose secondary calls all succeed."""
+                return c.status_envelope(target, pr_number)
+
+        monkeypatch.setattr(c, "provider_for", lambda _t: _Provider)
+        out = c.fetch(c.Target("github", "github.com", "o/r"), 5, "fetch_status")
+        assert out["degraded"] == []
 
     def test_thread_is_resolved_defaults_to_unknown_not_false(self):
         # null means "the transport could not tell"; collapsing it to False would

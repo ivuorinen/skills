@@ -116,8 +116,9 @@ def run_cli(doc: str, operation: str, argv: list[str]) -> int:
     `--help` is handled before any argument is resolved as a repository, so the
     flag never gets read as input and answered with a path error instead of usage.
 
-    `pr_common.provider_for` is called through the module rather than imported by
-    name so a test can patch the single dispatch point.
+    `pr_common.fetch` is called through the module rather than imported by name,
+    and resolves `pr_common.provider_for` the same way, so a test can patch the
+    single dispatch point.
     """
     if "--help" in argv or "-h" in argv:
         print(doc)
@@ -128,7 +129,7 @@ def run_cli(doc: str, operation: str, argv: list[str]) -> int:
         print(f"[error] {err}", file=sys.stderr)
         return 2
     try:
-        emit(getattr(pr_common.provider_for(target), operation)(target, pr_number))
+        emit(pr_common.fetch(target, pr_number, operation))
     except pr_common.UsageError as err:
         print(f"[error] {err}", file=sys.stderr)
         return 2
