@@ -70,6 +70,12 @@ on every platform.
 `head_sha` is what makes a bot review's freshness checkable: a review whose
 commit range predates this SHA has not seen the latest push.
 
+`reviews[]` is each reviewer's latest verdict, and its `commit_id` proves a
+review saw a commit only for an `approved` or `changes_requested` entry. A
+`commented` entry can be the empty review GitHub makes for a thread reply, and
+`commit_id` is always empty on GitLab and Bitbucket, whose reviews record no
+commit — so neither is evidence the latest push was reviewed.
+
 Secondary data (checks, reviews, changed files) is best-effort — a failure there
 degrades the result with a `[warn]` on stderr rather than losing the PR record.
 
