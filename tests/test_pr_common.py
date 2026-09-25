@@ -6,6 +6,7 @@ the JSON the CLIs print. Those are the pieces whose breakage is silent — a
 loosened host check still returns data, and a dropped envelope key still parses.
 """
 
+import contextlib
 import email.message
 import http.server
 import importlib.util
@@ -583,15 +584,22 @@ _PROVIDER_AUTH_HEADERS = [
 ]
 
 
-def _serve(handler: type) -> tuple[http.server.HTTPServer, int]:
-    """A throwaway loopback HTTP server on an ephemeral port, plus that port.
+@contextlib.contextmanager
+def _serve(handler: type):
+    """A throwaway loopback HTTP server on an ephemeral port; yields that port.
 
     Port 0 so concurrent test runs cannot collide, and a daemon thread so a
-    failed assertion cannot leave the suite hanging on a live server.
+    failed assertion cannot leave the suite hanging on a live server. Exit both
+    stops the loop and closes the listening socket: callers that only called
+    `shutdown()` left the socket open until garbage collection (leaks-3431a508).
     """
     server = http.server.HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1]
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def _constant_body(body: bytes) -> type:
@@ -766,9 +774,10 @@ class TestTokenSafeRedirectHandler:
         — `http_json` builds exactly this one and does nothing else to the
         response.
         """
-        internal, iport = _serve(_constant_body(b'{"secret": "INTERNAL"}'))
-        api, aport = _serve(_redirect_to(f"http://127.0.0.1:{iport}/latest/meta-data/"))
-        try:
+        with (
+            _serve(_constant_body(b'{"secret": "INTERNAL"}')) as iport,
+            _serve(_redirect_to(f"http://127.0.0.1:{iport}/latest/meta-data/")) as aport,
+        ):
             pinned = f"127.0.0.1:{aport}"
             opener = urllib.request.build_opener(c._TokenSafeRedirectHandler(pinned))
             req = urllib.request.Request(
@@ -777,10 +786,8 @@ class TestTokenSafeRedirectHandler:
             )
             with pytest.raises(urllib.error.HTTPError) as excinfo:
                 opener.open(req, timeout=10)
+            excinfo.value.close()
             assert "refusing to follow a redirect" in str(excinfo.value)
-        finally:
-            internal.shutdown()
-            api.shutdown()
 
 
 # ── pagination ────────────────────────────────────────────────────────────────
@@ -878,8 +885,7 @@ class TestHttpJsonBounds:
     def test_a_trickling_body_is_cut_off_at_the_deadline(self):
         # A real socket, because the defect lives below any mock: a buffered
         # read of N bytes blocks until N arrive, however slowly they come.
-        server, port = _serve(_trickle(0.2))
-        try:
+        with _serve(_trickle(0.2)) as port:
             start = time.monotonic()
             with (
                 patch.object(c, "_check_url"),
@@ -887,8 +893,6 @@ class TestHttpJsonBounds:
             ):
                 c.http_json(f"http://127.0.0.1:{port}/x", {}, f"127.0.0.1:{port}", timeout=1)
             assert time.monotonic() - start < 3
-        finally:
-            server.shutdown()
 
     def test_a_body_past_the_size_cap_is_refused(self, monkeypatch):
         monkeypatch.setattr(c, "_MAX_BODY_BYTES", 8)
