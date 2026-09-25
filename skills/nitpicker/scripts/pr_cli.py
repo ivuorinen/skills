@@ -15,7 +15,7 @@ provider nor the MCP server has any use for them. Keeping them here is what lets
 
 The two driving adapters stay independent: nothing here imports the MCP server,
 and the MCP server does not import this. Both reach the providers through
-`pr_common.provider_for`.
+`pr_common.fetch`.
 
 Stdlib-only, per `.claude/rules/use-uv-runner.md`. Not itself an entry point —
 it has no `__main__` guard, because each entry point owns the `--help` text for
@@ -24,6 +24,8 @@ its own tool and passes it in.
 
 import json
 import sys
+import traceback
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +136,11 @@ def run_cli(doc: str, operation: str, argv: list[str]) -> int:
         print(f"[error] {err}", file=sys.stderr)
         return 2
     except Exception as err:
-        print(f"[error] {err}", file=sys.stderr)
+        # The type always, and the stack for anything that is not a transport
+        # failure: a bare `[error] 'commit_id'` named neither the class nor where
+        # a parser bug sat, and read like an API error (errors-f248a161).
+        print(f"[error] {type(err).__name__}: {err}", file=sys.stderr)
+        if not isinstance(err, (pr_common.TransportError, urllib.error.URLError, OSError)):
+            print(traceback.format_exc(), file=sys.stderr, end="")
         return 1
     return 0
