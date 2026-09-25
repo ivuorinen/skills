@@ -436,13 +436,13 @@ def _fetch_review_bodies(
     """Every non-empty PR review body (any author) — outside-diff-range comments live here."""
     raw = rest_list(f"repos/{target.path}/pulls/{pr_number}/reviews")
     return [
-        {
-            "author": (r.get("user") or {}).get("login", "unknown"),
-            "state": r.get("state", ""),
-            "commit_id": (r.get("commit_id") or "")[:12],
-            "submitted_at": r.get("submitted_at", ""),
-            "body": r.get("body", ""),
-        }
+        pr_common.review_body(
+            author=(r.get("user") or {}).get("login", "unknown"),
+            state=r.get("state", ""),
+            commit_id=r.get("commit_id") or "",
+            submitted_at=r.get("submitted_at", ""),
+            body=r.get("body", ""),
+        )
         for r in raw
         if isinstance(r, dict) and (r.get("body") or "").strip()
     ]

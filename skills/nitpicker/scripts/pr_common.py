@@ -891,6 +891,25 @@ def review(
     }
 
 
+def review_body(
+    *, author: str, state: str, commit_id: str, submitted_at: str, body: str
+) -> dict[str, Any]:
+    """One non-empty review body — where a reviewer's outside-diff comments live.
+
+    Built here beside `review` so `commit_id` means one thing in both lists: the
+    full SHA the review saw. A provider that shortened it made a review body's
+    commit compare unequal to `head_sha` on every poll (contract-12074dd1).
+    `state` is the platform's own spelling, unlike `review`'s normalised verdict.
+    """
+    return {
+        "author": author or "unknown",
+        "state": state,
+        "commit_id": commit_id,
+        "submitted_at": submitted_at,
+        "body": body,
+    }
+
+
 def summarize_checks(checks: list[dict[str, Any]]) -> dict[str, int]:
     """Counts by outcome. `pending` is anything not yet concluded, so
     total == success + failure + neutral + pending on every platform."""

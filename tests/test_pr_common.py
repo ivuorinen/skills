@@ -1071,6 +1071,23 @@ class TestSummaries:
             "commented": 0,
         }
 
+    def test_a_review_body_carries_the_full_commit(self):
+        """One meaning of `commit_id` across `reviews[]` and `review_bodies[]`."""
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        body = c.review_body(
+            author="", state="COMMENTED", commit_id=sha, submitted_at="t", body="b"
+        )
+        assert body == {
+            "author": "unknown",
+            "state": "COMMENTED",
+            "commit_id": sha,
+            "submitted_at": "t",
+            "body": "b",
+        }
+        assert (
+            body["commit_id"] == c.review(author="a", state="commented", commit_id=sha)["commit_id"]
+        )
+
     def test_a_review_always_carries_every_key(self):
         # Present and empty, never absent: a caller comparing `commit_id` to the
         # head SHA must not have to learn which platform answered first.

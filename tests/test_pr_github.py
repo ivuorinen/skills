@@ -574,7 +574,9 @@ class TestOutOfThreadNotes:
         )
         bodies = gh._fetch_review_bodies(_TARGET, 1, rest)
         assert len(bodies) == 1
-        assert bodies[0]["commit_id"] == "abcdef123456"  # truncated to 12
+        # The full SHA, as in `reviews[]`: a 12-char prefix compared unequal to
+        # `head_sha` on every poll (contract-12074dd1).
+        assert bodies[0]["commit_id"] == "abcdef1234567890"
 
     def test_summary_comments_are_not_filtered_to_bots(self):
         # Filtering to `[bot]` logins dropped a maintainer's plain PR comment
