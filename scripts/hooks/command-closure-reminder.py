@@ -43,6 +43,12 @@ from _hooklib import load_event, report_skip, stop_feedback
 # by server as well as id.
 _TOOL = re.compile(r"^mcp__(?P<server>[A-Za-z0-9_-]*nitpicker)__(?P<tool>np_[a-z_]+)$")
 _OPEN = frozenset({"pending", "in_progress"})
+_CLOSE_STEPS = (
+    "Close each step with np_task_update and read the list back with np_task_list "
+    "before reporting (_conventions.md § Execution). If the run is waiting on the "
+    "user or on background work, say so; if the command was read without being run, "
+    "say that."
+)
 
 
 def _text(content: Any) -> str:
@@ -220,18 +226,8 @@ def main() -> None:
         report_skip("command-closure-reminder", f"{type(exc).__name__}: {exc}", "transcript read")
     reminders = open_steps(lines)
     if reminders:
-        stop_feedback(
-            "\n".join(
-                [
-                    "Nitpicker command process not closed:",
-                    *reminders,
-                    "Close each step with np_task_update and read the list back with "
-                    "np_task_list before reporting (_conventions.md § Execution). If the run "
-                    "is waiting on the user or on background work, say so; if the command was "
-                    "read without being run, say that.",
-                ]
-            )
-        )
+        message = ["Nitpicker command process not closed:", *reminders, _CLOSE_STEPS]
+        stop_feedback("\n".join(message))
 
 
 if __name__ == "__main__":
