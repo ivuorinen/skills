@@ -406,6 +406,14 @@ continuation its own exit 2 causes. That is one stop cycle, not one session:
 the reminder repeats once per turn for as long as skill edits stay
 uncommitted. That is the observed behaviour, not a broken guard.
 
+A second Stop hook, `command-closure-reminder.py`, reads the session transcript
+and reminds when a command loaded through `np_read_command` has process steps,
+seeded with `np_task_create`, still `pending` or `in_progress` — or none seeded.
+It reminds rather than blocks, under the same once-per-cycle guard: a turn ending
+is not a command ending, since a run legitimately waits on the user and on
+background work across turns. It sees only runs tracked with the `np_task_*`
+tools, and checks that steps were closed, not that their work was done.
+
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
 That root picks the tree being validated and the working directory, not the

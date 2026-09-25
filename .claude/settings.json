@@ -105,6 +105,14 @@
             "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/stop-reminder.py\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/command-closure-reminder.py\""
+          }
+        ]
       }
     ],
     "PreToolUse": [

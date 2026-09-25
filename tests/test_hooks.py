@@ -29,6 +29,7 @@ HOOK_NAMES = [
     "check-version-sync-hook",
     "ruff-hook",
     "stop-reminder",
+    "command-closure-reminder",
 ]
 
 
@@ -5037,3 +5038,253 @@ def test_hooks_carry_no_blanket_type_ignore():
         if "# type: ignore" in line
     ]
     assert blanket == []
+
+
+# ── command-closure-reminder: open process steps at stop time ─────────────────
+#
+# Fixtures use the block shapes Claude Code writes to a session transcript:
+# `tool_use` blocks in assistant entries, `tool_result` blocks (string or list
+# content) in user entries, task results as plain JSON.
+
+_NP = "mcp__nitpicker__"
+_NP_PLUGIN = "mcp__plugin_ivuorinen-skills_nitpicker__"
+
+
+class _Transcript:
+    """Builds a JSONL transcript one tool call at a time."""
+
+    def __init__(self):
+        """Start empty; `n` numbers the tool_use ids."""
+        self.lines: list[str] = []
+        self.n = 0
+
+    def call(self, name, args, result, *, error=False, sidechain=False, as_list=False):
+        """Append one tool_use and its tool_result, as two transcript entries."""
+        self.n += 1
+        tid = f"toolu_{self.n}"
+        use = {"type": "tool_use", "id": tid, "name": name, "input": args}
+        text = json.dumps(result) if not isinstance(result, str) else result
+        content = [{"type": "text", "text": text}] if as_list else text
+        res = {"type": "tool_result", "tool_use_id": tid, "content": content}
+        if error:
+            res["is_error"] = True
+        for kind, block in (("assistant", use), ("user", res)):
+            self.lines.append(
+                json.dumps(
+                    {"type": kind, "isSidechain": sidechain, "message": {"content": [block]}}
+                )
+            )
+        return self
+
+    def read(self, command, prefix=_NP, **kw):
+        """np_read_command for `command`; the result is the command's text."""
+        return self.call(
+            f"{prefix}np_read_command", {"command": command}, f"# {command}", as_list=True, **kw
+        )
+
+    def create(self, task_id, prefix=_NP, **kw):
+        """np_task_create returning `task_id`."""
+        return self.call(
+            f"{prefix}np_task_create", {"subject": "s"}, {"task": {"id": task_id}}, **kw
+        )
+
+    def update(self, task_id, status, prefix=_NP):
+        """np_task_update setting `status`."""
+        return self.call(
+            f"{prefix}np_task_update",
+            {"task_id": task_id, "status": status},
+            {"task": {"id": task_id}},
+        )
+
+    def listing(self, statuses, prefix=_NP):
+        """np_task_list returning `statuses` ({id: status})."""
+        tasks = [{"id": i, "status": s} for i, s in statuses.items()]
+        return self.call(f"{prefix}np_task_list", {}, {"tasks": tasks})
+
+
+def _closure(tmp_path, monkeypatch, transcript, **event):
+    """Run the hook on `transcript`; return (exit code or None, stderr)."""
+    mod = _load("command-closure-reminder")
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(transcript.lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys, "stdin", io.StringIO(json.dumps({"transcript_path": str(path), **event}))
+    )
+    try:
+        mod.main()
+    except SystemExit as exc:
+        return exc.code, ""
+    return None, ""
+
+
+def _closure_err(tmp_path, monkeypatch, capsys, transcript, **event):
+    """Exit code and captured stderr of one hook run."""
+    code, _ = _closure(tmp_path, monkeypatch, transcript, **event)
+    return code, capsys.readouterr().err
+
+
+def test_closure_silent_when_every_seeded_step_is_closed(tmp_path, monkeypatch, capsys):
+    t = (
+        _Transcript()
+        .read("cr")
+        .create("1")
+        .create("2")
+        .update("1", "completed")
+        .update("2", "completed")
+    )
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_reminds_about_open_steps(tmp_path, monkeypatch, capsys):
+    """The case the hook exists for: a run that reports with steps still open."""
+    t = _Transcript().read("cr").create("1").create("2").update("1", "completed")
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "cr: 1 of 2 steps still open (task ids 2)" in err
+    assert "np_task_list" in err
+
+
+def test_closure_reminds_when_nothing_was_seeded(tmp_path, monkeypatch, capsys):
+    """A loaded command with no seeded step is the evaporated task list itself."""
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, _Transcript().read("audit"))
+    assert code == 2
+    assert "audit: loaded, but no process step was seeded" in err
+
+
+def test_closure_a_reload_of_the_same_command_supersedes_the_unseeded_load(
+    tmp_path, monkeypatch, capsys
+):
+    t = _Transcript().read("cr").read("cr").create("1").update("1", "completed")
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_tasks_created_after_a_run_closed_belong_to_no_command(
+    tmp_path, monkeypatch, capsys
+):
+    """Found firing the hook on a real session: a finished `cr` run followed by the
+    agent's own work tasks was reported as `cr` still open, naming tasks cr never
+    seeded. Once every step a run seeded is closed, later tasks are not its."""
+    t = _Transcript().read("cr").create("1").update("1", "completed").create("2")
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_keys_task_ids_per_server(tmp_path, monkeypatch, capsys):
+    """The two registered servers hold separate lists whose ids collide."""
+    t = (
+        _Transcript()
+        .read("cr")
+        .create("1")
+        .update("1", "completed")
+        .read("pr", prefix=_NP_PLUGIN)
+        .create("1", prefix=_NP_PLUGIN)
+    )
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "pr: 1 of 1 steps still open" in err
+    assert "cr:" not in err
+
+
+def test_closure_ignores_subagent_entries(tmp_path, monkeypatch, capsys):
+    """A sidechain entry is another agent's run, not this one's."""
+    t = _Transcript().read("review", sidechain=True).create("1", sidechain=True)
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_ignores_failed_calls(tmp_path, monkeypatch, capsys):
+    """An isError create changed nothing on the server, so it seeds nothing."""
+    t = _Transcript().read("cr").create("1", error=True)
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "no process step was seeded" in err
+
+
+def test_closure_reads_status_from_the_list_readback(tmp_path, monkeypatch, capsys):
+    """The readback is authoritative: a status it reports wins, a missing id was deleted."""
+    t = _Transcript().read("cr").create("1").create("2").listing({"1": "completed"})
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_a_deleted_task_is_not_open(tmp_path, monkeypatch, capsys):
+    t = (
+        _Transcript()
+        .read("cr")
+        .create("1")
+        .create("2")
+        .update("1", "completed")
+        .update("2", "deleted")
+    )
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_does_not_loop_on_its_own_continuation(tmp_path, monkeypatch, capsys):
+    t = _Transcript().read("cr").create("1")
+    assert _closure_err(tmp_path, monkeypatch, capsys, t, stop_hook_active=True) == (None, "")
+
+
+def test_closure_without_a_transcript_path_is_a_no_op(monkeypatch, capsys):
+    mod = _load("command-closure-reminder")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    mod.main()
+    assert capsys.readouterr().err == ""
+
+
+def test_closure_reports_an_unreadable_transcript_rather_than_passing(
+    tmp_path, monkeypatch, capsys
+):
+    """A skipped check must not read as a closed run."""
+    mod = _load("command-closure-reminder")
+    event = {"transcript_path": str(tmp_path / "missing.jsonl")}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 1
+    assert "command-closure-reminder" in capsys.readouterr().err
+
+
+def test_closure_a_create_with_no_readable_task_seeds_nothing(tmp_path, monkeypatch, capsys):
+    """Non-text content, or JSON without a task id, is not a seeded step."""
+    t = _Transcript().read("cr").call(f"{_NP}np_task_create", {}, {"ok": True})
+    # Replace that call's own result with content that is neither a string nor
+    # a list of text blocks — the result, not a second one after it.
+    result = json.loads(t.lines[-1])
+    result["message"]["content"][0]["content"] = {}
+    t.lines[-1] = json.dumps(result)
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "no process step was seeded" in err
+
+
+def test_closure_an_update_without_a_status_changes_nothing(tmp_path, monkeypatch, capsys):
+    """Editing a task's subject leaves it open."""
+    t = _Transcript().read("cr").create("1")
+    t.call(f"{_NP}np_task_update", {"task_id": "1", "subject": "renamed"}, {"task": {"id": "1"}})
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "cr: 1 of 1 steps still open" in err
+
+
+def test_closure_a_list_result_without_tasks_is_not_a_readback(tmp_path, monkeypatch, capsys):
+    """An unreadable list must not be taken as "everything was deleted"."""
+    t = _Transcript().read("cr").create("1")
+    t.call(f"{_NP}np_task_list", {}, {"error": "x"})
+    code, err = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == 2
+    assert "cr: 1 of 1 steps still open" in err
+
+
+def test_command_closure_reminder_runs_as_a_script(tmp_path, monkeypatch, capsys):
+    """The __main__ path must behave like the imported one — it is how the hook runs."""
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(_Transcript().read("cr").create("1").lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"transcript_path": str(path)})))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / "command-closure-reminder.py"), run_name="__main__")
+    assert exc.value.code == 2
+    assert "cr: 1 of 1 steps still open" in capsys.readouterr().err
+
+
+def test_closure_skips_malformed_lines_and_foreign_tools(tmp_path, monkeypatch, capsys):
+    t = _Transcript().call("mcp__other__np_task_create", {}, {"task": {"id": "9"}})
+    t.lines += ["not json", json.dumps({"message": {"content": "plain"}}), json.dumps([1])]
+    t.read("cr").create("1").update("1", "completed")
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
