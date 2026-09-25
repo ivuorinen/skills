@@ -672,19 +672,40 @@ def cli_available(name: str) -> bool:
         return False
 
 
+# Secondary fetches that failed during the current fetch, as "label: Type: message".
+# `fetch` clears it before each dispatch and the envelopes drain it into their
+# `degraded` key — the MCP server is long-lived, so a record not reset per fetch
+# would report one PR's failures on the next.
+# ponytail: one module-level record, sound because nothing here runs two fetches
+# at once — mcp_server.serve handles one frame at a time and each CLI run is its
+# own process. A threaded caller needs a contextvars.ContextVar set in `fetch`.
+_DEGRADED: list[str] = []
+
+
 def best_effort(label: str, fn: Callable[[], Any], default: Any) -> Any:
     """Run a secondary fetch whose failure must not discard the primary result.
 
     The threads/PR record is what the caller came for; a rate-limited call for
     reviews or CI checks degrades the answer but must never turn it into an error.
-    Every such failure names itself on stderr, so a degraded result is visibly
-    degraded rather than quietly incomplete.
+    A failure is recorded for the envelope's `degraded` key as well as warned on
+    stderr: through the MCP tools stderr is the server's log, which the agent
+    never sees, so `reviews: []` from a failed fetch read exactly like a PR with
+    no reviews (errors-bc7067eb). The record carries the exception type, so a
+    parser bug surfaces as `reviews: KeyError: …` rather than as an empty list.
     """
     try:
         return fn()
     except Exception as err:
+        _DEGRADED.append(f"{label}: {type(err).__name__}: {err}")
         warn(f"could not fetch {label} ({err})")
         return default
+
+
+def _take_degraded() -> list[str]:
+    """The failures recorded since the last fetch began, clearing the record."""
+    taken = list(_DEGRADED)
+    _DEGRADED.clear()
+    return taken
 
 
 def warn(message: str) -> None:
@@ -775,6 +796,9 @@ def comments_envelope(
     a review-body concept, so both return it empty. It stays in the envelope
     because a caller that branched on the key's presence would be branching on
     platform, which is exactly what a shared format exists to avoid.
+
+    `degraded` names each secondary fetch that failed; a section it names is
+    unknown, not empty. It is `[]` when every fetch succeeded.
     """
     return {
         "platform": target.platform,
@@ -785,6 +809,7 @@ def comments_envelope(
         "threads": threads,
         "review_bodies": review_bodies,
         "summary_comments": summary_comments,
+        "degraded": _take_degraded(),
     }
 
 
@@ -815,6 +840,8 @@ def status_envelope(
     open `opened` and Bitbucket spells it `OPEN`, and a caller comparing strings
     should not have to know that. `mergeable` is tri-state: `null` means the
     platform had not finished computing it, which is not the same as "no".
+    `degraded` names each secondary fetch that failed: when it lists `checks`,
+    `checks_summary` is unknown rather than zero, and likewise for `reviews`.
     """
     checks = checks or []
     reviews = reviews or []
@@ -840,6 +867,7 @@ def status_envelope(
         "reviews": reviews,
         "review_summary": summarize_reviews(reviews),
         "changed_files": changed_files or [],
+        "degraded": _take_degraded(),
     }
 
 
@@ -849,9 +877,40 @@ def check(*, name: str, status: str = "", conclusion: str = "", url: str = "") -
     return {"name": name, "status": status, "conclusion": conclusion, "url": url}
 
 
-def review(*, author: str, state: str, submitted_at: str = "") -> dict[str, Any]:
-    """One review verdict. `state` is approved|changes_requested|commented."""
-    return {"author": author or "unknown", "state": state, "submitted_at": submitted_at}
+def review(
+    *, author: str, state: str, submitted_at: str = "", commit_id: str = ""
+) -> dict[str, Any]:
+    """One review verdict. `state` is approved|changes_requested|commented.
+
+    `commit_id` is the commit the review saw, and empty where the platform does
+    not record one (GitLab approvals, Bitbucket participants). A timestamp after a
+    push does not prove a review covered it; the reviewed commit does.
+    """
+    return {
+        "author": author or "unknown",
+        "state": state,
+        "submitted_at": submitted_at,
+        "commit_id": commit_id,
+    }
+
+
+def review_body(
+    *, author: str, state: str, commit_id: str, submitted_at: str, body: str
+) -> dict[str, Any]:
+    """One non-empty review body — where a reviewer's outside-diff comments live.
+
+    Built here beside `review` so `commit_id` means one thing in both lists: the
+    full SHA the review saw. A provider that shortened it made a review body's
+    commit compare unequal to `head_sha` on every poll (contract-12074dd1).
+    `state` is the platform's own spelling, unlike `review`'s normalised verdict.
+    """
+    return {
+        "author": author or "unknown",
+        "state": state,
+        "commit_id": commit_id,
+        "submitted_at": submitted_at,
+        "body": body,
+    }
 
 
 def summarize_checks(checks: list[dict[str, Any]]) -> dict[str, int]:
@@ -947,3 +1006,14 @@ def provider_for(target: Target) -> Any:
     # it even one line further up, silently.
     # nosemgrep: non-literal-import
     return importlib.import_module(_PROVIDER_MODULES[target.platform])
+
+
+def fetch(target: Target, pr_number: int, operation: str) -> dict[str, Any]:
+    """Run one provider fetch — `operation` is `fetch_comments` or `fetch_status`.
+
+    The one dispatch both driving adapters use, so the degraded record is reset
+    in one place: a fetch that raised after a secondary fetch failed would
+    otherwise leave its failures for the next call's envelope to report.
+    """
+    _DEGRADED.clear()
+    return getattr(provider_for(target), operation)(target, pr_number)

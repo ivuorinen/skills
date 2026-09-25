@@ -436,13 +436,13 @@ def _fetch_review_bodies(
     """Every non-empty PR review body (any author) — outside-diff-range comments live here."""
     raw = rest_list(f"repos/{target.path}/pulls/{pr_number}/reviews")
     return [
-        {
-            "author": (r.get("user") or {}).get("login", "unknown"),
-            "state": r.get("state", ""),
-            "commit_id": (r.get("commit_id") or "")[:12],
-            "submitted_at": r.get("submitted_at", ""),
-            "body": r.get("body", ""),
-        }
+        pr_common.review_body(
+            author=(r.get("user") or {}).get("login", "unknown"),
+            state=r.get("state", ""),
+            commit_id=r.get("commit_id") or "",
+            submitted_at=r.get("submitted_at", ""),
+            body=r.get("body", ""),
+        )
         for r in raw
         if isinstance(r, dict) and (r.get("body") or "").strip()
     ]
@@ -638,7 +638,13 @@ def _reviews(target: pr_common.Target, pr_number: int, rest_list: Callable[[str]
     GitHub returns every review ever submitted, so a reviewer who requested
     changes and then approved appears twice; counting raw rows reports the PR as
     still blocked. `COMMENTED` never supersedes a verdict, so it is only kept
-    when the reviewer has cast no other.
+    when the reviewer has cast no other — but a later comment does replace an
+    earlier one. Keeping the first instead reported a comment-only reviewer
+    (CodeRabbit) at its oldest review, dated before every push it had seen.
+
+    Ceiling: a `commented` entry's `commit_id` is not evidence the commit was
+    reviewed. GitHub makes an empty-body review object for every thread reply,
+    so a bot answering a reply is "commented" on whatever commit is current.
     """
     raw = rest_list(f"repos/{target.path}/pulls/{pr_number}/reviews")
     latest: dict[str, dict[str, Any]] = {}
@@ -649,10 +655,13 @@ def _reviews(target: pr_common.Target, pr_number: int, rest_list: Callable[[str]
         if state is None:
             continue  # PENDING / DISMISSED carry no verdict
         author = (r.get("user") or {}).get("login", "unknown")
-        if state == "commented" and author in latest:
+        if state == "commented" and latest.get(author, {}).get("state", "commented") != "commented":
             continue
         latest[author] = pr_common.review(
-            author=author, state=state, submitted_at=r.get("submitted_at", "")
+            author=author,
+            state=state,
+            submitted_at=r.get("submitted_at", ""),
+            commit_id=r.get("commit_id") or "",
         )
     return list(latest.values())
 

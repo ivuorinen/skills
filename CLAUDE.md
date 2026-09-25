@@ -49,7 +49,7 @@ the two measure different halves of the same budget.
 ```bash
 make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
-make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
+make validate-evals # shape of each skill's evals/*.json (evals, trigger-queries, pressure-records)
 make ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
 make test         # run pytest unit tests
 make list         # list the skill and its commands
@@ -84,7 +84,7 @@ because metadata values are strings. Claude Code reads that key from the top
 level only, so under `metadata` it is inert and those skills become
 model-invocable. That trade was accepted deliberately, buying portability.
 
-Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions) and `trigger-queries.json` (description trigger accuracy, fixed train/validation split) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
+Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions), `trigger-queries.json` (description trigger accuracy, fixed train/validation split) and `pressure-records.json` (which commands were pressure-tested) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
 
 `make spec-check` cross-checks every skill against the Agent Skills reference
 validator. It needs network access, so it sits outside `make check`;
@@ -401,10 +401,21 @@ before Claude hands back control. Its scope is the union of the git index
 (`git diff --cached`), the working tree (`git diff`) and the untracked set
 (`git ls-files --others`), so **unstaged** and brand-new files count too.
 
-A `stop_hook_active` guard keeps the reminder from re-firing on the forced
-continuation its own exit 2 causes. That is one stop cycle, not one session:
+It hands the reminder to the agent as `additionalContext` on exit 0
+(`_hooklib.stop_feedback`), the form the hooks reference recommends for a hook
+giving guidance: it continues the conversation as exit 2 would, but shows no
+hook-error notification. A `stop_hook_active` guard keeps the reminder from
+re-firing on the continuation it causes. That is one stop cycle, not one session:
 the reminder repeats once per turn for as long as skill edits stay
 uncommitted. That is the observed behaviour, not a broken guard.
+
+A second Stop hook, `command-closure-reminder.py`, reads the session transcript
+and reminds when a command loaded through `np_read_command` has process steps,
+seeded with `np_task_create`, still `pending` or `in_progress` — or none seeded.
+It reminds rather than blocks, under the same once-per-cycle guard: a turn ending
+is not a command ending, since a run legitimately waits on the user and on
+background work across turns. It sees only runs tracked with the `np_task_*`
+tools, and checks that steps were closed, not that their work was done.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 

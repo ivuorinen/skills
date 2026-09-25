@@ -574,7 +574,9 @@ class TestOutOfThreadNotes:
         )
         bodies = gh._fetch_review_bodies(_TARGET, 1, rest)
         assert len(bodies) == 1
-        assert bodies[0]["commit_id"] == "abcdef123456"  # truncated to 12
+        # The full SHA, as in `reviews[]`: a 12-char prefix compared unequal to
+        # `head_sha` on every poll (contract-12074dd1).
+        assert bodies[0]["commit_id"] == "abcdef1234567890"
 
     def test_summary_comments_are_not_filtered_to_bots(self):
         # Filtering to `[bot]` logins dropped a maintainer's plain PR comment
@@ -801,6 +803,67 @@ class TestReviews:
     def test_commented_alone_is_kept(self):
         rest = MagicMock(return_value=[{"user": {"login": "a"}, "state": "COMMENTED"}])
         assert gh._reviews(_TARGET, 1, rest)[0]["state"] == "commented"
+
+    def test_a_later_comment_replaces_an_earlier_comment(self):
+        # A reviewer that only ever comments — CodeRabbit's whole pattern — was
+        # reported with its first review, so on PR #141 np_pr_status dated
+        # coderabbitai's last review to the day the PR opened, a week before the
+        # reviews that had actually seen the fixes.
+        rest = MagicMock(
+            return_value=[
+                {
+                    "user": {"login": "bot"},
+                    "state": "COMMENTED",
+                    "submitted_at": "1",
+                    "commit_id": "old",
+                },
+                {
+                    "user": {"login": "bot"},
+                    "state": "COMMENTED",
+                    "submitted_at": "2",
+                    "commit_id": "new",
+                },
+            ]
+        )
+        assert gh._reviews(_TARGET, 1, rest) == [
+            c.review(author="bot", state="commented", submitted_at="2", commit_id="new")
+        ]
+
+    def test_each_review_carries_the_commit_it_reviewed(self):
+        # The cr loop must confirm a review saw the latest push; a timestamp after
+        # the push is a hint, the reviewed commit is the proof.
+        rest = MagicMock(
+            return_value=[
+                {
+                    "user": {"login": "a"},
+                    "state": "APPROVED",
+                    "submitted_at": "1",
+                    "commit_id": "abc",
+                },
+            ]
+        )
+        assert gh._reviews(_TARGET, 1, rest)[0]["commit_id"] == "abc"
+
+    def test_a_verdict_keeps_its_own_commit_when_a_comment_follows(self):
+        rest = MagicMock(
+            return_value=[
+                {
+                    "user": {"login": "a"},
+                    "state": "APPROVED",
+                    "submitted_at": "1",
+                    "commit_id": "v",
+                },
+                {
+                    "user": {"login": "a"},
+                    "state": "COMMENTED",
+                    "submitted_at": "2",
+                    "commit_id": "w",
+                },
+            ]
+        )
+        assert gh._reviews(_TARGET, 1, rest) == [
+            c.review(author="a", state="approved", submitted_at="1", commit_id="v")
+        ]
 
     def test_pending_and_dismissed_carry_no_verdict(self):
         rest = MagicMock(

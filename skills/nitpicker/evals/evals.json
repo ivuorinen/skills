@@ -122,6 +122,39 @@
         "The report is delivered with nothing applied, since an audit's requested change is the report",
         "Correctness defects noticed in the same file are routed in one line rather than reviewed here"
       ]
+    },
+    {
+      "id": 12,
+      "prompt": "/nitpicker audit only the np_* MCP tool surface — I don't want the rest of the repo looked at this time",
+      "expected_output": "The request names a part of the repository, so it is an input scope: every coverage lens still runs, against the MCP tool surface only, and nothing closes out of scope.",
+      "assertions": [
+        "The extra instructions are classified as an input scope, quoting the words that establish it",
+        "Every coverage task is kept and applied to the narrowed input; none is closed out of scope",
+        "A lens whose surface is absent from that input closes N/A with a reason when it runs, not in advance",
+        "The run is not treated as ambiguous between input and checklist scope"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "/nitpicker cr — CodeRabbit's summary now says 'No actionable comments were generated in the recent review', and it also has a 'Review limit reached' block whose 'Reviewing files that changed … between' range ends at my latest commit. Is the review loop finished?",
+      "expected_output": "Not finished: the range inside a 'Review limit reached' block lists commits waiting for review, so the clean line belongs to an older review and the latest commit is unreviewed.",
+      "assertions": [
+        "The loop is not declared clean",
+        "The range inside the Review limit reached block is read as commits waiting for review, not reviewed ones",
+        "Coverage of the latest commit is sought in the Recent review info block's range or a review whose commit_id is that commit",
+        "The rate-limit window is treated as the earliest time to retry, measured from the summary's last edit"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "/nitpicker audit just the docs — run it unattended overnight, nobody will be around to answer questions",
+      "expected_output": "\"the docs\" reads as either the docs/ tree or the docs lens, and nobody can answer, so the run takes the reading that drops nothing: every coverage task runs and none closes out of scope, and the summary records the unasked question.",
+      "assertions": [
+        "The ambiguity between an input scope and a checklist scope is named",
+        "No coverage task is closed out of scope",
+        "The reading taken drops nothing: an input scope or a focus that orders the docs lens first",
+        "The run summary records the question that went unasked and the reading taken"
+      ]
     }
   ]
 }

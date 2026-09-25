@@ -44,14 +44,17 @@ Analyze all of:
      its own auditor key. A focus deepens one lens and never narrows the
      checklist; every other coverage task still runs.
    - A **scope** bounds what the run covers, along one of two axes. Name which:
-     - **Input** — the files each lens runs against (`changed-files`). Every
-       lens still applies, to a smaller input. No task is dropped and none
-       closes `out of scope`.
-     - **Checklist** — the subject matter itself ("only the MCP tools", "just
-       the docs"). Tasks outside it are dropped, each closed **out of scope**
-       (`_audit-coverage.md` state 4) naming what the scope excluded, and each
-       appears in the run summary. The user then sees what was not looked at,
-       rather than reading a narrowed run as an exhaustive one.
+     - **Input** — the files each lens runs against (`changed-files`, "only the
+       MCP tools", "just `scripts/`"). Every lens still applies, to a smaller
+       input. No task is dropped and none closes `out of scope`.
+     - **Checklist** — the concerns themselves ("only security and privacy",
+       "skip accessibility and i18n"). A part of the repository names files;
+       a quality or concern names lenses. Tasks outside it are dropped: each
+       closes **out of scope** (`_audit-coverage.md` state 4) naming what the
+       scope excluded when its surface exists, or **N/A** with the reason when
+       the surface is absent, and each appears in the run summary. The user then sees
+       what was not looked at, rather than reading a narrowed run as an
+       exhaustive one.
 
      A checklist scope is legitimate — an audit the user scoped is the audit
      they asked for — but it is theirs to grant, not yours to infer: **quote
@@ -62,6 +65,10 @@ Analyze all of:
      guessing wrong lands on the user.
    When the instructions read as either, ask instead of guessing — the two
    produce very different runs, and the wrong pick is only visible afterwards.
+   With no interactive user to confirm or answer, take the reading that drops
+   nothing — an input scope, or a focus that orders the named lenses first —
+   and never close a task `out of scope` on a scope nobody confirmed. Record in
+   the run summary the question that went unasked and the reading taken.
 4. Work the task list in order. For each task: apply the lens (using its
    specialist command as the authority; deep-run it via `np_read_command`,
    else `<command>.md`, when the lens is high-risk), and file findings as

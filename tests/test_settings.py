@@ -182,6 +182,10 @@ def test_stop_reminder_registered():
     assert "stop-reminder.py" in _commands("Stop")
 
 
+def test_command_closure_reminder_registered():
+    assert "command-closure-reminder.py" in _commands("Stop")
+
+
 @pytest.mark.parametrize("matcher", ["Bash", "Read|Glob"])
 def test_pretooluse_hooks_registered(matcher):
     """The two graphify hook-guards can block a tool call — removal must not be silent.

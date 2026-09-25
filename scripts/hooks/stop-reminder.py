@@ -8,8 +8,9 @@ Scoped to the union of the git index, the working tree and the untracked set. An
 index-only scope missed `git commit -am`, which stages and commits inside a
 single Bash call, so no stop ever observed a staged state.
 
-The `stop_hook_active` guard below stops the reminder re-firing on the forced
-continuation its own exit 2 causes. That is ONE stop cycle, not one session:
+The reminder reaches the agent as `additionalContext` (`_hooklib.stop_feedback`),
+which continues the conversation once. The `stop_hook_active` guard below stops
+it re-firing on that forced continuation. That is ONE stop cycle, not one session:
 the variable is false again on the next turn, so a branch holding uncommitted
 skill edits is reminded once per turn until they are committed. That repetition
 is the intended behaviour and not a broken guard — deduping across turns would
@@ -27,6 +28,7 @@ from _hooklib import (
     load_event,
     repo_root,
     report_skip,
+    stop_feedback,
 )
 
 REPO_ROOT = repo_root()
@@ -37,14 +39,14 @@ def main() -> None:
 
     Reads the index, the working tree and the untracked set: a brand-new
     SKILL.md or command file appears in neither diff form, yet is the most
-    common pending change. Exit 2 blocks the stop, which is why the
-    `stop_hook_active` guard is needed to keep the reminder from firing again
-    on its own forced continuation.
+    common pending change. The reminder continues the conversation, which is
+    why the `stop_hook_active` guard is needed to keep it from firing again on
+    its own forced continuation.
     """
-    # A Stop hook that exits 2 blocks the stop and re-invokes Claude. Without
-    # this guard the reminder fires again on the forced continuation's own stop,
-    # looping forever. `stop_hook_active` is true on that second pass — surface
-    # the reminder once, then let Claude stop.
+    # A reminder re-invokes Claude. Without this guard it fires again on the
+    # forced continuation's own stop, until Claude Code's continuation cap ends
+    # it. `stop_hook_active` is true on that second pass — surface the reminder
+    # once, then let Claude stop.
     if (load_event() or {}).get("stop_hook_active"):
         return
 
@@ -82,12 +84,10 @@ def main() -> None:
         if "skills/" in f and (f.endswith("SKILL.md") or ("/commands/" in f and f.endswith(".md")))
     ]
     if changed:
-        # Stop hooks feed back to Claude only via exit 2 + stderr.
-        print("Pending skill changes detected:", file=sys.stderr)
-        for f in changed:
-            print(f"  {f}", file=sys.stderr)
-        print("Run /validate-skills before releasing.", file=sys.stderr, flush=True)
-        sys.exit(2)
+        listing = "\n".join(f"  {f}" for f in changed)
+        stop_feedback(
+            f"Pending skill changes detected:\n{listing}\nRun /validate-skills before releasing."
+        )
 
 
 if __name__ == "__main__":

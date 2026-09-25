@@ -43,8 +43,12 @@ Outputs a JSON object to stdout:
         }
       ],
       "review_bodies": [{"author", "state", "commit_id", "submitted_at", "body"}],
-      "summary_comments": [{"author", "created_at", "updated_at", "body"}]
+      "summary_comments": [{"author", "created_at", "updated_at", "body"}],
+      "degraded": ["summary comments: HTTPError: ..."]
     }
+
+`degraded` names each secondary fetch that failed and is `[]` when none did; a
+section it names is unknown, not empty.
 
 `threads` are the inline review threads. `review_bodies` and `summary_comments`
 carry notices that do NOT appear as inline threads and are historically missed: a

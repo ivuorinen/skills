@@ -6,6 +6,7 @@ the JSON the CLIs print. Those are the pieces whose breakage is silent — a
 loosened host check still returns data, and a dropped envelope key still parses.
 """
 
+import contextlib
 import email.message
 import http.server
 import importlib.util
@@ -583,15 +584,22 @@ _PROVIDER_AUTH_HEADERS = [
 ]
 
 
-def _serve(handler: type) -> tuple[http.server.HTTPServer, int]:
-    """A throwaway loopback HTTP server on an ephemeral port, plus that port.
+@contextlib.contextmanager
+def _serve(handler: type):
+    """A throwaway loopback HTTP server on an ephemeral port; yields that port.
 
     Port 0 so concurrent test runs cannot collide, and a daemon thread so a
-    failed assertion cannot leave the suite hanging on a live server.
+    failed assertion cannot leave the suite hanging on a live server. Exit both
+    stops the loop and closes the listening socket: callers that only called
+    `shutdown()` left the socket open until garbage collection (leaks-3431a508).
     """
     server = http.server.HTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1]
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def _constant_body(body: bytes) -> type:
@@ -766,9 +774,10 @@ class TestTokenSafeRedirectHandler:
         — `http_json` builds exactly this one and does nothing else to the
         response.
         """
-        internal, iport = _serve(_constant_body(b'{"secret": "INTERNAL"}'))
-        api, aport = _serve(_redirect_to(f"http://127.0.0.1:{iport}/latest/meta-data/"))
-        try:
+        with (
+            _serve(_constant_body(b'{"secret": "INTERNAL"}')) as iport,
+            _serve(_redirect_to(f"http://127.0.0.1:{iport}/latest/meta-data/")) as aport,
+        ):
             pinned = f"127.0.0.1:{aport}"
             opener = urllib.request.build_opener(c._TokenSafeRedirectHandler(pinned))
             req = urllib.request.Request(
@@ -777,10 +786,8 @@ class TestTokenSafeRedirectHandler:
             )
             with pytest.raises(urllib.error.HTTPError) as excinfo:
                 opener.open(req, timeout=10)
+            excinfo.value.close()
             assert "refusing to follow a redirect" in str(excinfo.value)
-        finally:
-            internal.shutdown()
-            api.shutdown()
 
 
 # ── pagination ────────────────────────────────────────────────────────────────
@@ -878,8 +885,7 @@ class TestHttpJsonBounds:
     def test_a_trickling_body_is_cut_off_at_the_deadline(self):
         # A real socket, because the defect lives below any mock: a buffered
         # read of N bytes blocks until N arrive, however slowly they come.
-        server, port = _serve(_trickle(0.2))
-        try:
+        with _serve(_trickle(0.2)) as port:
             start = time.monotonic()
             with (
                 patch.object(c, "_check_url"),
@@ -887,8 +893,6 @@ class TestHttpJsonBounds:
             ):
                 c.http_json(f"http://127.0.0.1:{port}/x", {}, f"127.0.0.1:{port}", timeout=1)
             assert time.monotonic() - start < 3
-        finally:
-            server.shutdown()
 
     def test_a_body_past_the_size_cap_is_refused(self, monkeypatch):
         monkeypatch.setattr(c, "_MAX_BODY_BYTES", 8)
@@ -963,10 +967,12 @@ class TestEnvelopes:
             "threads",
             "review_bodies",
             "summary_comments",
+            "degraded",
         }
         # A platform without the concept reports it empty, never absent — a caller
         # must not have to branch on key existence to learn which platform answered.
         assert out["review_bodies"] == []
+        assert out["degraded"] == []
 
     def test_status_envelope_keys_are_stable(self):
         out = c.status_envelope(c.Target("github", "github.com", "o/r"), 1)
@@ -992,7 +998,45 @@ class TestEnvelopes:
             "reviews",
             "review_summary",
             "changed_files",
+            "degraded",
         }
+
+    def test_a_failed_secondary_fetch_is_named_in_the_envelope(self):
+        """errors-bc7067eb: through MCP, stderr is the server's log, so the envelope
+        itself must say a section is unknown rather than empty."""
+
+        def boom():
+            """A reviews fetch that dies on a parser bug."""
+            raise KeyError("state")
+
+        reviews = c.best_effort("reviews", boom, [])
+        out = c.status_envelope(c.Target("github", "github.com", "o/r"), 1, reviews=reviews)
+        assert out["reviews"] == []
+        assert out["degraded"] == ["reviews: KeyError: 'state'"]
+
+    def test_the_record_is_drained_so_the_next_envelope_starts_clean(self):
+        c.best_effort("checks", lambda: 1 / 0, [])
+        target = c.Target("github", "github.com", "o/r")
+        assert c.status_envelope(target, 1)["degraded"] == [
+            "checks: ZeroDivisionError: division by zero"
+        ]
+        assert c.status_envelope(target, 1)["degraded"] == []
+
+    def test_fetch_discards_failures_left_by_a_fetch_that_raised(self, monkeypatch):
+        """A long-lived MCP server must not report one PR's failures on the next."""
+        c._DEGRADED[:] = ["reviews: RuntimeError: stale"]
+
+        class _Provider:
+            """Stands in for a provider module whose fetch builds an envelope."""
+
+            @staticmethod
+            def fetch_status(target, pr_number):
+                """A fetch whose secondary calls all succeed."""
+                return c.status_envelope(target, pr_number)
+
+        monkeypatch.setattr(c, "provider_for", lambda _t: _Provider)
+        out = c.fetch(c.Target("github", "github.com", "o/r"), 5, "fetch_status")
+        assert out["degraded"] == []
 
     def test_thread_is_resolved_defaults_to_unknown_not_false(self):
         # null means "the transport could not tell"; collapsing it to False would
@@ -1029,6 +1073,33 @@ class TestSummaries:
             "approved": 2,
             "changes_requested": 1,
             "commented": 0,
+        }
+
+    def test_a_review_body_carries_the_full_commit(self):
+        """One meaning of `commit_id` across `reviews[]` and `review_bodies[]`."""
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        body = c.review_body(
+            author="", state="COMMENTED", commit_id=sha, submitted_at="t", body="b"
+        )
+        assert body == {
+            "author": "unknown",
+            "state": "COMMENTED",
+            "commit_id": sha,
+            "submitted_at": "t",
+            "body": "b",
+        }
+        assert (
+            body["commit_id"] == c.review(author="a", state="commented", commit_id=sha)["commit_id"]
+        )
+
+    def test_a_review_always_carries_every_key(self):
+        # Present and empty, never absent: a caller comparing `commit_id` to the
+        # head SHA must not have to learn which platform answered first.
+        assert c.review(author="a", state="approved") == {
+            "author": "a",
+            "state": "approved",
+            "submitted_at": "",
+            "commit_id": "",
         }
 
     def test_states_outside_the_vocabulary_are_not_counted(self):

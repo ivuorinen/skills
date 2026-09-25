@@ -46,10 +46,15 @@ Outputs a JSON object to stdout:
       "merge_state": "clean" | "mergeable" | "" ,
       "checks": [{"name", "status", "conclusion", "url"}],
       "checks_summary": {"total", "success", "failure", "neutral", "pending"},
-      "reviews": [{"author", "state", "submitted_at"}],
+      "reviews": [{"author", "state", "submitted_at", "commit_id"}],
       "review_summary": {"approved", "changes_requested", "commented"},
-      "changed_files": ["src/foo.py", ...]
+      "changed_files": ["src/foo.py", ...],
+      "degraded": ["reviews: HTTPError: ..."]
     }
+
+`degraded` names each secondary fetch (checks, reviews, files) that failed and
+is `[]` when none did. A section it names is unknown, not empty: a failed checks
+fetch leaves `checks_summary.failure` at 0 without meaning CI passed.
 
 `state` is normalised to open/closed/merged across platforms — GitLab spells open
 `opened` and Bitbucket spells it `OPEN`, and `is_draft` is carried separately, so
@@ -64,6 +69,12 @@ on every platform.
 
 `head_sha` is what makes a bot review's freshness checkable: a review whose
 commit range predates this SHA has not seen the latest push.
+
+`reviews[]` is each reviewer's latest verdict, and its `commit_id` proves a
+review saw a commit only for an `approved` or `changes_requested` entry. A
+`commented` entry can be the empty review GitHub makes for a thread reply, and
+`commit_id` is always empty on GitLab and Bitbucket, whose reviews record no
+commit — so neither is evidence the latest push was reviewed.
 
 Secondary data (checks, reviews, changed files) is best-effort — a failure there
 degrades the result with a `[warn]` on stderr rather than losing the PR record.

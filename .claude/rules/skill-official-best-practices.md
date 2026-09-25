@@ -164,6 +164,10 @@ A skill carries its eval sets under `<skill-dir>/evals/`, validated by
 - `trigger-queries.json` — description trigger-accuracy queries labelled
   `should_trigger`, split into a fixed `train` and `validation` set
   (<https://agentskills.io/skill-creation/optimizing-descriptions>).
+- `pressure-records.json` — this repo's own: one record per command whose
+  behaviour under pressure was measured, or its name under `grandfathered`.
+  `validate-evals.py` checks the shape; `tests/test_pressure_records.py` checks
+  that every command is covered, since that needs the commands tree.
 
 Revise a description against `train` failures only, and score each iteration by
 its `validation` pass rate — tuning against the whole set overfits the wording

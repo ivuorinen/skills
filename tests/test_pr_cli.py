@@ -102,6 +102,26 @@ class TestRunCli:
             assert cli.run_cli("doc", "fetch_comments", ["o/r", "1"]) == 1
         assert "no auth" in capsys.readouterr().err
 
+    def test_runtime_error_names_its_type_without_a_traceback(self, capsys):
+        """A transport failure is an API condition, not a bug: type, message, no stack."""
+        provider = MagicMock()
+        provider.fetch_comments.side_effect = c.TransportError("no auth")
+        with patch.object(c, "provider_for", return_value=provider):
+            assert cli.run_cli("doc", "fetch_comments", ["o/r", "1"]) == 1
+        err = capsys.readouterr().err
+        assert "[error] TransportError: no auth" in err
+        assert "Traceback" not in err
+
+    def test_a_programming_error_keeps_its_type_and_traceback(self, capsys):
+        """errors-f248a161: a KeyError printed as a bare `'commit_id'` named nothing."""
+        provider = MagicMock()
+        provider.fetch_comments.side_effect = KeyError("commit_id")
+        with patch.object(c, "provider_for", return_value=provider):
+            assert cli.run_cli("doc", "fetch_comments", ["o/r", "1"]) == 1
+        err = capsys.readouterr().err
+        assert "[error] KeyError: 'commit_id'" in err
+        assert "Traceback" in err
+
     def test_success_prints_json_to_stdout_and_exits_zero(self, capsys):
         provider = MagicMock()
         provider.fetch_comments.return_value = {"threads": []}

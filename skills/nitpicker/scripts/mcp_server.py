@@ -1010,9 +1010,8 @@ def _pr_fetch(args: dict, operation: str) -> str | tuple[str, bool]:
     """
     try:
         target, pr_number = _pr_target(args)
-        provider = pr_common.provider_for(target)
-        fetch = provider.fetch_comments if operation == "comments" else provider.fetch_status
-        return _pr_fenced(_compact(fetch(target, pr_number)))
+        name = "fetch_comments" if operation == "comments" else "fetch_status"
+        return _pr_fenced(_compact(pr_common.fetch(target, pr_number, name)))
     except Exception as e:
         # Same boundary rule as dispatch: full detail on stderr, root scrubbed.
         print(f"[nitpicker] np_pr_{operation}: {type(e).__name__}: {e}", file=sys.stderr)

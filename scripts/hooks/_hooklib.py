@@ -130,6 +130,21 @@ def report_skip(hook: str, reason: str, command: str) -> NoReturn:
     sys.exit(1)
 
 
+def stop_feedback(text: str) -> None:
+    """Hand a Stop hook's reminder to the agent as `additionalContext`, exit 0.
+
+    The hooks reference recommends this over exit 2 for a Stop hook that is
+    working as designed and giving guidance: it continues the conversation under
+    the same loop protections (`stop_hook_active`, the consecutive-continuation
+    cap) but carries no hook-error notification, where exit 2 reports the
+    reminder as a failed hook. Exit 0 is required, not incidental: exit 2's
+    block is the one outcome JSON cannot override. stdout must hold this object
+    and nothing else, or Claude Code reads it as plain text and drops it.
+    """
+    payload = {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": text}}
+    print(json.dumps(payload), flush=True)
+
+
 # The checkout these hooks ship in, derived from `__file__`. Every validator a
 # hook EXECUTES comes from here; `repo_root()` is only the tree being validated
 # and the subprocess `cwd`. Deriving executed paths from the environment let a

@@ -257,8 +257,9 @@ def _reviews(pr: dict[str, Any]):
     """Verdicts from `participants`.
 
     `approved` is a boolean flag separate from `state`, and the two disagree on
-    older payloads, so approval is read from the flag and only a reviewer who has
-    neither approved nor requested changes falls through to `commented`.
+    older payloads, so approval is read from the flag. A participant who has
+    neither approved nor requested changes carries no verdict and is omitted —
+    Bitbucket has no comment-only review to report as `commented`.
     """
     reviews = []
     for participant in pr.get("participants") or []:
