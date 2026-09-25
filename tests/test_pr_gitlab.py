@@ -354,6 +354,8 @@ class TestReviews:
         approvals = {"approved_by": [{"user": {"username": "alice"}}]}
         reviews = gl._reviews({}, _TARGET, 7, lambda _p: approvals)
         assert reviews == [c.review(author="alice", state="approved")]
+        # GitLab records no commit per approval: the key is present and empty.
+        assert reviews[0]["commit_id"] == ""
 
     def test_requested_changes_read_from_the_mrs_reviewers(self):
         mr = {"reviewers": [{"username": "bob", "state": "requested_changes"}]}

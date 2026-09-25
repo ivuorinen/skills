@@ -849,9 +849,21 @@ def check(*, name: str, status: str = "", conclusion: str = "", url: str = "") -
     return {"name": name, "status": status, "conclusion": conclusion, "url": url}
 
 
-def review(*, author: str, state: str, submitted_at: str = "") -> dict[str, Any]:
-    """One review verdict. `state` is approved|changes_requested|commented."""
-    return {"author": author or "unknown", "state": state, "submitted_at": submitted_at}
+def review(
+    *, author: str, state: str, submitted_at: str = "", commit_id: str = ""
+) -> dict[str, Any]:
+    """One review verdict. `state` is approved|changes_requested|commented.
+
+    `commit_id` is the commit the review saw, and empty where the platform does
+    not record one (GitLab approvals, Bitbucket participants). A timestamp after a
+    push does not prove a review covered it; the reviewed commit does.
+    """
+    return {
+        "author": author or "unknown",
+        "state": state,
+        "submitted_at": submitted_at,
+        "commit_id": commit_id,
+    }
 
 
 def summarize_checks(checks: list[dict[str, Any]]) -> dict[str, int]:

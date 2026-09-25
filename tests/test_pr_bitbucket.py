@@ -280,6 +280,8 @@ class TestReviews:
     def test_approved_flag_wins_over_state(self):
         pr = {"participants": [{"user": {"nickname": "a"}, "approved": True, "state": None}]}
         assert bb._reviews(pr) == [c.review(author="a", state="approved")]
+        # Bitbucket participants carry no reviewed commit: present and empty.
+        assert bb._reviews(pr)[0]["commit_id"] == ""
 
     def test_changes_requested_state(self):
         pr = {

@@ -1031,6 +1031,16 @@ class TestSummaries:
             "commented": 0,
         }
 
+    def test_a_review_always_carries_every_key(self):
+        # Present and empty, never absent: a caller comparing `commit_id` to the
+        # head SHA must not have to learn which platform answered first.
+        assert c.review(author="a", state="approved") == {
+            "author": "a",
+            "state": "approved",
+            "submitted_at": "",
+            "commit_id": "",
+        }
+
     def test_states_outside_the_vocabulary_are_not_counted(self):
         # A platform-specific state must not silently land in one of the buckets.
         assert c.summarize_reviews([c.review(author="a", state="dismissed")]) == {

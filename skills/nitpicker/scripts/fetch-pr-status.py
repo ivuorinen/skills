@@ -46,7 +46,7 @@ Outputs a JSON object to stdout:
       "merge_state": "clean" | "mergeable" | "" ,
       "checks": [{"name", "status", "conclusion", "url"}],
       "checks_summary": {"total", "success", "failure", "neutral", "pending"},
-      "reviews": [{"author", "state", "submitted_at"}],
+      "reviews": [{"author", "state", "submitted_at", "commit_id"}],
       "review_summary": {"approved", "changes_requested", "commented"},
       "changed_files": ["src/foo.py", ...]
     }
