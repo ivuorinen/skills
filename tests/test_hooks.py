@@ -5300,3 +5300,77 @@ def test_closure_skips_malformed_lines_and_foreign_tools(tmp_path, monkeypatch, 
     t.lines += ["not json", json.dumps({"message": {"content": "plain"}}), json.dumps([1])]
     t.read("cr").create("1").update("1", "completed")
     assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_a_reload_on_another_server_does_not_supersede(tmp_path, monkeypatch, capsys):
+    """The two servers keep separate task lists, so a load through one cannot be
+    the restart of an unseeded load through the other."""
+    t = (
+        _Transcript()
+        .read("cr")
+        .read("cr", prefix=_NP_PLUGIN)
+        .create("1", prefix=_NP_PLUGIN)
+        .update("1", "completed", prefix=_NP_PLUGIN)
+    )
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: loaded, but no process step was seeded" in text
+
+
+def _todos(t, statuses, prefix=_NP):
+    """np_todo_write replacing the list; the server answers with fresh ids."""
+    tasks = [{"id": i, "status": s} for i, s in statuses.items()]
+    todos = [{"content": "s", "active_form": "s", "status": s} for s in statuses.values()]
+    return t.call(f"{prefix}np_todo_write", {"todos": todos}, {"tasks": tasks})
+
+
+def test_closure_steps_seeded_by_todo_write_belong_to_the_run(tmp_path, monkeypatch, capsys):
+    """_conventions lets a run seed its steps with np_todo_write as well as np_task_create."""
+    t = _todos(_Transcript().read("cr"), {"1": "pending", "2": "completed"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 2 steps still open (task ids 1)" in text
+
+
+def test_closure_todo_write_replaces_the_runs_steps(tmp_path, monkeypatch, capsys):
+    """The replacement's fresh ids are the run's steps now, not the cleared ones."""
+    t = _todos(_Transcript().read("cr").create("1"), {"2": "pending"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 1 steps still open (task ids 2)" in text
+
+
+def test_closure_todo_write_after_a_run_closed_belongs_to_no_command(tmp_path, monkeypatch, capsys):
+    """The same rule np_task_create follows: a closed run takes no new steps."""
+    t = _todos(_Transcript().read("cr").create("1").update("1", "completed"), {"2": "pending"})
+    assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+def test_closure_todo_write_on_another_server_leaves_the_run_alone(tmp_path, monkeypatch, capsys):
+    """A replacement clears only its own server's list."""
+    t = _todos(_Transcript().read("cr").create("1"), {"9": "completed"}, prefix=_NP_PLUGIN)
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 1 steps still open (task ids 1)" in text
+
+
+def test_closure_a_todo_write_result_without_tasks_changes_nothing(tmp_path, monkeypatch, capsys):
+    """An unreadable replacement must not be taken as "the list is now empty"."""
+    t = _Transcript().read("cr").create("1")
+    t.call(f"{_NP}np_todo_write", {"todos": []}, {"error": "x"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 1 steps still open (task ids 1)" in text
+
+
+def test_closure_todo_write_skips_entries_that_are_not_tasks(tmp_path, monkeypatch, capsys):
+    """A malformed entry in the replacement is not a step."""
+    t = _Transcript().read("cr")
+    t.call(
+        f"{_NP}np_todo_write",
+        {"todos": []},
+        {"tasks": ["x", {"status": "pending"}, {"id": "2", "status": "pending"}]},
+    )
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 1 steps still open (task ids 2)" in text

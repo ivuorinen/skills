@@ -141,14 +141,42 @@ class _Session:
             else:
                 del self.status[key]
 
+    def todo_write(self, server: str, _args: dict, result: Any) -> None:
+        """A replacement clears the server's list and answers with fresh ids.
+
+        Those ids are the latest run's steps now, not an unknown list to reconcile
+        against the old one: read as a list readback, the cleared ids vanish, the
+        run reads as closed, and the pending replacements belong to nothing. A run
+        that had already closed takes none of them, as with `task_create`.
+        """
+        tasks = _field(result, "tasks")
+        if not isinstance(tasks, list):
+            return
+        run = self._latest(server)
+        if run is not None and self._closed(run):
+            run = None  # judged before the clear below, which would close any run
+        for key in [k for k in self.status if k[0] == server]:
+            del self.status[key]
+        ids = []
+        for t in tasks:
+            if isinstance(t, dict) and "id" in t:
+                ids.append(str(t["id"]))
+                self.status[(server, ids[-1])] = str(t.get("status", ""))
+        if run is not None:
+            run["tasks"] = ids
+
     def reminders(self) -> list[str]:
         """One line per run with open steps, or loaded with none seeded."""
         out: list[str] = []
         for i, run in enumerate(self.runs):
             if not run["tasks"]:
-                # A load re-issued later for the same command is the same run
-                # restarting, not a second one left unseeded.
-                if not any(r["command"] == run["command"] for r in self.runs[i + 1 :]):
+                # A load re-issued later for the same command on the same server
+                # is the same run restarting, not a second one left unseeded. The
+                # other server keeps its own task list, so its load cannot be.
+                later = self.runs[i + 1 :]
+                if not any(
+                    r["server"] == run["server"] and r["command"] == run["command"] for r in later
+                ):
                     out.append(f"  {run['command']}: loaded, but no process step was seeded")
                 continue
             still_open = [t for t in run["tasks"] if self.status.get((run["server"], t)) in _OPEN]
@@ -165,7 +193,7 @@ _HANDLERS = {
     "np_task_create": _Session.task_create,
     "np_task_update": _Session.task_update,
     "np_task_list": _Session.task_list,
-    "np_todo_write": _Session.task_list,
+    "np_todo_write": _Session.todo_write,
 }
 
 
