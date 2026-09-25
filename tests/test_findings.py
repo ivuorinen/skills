@@ -975,14 +975,15 @@ def test_force_reresolve_replaces_resolution_without_duplicate(tmp_path):
 # --- Regression tests for audit fixes (2026-07-09, batch 2) ---
 
 
-def test_migrate_rejects_unrecognized_v1_section(tmp_path):
+def test_migrate_skips_an_unrecognized_v1_section_out_loud(tmp_path, capsys):
     # FIX 1: a non-canonical '## ' section outside a finding must not be silently
-    # dropped — it raises instead.
+    # dropped. One holding only prose is skipped and named on stderr; one holding
+    # a finding still raises (test_migrate_v1_refuses_an_unrecognized_section_...).
     doc = "# X Findings\nGenerated: 2026-04-24\n\n## Resolved\n\nstray text\n"
     src = tmp_path / "security-findings.md"
     src.write_text(doc, encoding="utf-8")
-    with pytest.raises(findings.FindingError, match="unrecognized v1 section"):
-        findings.migrate_v1(src, tmp_path / "findings")
+    assert findings.migrate_v1(src, tmp_path / "findings") == 0
+    assert "resolved" in capsys.readouterr().err
 
 
 def test_migrate_preserves_heading_inside_finding_field(tmp_path):
@@ -2899,9 +2900,11 @@ class TestMigrationsValidateBeforeWriting:
 
     def test_migrate_v1_refuses_a_resolved_record_validate_would_reject(self, tmp_path):
         src = tmp_path / "nitpicker-findings.md"
-        src.write_text(V1_DOC.replace("[N-014]", "[bad-id]"), "utf-8")
+        # A heading with no title yields a record the ledger validator rejects. (A
+        # malformed id used to be the trigger; it now takes a content id instead.)
+        src.write_text(V1_DOC.replace("[N-014] Suspected dead code", "[N-014]"), "utf-8")
         root = tmp_path / "findings"
-        with pytest.raises(findings.FindingError, match="malformed id 'bad-id'"):
+        with pytest.raises(findings.FindingError, match="missing title"):
             findings.migrate_v1(src, root)
         assert not findings.ledger_path(root).exists()
 
@@ -3101,3 +3104,211 @@ def test_gather_findings_limit_truncates_and_clamps_negative_to_empty(tmp_path):
     assert len(findings.gather_findings(tmp_path)) == 1
     assert findings.gather_findings(tmp_path, limit=0) == []
     assert findings.gather_findings(tmp_path, limit=-3) == []
+
+
+# --- v1 documents written by agents, not to the 1.x spec ---
+#
+# The 1.x nitpicker skill never specified its document's field or id format, so
+# agents wrote their own. This one is verbatim from a real repository: bullet
+# fields (a bulleted `Generated:` too), a repeated field, id `N1`, and a notes
+# section after the finding. `migrate` refused it outright.
+
+AGENT_V1_DOC = """# Nitpicker Findings
+
+- Generated: 2026-06-25
+- Last validated: 2026-06-25
+- Scope: all uncommitted changes (changed-files mode) on branch `chore/upgrades`
+
+## Summary
+
+- Total: 1 | Open: 1 | Fixed: 0 | Invalid: 0
+
+Reviewed changes:
+
+- Prettier YAML reformats: `codeql.yml`, `stale.yml`, `sync-labels.yml`, `.yarnrc.yml`
+- `js-yaml` resolution added to `package.json`
+- node_modules cache-key change in `pr.yml` and `publish.yml`
+- New config files: `.coderabbit.yaml`, `.mega-linter.yml`
+
+No correctness, security, reliability, maintainability, or convention defects were found.
+
+## Open Findings
+
+### Advisory
+
+#### [N1] zizmor online-audit re-enable cannot be confirmed without a CI run
+
+- Category: reliability
+- Area: `.mega-linter.yml`
+- Problem: Exposing `GITHUB_TOKEN` lets zizmor's online `impostor-commit` audit authenticate instead of returning HTTP 401.
+- Evidence: `ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES` is in the MegaLinter v9.5.0 schema and is the documented remedy.
+- Evidence: Online audits run only inside MegaLinter's CI; local validation cannot exercise the token hand-off.
+- Impact: Informational. If MegaLinter does not surface `GITHUB_TOKEN` to the zizmor step in CI, the 401 may persist.
+- Fix: No action now. If CI still 401s, set `ACTION_ZIZMOR_ARGUMENTS: --no-online-audits` to skip only online audits.
+
+## Verification notes (no findings)
+
+- Prettier quote changes parse to identical YAML trees versus `HEAD` for all four files; no semantic change.
+- `js-yaml` `^4.2.0` removes the vulnerable `4.1.1` (CVE-2026-53550); only `4.2.0` remains, with no `3.x` consumer.
+- Cache key `hashFiles('.nvmrc', '**/yarn.lock')` references existing files; no `restore-keys`, so a Node bump misses cleanly.
+- `.coderabbit.yaml` and `.mega-linter.yml` pass prettier and yamllint, and validate against their published JSON schemas.
+- `zizmor --persona auditor .github/workflows/` reports no findings.
+
+## Fixed
+
+None.
+
+## Invalid
+
+None.
+"""  # noqa: E501 — verbatim from a real repository; rewrapping would change it
+
+
+def _migrate_agent_doc(tmp_path, doc=AGENT_V1_DOC, name="nitpicker-findings.md"):
+    src = tmp_path / name
+    src.write_text(doc, encoding="utf-8")
+    root = tmp_path / "findings"
+    return findings.migrate_v1(src, root), root
+
+
+def test_migrate_v1_accepts_the_agent_written_document(tmp_path):
+    n, root = _migrate_agent_doc(tmp_path)
+    assert n == 1
+    (path,) = root.glob("audit/open/*.md")
+    assert findings.validate_file(path) == []
+    text = path.read_text(encoding="utf-8")
+    assert "category: reliability" in text
+    assert "found: 2026-06-25" in text
+    assert "`.mega-linter.yml`" in text
+
+
+def test_migrate_v1_gives_a_nonconforming_id_a_content_id_and_keeps_the_old_one(tmp_path):
+    """`N1` fits neither id pattern; the native content id replaces it, traceably."""
+    _n, root = _migrate_agent_doc(tmp_path)
+    (path,) = root.glob("audit/open/*.md")
+    title = "zizmor online-audit re-enable cannot be confirmed without a CI run"
+    assert path.stem == findings.finding_id("audit", "`.mega-linter.yml`", title)
+    assert "`N1`" in path.read_text(encoding="utf-8")
+
+
+def test_migrate_v1_keeps_a_repeated_bullet_field_in_its_own_section(tmp_path):
+    """Read as prose, a repeated field landed in whichever field came before it —
+    here Impact — with its `- Evidence:` label left in the text."""
+    lines = AGENT_V1_DOC.splitlines()
+    second = next(i for i, ln in enumerate(lines) if ln.startswith("- Evidence: Online audits"))
+    moved = lines.pop(second)
+    lines.insert(next(i for i, ln in enumerate(lines) if ln.startswith("- Impact:")) + 1, moved)
+    _n, root = _migrate_agent_doc(tmp_path, "\n".join(lines) + "\n")
+    (path,) = root.glob("audit/open/*.md")
+    text = path.read_text(encoding="utf-8")
+    evidence = text.split("## Evidence", 1)[1].split("## Impact", 1)[0]
+    impact_text = text.split("## Impact", 1)[1].split("## Fix", 1)[0]
+    assert "documented remedy" in evidence
+    assert "local validation cannot exercise" in evidence
+    assert "local validation cannot exercise" not in impact_text
+    assert "- Evidence:" not in text
+
+
+def test_migrate_v1_ends_a_bulleted_finding_at_the_next_section(tmp_path):
+    """An unindented `##` cannot sit inside a list item, so after bullet fields it
+    is structure: the notes section must not land in the finding's Fix."""
+    _n, root = _migrate_agent_doc(tmp_path)
+    (path,) = root.glob("audit/open/*.md")
+    text = path.read_text(encoding="utf-8")
+    assert "No action now" in text
+    assert "Verification notes" not in text
+    assert "Prettier quote changes" not in text
+
+
+def test_migrate_v1_reports_a_skipped_section(tmp_path, capsys):
+    _migrate_agent_doc(tmp_path)
+    assert "verification notes (no findings)" in capsys.readouterr().err
+
+
+def test_migrate_v1_refuses_an_unrecognized_section_that_holds_a_finding(tmp_path):
+    """Skipping is for notes: a finding under an unknown heading must not vanish."""
+    doc = (
+        "# X Findings\nGenerated: 2026-04-24\n\n## Resolved\n\n#### [SEC-1] t\nCategory: security\n"
+    )
+    with pytest.raises(findings.FindingError, match="unrecognized v1 section"):
+        _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+
+
+def test_migrate_v1_accepts_bold_labels(tmp_path):
+    doc = AGENT_V1_DOC.replace("- Category: reliability", "- **Category:** reliability")
+    _n, root = _migrate_agent_doc(tmp_path, doc)
+    (path,) = root.glob("audit/open/*.md")
+    assert "category: reliability" in path.read_text(encoding="utf-8")
+
+
+def test_migrate_v1_gives_a_nonconforming_resolved_id_a_content_id(tmp_path):
+    doc = AGENT_V1_DOC.replace(
+        "## Fixed\n\nNone.",
+        "## Fixed\n\n### Pass 1 — 2026-06-20\n\n"
+        "#### [F2] an old one\n\n- Fixed: 2026-06-21\n- Notes: done",
+    )
+    _n, root = _migrate_agent_doc(tmp_path, doc)
+    rid = findings.finding_id("audit", "", "an old one")
+    rec = findings.resolved_records(root)[rid]
+    assert rec["resolved"] == "2026-06-21"
+    assert "`F2`" in rec["body"] and "done" in rec["body"]
+    assert findings.validate_store(root) == []
+
+
+PLAIN_TWO_SEVERITIES = """# Security Findings
+Generated: 2026-04-24
+
+## Open Findings
+
+### High
+
+#### [SEC-001] first
+Category: security
+Area: a.py
+Problem: p
+Evidence: e
+Impact: i
+Fix: f
+
+### Low
+
+#### [SEC-002] second
+Category: security
+Area: b.py
+Problem: p
+Evidence: e
+Impact: i
+Fix: f
+
+## Fixed
+
+### Pass 2 — 2026-05-01
+
+#### [SEC-003] third
+Fixed: yes
+Notes: n3
+
+### Pass 3 — 2026-06-01
+
+#### [SEC-004] fourth
+Fixed: yes
+Notes: n4
+"""
+
+
+def test_migrate_v1_a_severity_heading_between_plain_findings_is_structure(tmp_path):
+    """A plain-form finding used to swallow the next `### Low` into its Fix, and every
+    later finding kept the earlier severity — in documents that follow the 1.x spec."""
+    _n, root = _migrate_agent_doc(tmp_path, PLAIN_TWO_SEVERITIES, "security-findings.md")
+    first = (root / "security" / "open" / "SEC-001.md").read_text(encoding="utf-8")
+    second = (root / "security" / "open" / "SEC-002.md").read_text(encoding="utf-8")
+    assert "severity: high" in first and "### Low" not in first
+    assert "severity: low" in second
+
+
+def test_migrate_v1_a_pass_heading_between_plain_resolved_findings_is_structure(tmp_path):
+    _n, root = _migrate_agent_doc(tmp_path, PLAIN_TWO_SEVERITIES, "security-findings.md")
+    records = findings.resolved_records(root)
+    assert records["SEC-003"]["resolved"] == "2026-05-01"
+    assert records["SEC-004"]["resolved"] == "2026-06-01"
+    assert "Pass 3" not in records["SEC-003"]["body"]

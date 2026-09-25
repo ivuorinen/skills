@@ -53,7 +53,8 @@ agent — that decision rule holds even when the working tree is clean.
      Compare each v1 file's Summary counts (Total/Open/Fixed/Invalid)
      against the migrated per-file count the tool printed and the store
      (np_list_findings, else python3 "${CLAUDE_SKILL_DIR}/scripts/findings.py" list). Any mismatch: report it, do
-     not delete anything.
+     not delete anything. Each `NOTE … skipped section` line on stderr names
+     a section whose content was not migrated: list it in the run summary.
 5. Ask separately: "Remove the migrated v1 files? (y/n)" — deletion is its
    own consent, never bundled with step 2. On yes: git rm the v1 files.
 6. Ask: "Commit the migration to git? (y/n)" — never commit silently.
@@ -68,6 +69,7 @@ Everything the v1 format recorded, mapped losslessly:
 | v1 | v2 |
 | --- | --- |
 | `[ID]` (e.g. `N-042`) | Same ID, kept as filename and `id:` (legacy IDs stay valid) |
+| `[ID]` fitting no id pattern (e.g. `N1`) | A content id, as `new` derives one; the provenance line names the v1 id |
 | Severity h3 (open findings) | `severity:` frontmatter |
 | `Category:` / `Area:` | `category:` / `area:` frontmatter |
 | `Problem/Evidence/Impact/Fix` | The same `##` sections in the body |
@@ -78,6 +80,14 @@ Everything the v1 format recorded, mapped losslessly:
 
 File-level `Last validated:` has no per-finding equivalent and is the only
 v1 datum not carried into individual findings — state this in the summary.
+
+The 1.x nitpicker skill never specified its own document's format, so agents
+wrote variants. Fields as list items or with bold labels (`- Category: x`,
+`- **Category:** x`) read the same as plain `Category: x`, and a repeated
+list-item field adds to that field. A section the format never had, such as
+an agent's verification notes, is skipped and named on stderr. A finding
+inside one refuses the migration, so no finding is dropped for sitting under
+the wrong heading.
 
 ## Common mistakes
 

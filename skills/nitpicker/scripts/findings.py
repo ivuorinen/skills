@@ -181,8 +181,26 @@ _STORE_GITATTRIBUTES_BODY = (
 # v1 (single-document) format patterns, inherited from check-audit-consistency.py
 _V1_FINDING = re.compile(r"^####\s+\[([A-Za-z0-9-]+)\]\s*(.*)$")
 _V1_PASS = re.compile(r"^###\s+Pass\s+(\d+)\s+—\s+(\d{4}-\d{2}-\d{2})\s*$")
-_V1_FIELD = re.compile(r"^(Category|Area|Problem|Evidence|Impact|Fix|Fixed|Notes):\s*(.*)$")
-_V1_GENERATED = re.compile(r"^Generated:\s*(\d{4}-\d{2}-\d{2})")
+# The 1.x specialist skills specified plain `Field:` lines, but the 1.x nitpicker
+# skill never specified its own document, and agents wrote bullets and bold labels
+# (`- Category: x`, `- **Category:** x`). Group 1 is the list marker, if any.
+_V1_LABEL = r"^(?:([-*+])\s+)?(?:\*\*)?({})(?::\*\*|\*\*:|:)\s*"
+_V1_FIELD = re.compile(
+    _V1_LABEL.format("Category|Area|Problem|Evidence|Impact|Fix|Fixed|Notes") + r"(.*)$"
+)
+_V1_GENERATED = re.compile(_V1_LABEL.format("Generated") + r"(\d{4}-\d{2}-\d{2})")
+
+
+def _v1_group_heading(line: str, section: str) -> bool:
+    """A `###` that opens a v1 group: a severity under Open, a pass elsewhere.
+
+    Both come from a closed vocabulary, so one ends the finding before it in any
+    field form. Every other `###` inside a plain-form finding stays field content.
+    """
+    if section == "open":
+        return line[4:].strip().lower() in SEVERITIES
+    return bool(_V1_PASS.match(line))
+
 
 # old skill name -> command/auditor key (2.0 vocabulary)
 V1_AUDITOR_MAP = {
@@ -1929,6 +1947,14 @@ def _build_v1(
     _check_auditor(auditor)
     status = entry["status"]
     fid = entry["id"]
+    # An id outside both patterns (`N1`, which 1.x's own checker rejected too)
+    # takes the native content id, derived as new_finding derives it; the v1 id
+    # stays in the provenance so a reference to it can still be traced.
+    renamed = ""
+    if not (_LEGACY_ID.match(fid) or _HASH_ID.match(fid)):
+        area = fields.get("Area", "") if status == "open" else ""
+        renamed = f" as `{fid}`"
+        fid = finding_id(auditor, redact(area).strip(), redact(entry["title"]).strip())
     if status == "open":
         fm = {
             "id": fid,
@@ -1940,6 +1966,8 @@ def _build_v1(
             "found": generated or "1970-01-01",
         }
         body = "\n\n".join(f"## {s}\n{fields.get(s, '').strip()}" for s in OPEN_SECTIONS)
+        if renamed:
+            body += f"\n\nMigrated from v1 `{src_name}`{renamed}."
         path = root / auditor / "open" / f"{fid}.md"
         # Redacted like new_finding's: a migrated v1 document is untrusted text
         # this tool did not author, and its Evidence sections quote real code.
@@ -1962,7 +1990,9 @@ def _build_v1(
         )
         if bit
     )
-    provenance = f"Migrated from v1 `{src_name}`" + (f" ({pass_bits})" if pass_bits else "")
+    provenance = f"Migrated from v1 `{src_name}`{renamed}" + (
+        f" ({pass_bits})" if pass_bits else ""
+    )
     body += f"\n\n{provenance}."
     rec = {
         "id": fid,
@@ -2003,8 +2033,13 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
     entry: dict[str, str] = {}
     fields: dict[str, str] = {}
     last_field = ""
+    # Whether the current finding's fields are list items. An unindented heading
+    # cannot sit inside a list item, so after bullet fields `##`/`###` is structure;
+    # after plain fields it stays field content (test_migrate_preserves_heading_...).
+    bulleted = False
     fence = ""
     buffered: list[tuple] = []
+    skipped: list[str] = []  # unrecognized sections holding no finding
     known_sections = {
         "open findings": "open",
         "fixed": "fixed",
@@ -2013,11 +2048,11 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
     }
 
     def flush() -> None:
-        nonlocal entry, fields, last_field
+        nonlocal entry, fields, last_field, bulleted
         built = _build_v1(root, auditor, entry, fields, generated, src.name)
         if built:
             buffered.append(built)
-        entry, fields, last_field = {}, {}, ""
+        entry, fields, last_field, bulleted = {}, {}, "", False
 
     for line in text.splitlines():
         stripped = line.rstrip()
@@ -2036,7 +2071,7 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
             continue
         m = _V1_GENERATED.match(line)
         if m and not generated:
-            generated = m.group(1)
+            generated = m.group(3)
             continue
         if line.startswith("## "):
             name = line[3:].strip().lower()
@@ -2044,11 +2079,28 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 flush()
                 section = known_sections[name]
                 continue
-            if not entry:
-                raise FindingError(f"unrecognized v1 section {name!r} in {src.name}")
-            # else: an unrecognized '## ' heading inside a finding is field
-            # content — fall through to the field-continuation handling below.
-        elif line.startswith("### ") and not line.startswith("####") and not entry:
+            if not entry or bulleted:
+                # A section the v1 format never had: an agent's notes, most often.
+                # Skipped out loud; a finding inside one refuses the migration
+                # below, so no finding is dropped for sitting under the wrong name.
+                flush()
+                section = f"?{name}"
+                skipped.append(name)
+                continue
+            # else: an unrecognized '## ' heading inside a plain-form finding is
+            # field content — fall through to the field-continuation handling below.
+        elif section.startswith("?"):
+            if _V1_FINDING.match(line):
+                raise FindingError(
+                    f"unrecognized v1 section {section[1:]!r} in {src.name} holds a finding"
+                )
+            continue
+        elif (
+            line.startswith("### ")
+            and not line.startswith("####")
+            and (bulleted or not entry or _v1_group_heading(line, section))
+        ):
+            flush()
             if section == "open":
                 severity = line[4:].strip().lower()
             else:
@@ -2075,13 +2127,23 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 if entry["status"] == "open"
                 else ("Fixed", "Notes")
             )
-            if m and m.group(1) in allowed and m.group(1) not in fields:
-                last_field = m.group(1)
-                fields[last_field] = m.group(2)
+            if m and m.group(2) in allowed and m.group(2) not in fields:
+                last_field = m.group(2)
+                fields[last_field] = m.group(3)
+                bulleted = bulleted or bool(m.group(1))
+            elif m and m.group(1) and m.group(2) in allowed:
+                # A repeated list-item field is a second value for that field, not
+                # prose for whichever field happened to come before it.
+                last_field = m.group(2)
+                fields[last_field] += "\n\n" + m.group(3)
             elif last_field:
                 # Blank lines and prose (even "Field:"-shaped) continue the open field.
                 fields[last_field] += "\n" + line
     flush()
+    for name in skipped:
+        print(
+            f"  NOTE  {src.name}: skipped section {name!r}, which holds no finding", file=sys.stderr
+        )
 
     # Dry-run first: an in-run duplicate id must abort BEFORE any write, so a bad
     # source can never leave a half-migrated store behind.
