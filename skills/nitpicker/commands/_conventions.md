@@ -53,7 +53,11 @@ Severity reflects actual risk, never preference.
   the run, so a concurrent run's entries interleave with yours — an unscoped
   readback either blocks on work that is not this run's or passes on it. **Where the session exposes no task tracker, print the numbered
   steps with a one-line outcome each in the response instead, before
-  reporting.** A tracker is the preferred form, never the condition: naming a
+  reporting.** Print it as its own visible block ahead of the command's output,
+  never inside it and never hidden: a command's output format — "nothing
+  else", "and stop", a copy-paste-ready artifact — governs the output, not this
+  record, so the two do not compete and neither is bent to fit the other. A
+  tracker is the preferred form, never the condition: naming a
   tool as the only way to satisfy a rule means the rule disappears in a session
   without that tool, silently and with nothing to notice. No step may be
   silently dropped: an unexecuted step is a coverage gap, and silence means
