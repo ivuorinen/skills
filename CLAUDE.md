@@ -401,8 +401,11 @@ before Claude hands back control. Its scope is the union of the git index
 (`git diff --cached`), the working tree (`git diff`) and the untracked set
 (`git ls-files --others`), so **unstaged** and brand-new files count too.
 
-A `stop_hook_active` guard keeps the reminder from re-firing on the forced
-continuation its own exit 2 causes. That is one stop cycle, not one session:
+It hands the reminder to the agent as `additionalContext` on exit 0
+(`_hooklib.stop_feedback`), the form the hooks reference recommends for a hook
+giving guidance: it continues the conversation as exit 2 would, but shows no
+hook-error notification. A `stop_hook_active` guard keeps the reminder from
+re-firing on the continuation it causes. That is one stop cycle, not one session:
 the reminder repeats once per turn for as long as skill edits stay
 uncommitted. That is the observed behaviour, not a broken guard.
 

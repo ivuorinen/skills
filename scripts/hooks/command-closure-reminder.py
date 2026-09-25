@@ -14,9 +14,10 @@ are still `pending` or `in_progress`.
 A reminder, not a block. A turn ending is not a command ending: a run waits on
 the user (the apply-fixes and commit prompts, `cr`'s Step 6 menu) and on
 background work (subagents, a review poll) across turns, and a hard block there
-would force a continuation on every legitimate wait. Exit 2 surfaces the open
-steps to the agent once per stop cycle — the `stop_hook_active` guard keeps it
-from re-firing on its own forced continuation — and the agent either closes them
+would force a continuation on every legitimate wait. The open steps reach the
+agent as `additionalContext` (`_hooklib.stop_feedback`) once per stop cycle —
+the `stop_hook_active` guard keeps it from re-firing on its own forced
+continuation — and the agent either closes them
 or says what it is waiting on. It repeats once per turn while steps stay open,
 the same shape `stop-reminder.py` has.
 
@@ -34,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import load_event, report_skip
+from _hooklib import load_event, report_skip, stop_feedback
 
 # Tool names carry the server qualifier: `mcp__nitpicker__np_…` for the
 # project-scope server, `mcp__plugin_<plugin>_nitpicker__np_…` for the plugin
@@ -205,8 +206,8 @@ def open_steps(lines: list[str]) -> list[str]:
 def main() -> None:
     """Remind once per stop cycle about loaded commands with open process steps."""
     event = load_event() or {}
-    # Exit 2 re-invokes Claude; on that forced continuation `stop_hook_active` is
-    # true, so return and let it stop — once per cycle, not a loop.
+    # The reminder re-invokes Claude; on that forced continuation `stop_hook_active`
+    # is true, so return and let it stop — once per cycle, not a loop.
     if event.get("stop_hook_active"):
         return
     transcript = event.get("transcript_path")
@@ -219,18 +220,18 @@ def main() -> None:
         report_skip("command-closure-reminder", f"{type(exc).__name__}: {exc}", "transcript read")
     reminders = open_steps(lines)
     if reminders:
-        print("Nitpicker command process not closed:", file=sys.stderr)
-        for line in reminders:
-            print(line, file=sys.stderr)
-        print(
-            "Close each step with np_task_update and read the list back with np_task_list "
-            "before reporting (_conventions.md § Execution). If the run is waiting on the "
-            "user or on background work, say so; if the command was read without being run, "
-            "say that.",
-            file=sys.stderr,
-            flush=True,
+        stop_feedback(
+            "\n".join(
+                [
+                    "Nitpicker command process not closed:",
+                    *reminders,
+                    "Close each step with np_task_update and read the list back with "
+                    "np_task_list before reporting (_conventions.md § Execution). If the run "
+                    "is waiting on the user or on background work, say so; if the command was "
+                    "read without being run, say that.",
+                ]
+            )
         )
-        sys.exit(2)
 
 
 if __name__ == "__main__":
