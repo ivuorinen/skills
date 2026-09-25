@@ -44,14 +44,16 @@ Analyze all of:
      its own auditor key. A focus deepens one lens and never narrows the
      checklist; every other coverage task still runs.
    - A **scope** bounds what the run covers, along one of two axes. Name which:
-     - **Input** — the files each lens runs against (`changed-files`). Every
-       lens still applies, to a smaller input. No task is dropped and none
-       closes `out of scope`.
-     - **Checklist** — the subject matter itself ("only the MCP tools", "just
-       the docs"). Tasks outside it are dropped, each closed **out of scope**
-       (`_audit-coverage.md` state 4) naming what the scope excluded, and each
-       appears in the run summary. The user then sees what was not looked at,
-       rather than reading a narrowed run as an exhaustive one.
+     - **Input** — the files each lens runs against (`changed-files`, "only the
+       MCP tools", "just `scripts/`"). Every lens still applies, to a smaller
+       input. No task is dropped and none closes `out of scope`.
+     - **Checklist** — the concerns themselves ("only security and privacy",
+       "skip accessibility and i18n"). A part of the repository names files;
+       a quality or concern names lenses. Tasks outside it are dropped, each
+       closed **out of scope** (`_audit-coverage.md` state 4) naming what the
+       scope excluded, and each appears in the run summary. The user then sees
+       what was not looked at, rather than reading a narrowed run as an
+       exhaustive one.
 
      A checklist scope is legitimate — an audit the user scoped is the audit
      they asked for — but it is theirs to grant, not yours to infer: **quote

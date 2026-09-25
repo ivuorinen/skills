@@ -122,6 +122,17 @@
         "The report is delivered with nothing applied, since an audit's requested change is the report",
         "Correctness defects noticed in the same file are routed in one line rather than reviewed here"
       ]
+    },
+    {
+      "id": 12,
+      "prompt": "/nitpicker audit only the np_* MCP tool surface — I don't want the rest of the repo looked at this time",
+      "expected_output": "The request names a part of the repository, so it is an input scope: every coverage lens still runs, against the MCP tool surface only, and nothing closes out of scope.",
+      "assertions": [
+        "The extra instructions are classified as an input scope, quoting the words that establish it",
+        "Every coverage task is kept and applied to the narrowed input; none is closed out of scope",
+        "A lens whose surface is absent from that input closes N/A with a reason when it runs, not in advance",
+        "The run is not treated as ambiguous between input and checklist scope"
+      ]
     }
   ]
 }
