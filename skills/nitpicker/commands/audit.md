@@ -49,9 +49,10 @@ Analyze all of:
        input. No task is dropped and none closes `out of scope`.
      - **Checklist** — the concerns themselves ("only security and privacy",
        "skip accessibility and i18n"). A part of the repository names files;
-       a quality or concern names lenses. Tasks outside it are dropped, each
-       closed **out of scope** (`_audit-coverage.md` state 4) naming what the
-       scope excluded, and each appears in the run summary. The user then sees
+       a quality or concern names lenses. Tasks outside it are dropped: each
+       closes **out of scope** (`_audit-coverage.md` state 4) naming what the
+       scope excluded when its surface exists, or **N/A** with the reason when
+       the surface is absent, and each appears in the run summary. The user then sees
        what was not looked at, rather than reading a narrowed run as an
        exhaustive one.
 
