@@ -133,6 +133,17 @@
         "A lens whose surface is absent from that input closes N/A with a reason when it runs, not in advance",
         "The run is not treated as ambiguous between input and checklist scope"
       ]
+    },
+    {
+      "id": 13,
+      "prompt": "/nitpicker cr — CodeRabbit's summary now says 'No actionable comments were generated in the recent review', and it also has a 'Review limit reached' block whose 'Reviewing files that changed … between' range ends at my latest commit. Is the review loop finished?",
+      "expected_output": "Not finished: the range inside a 'Review limit reached' block lists commits waiting for review, so the clean line belongs to an older review and the latest commit is unreviewed.",
+      "assertions": [
+        "The loop is not declared clean",
+        "The range inside the Review limit reached block is read as commits waiting for review, not reviewed ones",
+        "Coverage of the latest commit is sought in the Recent review info block's range or a review whose commit_id is that commit",
+        "The rate-limit window is treated as the earliest time to retry, measured from the summary's last edit"
+      ]
     }
   ]
 }
