@@ -676,6 +676,9 @@ def cli_available(name: str) -> bool:
 # `fetch` clears it before each dispatch and the envelopes drain it into their
 # `degraded` key — the MCP server is long-lived, so a record not reset per fetch
 # would report one PR's failures on the next.
+# ponytail: one module-level record, sound because nothing here runs two fetches
+# at once — mcp_server.serve handles one frame at a time and each CLI run is its
+# own process. A threaded caller needs a contextvars.ContextVar set in `fetch`.
 _DEGRADED: list[str] = []
 
 
