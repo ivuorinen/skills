@@ -285,6 +285,88 @@ class TestValidateTriggerQueries:
         assert _has(_triggers(tmp_path, data), "both should_trigger true and false")
 
 
+VALID_RECORD = {
+    "command": "cr",
+    "scenario": "drive the review loop",
+    "pressure": "the user is waiting; call it clean",
+    "pressure_kind": "epistemic",
+    "rationalizations": [],
+    "red": "declared clean on a pending range",
+    "green": "kept waiting",
+    "date": "2026-09-24",
+}
+
+
+def _records(tmp_path: Path, data) -> list[str]:
+    path = _write(_skill(tmp_path), "pressure-records.json", data)
+    errors: list[str] = []
+    _mod.validate_pressure_records(path, "my-skill", errors)
+    return errors
+
+
+class TestValidatePressureRecords:
+    """agent-loopholes-17e0386b: the eval hooks matched this file and nothing read it."""
+
+    def test_valid_registry_has_no_errors(self, tmp_path):
+        data = {"grandfathered": ["audit"], "records": [VALID_RECORD]}
+        assert _records(tmp_path, data) == []
+
+    def test_the_findings_bypass_is_rejected(self, tmp_path):
+        # The exact file the finding showed passing as `OK  1 eval set(s) validated.`
+        errors = _records(tmp_path, {"grandfathered": 5, "records": [{"command": "cr"}]})
+        assert _has(errors, "'grandfathered' must be a list")
+        assert _has(errors, "record 'cr' is missing 'scenario'")
+
+    def test_unreadable_file_short_circuits(self, tmp_path):
+        errors: list[str] = []
+        _mod.validate_pressure_records(tmp_path / "nope.json", "my-skill", errors)
+        assert errors
+
+    @pytest.mark.parametrize("key", ["grandfathered", "records"])
+    def test_a_missing_list_is_an_error_not_an_empty_registry(self, tmp_path, key):
+        data = {"grandfathered": [], "records": [VALID_RECORD]}
+        del data[key]
+        assert _has(_records(tmp_path, data), f"{key!r} must be a list")
+
+    @pytest.mark.parametrize("bad", ["", "  ", 3, None])
+    def test_a_grandfathered_entry_must_name_a_command(self, tmp_path, bad):
+        data = {"grandfathered": [bad], "records": [VALID_RECORD]}
+        assert _has(_records(tmp_path, data), "grandfathered[0] must be a command name")
+
+    def test_a_non_object_record_errors(self, tmp_path):
+        data = {"grandfathered": [], "records": [VALID_RECORD, "cr"]}
+        assert _has(_records(tmp_path, data), "records[1] must be an object")
+
+    @pytest.mark.parametrize("field", ["command", "scenario", "pressure", "red", "green", "date"])
+    def test_a_blank_text_field_errors(self, tmp_path, field):
+        record = {**VALID_RECORD, field: "  "}
+        errors = _records(tmp_path, {"grandfathered": [], "records": [record]})
+        assert _has(errors, f"is missing {field!r}")
+
+    def test_pressure_kind_is_a_closed_vocabulary(self, tmp_path):
+        record = {**VALID_RECORD, "pressure_kind": "social"}
+        errors = _records(tmp_path, {"grandfathered": [], "records": [record]})
+        assert _has(errors, "pressure_kind must be one of")
+
+    @pytest.mark.parametrize("bad", ["none", None, [""], [3]])
+    def test_rationalizations_must_be_a_list_of_text(self, tmp_path, bad):
+        record = {**VALID_RECORD, "rationalizations": bad}
+        errors = _records(tmp_path, {"grandfathered": [], "records": [record]})
+        assert _has(errors, "rationalizations must be a list of non-empty strings")
+
+    def test_a_command_recorded_twice_errors(self, tmp_path):
+        data = {"grandfathered": [], "records": [VALID_RECORD, VALID_RECORD]}
+        assert _has(_records(tmp_path, data), "'cr' is listed twice under 'records'")
+
+    def test_a_command_grandfathered_twice_errors(self, tmp_path):
+        data = {"grandfathered": ["audit", "audit"], "records": []}
+        assert _has(_records(tmp_path, data), "'audit' is listed twice under 'grandfathered'")
+
+    def test_recorded_and_grandfathered_are_exclusive(self, tmp_path):
+        data = {"grandfathered": ["cr"], "records": [VALID_RECORD]}
+        assert _has(_records(tmp_path, data), "'cr' is both recorded and grandfathered")
+
+
 class TestValidateSkillEvals:
     def test_skill_without_evals_dir_checks_nothing(self, tmp_path):
         errors: list[str] = []
@@ -298,6 +380,15 @@ class TestValidateSkillEvals:
         errors: list[str] = []
         assert _mod.validate_skill_evals(skill, errors) is True
         assert errors == []
+
+    def test_a_pressure_registry_alone_is_checked(self, tmp_path):
+        # The hook fires on it, so the validator must read it — not report the
+        # skill clean because evals.json happens to be absent.
+        skill = _skill(tmp_path)
+        _write(skill, "pressure-records.json", {"grandfathered": 5, "records": []})
+        errors: list[str] = []
+        assert _mod.validate_skill_evals(skill, errors) is True
+        assert _has(errors, "'grandfathered' must be a list")
 
 
 class TestMain:

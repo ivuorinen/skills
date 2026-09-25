@@ -9,15 +9,17 @@ Usage:
 
 With no arguments, checks every `skills/*/evals/` directory in the repo.
 
-Two file shapes are checked, both defined by the Agent Skills skill-creation
-guides:
+The first two file shapes are defined by the Agent Skills skill-creation
+guides; the third is this repo's:
 
     evals/evals.json          output-quality test cases
                               (https://agentskills.io/skill-creation/evaluating-skills)
     evals/trigger-queries.json  description trigger-accuracy queries
                               (https://agentskills.io/skill-creation/optimizing-descriptions)
+    evals/pressure-records.json  which commands were pressure-tested, and how
+                              (.claude/skills/skill-tester)
 
-Neither file is required. When one exists it must be well-formed, so an eval
+No file is required. When one exists it must be well-formed, so an eval
 set cannot rot into a shape the eval loop silently skips.
 
 Exit codes: 0 = valid (or no eval sets present), 1 = malformed eval set.
@@ -58,6 +60,12 @@ EXECUTION_KEYS = (
     "range_reads",
     "latency_ms",
 )
+
+# pressure-records.json: every record carries these as non-empty text, plus a
+# `pressure_kind` from PRESSURE_KINDS (skill-tester defines both kinds) and a
+# `rationalizations` list.
+PRESSURE_TEXT_FIELDS = ("command", "scenario", "pressure", "red", "green", "date")
+PRESSURE_KINDS = ("motivational", "epistemic")
 
 
 def _load(path: Path, errors: list[str]) -> dict | None:
@@ -239,6 +247,72 @@ def validate_trigger_queries(path: Path, skill_name: str, errors: list[str]) -> 
             err(f"the '{split}' split must contain both should_trigger true and false queries")
 
 
+def _check_record(record: dict, label: str, err: Callable[[str], None]) -> None:
+    """Check one pressure record's fields against PRESSURE_TEXT_FIELDS and the vocabularies."""
+    for field in PRESSURE_TEXT_FIELDS:
+        value = record.get(field)
+        if not (isinstance(value, str) and value.strip()):
+            err(f"record {label} is missing {field!r}")
+    if record.get("pressure_kind") not in PRESSURE_KINDS:
+        err(f"record {label} pressure_kind must be one of {PRESSURE_KINDS}")
+    rationalizations = record.get("rationalizations")
+    # Empty is legitimate: it is what a RED that did not reproduce records.
+    if not isinstance(rationalizations, list) or any(
+        not (isinstance(r, str) and r.strip()) for r in rationalizations
+    ):
+        err(f"record {label} rationalizations must be a list of non-empty strings")
+
+
+def _names(entries: list, key: str, err: Callable[[str], None]) -> list[str]:
+    """The command names under `key`, erroring on a repeat — every consumer reads them as a set."""
+    names = [e for e in entries if isinstance(e, str)]
+    for name in sorted({n for n in names if names.count(n) > 1}):
+        err(f"{name!r} is listed twice under {key!r}")
+    return names
+
+
+def validate_pressure_records(path: Path, skill_name: str, errors: list[str]) -> None:
+    """Check evals/pressure-records.json — one record per pressure-tested command.
+
+    Shape only. Whether every command file has a record or a grandfather entry
+    needs the commands tree and lives in tests/test_pressure_records.py.
+    `skill_name` is unused: the registry carries none, and the checker table
+    passes it to every checker alike.
+    """
+    del skill_name
+    data = _load(path, errors)
+    if data is None:
+        return
+
+    def err(msg: str) -> None:
+        errors.append(f"  ERROR  {path}: {msg}")
+
+    # A missing list is an error rather than an empty one: reading it as empty
+    # turns a deleted key into a registry that claims nothing and fails nothing.
+    lists = {}
+    for key in ("grandfathered", "records"):
+        lists[key] = data.get(key)
+        if not isinstance(lists[key], list):
+            err(f"{key!r} must be a list; got {type(lists[key]).__name__}")
+            lists[key] = []
+
+    for i, name in enumerate(lists["grandfathered"]):
+        if not (isinstance(name, str) and name.strip()):
+            err(f"grandfathered[{i}] must be a command name")
+    commands = []
+    for i, record in enumerate(lists["records"]):
+        if not isinstance(record, dict):
+            err(f"records[{i}] must be an object")
+            continue
+        _check_record(record, repr(record.get("command", f"records[{i}]")), err)
+        commands.append(record.get("command"))
+
+    recorded = _names(commands, "records", err)
+    grandfathered = _names(lists["grandfathered"], "grandfathered", err)
+    for name in sorted(set(recorded) & set(grandfathered)):
+        err(f"{name!r} is both recorded and grandfathered; the two are exclusive")
+
+
 def validate_skill_evals(skill_dir: Path, errors: list[str]) -> bool:
     """Validate one skill's evals/ directory. Returns True if any file was checked."""
     evals_dir = skill_dir / "evals"
@@ -246,6 +320,7 @@ def validate_skill_evals(skill_dir: Path, errors: list[str]) -> bool:
     for filename, checker in (
         ("evals.json", validate_evals),
         ("trigger-queries.json", validate_trigger_queries),
+        ("pressure-records.json", validate_pressure_records),
     ):
         path = evals_dir / filename
         if path.is_file():

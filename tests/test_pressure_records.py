@@ -10,6 +10,7 @@ which is a visible, reviewable line in a diff rather than a silent omission.
 The registry is not a substitute for running the test. It records that one ran.
 """
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -18,17 +19,7 @@ import pytest
 _REPO = Path(__file__).parent.parent
 _COMMANDS = _REPO / "skills" / "nitpicker" / "commands"
 _REGISTRY = _REPO / "skills" / "nitpicker" / "evals" / "pressure-records.json"
-
-_REQUIRED_FIELDS = (
-    "command",
-    "scenario",
-    "pressure",
-    "pressure_kind",
-    "rationalizations",
-    "red",
-    "green",
-    "date",
-)
+_VALIDATOR = _REPO / "scripts" / "validate-evals.py"
 
 
 @pytest.fixture(scope="module")
@@ -67,28 +58,17 @@ def test_the_registry_names_no_command_that_does_not_exist(registry):
     assert not stale, f"pressure-records.json names commands that do not exist: {stale}"
 
 
-def test_no_command_is_listed_twice(registry):
-    """Every check here reads the lists as sets, where a second entry vanishes unseen."""
-    for key, names in (
-        ("records", [r["command"] for r in registry["records"]]),
-        ("grandfathered", registry["grandfathered"]),
-    ):
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        assert not dupes, f"pressure-records.json lists {dupes} twice under {key!r}"
-
-
-def test_a_command_is_not_both_recorded_and_grandfathered(registry):
-    both = sorted(set(registry["grandfathered"]) & {r["command"] for r in registry["records"]})
-    assert not both, f"tested and grandfathered are exclusive; both claim: {both}"
-
-
-def test_every_record_carries_every_field(registry):
-    for record in registry["records"]:
-        missing = [f for f in _REQUIRED_FIELDS if f not in record]
-        assert not missing, f"record {record.get('command')!r} missing {missing}"
-        assert record["pressure_kind"] in ("motivational", "epistemic")
-        assert isinstance(record["rationalizations"], list)
-        assert record["pressure"].strip(), "the pressure must be recorded verbatim, not summarised"
+def test_the_registry_is_well_formed():
+    """Fields, vocabularies, duplicates and exclusivity: validate-evals.py owns the
+    shape, so the hook and pre-commit that run it hold the same bar this suite
+    does (agent-loopholes-17e0386b). Checked here too, so a shape error also
+    fails the unit run beside the coverage checks above."""
+    spec = importlib.util.spec_from_file_location("validate_evals", _VALIDATOR)
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    errors: list[str] = []
+    module.validate_pressure_records(_REGISTRY, "nitpicker", errors)
+    assert errors == []
 
 
 def test_the_gate_can_fail():

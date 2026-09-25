@@ -49,7 +49,7 @@ the two measure different halves of the same budget.
 ```bash
 make check        # the full gate; run before every commit. `make help` lists its targets
 make validate     # SKILL.md + command-file structure (public + internal)
-make validate-evals # evals/evals.json + evals/trigger-queries.json shape per skill
+make validate-evals # shape of each skill's evals/*.json (evals, trigger-queries, pressure-records)
 make ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
 make test         # run pytest unit tests
 make list         # list the skill and its commands
@@ -84,7 +84,7 @@ because metadata values are strings. Claude Code reads that key from the top
 level only, so under `metadata` it is inert and those skills become
 model-invocable. That trade was accepted deliberately, buying portability.
 
-Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions) and `trigger-queries.json` (description trigger accuracy, fixed train/validation split) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
+Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions), `trigger-queries.json` (description trigger accuracy, fixed train/validation split) and `pressure-records.json` (which commands were pressure-tested) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
 
 `make spec-check` cross-checks every skill against the Agent Skills reference
 validator. It needs network access, so it sits outside `make check`;
