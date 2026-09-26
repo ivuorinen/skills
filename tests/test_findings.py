@@ -3312,3 +3312,58 @@ def test_migrate_v1_a_pass_heading_between_plain_resolved_findings_is_structure(
     assert records["SEC-003"]["resolved"] == "2026-05-01"
     assert records["SEC-004"]["resolved"] == "2026-06-01"
     assert "Pass 3" not in records["SEC-003"]["body"]
+
+
+_OPEN_HEAD = "# Security Findings\nGenerated: 2026-04-24\n\n## Open Findings\n\n### High\n\n"
+_PLAIN_FINDING = (
+    "#### [SEC-001] first\nCategory: security\nArea: a.py\n"
+    "Problem: p\nEvidence: e\nImpact: i\nFix: f\n"
+)
+
+
+def test_migrate_v1_gives_an_id_outside_the_capture_a_content_id(tmp_path):
+    """`[SEC_001]` used to fall outside the heading pattern, so the finding was
+    dropped with nothing said; it now reaches the content-id fallback."""
+    doc = _OPEN_HEAD + _PLAIN_FINDING.replace("SEC-001", "SEC_001")
+    n, root = _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+    assert n == 1
+    (path,) = root.glob("security/open/*.md")
+    assert path.stem == findings.finding_id("security", "a.py", "first")
+    assert "`SEC_001`" in path.read_text(encoding="utf-8")
+
+
+def test_migrate_v1_refuses_a_finding_heading_it_cannot_read(tmp_path):
+    """A `####` heading with no finding open is a finding the parser cannot read:
+    refusing names it, where skipping it lost the finding."""
+    doc = _OPEN_HEAD + "#### SEC-001 no brackets\nCategory: security\n"
+    with pytest.raises(findings.FindingError, match="unreadable v1 finding heading"):
+        _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+
+
+def test_migrate_v1_refuses_a_finding_after_an_unknown_section_in_plain_form(tmp_path):
+    """After a plain-form finding an unknown `##` reads as its prose (headings in
+    prose are kept), but a finding after it would migrate under the section before
+    it: `## Resolved` findings would reopen. That must refuse, not guess."""
+    doc = (
+        _OPEN_HEAD
+        + _PLAIN_FINDING
+        + "\n## Review notes\n\n"
+        + _PLAIN_FINDING.replace("SEC-001", "SEC-002")
+    )
+    with pytest.raises(findings.FindingError, match="unrecognized v1 section 'review notes'"):
+        _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+
+
+def test_migrate_v1_a_bulleted_repeat_of_a_plain_field_makes_the_finding_bulleted(tmp_path, capsys):
+    """A list item ends at an unindented heading however the field first appeared,
+    so a notes section after it is skipped, not read into the finding."""
+    doc = (
+        _OPEN_HEAD
+        + _PLAIN_FINDING.replace("Impact: i", "- Evidence: e2\nImpact: i")
+        + "\n## Review notes\n\n- a note\n"
+    )
+    _n, root = _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+    text = (root / "security" / "open" / "SEC-001.md").read_text(encoding="utf-8")
+    assert "e2" in text
+    assert "a note" not in text and "Review notes" not in text
+    assert "review notes" in capsys.readouterr().err

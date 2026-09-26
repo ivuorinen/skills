@@ -86,8 +86,10 @@ wrote variants. Fields as list items or with bold labels (`- Category: x`,
 `- **Category:** x`) read the same as plain `Category: x`, and a repeated
 list-item field adds to that field. A section the format never had, such as
 an agent's verification notes, is skipped and named on stderr. A finding
-inside one refuses the migration, so no finding is dropped for sitting under
-the wrong heading.
+inside one refuses the migration, and so does a `####` heading the tool cannot
+read as a finding, so no finding is dropped for sitting under the wrong
+heading or for being written in an unexpected shape. Refused, fix the heading
+in the v1 file and run the migration again.
 
 ## Common mistakes
 

@@ -179,7 +179,9 @@ _STORE_GITATTRIBUTES_BODY = (
 )
 
 # v1 (single-document) format patterns, inherited from check-audit-consistency.py
-_V1_FINDING = re.compile(r"^####\s+\[([A-Za-z0-9-]+)\]\s*(.*)$")
+# Any bracketed id: one outside both id patterns (`N1`, `SEC_001`) is replaced by
+# a content id in _build_v1, not dropped here for failing to match.
+_V1_FINDING = re.compile(r"^####\s+\[([^\]]*)\]\s*(.*)$")
 _V1_PASS = re.compile(r"^###\s+Pass\s+(\d+)\s+—\s+(\d{4}-\d{2}-\d{2})\s*$")
 # The 1.x specialist skills specified plain `Field:` lines, but the 1.x nitpicker
 # skill never specified its own document, and agents wrote bullets and bold labels
@@ -2040,6 +2042,7 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
     fence = ""
     buffered: list[tuple] = []
     skipped: list[str] = []  # unrecognized sections holding no finding
+    absorbed = ""  # an unrecognized section read as plain-form prose, until the next known one
     known_sections = {
         "open findings": "open",
         "fixed": "fixed",
@@ -2078,6 +2081,7 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
             if name in known_sections:
                 flush()
                 section = known_sections[name]
+                absorbed = ""
                 continue
             if not entry or bulleted:
                 # A section the v1 format never had: an agent's notes, most often.
@@ -2089,6 +2093,8 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 continue
             # else: an unrecognized '## ' heading inside a plain-form finding is
             # field content — fall through to the field-continuation handling below.
+            # Remembered: if a finding follows, the heading was a section after all.
+            absorbed = name
         elif section.startswith("?"):
             if _V1_FINDING.match(line):
                 raise FindingError(
@@ -2110,6 +2116,12 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
             continue
         m = _V1_FINDING.match(line)
         if m and section:
+            if absorbed:
+                # Taken as the prose of the finding before it, the heading would
+                # file this finding under the known section above it instead.
+                raise FindingError(
+                    f"unrecognized v1 section {absorbed!r} in {src.name} holds a finding"
+                )
             flush()
             entry = {
                 "id": m.group(1),
@@ -2120,6 +2132,10 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 "pass_n": pass_n,
             }
             continue
+        if line.startswith("#### ") and section and (bulleted or not entry):
+            # Where a finding heading can stand, one the pattern cannot read is a
+            # finding: skipping it dropped the finding with nothing said.
+            raise FindingError(f"unreadable v1 finding heading {line.strip()!r} in {src.name}")
         if entry:
             m = _V1_FIELD.match(line)
             allowed = (
@@ -2136,6 +2152,7 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 # prose for whichever field happened to come before it.
                 last_field = m.group(2)
                 fields[last_field] += "\n\n" + m.group(3)
+                bulleted = True
             elif last_field:
                 # Blank lines and prose (even "Field:"-shaped) continue the open field.
                 fields[last_field] += "\n" + line
