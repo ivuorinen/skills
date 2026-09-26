@@ -2113,6 +2113,10 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
             and (bulleted or not entry or _v1_group_heading(line, section))
         ):
             flush()
+            # A group opens here (a plain-form finding reaches this branch only on a
+            # severity or pass heading): a prose `##` read into the finding before
+            # it says nothing about the findings under this heading.
+            absorbed = ""
             if section == "open":
                 severity = line[4:].strip().lower()
             else:

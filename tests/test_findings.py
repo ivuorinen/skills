@@ -3393,3 +3393,14 @@ def test_migrate_v1_refuses_an_unreadable_heading_inside_a_skipped_section(tmp_p
     doc = _OPEN_HEAD + "## Review notes\n\n#### SEC-009 no brackets\nCategory: security\n"
     with pytest.raises(findings.FindingError, match=r"'review notes'.*holds a finding"):
         _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+
+
+def test_migrate_v1_a_group_heading_ends_what_a_prose_heading_left_pending(tmp_path):
+    """A prose `##` inside one finding said nothing about the next severity group:
+    its finding used to be refused as if it sat under an unknown section."""
+    first = _PLAIN_FINDING.replace("Evidence: e", "## a prose heading\nmore prose\nEvidence: e")
+    doc = _OPEN_HEAD + first + "\n### Medium\n\n" + _PLAIN_FINDING.replace("SEC-001", "SEC-002")
+    n, root = _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+    assert n == 2
+    second = (root / "security" / "open" / "SEC-002.md").read_text(encoding="utf-8")
+    assert "severity: medium" in second
