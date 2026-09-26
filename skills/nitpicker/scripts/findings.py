@@ -2083,7 +2083,11 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 section = known_sections[name]
                 absorbed = ""
                 continue
-            if not entry or bulleted:
+            # After a finding's closing field the heading is a section too: taken as
+            # prose, an agent's notes migrated as the finding's Fix with nothing said.
+            # ponytail: a prose heading inside Fix itself now reads as a section —
+            # skipped and named on stderr rather than kept; the visible direction.
+            if not entry or bulleted or last_field in ("Fix", "Fixed", "Notes"):
                 # A section the v1 format never had: an agent's notes, most often.
                 # Skipped out loud; a finding inside one refuses the migration
                 # below, so no finding is dropped for sitting under the wrong name.
@@ -2096,7 +2100,9 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
             # Remembered: if a finding follows, the heading was a section after all.
             absorbed = name
         elif section.startswith("?"):
-            if _V1_FINDING.match(line):
+            # Any `####`, readable or not: an unreadable one is still a finding, and
+            # skipping it had the notice below claim the section held none.
+            if line.startswith("#### "):
                 raise FindingError(
                     f"unrecognized v1 section {section[1:]!r} in {src.name} holds a finding"
                 )

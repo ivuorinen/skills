@@ -3340,15 +3340,22 @@ def test_migrate_v1_refuses_a_finding_heading_it_cannot_read(tmp_path):
         _migrate_agent_doc(tmp_path, doc, "security-findings.md")
 
 
-def test_migrate_v1_refuses_a_finding_after_an_unknown_section_in_plain_form(tmp_path):
-    """After a plain-form finding an unknown `##` reads as its prose (headings in
-    prose are kept), but a finding after it would migrate under the section before
-    it: `## Resolved` findings would reopen. That must refuse, not guess."""
+@pytest.mark.parametrize(
+    "first",
+    [
+        # after the closing field: the heading is a skipped section
+        _PLAIN_FINDING,
+        # after an early field: the heading reads as that field's prose until a
+        # finding follows, which shows it was a section after all
+        "#### [SEC-001] first\nCategory: security\nArea: a.py\nProblem: p\n",
+    ],
+    ids=["after-fix", "mid-finding"],
+)
+def test_migrate_v1_refuses_a_finding_after_an_unknown_section_in_plain_form(tmp_path, first):
+    """A finding after an unknown `##` would migrate under the section before it:
+    `## Resolved` findings would reopen. That must refuse, not guess."""
     doc = (
-        _OPEN_HEAD
-        + _PLAIN_FINDING
-        + "\n## Review notes\n\n"
-        + _PLAIN_FINDING.replace("SEC-001", "SEC-002")
+        _OPEN_HEAD + first + "\n## Review notes\n\n" + _PLAIN_FINDING.replace("SEC-001", "SEC-002")
     )
     with pytest.raises(findings.FindingError, match="unrecognized v1 section 'review notes'"):
         _migrate_agent_doc(tmp_path, doc, "security-findings.md")
@@ -3367,3 +3374,22 @@ def test_migrate_v1_a_bulleted_repeat_of_a_plain_field_makes_the_finding_bullete
     assert "e2" in text
     assert "a note" not in text and "Review notes" not in text
     assert "review notes" in capsys.readouterr().err
+
+
+def test_migrate_v1_skips_a_section_after_a_plain_findings_closing_field(tmp_path, capsys):
+    """After `Fix:` an unknown `##` is a section, not more fix: the notes used to
+    migrate as part of the Fix with nothing said."""
+    doc = _OPEN_HEAD + _PLAIN_FINDING + "\n## Verification notes\n\n- a note\n"
+    n, root = _migrate_agent_doc(tmp_path, doc, "security-findings.md")
+    assert n == 1
+    text = (root / "security" / "open" / "SEC-001.md").read_text(encoding="utf-8")
+    assert "a note" not in text and "Verification notes" not in text
+    assert "verification notes" in capsys.readouterr().err
+
+
+def test_migrate_v1_refuses_an_unreadable_heading_inside_a_skipped_section(tmp_path):
+    """The skipped-section notice used to say "holds no finding" over one it could
+    not read."""
+    doc = _OPEN_HEAD + "## Review notes\n\n#### SEC-009 no brackets\nCategory: security\n"
+    with pytest.raises(findings.FindingError, match=r"'review notes'.*holds a finding"):
+        _migrate_agent_doc(tmp_path, doc, "security-findings.md")
