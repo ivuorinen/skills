@@ -84,6 +84,11 @@ title` check (`.github/workflows/pr-title.yml`) fails a title that is not a
 conventional commit; it cannot tell whether the type matches the commits, so
 that part is on you. Retitle the PR rather than rewording commits.
 
+If auto-merge is already enabled, the merge uses the commit title captured when
+it was enabled, not the current PR title. Disable and re-enable auto-merge after
+retitling, or the old type lands on `main`. The `Lint PR title` check fails
+while the captured title and the PR title disagree.
+
 ## Adding a command
 
 Use `/new-command`, which drives the RED → GREEN → REFACTOR → adversarial-review
