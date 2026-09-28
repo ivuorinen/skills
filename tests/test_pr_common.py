@@ -672,10 +672,10 @@ class TestTokenSafeRedirectHandler:
         handler = c._TokenSafeRedirectHandler(allowed)
         new = handler.redirect_request(
             req,
-            None,  # type: ignore[arg-type]
+            None,  # pyright: ignore[reportArgumentType]
             302,
             "Found",
-            email.message.Message(),  # type: ignore[arg-type]
+            email.message.Message(),  # pyright: ignore[reportArgumentType]
             new_url,
         )
         assert new is not None
@@ -724,10 +724,10 @@ class TestTokenSafeRedirectHandler:
         handler = c._TokenSafeRedirectHandler("api.github.com")
         new = handler.redirect_request(
             req,
-            None,  # type: ignore[arg-type]
+            None,  # pyright: ignore[reportArgumentType]
             302,
             "Found",
-            email.message.Message(),  # type: ignore[arg-type]
+            email.message.Message(),  # pyright: ignore[reportArgumentType]
             "https://api.github.com/b",
         )
         assert new is not None
@@ -831,6 +831,14 @@ class TestPaginateLink:
             out = c.paginate_link("https://api.github.com/x", {}, "api.github.com")
         assert len(out) == c._MAX_PAGES
         assert "may be truncated" in capsys.readouterr().err
+        # audit-36ac9b78: stderr never reaches an MCP caller; the envelope must.
+        target = c.Target("github", "github.com", "a/b")
+        envelope = c.comments_envelope(
+            target, 1, threads=out, review_bodies=[], summary_comments=[], transport="x"
+        )
+        assert envelope["degraded"] == [
+            f"stopped after {c._MAX_PAGES} pages; result may be truncated"
+        ]
 
     def test_exhausting_pages_without_a_next_does_not_warn(self, capsys):
         # The warning must mark a genuine truncation, not a normal last page.
@@ -838,6 +846,7 @@ class TestPaginateLink:
             opener.return_value.open.return_value = _http_resp([1])
             c.paginate_link("https://api.github.com/x", {}, "api.github.com")
         assert "may be truncated" not in capsys.readouterr().err
+        assert c._take_degraded() == []
 
     def test_empty_body_contributes_nothing(self):
         resp = MagicMock()
@@ -939,6 +948,10 @@ class TestPaginateBodyNext:
             out = c.paginate_body_next("https://api.bitbucket.org/2.0/x", {}, "api.bitbucket.org")
         assert len(out) == c._MAX_PAGES
         assert "may be truncated" in capsys.readouterr().err
+        # audit-36ac9b78: the truncation reaches the envelope, not stderr alone.
+        assert c._take_degraded() == [
+            f"stopped after {c._MAX_PAGES} pages; result may be truncated"
+        ]
 
     def test_non_dict_body_stops_rather_than_looping(self):
         with patch.object(c.urllib.request, "build_opener") as opener:
@@ -1213,8 +1226,8 @@ def test_entry_points_do_nothing_when_merely_imported(script, capsys):
     """Imported rather than run, an entry point must stay inert — the `__main__`
     guard is what keeps a tool from firing a network fetch on import."""
     spec = importlib.util.spec_from_file_location(f"probe_{script.stem}", script)
-    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
     assert capsys.readouterr().out == ""
 
 

@@ -558,7 +558,7 @@ def paginate_link(url: str, headers: dict[str, str], allowed_netloc: str) -> lis
     # Reached only by consuming every allowed hop with a `next` still pending, so
     # this is always a real truncation — no guard needed, and none that could go
     # stale into a branch that never runs.
-    warn(f"stopped after {_MAX_PAGES} pages; result may be truncated")
+    degrade(f"stopped after {_MAX_PAGES} pages; result may be truncated")
     return results
 
 
@@ -574,7 +574,7 @@ def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -
         if not url:
             return results
         _check_url(url, allowed_netloc)
-    warn(f"stopped after {_MAX_PAGES} pages; result may be truncated")
+    degrade(f"stopped after {_MAX_PAGES} pages; result may be truncated")
     return results
 
 
@@ -698,6 +698,19 @@ def best_effort(label: str, fn: Callable[[], Any], default: Any) -> Any:
         _DEGRADED.append(f"{label}: {type(err).__name__}: {err}")
         warn(f"could not fetch {label} ({err})")
         return default
+
+
+def degrade(message: str) -> None:
+    """Record a partial result for the envelope's `degraded` key, and warn on stderr.
+
+    audit-36ac9b78: a pagination cap or a thread vanishing mid-pagination went to
+    `warn` alone, and stderr is the MCP server's log, which the agent never sees —
+    so a truncated review surface read exactly like a complete one, and `cr`
+    could declare every thread handled. Every site that returns a result it
+    knows to be incomplete calls this rather than `warn`.
+    """
+    _DEGRADED.append(message)
+    warn(message)
 
 
 def _take_degraded() -> list[str]:

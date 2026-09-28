@@ -397,6 +397,10 @@ class TestFetchGraphql:
         assert gql.call_count == c._MAX_PAGES
         assert len(threads) == c._MAX_PAGES
         assert "may be truncated" in capsys.readouterr().err
+        # audit-36ac9b78: the envelope carries the truncation, not stderr alone.
+        assert c._take_degraded() == [
+            f"stopped after {c._MAX_PAGES} review-thread pages; result may be truncated"
+        ]
 
     def test_inner_pagination_with_a_constant_cursor_stops_at_the_page_cap(self, capsys):
         first = _graphql_response([_thread_node(has_next=True)])
@@ -414,6 +418,8 @@ class TestFetchGraphql:
             gh.fetch_graphql(_TARGET, 1)
         assert gql.call_count == 1 + c._MAX_PAGES
         assert "may be truncated" in capsys.readouterr().err
+        degraded = c._take_degraded()
+        assert len(degraded) == 1 and "comment pages of thread" in degraded[0]
 
     def test_inner_pagination_ending_on_the_last_allowed_page_does_not_warn(
         self, monkeypatch, capsys
@@ -430,12 +436,16 @@ class TestFetchGraphql:
         with patch.object(gh, "_gh_graphql", side_effect=[first, last]):
             gh.fetch_graphql(_TARGET, 1)
         assert "may be truncated" not in capsys.readouterr().err
+        assert c._take_degraded() == []
 
     def test_thread_deleted_mid_inner_pagination_keeps_what_was_read(self):
         first = _graphql_response([_thread_node(has_next=True)])
         with patch.object(gh, "_gh_graphql", side_effect=[first, {"data": {"node": None}}]):
             threads = gh.fetch_graphql(_TARGET, 1)
         assert len(threads[0]["comments"]) == 1
+        # audit-36ac9b78: the partial thread used to come back with no signal at all.
+        degraded = c._take_degraded()
+        assert len(degraded) == 1 and "vanished mid-pagination" in degraded[0]
 
     def test_inner_pagination_errors_raise(self):
         first = _graphql_response([_thread_node(has_next=True)])
@@ -969,5 +979,5 @@ def test_module_emits_nothing_to_stdout_on_import(module, capsys):
     spec = importlib.util.spec_from_file_location(f"probe_{module}", _SCRIPTS / module)
     assert spec is not None
     probe = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(probe)  # type: ignore[union-attr]
+    spec.loader.exec_module(probe)  # pyright: ignore[reportOptionalMemberAccess]
     assert capsys.readouterr().out == ""

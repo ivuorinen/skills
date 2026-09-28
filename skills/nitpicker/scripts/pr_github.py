@@ -292,7 +292,11 @@ def _all_thread_comments(node: dict[str, Any], hostname: str) -> list[dict[str, 
     thread with >100 comments is not silently truncated to its first page.
 
     Bounded to `_MAX_PAGES` follow-up requests for the reason `fetch_graphql`
-    is (reliability-2bc887b7), warning only when a next page is still pending.
+    is (reliability-2bc887b7), reporting only when a next page is still pending.
+    Both early exits that keep a partial thread — the cap, and the thread
+    vanishing mid-pagination — go through `pr_common.degrade`, so the envelope's
+    `degraded` key says so; a stderr warning alone never reached an MCP caller
+    (audit-36ac9b78).
     """
 
     conn = node["comments"]
@@ -307,13 +311,17 @@ def _all_thread_comments(node: dict[str, Any], hostname: str) -> list[dict[str, 
             raise RuntimeError(json.dumps(sub["errors"]))
         node_data = (sub.get("data") or {}).get("node")
         if not node_data:
-            return comments  # thread deleted or hidden mid-pagination — keep what we have
+            # Thread deleted or hidden mid-pagination — keep what we have, and say so.
+            pr_common.degrade(
+                f"thread {node['id']} vanished mid-pagination; comments may be incomplete"
+            )
+            return comments
         conn = node_data["comments"]
         comments.extend(_gql_comment(c) for c in conn["nodes"])
         info = conn.get("pageInfo") or {}
         cursor = info.get("endCursor")
     if info.get("hasNextPage") and cursor:
-        pr_common.warn(
+        pr_common.degrade(
             f"stopped after {pr_common._MAX_PAGES} comment pages of thread {node['id']}; "
             "result may be truncated"
         )
@@ -376,7 +384,8 @@ def fetch_graphql(target: pr_common.Target, pr_number: int) -> list[dict[str, An
         cursor = page["pageInfo"]["endCursor"]
 
     # Reached only with a next page still pending after every allowed request.
-    pr_common.warn(
+    # degrade, not warn: the envelope must carry the truncation (audit-36ac9b78).
+    pr_common.degrade(
         f"stopped after {pr_common._MAX_PAGES} review-thread pages; result may be truncated"
     )
     return threads

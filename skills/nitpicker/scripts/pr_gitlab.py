@@ -192,6 +192,12 @@ def _split_discussions(
     ("added 3 commits", "changed the description") are dropped: they are activity
     records, never review feedback, and a caller that had to filter them would be
     filtering platform noise the shared format exists to hide.
+
+    An MR-level discussion ("Start a thread") is resolvable too, and once every
+    resolvable note in it is resolved it is dropped from the summary comments
+    (audit-97ad14c6). Returned regardless, a resolved reviewer thread read as
+    live feedback and `cr` re-surfaced it on every poll. A plain comment carries
+    no resolvable note and is kept.
     """
     threads: list[dict[str, Any]] = []
     summary: list[dict[str, Any]] = []
@@ -203,7 +209,10 @@ def _split_discussions(
         if not real:
             continue
         positioned = [n for n in real if _position(n)]
+        resolvable = [n for n in real if n.get("resolvable")]
         if not positioned:
+            if resolvable and all(n.get("resolved") for n in resolvable):
+                continue
             summary.extend(
                 {
                     "author": _author(n),
@@ -217,7 +226,6 @@ def _split_discussions(
             continue
         head = positioned[0]
         position = _position(head)
-        resolvable = [n for n in real if n.get("resolvable")]
         threads.append(
             pr_common.thread(
                 thread_id=str(discussion.get("id", "")),
@@ -293,19 +301,31 @@ def _checks(target: pr_common.Target, iid: int, rest_list: Callable[[str], list[
 
 
 def _reviews(
-    mr: dict[str, Any], target: pr_common.Target, iid: int, rest_get: Callable[[str], Any]
+    target: pr_common.Target,
+    iid: int,
+    rest_list: Callable[[str], list[Any]],
+    rest_get: Callable[[str], Any],
 ):
     """Approvals plus any reviewer who has requested changes.
 
     Two sources because GitLab splits them: approvals live on their own endpoint,
-    while "requested changes" is a state on the MR's `reviewers`. A reviewer who
-    did both is reported once, with the approval winning — it is the later act
-    that GitLab lets stand.
+    and the per-reviewer verdict on `.../merge_requests/:iid/reviewers`, whose
+    entries are `{user: {...}, state: unreviewed|reviewed|requested_changes}`.
+    audit-9dcff266: the verdict was read from the single-MR response's
+    `reviewers`, where each entry is a plain user and `state` is the *account*
+    state (`active`, `blocked`) — so `requested_changes` never matched and every
+    blocked MR reported no blocking verdict. Each source is best-effort on its
+    own, so a failed one lands in `degraded` without discarding the other. A
+    reviewer who did both is reported once, with the approval winning — it is
+    the later act that GitLab lets stand.
     """
     reviews: dict[str, dict[str, Any]] = {}
-    for reviewer in mr.get("reviewers") or []:
-        if isinstance(reviewer, dict) and (reviewer.get("state") or "") == "requested_changes":
-            username = reviewer.get("username") or "unknown"
+    reviewers = pr_common.best_effort(
+        "reviewers", lambda: rest_list(f"{_mr_path(target, iid)}/reviewers"), []
+    )
+    for entry in reviewers:
+        if isinstance(entry, dict) and entry.get("state") == "requested_changes":
+            username = (entry.get("user") or {}).get("username") or "unknown"
             reviews[username] = pr_common.review(author=username, state="changes_requested")
     approvals = pr_common.best_effort(
         "approvals", lambda: rest_get(f"{_mr_path(target, iid)}/approvals"), {}
@@ -321,8 +341,12 @@ def _mergeable(detailed: str) -> bool | None:
 
     `checking`/`unchecked` mean GitLab has not finished deciding, which is not the
     same as "cannot merge" — collapsing them to False reports a fine MR as blocked.
+    `preparing` (the MR diff is still being created) and `approvals_syncing` are
+    transient in the same way, and GitLab tells automation to wait them out, so
+    they are unknown too (audit-c8c04558) rather than a freshly pushed MR reading
+    as `mergeable: false`.
     """
-    if detailed in ("checking", "unchecked", ""):
+    if detailed in ("checking", "unchecked", "preparing", "approvals_syncing", ""):
         return None
     return detailed == "mergeable"
 
@@ -362,7 +386,7 @@ def fetch_status(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
         merge_state=detailed,
         checks=pr_common.best_effort("checks", lambda: _checks(target, pr_number, rest_list), []),
         reviews=pr_common.best_effort(
-            "reviews", lambda: _reviews(mr, target, pr_number, rest_get), []
+            "reviews", lambda: _reviews(target, pr_number, rest_list, rest_get), []
         ),
         changed_files=[
             d.get("new_path") or d.get("old_path") or "" for d in diffs if isinstance(d, dict)
