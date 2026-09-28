@@ -9,8 +9,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "validate-rules.py"
 _spec = importlib.util.spec_from_file_location("validate_rules", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 validate = _mod.validate
 _discover_targets = _mod._discover_targets
 
@@ -410,10 +410,27 @@ def _main_on(monkeypatch, tmp_path, argv: list[str]):
     return _mod.main()
 
 
-def test_main_without_argv_exits_zero_when_there_is_no_rules_dir(tmp_path, monkeypatch):
+def test_main_without_argv_is_clean_when_there_is_no_rules_dir_and_no_index(
+    tmp_path, monkeypatch, capsys
+):
+    """No CLAUDE.md and no rules tree: nothing is indexed, so nothing is missing.
+    The run still prints its verdict rather than exiting in silence."""
+    assert _main_on(monkeypatch, tmp_path, []) is None
+    assert "OK  0 rule(s) validated." in capsys.readouterr().out
+
+
+def test_missing_rules_dir_reports_every_rule_claude_md_indexes(tmp_path, monkeypatch, capsys):
+    """audit-aa157132: deleting the whole rules tree exited 0 with no output while
+    CLAUDE.md still listed every rule. Each listed rule is now reported missing."""
+    (tmp_path / "CLAUDE.md").write_text(
+        "## Conventions\n\n- `a-rule.md`\n- `b-rule.md`\n", encoding="utf-8"
+    )
     with pytest.raises(SystemExit) as exc:
         _main_on(monkeypatch, tmp_path, [])
-    assert exc.value.code == 0
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "lists a-rule.md, but .claude/rules/ does not exist" in out
+    assert "lists b-rule.md, but .claude/rules/ does not exist" in out
 
 
 def test_main_without_argv_discovers_rules_and_prints_warnings(tmp_path, monkeypatch, capsys):

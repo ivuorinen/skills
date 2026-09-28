@@ -11,8 +11,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "validate-evals.py"
 _spec = importlib.util.spec_from_file_location("validate_evals", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _has(errors: list[str], fragment: str) -> bool:
@@ -266,7 +266,20 @@ class TestValidateTriggerQueries:
     def test_empty_query_text_errors(self, tmp_path):
         bad = {"query": "  ", "should_trigger": True, "split": "train"}
         data = {"skill_name": "my-skill", "queries": [*VALID_QUERIES, bad]}
-        assert _has(_triggers(tmp_path, data), "empty 'query'")
+        assert _has(_triggers(tmp_path, data), "non-empty string 'query'")
+
+    @pytest.mark.parametrize("value", [None, 42, ["x"], {"a": 1}])
+    def test_a_non_string_query_errors(self, tmp_path, value):
+        """audit-4493b4b0: `str(value).strip()` turned each of these into
+        non-empty text, so a query with no words in it validated as OK."""
+        bad = {"query": value, "should_trigger": True, "split": "train"}
+        data = {"skill_name": "my-skill", "queries": [*VALID_QUERIES, bad]}
+        assert _has(_triggers(tmp_path, data), "non-empty string 'query'")
+
+    def test_a_missing_query_key_errors(self, tmp_path):
+        bad = {"should_trigger": True, "split": "train"}
+        data = {"skill_name": "my-skill", "queries": [*VALID_QUERIES, bad]}
+        assert _has(_triggers(tmp_path, data), "non-empty string 'query'; got None")
 
     def test_non_boolean_label_errors(self, tmp_path):
         bad = {"query": "x", "should_trigger": "yes", "split": "train"}
@@ -452,6 +465,30 @@ class TestMain:
         monkeypatch.setattr(_mod.Path, "glob", lambda self, pat: iter(()))
         _mod.main()
         assert "OK  0 eval set(s) validated." in capsys.readouterr().out
+
+    def test_the_sweep_fails_on_an_evals_dir_with_no_recognised_file(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """audit-4493b4b0: a misnamed set (`trigger_queries.json`) validated as OK
+        under the sweep while the same path named explicitly failed."""
+        skill = _skill(tmp_path / "skills")
+        _write(skill, "trigger_queries.json", {"skill_name": "my-skill"})
+        monkeypatch.setattr(sys, "argv", ["prog"])
+        monkeypatch.setattr(_mod, "__file__", str(tmp_path / "scripts" / "validate-evals.py"))
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 1
+        assert "holds no recognised eval file" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("flag", ["--bogus", "-x"])
+    def test_an_unknown_option_is_a_usage_error(self, flag, monkeypatch, capsys):
+        """audit-d73756b3: an unknown flag was read as a skill path and failed at
+        exit 1, indistinguishable from a malformed eval set."""
+        monkeypatch.setattr(sys, "argv", ["prog", flag])
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 2
+        assert f"unknown option {flag!r}" in capsys.readouterr().err
 
     def test_module_entrypoint(self, monkeypatch, capsys):
         """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""

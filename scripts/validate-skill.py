@@ -17,6 +17,7 @@ With no arguments, validates skills/*/SKILL.md and .claude/skills/*/SKILL.md.
 Exit codes: 0 valid, 1 validation errors, 2 usage error.
 """
 
+import importlib.util
 import re
 import sys
 from collections.abc import Callable
@@ -24,6 +25,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import md_fences, parse_frontmatter
+
+# The token estimate has one definition, the shipped context_pack's
+# `estimate_tokens`. A private `len(body) // 4` here rounded down while
+# check-context-tokens rounded up, so the two tools disagreed at the 5000-token
+# boundary (audit-c798015a). Loaded by path, the way scripts/common.py loads
+# findings.py: internal tooling depends on the shipped tool, never the reverse.
+# Registered in sys.modules before exec because context_pack's dataclasses
+# resolve their string annotations through their own module entry.
+_CONTEXT_PACK_PATH = (
+    Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "context_pack.py"
+)
+_cp_spec = importlib.util.spec_from_file_location("context_pack_for_validate", _CONTEXT_PACK_PATH)
+_context_pack = importlib.util.module_from_spec(_cp_spec)  # pyright: ignore[reportArgumentType]
+sys.modules[_cp_spec.name] = _context_pack  # pyright: ignore[reportOptionalMemberAccess]
+_cp_spec.loader.exec_module(_context_pack)  # pyright: ignore[reportOptionalMemberAccess]
+estimate_tokens = _context_pack.estimate_tokens
 
 # Vendored skills — authored by someone else and installed into this repo (e.g.
 # via `/graphify`), NOT held to our SKILL.md conventions. Skills named here are
@@ -134,9 +151,17 @@ _UNSAFE_SHELL_RE = re.compile(
     # careless line in a file this repo ships.
     r"(?:curl|wget)[^|\n]*\|\s*"
     r"(?:\S*/)?"
+    # `| sudo bash` is the most common install idiom of all, and it passed
+    # (audit-f086be8d). Privilege escalation with its flags, then the same
+    # optional path prefix, before `env` or the interpreter. The flag run is
+    # bounded for the same backtracking reason as the env run below.
+    r"(?:(?:sudo|doas)(?:\s+-\S+){0,8}\s+(?:\S*/)?)?"
     r"(?:env(?:\s+\S+){0,8}?\s+(?:\S*/)?)?"
     r"(?:ba|z|k|da)?sh\b"
-    r"|rm\s+-rf\s+/(?:\s|$)"  # delete from root
+    # Either flag order, and a root glob: `rm -rf /*` deletes as much as
+    # `rm -rf /` and slipped through a pattern demanding space or end after `/`
+    # (audit-f086be8d).
+    r"|rm\s+-(?:rf|fr)\s+/(?:\*|\s|$)"  # delete from root
     r"|chmod\s+777"
     r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb
     r"|>\s*/dev/sd[a-z]"  # write to a raw device
@@ -457,10 +482,10 @@ def validate(path: Path, errors: list[str], warnings: list[str]) -> None:  # noq
         )
 
     # Progressive disclosure (https://agentskills.io/specification#progressive-disclosure):
-    # the instructions tier should stay under ~5000 tokens. Estimated at 4 chars
-    # per token — close enough to catch a body that has outgrown the tier, and it
-    # needs no tokeniser dependency in a stdlib-only gate.
-    est_tokens = len(body) // 4
+    # the instructions tier should stay under ~5000 tokens. Estimated by the
+    # shipped `estimate_tokens` (see _CONTEXT_PACK_PATH above), so this warning
+    # and check-context-tokens agree at the boundary (audit-c798015a).
+    est_tokens = estimate_tokens(body)
     if est_tokens > 5000:
         warn(
             f"SKILL.md body is ~{est_tokens} tokens; progressive disclosure "
@@ -587,8 +612,12 @@ def _alias_errors(skill_md: Path, skill_body: str, table_cmds: set[str]) -> list
 # and outside Claude Code the fallback is the only interface. A `/` before the
 # name (`scripts/findings.py`, `${CLAUDE_SKILL_DIR}/scripts/findings.py`) passes;
 # so does a quoted path, because the closing quote separates name and subcommand.
+# Global options may sit between the name and the subcommand (`findings.py --root
+# x list`); requiring the subcommand directly after the name let that bare,
+# unresolvable form pass (audit-bc3ed860). The option run is bounded, like the
+# env run in _UNSAFE_SHELL_RE, so the repeat cannot backtrack catastrophically.
 _BARE_FINDINGS_CLI = re.compile(
-    r"(?<![/\w])findings\.py`?\s+"
+    r"(?<![/\w])findings\.py`?(?:\s+--?[\w-]+(?:[= ][^\s`]+)?){0,8}\s+"
     r"(?:new|resolve|list|show|validate|index|export|recheck|baseline|migrate|migrate-resolved)\b"
 )
 # The findings store accepts only these; a domain severity guide inventing a
