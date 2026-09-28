@@ -15,8 +15,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "bench-retrieval.py"
 _spec = importlib.util.spec_from_file_location("bench_retrieval", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _row(**over) -> dict:
@@ -604,6 +604,25 @@ def test_cli_help_exits_zero(capsys):
         _mod.main(["--help"])
     assert exc.value.code == 0
     assert "bench-retrieval" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "255", "lots", "1.5"])
+def test_an_invalid_budget_is_a_usage_error(raw, capsys):
+    """audit-d73756b3: `--budget-tokens 0` reached context_pack and came back as
+    a refused case at exit 1, against the documented "2 = usage error"."""
+    with pytest.raises(SystemExit) as exc:
+        _mod.main(["--budget-tokens", raw])
+    assert exc.value.code == 2
+    assert "--budget-tokens" in capsys.readouterr().err
+
+
+def test_the_budget_floor_is_context_packs_floor():
+    """The parse-time floor mirrors context_pack's; this pins the two together
+    so neither can move alone."""
+    floor = _mod._MIN_BUDGET_TOKENS
+    assert _mod._budget_tokens(str(floor)) == floor
+    with pytest.raises(_mod.context_pack.PackError, match=f"at least {floor}"):
+        _mod.context_pack.build(root=Path(), goal="x", mode="evidence", budget_tokens=floor - 1)
 
 
 def test_module_runs_as_a_script(monkeypatch, capsys):

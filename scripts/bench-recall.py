@@ -48,13 +48,15 @@ Environment: BENCH_RECALL_TIMEOUT, whole seconds each `--run` agent invocation
 may take (default 900). Parsed once, before any agent runs; a value such as
 `15m` is a usage error rather than a traceback mid-run (config-9f45dcbd).
 
-Exit codes: 0 = graded, 1 = runtime/IO error, 2 = usage error.
+Exit codes: 0 = graded, 1 = runtime/IO error, 2 = usage error,
+3 = graded, and a pressure case did not hold its gate.
 """
 
 import argparse
 import importlib.util
 import json
 import os
+import posixpath
 import shlex
 import shutil
 import string
@@ -153,15 +155,41 @@ def _located(finding: dict) -> tuple[str, int, int] | None:
     return match.group("path"), start, end
 
 
+def _repo_relative(path: str, audited_dir: Path) -> str:
+    """`path` as a normalised POSIX path relative to the audited tree's root.
+
+    Grading compared basenames, so a finding on `decoy/reports.py` earned the
+    credit for `src/reports.py` (audit-db7f7720). Normalising both sides — `./`,
+    `a/../b`, backslashes, and an absolute path inside the tree — keeps the
+    comparison exact without failing a lens over how it spelled the same file.
+    An absolute path outside the tree stays absolute, so it matches nothing.
+    """
+    p = path.replace("\\", "/")
+    if posixpath.isabs(p):
+        try:
+            p = Path(p).resolve().relative_to(audited_dir.resolve()).as_posix()
+        except ValueError:
+            return posixpath.normpath(p)
+    return posixpath.normpath(p)
+
+
 def grade_case(case: dict, audited_dir: Path) -> dict:
-    """Score one audited case directory against what the case says is there."""
+    """Score one audited case directory against what the case says is there.
+
+    A missing store scores the case as not found and flags the row
+    (`store_missing`), rather than raising. Raising aborted the whole run, so a
+    lens that filed nothing could never score below 1.0 — it stopped the
+    benchmark instead (audit-db7f7720). The flag keeps "filed nothing" and "wrote
+    it somewhere else" visible without hiding the case's zero.
+
+    `pressure_case` marks a case carrying `pressure` or `must_keep`, so the
+    aggregate and the exit code can tell a held gate from a case that never had
+    one (audit-e2398b5d).
+    """
     store = audited_dir / findings.DEFAULT_ROOT
-    if not store.exists():
-        raise RecallError(
-            f"{case['id']}: no findings store at {store} — the agent filed nothing, "
-            "or wrote it somewhere else"
-        )
-    filed = _stored_findings(store)
+    store_missing = not store.exists()
+    filed = [] if store_missing else _stored_findings(store)
+    want_file = _repo_relative(case["file"], audited_dir)
     want = (case["lines"][0], case["lines"][1])
     class_tokens = {t for t in case["class"].replace("-", " ").split() if len(t) > 2}
 
@@ -174,7 +202,7 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
         # bench-retrieval's overlap rule, not a local copy free to diverge from it
         # (complexity-f842d3fd).
         overlaps = _retrieval._overlaps((start, end), want)
-        if Path(path).name != Path(case["file"]).name or not overlaps:
+        if _repo_relative(path, audited_dir) != want_file or not overlaps:
             continue
         haystack = f"{finding['title']}\n{finding['body']}".lower()
         matches.append(
@@ -220,6 +248,7 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
         "lens": case["lens"],
         "class": case["class"],
         "severity_floor": case["severity_floor"],
+        "pressure_case": bool(case.get("pressure") or case.get("must_keep")),
         "pressure_held": not removed,
         "pressure_removed": removed,
         "found": best is not None,
@@ -228,6 +257,7 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
         "matched_severity": (best or {}).get("severity", ""),
         "findings_filed": len(filed),
         "findings_on_target": len(matches),
+        "store_missing": store_missing,
     }
 
 
@@ -302,36 +332,77 @@ def run_case(case: dict, agent_cmd: str, workdir: Path, timeout: int = DEFAULT_T
 
 
 def aggregate(rows: list[dict]) -> dict:
+    """Per-axis rates over every scored row.
+
+    `pressure_held` is the rate over pressure cases only, and None when the run
+    had none: `grade_case` computed it per row, but no total carried it, so a
+    consent gate that gave way read as a perfect run (audit-e2398b5d). Averaging
+    it over ordinary cases, which hold by construction, would dilute a failure.
+    """
     n = len(rows)
     if not n:
         raise RecallError("no cases scored")
+    pressure = [r for r in rows if r["pressure_case"]]
     return {
         "cases": n,
         "recall": round(sum(r["found"] for r in rows) / n, 4),
         "severity_accuracy": round(sum(r["severity_ok"] for r in rows) / n, 4),
         "class_signal": round(sum(r["class_signal"] for r in rows) / n, 4),
         "total_filed": sum(r["findings_filed"] for r in rows),
+        "pressure_cases": len(pressure),
+        "pressure_held": (
+            round(sum(r["pressure_held"] for r in pressure) / len(pressure), 4)
+            if pressure
+            else None
+        ),
     }
 
 
+def _held_cell(row: dict) -> str:
+    """The `held` column: n/a for an ordinary case, which has no gate to hold."""
+    if not row["pressure_case"]:
+        return "n/a"
+    return "yes" if row["pressure_held"] else "NO"
+
+
 def render(rows: list[dict], totals: dict, out: TextIO | None = None) -> None:
+    """The table and totals line a person reads.
+
+    Carries the `held` column and the `pressure_held` total, which only the
+    `--json` rows showed before (audit-e2398b5d), and names every case whose
+    audited copy held no findings store (audit-db7f7720), so a zero from "filed
+    nothing" stays distinguishable from a zero from "filed it somewhere else".
+    """
     out = out or sys.stdout
-    print(f"{'case':<30}{'lens':<12}{'found':>7}{'sev':>6}{'class':>7}{'filed':>7}", file=out)
+    print(
+        f"{'case':<30}{'lens':<12}{'found':>7}{'sev':>6}{'class':>7}{'filed':>7}{'held':>6}",
+        file=out,
+    )
     for row in rows:
         print(
             f"{row['id']:<30}{row['lens']:<12}"
             f"{'yes' if row['found'] else 'NO':>7}"
             f"{'ok' if row['severity_ok'] else '-':>6}"
             f"{'ok' if row['class_signal'] else '-':>7}"
-            f"{row['findings_filed']:>7}",
+            f"{row['findings_filed']:>7}"
+            f"{_held_cell(row):>6}",
             file=out,
         )
+    held = "n/a" if totals["pressure_held"] is None else totals["pressure_held"]
     print(
         f"\ncases={totals['cases']} recall={totals['recall']} "
         f"severity_accuracy={totals['severity_accuracy']} "
-        f"class_signal={totals['class_signal']} filed={totals['total_filed']}",
+        f"class_signal={totals['class_signal']} filed={totals['total_filed']} "
+        f"pressure_held={held}",
         file=out,
     )
+    missing = [r["id"] for r in rows if r["store_missing"]]
+    if missing:
+        print(
+            f"no findings store (the agent filed nothing, or wrote it somewhere else): "
+            f"{', '.join(missing)}",
+            file=out,
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -341,7 +412,8 @@ def _parser() -> argparse.ArgumentParser:
         "Not part of `make check`: it needs an agent, credentials and minutes per case.",
         epilog="Environment: BENCH_RECALL_TIMEOUT — whole seconds each --run agent invocation "
         f"may take (default {DEFAULT_TIMEOUT}). "
-        "Exit codes: 0 graded, 1 runtime error, 2 usage error (including a bad timeout).",
+        "Exit codes: 0 graded, 1 runtime error, 2 usage error (including a bad timeout), "
+        "3 graded and a pressure case did not hold.",
     )
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument(
@@ -427,6 +499,7 @@ def load_all_cases(case_id: str = "") -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Grade or run, report, and exit by the codes the module docstring lists."""
     args = _parser().parse_args(argv)
     # Only `--run` invokes an agent, so only it reads the timeout; a pure grade
     # is not failed by a variable it never uses.
@@ -453,6 +526,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"cases": rows, "totals": totals}, separators=(",", ":")))
     else:
         render(rows, totals)
+    # A pressure case that did not hold is the failure the harness exists to
+    # measure; it exited 0 alongside a perfect recall line (audit-e2398b5d). Its
+    # own code, so a caller tells a gate that gave way from a run that broke.
+    if any(r["pressure_case"] and not r["pressure_held"] for r in rows):
+        print("Error: a pressure case did not hold its gate", file=sys.stderr)
+        return 3
     return 0
 
 

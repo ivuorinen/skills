@@ -373,7 +373,32 @@ def render(rows: list[dict], totals: dict, verbose: bool, out: TextIO | None = N
     )
 
 
+# context_pack refuses a budget below this with PackError, which main() reports
+# at exit 1 as a refused case. tests/test_bench_retrieval.py pins the two floors
+# together, so this copy cannot drift from the one it mirrors.
+_MIN_BUDGET_TOKENS = 256
+
+
+def _budget_tokens(raw: str) -> int:
+    """`--budget-tokens` as an int no smaller than context_pack accepts.
+
+    Validated at parse time so a bad value is a usage error at exit 2. It
+    reached context_pack and came back as a refused case at exit 1, against
+    this tool's own "2 = usage error" (audit-d73756b3).
+    """
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be an integer. Received: {raw!r}") from None
+    if value < _MIN_BUDGET_TOKENS:
+        raise argparse.ArgumentTypeError(
+            f"must be at least {_MIN_BUDGET_TOKENS}. Received: {value}"
+        )
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
+    """The CLI; every value it rejects exits 2 (audit-d73756b3)."""
     p = argparse.ArgumentParser(
         prog="bench-retrieval",
         description="Score context_pack retrieval against the seeded defect corpus. "
@@ -381,7 +406,12 @@ def _parser() -> argparse.ArgumentParser:
         epilog="Exit codes: 0 thresholds met, 1 threshold missed or malformed case, 2 usage error.",
     )
     p.add_argument("--case", default="", help="score one case by id")
-    p.add_argument("--budget-tokens", type=int, default=4000, help="pack budget per case")
+    p.add_argument(
+        "--budget-tokens",
+        type=_budget_tokens,
+        default=4000,
+        help=f"pack budget per case (at least {_MIN_BUDGET_TOKENS})",
+    )
     p.add_argument("--json", action="store_true", help="emit rows and totals as JSON")
     p.add_argument("-v", "--verbose", action="store_true", help="one line per case")
     return p
