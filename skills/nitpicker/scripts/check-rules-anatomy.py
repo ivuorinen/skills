@@ -334,6 +334,7 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
     body_total = len(body.splitlines())
     buried: list[tuple[int, int, str]] = []
     headings: set[str] = set()
+    heading_counts: dict[str, int] = {}
     anchors: list[tuple[int, str]] = []
     seen_lines: dict[str, int] = {}
     dupes: list[tuple[int, int, str]] = []
@@ -369,7 +370,13 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             buried.append((lineno, round(depth * 100), stripped[:70]))
 
         if stripped.startswith("#"):
-            headings.add(_slug(stripped))
+            # GitHub suffixes the second and later identical headings with -1,
+            # -2, …; bare slugs alone flagged a working link to the second
+            # `## Enforcement` as a dead anchor (audit-1558e13f).
+            slug = _slug(stripped)
+            n = heading_counts.get(slug, 0)
+            headings.add(slug if n == 0 else f"{slug}-{n}")
+            heading_counts[slug] = n + 1
             continue
         if not stripped:
             continue
@@ -432,7 +439,19 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             if _looks_illustrative(ref):
                 continue
             rel, base = _tracked(project_root)
-            if ref in rel or ref.split("/")[-1] in base or (project_root / ref).exists():
+            # The basename fallback is for a bare `findings.py` only. Applied to
+            # a directory-qualified path it passed `scripts/validate.py` after the
+            # file moved to `tools/validate.py` — the move stale_path exists to
+            # catch (audit-379e888a). A directory-qualified ref still resolves as
+            # a trailing run of whole path components, so `commands/_conventions.md`
+            # written relative to its skill is not reported while the file is at
+            # `skills/nitpicker/commands/_conventions.md`.
+            if (
+                ref in rel
+                or ("/" not in ref and ref in base)
+                or any(p.endswith(f"/{ref}") for p in rel)
+                or (project_root / ref).exists()
+            ):
                 continue
             issue(
                 # Low, like `stale_glob` above and for the same reason: a rule may
