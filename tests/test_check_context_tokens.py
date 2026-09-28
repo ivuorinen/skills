@@ -18,8 +18,8 @@ _TOOL = (
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-context-tokens.py"
 )
 _spec = importlib.util.spec_from_file_location("check_context_tokens", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _project(root: Path, *, rules: int = 2, command: str = "audit") -> Path:
@@ -55,6 +55,48 @@ def test_always_loaded_includes_rules_in_subdirectories(tmp_path):
     (root / ".claude" / "rules" / "sub").mkdir()
     (root / ".claude" / "rules" / "sub" / "n.md").write_text("# n\n", encoding="utf-8")
     assert ".claude/rules/sub/n.md" in {row["path"] for row in _mod.always_loaded(root)}
+
+
+def test_the_token_estimate_is_context_packs_single_definition():
+    """audit-c798015a: the ratio lives in context_pack only; a second copy had drifted."""
+    import context_pack
+
+    assert _mod.estimate_tokens is context_pack.estimate_tokens
+    assert not hasattr(_mod, "CHARS_PER_TOKEN")
+
+
+def test_a_path_scoped_rule_leaves_the_always_loaded_set(tmp_path):
+    """audit-b761d1f4: a `paths:` rule loads only on a matching read, not every turn."""
+    root = _project(tmp_path, rules=1)
+    (root / ".claude" / "rules" / "scoped.md").write_text(
+        "---\npaths:\n  - 'src/**'\n---\n\n# s\n", encoding="utf-8"
+    )
+    assert ".claude/rules/scoped.md" not in {r["path"] for r in _mod.always_loaded(root)}
+    assert [r["path"] for r in _mod.path_scoped(root)] == [".claude/rules/scoped.md"]
+
+
+def test_copilot_instructions_are_reported_as_their_own_harness_row(tmp_path):
+    """audit-b761d1f4: Claude Code never reads `.github/copilot-instructions.md`."""
+    root = _project(tmp_path, rules=1)
+    (root / ".github").mkdir()
+    (root / ".github" / "copilot-instructions.md").write_text("# c\n", encoding="utf-8")
+    assert ".github/copilot-instructions.md" not in {r["path"] for r in _mod.always_loaded(root)}
+    data = _mod.report(root, "nitpicker", "audit")
+    assert set(data["sets"]) == {"always_loaded", "path_scoped", "copilot_loaded", "invocation"}
+    assert [r["path"] for r in data["sets"]["copilot_loaded"]["files"]] == [
+        ".github/copilot-instructions.md"
+    ]
+
+
+def test_scoping_a_rule_shows_as_a_drop_in_the_per_turn_total(tmp_path):
+    """The saving instruction-budget.md prescribes has to be visible in the delta."""
+    root = _project(tmp_path, rules=1)
+    rule = root / ".claude" / "rules" / "big.md"
+    rule.write_text("# b\n" + "w" * 4000, encoding="utf-8")
+    before = _mod.report(root, "nitpicker", "audit")["sets"]["always_loaded"]["totals"]
+    rule.write_text("---\npaths:\n  - 'src/**'\n---\n\n# b\n" + "w" * 4000, encoding="utf-8")
+    after = _mod.report(root, "nitpicker", "audit")["sets"]["always_loaded"]["totals"]
+    assert after["est_tokens"] < before["est_tokens"] - 900
 
 
 @pytest.mark.parametrize(("body", "lines"), [("", 0), ("no newline", 1), ("a\nb\n", 2)])

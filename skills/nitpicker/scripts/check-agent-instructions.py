@@ -14,7 +14,10 @@ these defects only exist across files or against a whole-set budget:
                           together. A harness reserves roughly 50 instructions
                           for itself, so a config past ~150 is competing with it
                           for the same attention. No single file is at fault,
-                          which is why no per-file check finds it.
+                          which is why no per-file check finds it. A file an
+                          `@path.md` import pulls in counts with the set.
+    root_file_length      a root instruction file past 200 lines (Medium) or
+                          400 (High). The directive count is blind to length.
     position_risk         a critical rule titled in the middle 20-80% of a long
                           file. The top and bottom of a file survive; the middle
                           is where an instruction goes to be skimmed past.
@@ -205,8 +208,55 @@ def _declares_paths(frontmatter: str) -> bool:
     return False
 
 
-def is_path_scoped(text: str) -> bool:
-    """True when leading frontmatter declares a non-empty `paths:` list.
+def _frontmatter_value(frontmatter: str, key: str) -> str | None:
+    """The scalar value of top-level `key:` with quotes stripped; None when absent.
+
+    Only the harness keys `_harness_scoped` names are read, each a scalar, so a
+    line scan is enough — the same reasoning `_declares_paths` gives for not
+    reaching for a pattern.
+    """
+    for raw in frontmatter.splitlines():
+        if raw.startswith(f"{key}:"):
+            return raw[len(key) + 1 :].strip().strip("\"'").strip()
+    return None
+
+
+# Globs a Copilot `applyTo:` may use to mean "every file". A file applying to
+# all of them is attached to every request, so its `applyTo:` scopes nothing.
+_APPLY_TO_EVERYTHING = frozenset({"**", "**/*"})
+
+
+def _harness_scoped(frontmatter: str, rel: str) -> bool:
+    """True when the harness that owns `rel` loads it only on a condition.
+
+    Keyed on the harness pattern the file matched, because each harness spells
+    conditional loading under its own key, and `paths:` alone covered Claude
+    Code only (audit-72ab6817). A Copilot `.instructions.md` already scoped by
+    `applyTo:`, or a Cursor `.mdc` with `alwaysApply: false`, was charged to the
+    always-loaded total, and the remediation this tool prints could not clear a
+    budget the author had in fact already met.
+
+    - Copilot `.github/instructions/**/*.instructions.md`: a non-empty
+      `applyTo:` naming anything narrower than every file.
+    - Cursor `.cursor/rules/**/*.mdc`: `alwaysApply: false`.
+    - Windsurf `.windsurf/rules/**/*.md`: a `trigger:` other than `always_on`.
+    """
+    if rel.startswith(".github/instructions/") and rel.endswith(".instructions.md"):
+        apply_to = _frontmatter_value(frontmatter, "applyTo")
+        if not apply_to:
+            return False
+        globs = {g.strip().strip("\"'") for g in apply_to.split(",")}
+        return not globs & _APPLY_TO_EVERYTHING
+    if rel.startswith(".cursor/rules/") and rel.endswith(".mdc"):
+        return _frontmatter_value(frontmatter, "alwaysApply") == "false"
+    if rel.startswith(".windsurf/rules/"):
+        trigger = _frontmatter_value(frontmatter, "trigger")
+        return bool(trigger) and trigger != "always_on"
+    return False
+
+
+def is_path_scoped(text: str, rel: str = "") -> bool:
+    """True when leading frontmatter makes the file load only on a condition.
 
     Such a file loads only when a matching file is read, so it spends no
     always-loaded budget. Counting it did two things at once: it overstated the
@@ -214,10 +264,18 @@ def is_path_scoped(text: str) -> bool:
     the remediation this tool prints — move what is situational into a
     path-scoped rule file — unable to lower the number it was printed against.
 
+    `paths:` is Claude Code's key and is honoured for any file. `rel`, the
+    project-relative path, selects the other harnesses' keys (see
+    `_harness_scoped`); omitted, only `paths:` is judged. Shared with
+    check-context-tokens.py so both tools agree on what a turn carries
+    (audit-b761d1f4).
+
     An empty `paths:` scopes nothing, so it does not qualify.
     """
     m = _FRONTMATTER_RE.match(text)
-    return bool(m) and _declares_paths(m.group(1))
+    if not m:
+        return False
+    return _declares_paths(m.group(1)) or _harness_scoped(m.group(1), rel)
 
 
 def _count_instructions(text: str) -> int:
@@ -361,8 +419,15 @@ def _imports(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
-    """Imports that resolve to nothing, and import cycles.
+def _import_findings(
+    project_root: Path, files: list[Path]
+) -> tuple[list[dict], dict[Path, list[tuple[Path, int, str]]]]:
+    """Imports that resolve to nothing, and import cycles; plus the edge map walked.
+
+    The edge map is returned so `check` can charge each imported file to the
+    budget. The walk found every target and discarded them after judging only
+    dangling, cycle and depth, so directives moved behind an `@import` counted
+    zero and passed the gate the same text blocked inline (audit-312999e8).
 
     Resolution is relative to the *importing* file's directory, which is how the
     harnesses that support this resolve it. A `~` path is left alone: it points
@@ -430,7 +495,41 @@ def _import_findings(project_root: Path, files: list[Path]) -> list[dict]:
 
     findings += _import_cycles(edges, project_root)
     findings += _import_depth(edges, files, project_root)
-    return findings
+    return findings, edges
+
+
+def _imported_targets(
+    edges: dict[Path, list[tuple[Path, int, str]]],
+    roots: list[Path],
+    files: list[Path],
+    project_root: Path,
+) -> dict[Path, Path]:
+    """Imported file -> the file importing it, for each target a session loads.
+
+    Breadth-first from the always-loaded, non-scoped `roots`, so each target is
+    reached at its shallowest depth and one past `_MAX_IMPORT_DEPTH` — which
+    never arrives, and `_import_depth` already reports — is not charged. A file
+    already in the scanned set `files` is never a target: it is counted, or
+    excluded as scoped, as itself. A path-scoped target is neither charged nor
+    followed, since what it imports loads only when it does.
+    """
+    seen = set(files)
+    out: dict[Path, Path] = {}
+    frontier = list(roots)
+    for _depth in range(_MAX_IMPORT_DEPTH):
+        nxt = []
+        for node in frontier:
+            for target, _lineno, _spelling in edges.get(node, []):
+                if target in seen:
+                    continue
+                seen.add(target)
+                text = target.read_text(encoding="utf-8", errors="replace")
+                if is_path_scoped(text, _rel_to(target, project_root)):
+                    continue
+                out[target] = node
+                nxt.append(target)
+        frontier = nxt
+    return out
 
 
 # Claude Code follows an import chain five hops deep and stops. The sixth file
@@ -617,6 +716,43 @@ def _scan_file(
     return findings
 
 
+# A root file past these line counts is one an agent reads less of: Medium warns
+# while there is room to move content out, and High blocks at the point the
+# agent-rules audit already grades a root file High.
+_LENGTH_WARN = 200
+_LENGTH_ERROR = 400
+
+
+def _length_findings(rel: str, text: str) -> list[dict]:
+    """A `root_file_length` finding when a root instruction file runs long.
+
+    The directive budget cannot see length: CLAUDE.md regrew to 439 lines while
+    scoring 94 directives, under the warn threshold, after a manual audit had
+    already cut it once (agent-hooks-9b47171a). Line count is mechanical, so
+    this gate catches the regression the next commit instead of the next audit.
+    Root files only — a rules-directory file is check-rules-anatomy.py's unit.
+    """
+    if rel not in _ROOT_FILES:
+        return []
+    lines = len(text.splitlines())
+    if lines > _LENGTH_ERROR:
+        severity, limit = "High", f"limit {_LENGTH_ERROR}"
+    elif lines > _LENGTH_WARN:
+        severity, limit = "Medium", f"warn above {_LENGTH_WARN}, limit {_LENGTH_ERROR}"
+    else:
+        return []
+    return [
+        {
+            "severity": severity,
+            "code": "root_file_length",
+            "file": rel,
+            "detail": f"{lines} lines ({limit}). A root instruction file is read start to "
+            f"finish every session; move what is situational into a path-scoped rule "
+            f"file or an on-demand skill.",
+        }
+    ]
+
+
 def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     """The report for `project_root`, and whether it blocks; (report, blocking).
 
@@ -676,12 +812,13 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     seen_lines: dict[str, list[tuple[str, int]]] = {}
     total = 0
     scoped_total = 0
+    roots: list[Path] = []
 
     for path in files:
         rel = path.relative_to(project_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         count = _count_instructions(text)
-        scoped = is_path_scoped(text)
+        scoped = is_path_scoped(text, rel)
         # Scanned either way — a path-scoped file still loads, so a duplicate or
         # a buried directive in it is still a defect. Only the budget excludes
         # it, because the budget is about what every turn carries.
@@ -689,10 +826,28 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
             scoped_total += count
         else:
             total += count
+            roots.append(path)
         per_file.append({"file": rel, "instructions": count, "path_scoped": scoped})
         findings += _scan_file(rel, text, owners, seen_lines)
+        findings += _length_findings(rel, text)
 
-    findings += _import_findings(project_root, files)
+    import_findings, edges = _import_findings(project_root, files)
+    findings += import_findings
+    # An imported file loads with the file importing it, at launch, so its
+    # directives are always-loaded ones (audit-312999e8).
+    imported = _imported_targets(edges, roots, files, project_root)
+    for target, importer in imported.items():
+        count = _count_instructions(target.read_text(encoding="utf-8", errors="replace"))
+        total += count
+        per_file.append(
+            {
+                "file": _rel_to(target, project_root),
+                "instructions": count,
+                "path_scoped": False,
+                "imported_by": _rel_to(importer, project_root),
+            }
+        )
+    loaded = len(files) + len(imported)
 
     if total > _BUDGET_ERROR:
         findings.append(
@@ -700,7 +855,7 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
                 "severity": "High",
                 "code": "instruction_budget",
                 "file": "(always-loaded set)",
-                "detail": f"{total} instructions across {len(files)} always-loaded files "
+                "detail": f"{total} instructions across {loaded} always-loaded files "
                 f"(limit {_BUDGET_ERROR}). A harness reserves roughly 50 internally, so "
                 f"this config competes with it. Move what is situational into a "
                 f"path-scoped rule file or an on-demand skill.",
@@ -712,7 +867,7 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
                 "severity": "Low",
                 "code": "instruction_budget",
                 "file": "(always-loaded set)",
-                "detail": f"{total} instructions across {len(files)} always-loaded files "
+                "detail": f"{total} instructions across {loaded} always-loaded files "
                 f"(warn above {_BUDGET_WARN}, limit {_BUDGET_ERROR}).",
             }
         )

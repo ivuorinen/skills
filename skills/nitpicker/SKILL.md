@@ -190,7 +190,7 @@ flow.
 | `scripts/findings.py` | every file-writing command (findings store CLI) |
 | `scripts/context_pack.py` | every command that inspects the audited repo (bounded context packs) |
 | `scripts/findings_export.py` | `findings.py export` — SARIF, JSON and JUnit renderings of the store |
-| `scripts/check-context-tokens.py` | `agent-rules` — the size of the always-loaded set and of one invocation |
+| `scripts/check-context-tokens.py` | `agent-rules` — token estimates of the per-turn, path-scoped and per-invocation sets |
 | `scripts/fetch-pr-comments.py` | `cr` — PR/MR review threads and out-of-thread notices |
 | `scripts/fetch-pr-status.py` | `cr` — PR/MR state, CI checks, review verdicts, changed files |
 | `scripts/process-sarif.py` | `security` |
