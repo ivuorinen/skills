@@ -8,4 +8,4 @@ Precondition: Go source exists (`find . -name "*.go" -not -path "*/vendor/*" | h
 gosec_out=$(gosec -fmt json ./... 2>"$_sa_tmp/gosec-err.txt")
 ```
 
-Parse `.issues[]` → `.rule_id`, `.details`, `.severity`, `.confidence`, `.file`, `.line`.
+Parse `.Issues[]` (the report's keys are capitalised; `.issues` never exists) → `.rule_id`, `.details`, `.severity`, `.confidence`, `.file`, `.line`, `.cwe`. Also read `."Golang errors"`: a non-empty value means packages failed to build, so record the run as a partial scan.
