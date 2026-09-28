@@ -246,9 +246,11 @@ end.
 - `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash and
   context-mode shell calls only, not a `git checkout` inside a script)
 - `vendored-skills.md`
+- `graphify.md` (the knowledge-graph rules `graphify claude install` wrote)
 - Path-scoped, loaded with the files they govern: `mcp-stale-server.md`,
   `suppression-markers.md`, `agentlinter-baseline.md`, `version-bumps.md`,
-  `enforcement-surface-owner.md`, `hooks-fail-closed.md`, `pr-fetchers.md`
+  `enforcement-surface-owner.md`, `hooks-fail-closed.md`, `pr-fetchers.md`,
+  `hook-inventory.md`
 
 ## Plugin Metadata
 
@@ -301,121 +303,15 @@ Plus a shell PostToolUse hook (Bash and the context-mode shell tools),
 `post-bash-revalidate.py`: an edit made through a shell (`sed -i`, redirection,
 `git mv`) is invisible to the Write/Edit matchers, so this one re-runs the whole-tree gates when
 `git status` shows a governed path dirty. Ignored entries count only inside the
-findings store, so a clean tree costs one `git status`.
+findings store, so a clean tree costs one `git status`. A gate it cannot run
+(script or interpreter missing) is reported through `report_skip` with exit
+1, or listed in the exit-2 block beside a failing gate
+(agent-loopholes-6ca5b557).
 
-Plus the **PreToolUse** hooks below, which can *block* a tool call before it
-runs — the most behaviour-changing entries in the file. `.claude/settings.json`
-holds the authoritative list; `tests/test_settings.py` fails when one of them is
-configured and unnamed here:
-
-- matcher `Bash` and the context-mode shell tools (`ctx_execute`,
-  `ctx_execute_file`, `ctx_batch_execute`) — `deny-agents-path-hook.py`, which
-  blocks a shell command whose
-  text names `.claude/agents/` **or a full protected agent filename** —
-  literally, quoted, escaped, variable-built, or glob-spelled (the
-  `permissions.deny` block binds file tools only, not Bash — it names `Read`,
-  `Edit` **and** `Write` rules. Claude Code's permissions docs state that `Edit`
-  rules apply to every built-in tool that edits files, so the `Write` entries
-  are redundant belt and braces, kept because they cost nothing.
-  `tests/test_settings.py` pins the exact list). So
-  `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
-  It raises the cost of reaching that tree; it does not close it. The guard
-  matches tokens, so a command that locates the files by **content** rather than
-  by path or name (`git ls-files | grep review | xargs cat`) carries neither
-  token and passes — the one token it does carry, `review`, is a nitpicker
-  command name that appears in ordinary commands constantly, so matching it
-  would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
-  the binding control, not this hook. The same hook also blocks a shell
-  **write** to any `PROTECTED_WRITE` path — `scripts/hooks/`,
-  `.claude/settings.json`, `.claude/settings.local.json`,
-  `.claude/skills/graphify/.graphify_version` — and refuses context-mode code in
-  another language that names one of them or the agents tree, where reading
-  stays allowed — so the enforcement surface cannot be edited around via
-  `sed -i` or a redirect. `.claude/rules/enforcement-surface-owner.md` says who
-  makes those edits.
-- matcher `Bash` and the context-mode shell tools — `deny-unsafe-git-hook.py`,
-  which blocks `git` with `--no-verify` or `-n` (stacked clusters and the
-  abbreviations git accepts included), a `-c core.hooksPath=`, `--config-env`
-  (either form) or `GIT_CONFIG_*` override that disables the repository's hooks,
-  a `git config` write to `core.hooksPath` or `alias.*`, an alias whose body
-  resolves to any of those (a `!` shell body included, and aliases already in
-  git config judged by their body), a pre-commit skip variable on `git commit`
-  (`.claude/rules/commit-gate-integrity.md` names them), `pre-commit uninstall`,
-  a `git add` whose pathspec reaches the whole tree
-  however it is spelled, and a push to a protected branch. It reads a command
-  nested in `$(...)`, backticks or a subshell as its own stage, and judges the
-  command behind a wrapper (`env`, `sudo`, `xargs`, …) as well as the wrapper.
-  Per `.claude/rules/commit-gate-integrity.md` the pre-commit validators are not
-  optional; commit without the flag and fix what fails. That rule also states
-  what remains open — the guard matches command text, so a request carrying no
-  `git` token at all (a shell function shadowing it, a script, `eval` on a
-  runtime-built string) passes it.
-- matcher `Bash` — `guard-ctx-ok-hook.py`, which validates the `# ctx-ok`
-  escape hatch from `.claude/rules/use-context-mode.md` and denies it on any
-  verb outside its allowlist, including every read verb. Fails closed on an
-  unrecognised verb, so a denial usually means route the command through
-  context-mode instead — not that the marker was spelled wrong.
-- matcher `Bash` and the context-mode shell tools —
-  `ask-destructive-restore-hook.py`, which asks before a `git checkout` of paths
-  (with or without `--`) or a `git restore` that would discard uncommitted
-  tracked changes, treating pathspec magic and globs as covering every dirty
-  path. See `.claude/rules/snapshot-before-mutating.md`: snapshot with `cp`
-  instead.
-- matcher `Bash` — `graphify hook-guard search`
-- matcher `Read|Glob` — `graphify hook-guard read`
-- matcher `mcp__(plugin_…_)?nitpicker__np_(new_finding|resolve_finding|write_index|process_sarif)`
-  — `deny-stale-mcp-write-hook.py`, which denies a findings-store or SARIF MCP
-  write while `git status -- skills/nitpicker/scripts` is non-empty or
-  unreadable, and names the CLI command to use instead
-  (`.claude/rules/mcp-stale-server.md`).
-- matcher the context-mode shell tools only — `deny-unguarded-cd-hook.py`,
-  which denies a script that writes (a git write, a file-changing command,
-  `sed -i`, a redirect into a file) after a `cd` or `pushd` that can fail. A
-  `cd` counts as guarded by `|| …`, an `&&` chain reaching the write, or an
-  earlier `set -e`. Bash is out of scope, since its working directory is the
-  project; `cd x || true` still counts as guarded.
-
-Every repo guard's registered command maps any exit other than 0 or 2 to 2, so a
-guard that fails to run denies (`.claude/rules/hooks-fail-closed.md`).
-
-Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
-clone without graphify installed it exits 0 and is a no-op. When graphify is on
-the executable search path (`$PATH`), the guard's own exit code propagates and
-can block the call.
-
-Between those two it **pins the binary**: it compares `graphify --version`
-against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch,
-telling the agent to ask the owner. The pin file is on `permissions.deny` and
-`PROTECTED_WRITE`, so an agent cannot re-pin it.
-Without that, a different or compromised `graphify` earlier on `$PATH` silently
-takes over the permit/deny decision for every file read, glob and shell command
-in the session — the one executing component the vendored-skill trust model left
-unbound. An **empty or missing** pin file denies rather than passes: treating an
-unreadable pin as "no constraint" would make deleting one file disable the check
-in silence. The ceiling is worth knowing — a version string is self-reported, so
-this raises the cost of substitution and makes an accidental mismatch visible;
-it is not attestation.
-
-Plus a Stop hook, `stop-reminder.py`, which reminds about pending skill files
-before Claude hands back control. Its scope is the union of the git index
-(`git diff --cached`), the working tree (`git diff`) and the untracked set
-(`git ls-files --others`), so **unstaged** and brand-new files count too.
-
-It hands the reminder to the agent as `additionalContext` on exit 0
-(`_hooklib.stop_feedback`), the form the hooks reference recommends for a hook
-giving guidance: it continues the conversation as exit 2 would, but shows no
-hook-error notification. A `stop_hook_active` guard keeps the reminder from
-re-firing on the continuation it causes. That is one stop cycle, not one session:
-the reminder repeats once per turn for as long as skill edits stay
-uncommitted. That is the observed behaviour, not a broken guard.
-
-A second Stop hook, `command-closure-reminder.py`, reads the session transcript
-and reminds when a command loaded through `np_read_command` has process steps,
-seeded with `np_task_create`, still `pending` or `in_progress` — or none seeded.
-It reminds rather than blocks, under the same once-per-cycle guard: a turn ending
-is not a command ending, since a run legitimately waits on the user and on
-background work across turns. It sees only runs tracked with the `np_task_*`
-tools, and checks that steps were closed, not that their work was done.
+The PreToolUse guards, which can *block* a tool call, the graphify guards' binary
+pin, and the Stop hooks are described in `.claude/rules/hook-inventory.md`, which
+loads with `.claude/settings.json` and `scripts/hooks/`. `tests/test_settings.py`
+fails when a configured PreToolUse hook is unnamed there.
 
 Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
@@ -426,14 +322,3 @@ location, come from the checkout the hook ships in (`SHIPPED_ROOT` in
 checked, not what checks it.
 
 `.claude/skills/nitpicker` is a symlink to `../../skills/nitpicker` so Claude Code discovers the shipped public skill alongside the internal dev skills.
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

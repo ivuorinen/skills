@@ -175,5 +175,6 @@ release-please derives releases from these prefixes; a wrong prefix mis-versions
   free text after the invocation instead.
 - **Do not** add frontmatter to command files, or omit it from the router SKILL.md.
 - **Do not** update the version in only one manifest — every manifest listed above moves together.
-- **Do not** read or modify anything under `.claude/agents/` — those are restricted.
+- **Do not** read or modify anything under `.claude/agents/` — those are restricted. Edits are denied in
+  `.claude/settings.json`; reads are not, so the no-read half rests on you.
 - **Do not** commit finding files silently — audits ask "Commit findings to git? (y/n)" first.

@@ -233,11 +233,27 @@ def test_every_registered_hook_script_exists():
         assert (REPO_ROOT / rel).exists(), f"registered hook missing: {rel}"
 
 
-def test_every_pretooluse_hook_is_documented_in_claude_md():
+HOOK_INVENTORY = ".claude/rules/hook-inventory.md"
+
+
+def test_claude_md_points_at_the_hook_inventory():
+    """The inventory left CLAUDE.md for a path-scoped rule to keep CLAUDE.md short.
+
+    A path-scoped rule loads only with the files it names, so an agent that never
+    touches `.claude/settings.json` reaches the inventory through CLAUDE.md's
+    pointer alone. Drop the pointer and the inventory stops being discoverable
+    from the file every turn loads, while the check below still passes.
+    """
+    assert HOOK_INVENTORY in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert (REPO_ROOT / HOOK_INVENTORY).is_file()
+
+
+def test_every_pretooluse_hook_is_documented_in_the_hook_inventory():
     """A blocking hook nobody wrote down is one an agent can only find by tripping it.
 
-    CLAUDE.md is loaded every turn and is the only description of this surface an
-    agent gets. It said "three PreToolUse hooks" while six were configured, and
+    The hook inventory (`.claude/rules/hook-inventory.md`, pointed at from
+    CLAUDE.md) is the only description of this surface an
+    agent gets. CLAUDE.md said "three PreToolUse hooks" while six were configured, and
     the three it omitted — deny-unsafe-git, guard-ctx-ok, ask-destructive-restore
     — all exit 2. An agent planning around the documented three had no basis to
     expect a denial from the other three and no stated recovery.
@@ -250,7 +266,7 @@ def test_every_pretooluse_hook_is_documented_in_claude_md():
     drifted silently; a reference has a referent and can be checked, which is
     what this does.
     """
-    documented = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    documented = (REPO_ROOT / HOOK_INVENTORY).read_text(encoding="utf-8")
     undocumented = []
     for entry in _settings()["hooks"]["PreToolUse"]:
         for hook in entry.get("hooks", []):
@@ -259,7 +275,7 @@ def test_every_pretooluse_hook_is_documented_in_claude_md():
                 name = Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name
             elif "graphify hook-guard" in cmd:
                 # The subcommand, not the bare prefix. Both graphify guards share
-                # `graphify hook-guard`, so collapsing them to it let CLAUDE.md
+                # `graphify hook-guard`, so collapsing them to it let the inventory
                 # drop either bullet and still pass on the strength of the other.
                 name = f"graphify hook-guard {cmd.split('graphify hook-guard')[1].split()[0]}"
             else:  # pragma: no cover - a spelling neither branch handles
@@ -267,15 +283,19 @@ def test_every_pretooluse_hook_is_documented_in_claude_md():
             if name not in documented:
                 undocumented.append(name)
     missing = sorted(set(undocumented) - PENDING_CLAUDE_MD)
-    assert missing == [], f"PreToolUse hooks configured but not named in CLAUDE.md: {missing}"
+    assert missing == [], (
+        f"PreToolUse hooks configured but not named in {HOOK_INVENTORY}: {missing}"
+    )
     expired = sorted(PENDING_CLAUDE_MD - set(undocumented))
-    assert expired == [], f"now named in CLAUDE.md (or unregistered); drop from PENDING: {expired}"
+    assert expired == [], (
+        f"now named in {HOOK_INVENTORY} (or unregistered); drop from PENDING: {expired}"
+    )
 
 
-# PreToolUse hooks whose CLAUDE.md bullet is delivered separately from the patch
+# PreToolUse hooks whose inventory bullet is delivered separately from the patch
 # that adds them: the enforcement surface ships as owner-applied patches, and
-# CLAUDE.md is edited in another change. The second assertion above fails the
-# moment CLAUDE.md names an entry, so this list empties itself rather than
+# the inventory is edited in another change. The second assertion above fails the
+# moment the inventory names an entry, so this list empties itself rather than
 # outliving its reason. Adding to it is an owner decision, like the deny list.
 PENDING_CLAUDE_MD: frozenset[str] = frozenset()
 

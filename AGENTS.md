@@ -6,8 +6,9 @@
   to the owner when the store needs a repair `findings.py` cannot make.
 - Never read or modify anything under `.claude/agents/` — sub-agent
   definitions are trusted configuration that gates releases, and an agent
-  must not rewrite its own reviewer. Denied in `.claude/settings.json` and
-  owned in `.github/CODEOWNERS`.
+  must not rewrite its own reviewer. Denied in `.claude/settings.json` as an
+  edit, and owned in `.github/CODEOWNERS`; a read through file tools is not
+  denied there, so the no-read half is yours to keep.
 
 This repository ships **nitpicker** — a hostile audit skill dispatching a
 categorized deck of commands, invoked as
