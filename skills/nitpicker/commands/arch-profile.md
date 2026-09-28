@@ -96,6 +96,6 @@ Evidence:
 ## Behavior
 
 - If `docs/audit/arch-profile.md` already exists: re-detect and include a Drift section comparing to the prior profile.
-- The profile is stale when the most recent commit touching it predates the branch's oldest commit — check staleness from git metadata, not filesystem mtime.
+- The profile is stale when a commit after the most recent one touching it moves directories or changes imports outside `docs/` — list them with `git log --oneline <profile-commit>..HEAD -- . ':!docs'` and read whether any touches module layout. Judge staleness from git metadata, never filesystem mtime.
 - If no catalogued pattern matches with ≥ Medium confidence, write the profile with `Detected: none` and `Inferred Structural Rules: none` and flag it `Confidence: none — manual review required`. Do not invent rules.
 - After writing: ask "Commit the profile to git? (y/n)" — never commit silently.

@@ -9,7 +9,7 @@ Hostile audit of infrastructure-as-code — container images (Dockerfiles), orch
 - Before a deploy, to prove no resource ships public, unencrypted, or over-permissioned
 - When asked to "audit the infra", "audit the Dockerfiles", "check Terraform security", "is this k8s manifest hardened", or "review the IaC"
 
-Out of scope: CI/CD pipeline definitions (`.github/workflows/`, `.gitlab-ci.yml`) route to `/nitpicker ci`; application-source vulnerabilities and committed secrets in application code to `/nitpicker security`; runtime env-var documentation and config drift in the app layer to `/nitpicker config`; dependency CVEs to `/nitpicker deps`. A repo with no infrastructure-as-code files gets the explicit verdict "no IaC surface".
+Out of scope: CI/CD pipeline definitions (`.github/workflows/`, `.gitlab-ci.yml`) route to `/nitpicker ci`; application-source vulnerabilities and committed secrets in application code to `/nitpicker security`; runtime env-var documentation and config drift in the app layer to `/nitpicker config`; dependency CVEs to `/nitpicker security`. A repo with no infrastructure-as-code files gets the explicit verdict "no IaC surface".
 
 ## Process
 
