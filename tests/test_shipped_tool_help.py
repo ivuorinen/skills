@@ -9,6 +9,9 @@ built a findings store in the repository and replaced its `.gitattributes` and
 
 Static, not a `--help` smoke test: the per-tool tests already confirm `--help`
 exits 0, which it does whether or not the flags it lists say anything.
+
+Also pins which shipped modules present themselves as runnable at all: only a
+tool (a `__main__` guard) carries the shebang and the exec bit (audit-0fde2571).
 """
 
 import ast
@@ -98,6 +101,39 @@ def test_the_probe_accepts_a_computed_help(tmp_path):
         encoding="utf-8",
     )
     assert _undocumented(sample) == []
+
+
+def _is_entry_point(path: Path) -> bool:
+    """A top-level `if __name__ == "__main__":` guard — the CLI/library signal the
+    `--help` sweep in tests/test_pr_common.py and check-stdlib-only.py share."""
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.If) and "__main__" in ast.unparse(node.test):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("module", _SHIPPED, ids=lambda p: p.name)
+def test_only_an_entry_point_presents_itself_as_runnable(module):
+    """audit-0fde2571: every shipped module carried the shebang and the exec bit,
+    so a library such as `md_fences.py` looked like a tool and, run directly,
+    printed nothing and exited 0. A module with a `__main__` guard is a tool —
+    the `--help` sweep holds it to its interface — and carries both; one without
+    is a library and carries neither."""
+    entry = _is_entry_point(module)
+    has_shebang = module.read_text(encoding="utf-8").startswith("#!")
+    executable = bool(module.stat().st_mode & 0o111)
+    assert has_shebang is entry, (
+        f"{module.name}: {'tool without a shebang' if entry else 'library with a shebang'}"
+    )
+    assert executable is entry, (
+        f"{module.name}: {'tool is not executable' if entry else 'library is executable'}"
+    )
+
+
+def test_the_runnable_split_found_both_kinds():
+    """Either half matching nothing would make the parametrized case above vacuous."""
+    kinds = {_is_entry_point(p) for p in _SHIPPED}
+    assert kinds == {True, False}
 
 
 def test_the_sweep_actually_found_tools():

@@ -16,13 +16,16 @@ must begin with `#!/usr/bin/env -S uv run --quiet` and include the
 `# /// script` inline metadata block.
 
 **Shipped skill tools** (anything under `skills/*/scripts/` — bundled with
-the skill and executed on consumer machines): must be stdlib-only, run with
-plain `python3 <script>`, and begin with `#!/usr/bin/env python3`. No
+the skill and executed on consumer machines): must be stdlib-only and run with
+plain `python3 <script>`. An entry point — a module with a top-level
+`if __name__ == "__main__"` guard — begins with `#!/usr/bin/env python3` and is
+executable; a library module carries neither the shebang nor the exec bit. No
 `# /// script` block, no uv invocation, no imports outside the standard
 library — uv cannot be assumed to exist on systems running the skills.
 
-`scripts/check-stdlib-only.py` gates the stdlib half in pre-commit and CI. The
-runner split itself is author discipline.
+`scripts/check-stdlib-only.py` gates the stdlib half and the shipped
+entry-point/library split in pre-commit and CI. The internal runner split is
+author discipline.
 
 ## Designing a shipped tool for agentic use
 

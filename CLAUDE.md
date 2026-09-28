@@ -179,7 +179,7 @@ interface to use for the rest of the session.
 
 Two classes (see `.claude/rules/use-uv-runner.md`):
 
-- **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`, `#!/usr/bin/env python3`. The stdlib-only rule is enforced by `scripts/check-stdlib-only.py` (pre-commit + CI) — a third-party import fails the gate.
+- **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`. An entry point (top-level `__main__` guard) carries `#!/usr/bin/env python3` and the exec bit. A library module carries neither. `scripts/check-stdlib-only.py` (pre-commit + CI) fails on a third-party import or a mismatched shebang.
 - **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`): `uv run --quiet`, `#!/usr/bin/env -S uv run --quiet` + `# /// script` block.
 
 Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0.

@@ -218,9 +218,9 @@ purpose: the store's `export`, `recheck`, `baseline`, `migrate` and
 `migrate-resolved` (`_findings-store` gives each reason), and
 `check-context-tokens.py`, whose estimate table has no pass/fail for a tool to
 return; `agent-rules` still runs it. The remaining rows are the server and the
-libraries the entry points import.
+libraries the entry points import (no shebang, no exec bit, never run directly).
 
-The CLI form is the fallback: every bundled tool is stdlib-only and runs with
+The CLI form is the fallback: every entry point is stdlib-only and runs with
 plain `python3 <path>`, no uv or package install. In Claude Code the skill directory is `${CLAUDE_SKILL_DIR}`; other agents
 resolve the path relative to this file.
 

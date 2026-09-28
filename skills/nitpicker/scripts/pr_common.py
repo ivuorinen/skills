@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared plumbing for the PR fetchers: target resolution, HTTP, output envelopes.
 
 This is the provider *port*: the `Target` every adapter is handed, the envelope

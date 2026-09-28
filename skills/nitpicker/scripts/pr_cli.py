@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """CLI driving adapter for the PR fetchers: argv in, JSON on stdout, exit code back.
 
 `fetch-pr-comments.py` and `fetch-pr-status.py` differ only in which provider

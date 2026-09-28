@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """GitLab provider: merge-request discussions and status, in the shared envelope.
 
 Library, not a CLI — `fetch-pr-comments.py` and `fetch-pr-status.py` dispatch
