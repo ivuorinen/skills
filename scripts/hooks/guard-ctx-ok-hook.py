@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
-    load_event,
+    load_event_strict,
     shell_stages,
     skip_git_global_opts,
 )
@@ -223,9 +223,7 @@ def main() -> None:
     is checked, not just the first, so appending a mutation to a read does
     not launder the read past the hatch.
     """
-    data = load_event()
-    if data is None:
-        return
+    data = load_event_strict()
 
     command = (data.get("tool_input") or {}).get("command") or ""
     if not command or not _CTX_OK.search(command):

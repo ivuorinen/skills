@@ -143,20 +143,22 @@ def main() -> None:  # noqa: C901
         return
 
     failures = []
+    # Skips are collected, not printed as they happen: a line on stderr from a
+    # PostToolUse hook that then exits 0 is never shown to the agent, so a Bash
+    # call that deleted or broke a validator got no in-session signal at all
+    # (agent-loopholes-6ca5b557). They are reported at the end instead.
+    skips = []
     for script, cmd in GATES:
         if not (SHIPPED_ROOT / script).exists():
             # gate script absent (partial checkout) — CI remains the gate, but a
             # silently skipped gate is indistinguishable from a passing one.
-            print(f"  post-bash-revalidate: gate skipped, {script} not found", file=sys.stderr)
+            skips.append(f"{script} not found")
             continue
         if shutil.which(cmd[0]) is None:
             # Same reasoning as the missing-script arm above: that check covered
             # the gate script but never the interpreter, so an absent `uv` raised
             # an uncaught FileNotFoundError instead of this message.
-            print(
-                f"  post-bash-revalidate: gate skipped, {cmd[0]} not on PATH",
-                file=sys.stderr,
-            )
+            skips.append(f"{cmd[0]} not on PATH for {script}")
             continue
         try:
             # argv is a GATES entry: a module-constant literal list, never input.
@@ -191,9 +193,17 @@ def main() -> None:  # noqa: C901
             failures.append(detail or f"{' '.join(cmd)} failed (exit {result.returncode})")
 
     if failures:
-        # PostToolUse surfaces only exit 2 + stderr back to the agent.
-        print("\n".join(f for f in failures if f), file=sys.stderr, flush=True)
+        # PostToolUse surfaces only exit 2 + stderr back to the agent. A skip
+        # rides along, so the block names every gate that did not judge the tree.
+        lines = [f for f in failures if f]
+        lines += [f"  post-bash-revalidate: gate skipped, {skip}" for skip in skips]
+        print("\n".join(lines), file=sys.stderr, flush=True)
         sys.exit(2)
+    if skips:
+        # No failure to block on, but a gate that did not run is not a pass:
+        # exit 1 is shown without blocking, which is the skip contract every
+        # other hook keeps (observability-879596c7).
+        report_skip("post-bash-revalidate", "; ".join(skips), "make check")
 
 
 if __name__ == "__main__":

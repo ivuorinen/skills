@@ -76,7 +76,14 @@ def main() -> None:
             # silent return reads as "nothing pending".
             report_skip("stop-reminder", f"{type(exc).__name__}: {exc}", "git status")
         if result.returncode != 0:
-            return
+            # git ran and failed — not a repository, a broken index. A bare
+            # return here was the silent "nothing pending" the comment above
+            # warns against (audit-38c90f58); name the failure instead.
+            report_skip(
+                "stop-reminder",
+                f"git exited {result.returncode}: {result.stderr.strip()[:200]}",
+                "git status",
+            )
         paths += [p for p in result.stdout.split("\0") if p and p not in paths]
     changed = [
         f

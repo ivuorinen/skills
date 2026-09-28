@@ -17,20 +17,24 @@ assignment made through `GIT_CONFIG_*` in the environment, a `git config` write
 to `core.hooksPath` or `alias.*`, and an alias body that resolves to a denied
 call — spelled in the command or already in git config, and including a
 `!`-prefixed body, which is a shell command rather than a git subcommand. It
-also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit`, and
-`pre-commit uninstall`. A command nested in `$(...)`, backticks or a
-subshell is judged as its own stage, and so is a git call behind a wrapper
-(`env`, `sudo`, `xargs`, …). Five bypasses of these shapes were closed together;
+also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit` — in front of
+it or exported earlier in the same command — and `pre-commit uninstall`. A
+command nested in `$(...)`, backticks or a subshell is judged as its own stage,
+and so is a git call behind a wrapper (`env`, `sudo`, `xargs`, …) or inside a
+shell's `-c` string (`bash -c '…'`, `sh -c`, `fish --command`). Text piped into
+a shell (`… | bash`) cannot be tokenized, so it is refused whenever it names git
+with a write word. Five bypasses of these shapes were closed together;
 `tests/test_hooks.py::test_git_guard_denies_the_reopened_bypass_classes` holds
 each one.
 
 Treat it as a backstop rather than the binding gate. It judges the command's
-**text**, so a request that carries no `git` token at all is outside it, and
+**text**, so a request whose git call is not in that text is outside it, and
 those are not theoretical:
 
 - an indirection that runs git from inside something else — a shell function or
   rc alias shadowing `git`, a script the hook sees only by its own name
-  (`./deploy.sh`), `eval` on a string assembled at runtime
+  (`./deploy.sh`), `eval` on a string assembled at runtime, a variable exported
+  by an earlier call
 - a wrapper outside the list `_hooklib._WRAPPERS` names
 
 Closing the spelled-out forms raised the cost of the rewrite; it did not turn

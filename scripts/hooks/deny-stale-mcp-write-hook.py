@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hooklib import load_event, repo_root
+from _hooklib import load_event_strict, repo_root
 
 REPO_ROOT = repo_root()
 SCRIPTS = "skills/nitpicker/scripts"
@@ -57,9 +57,7 @@ def _edited() -> list[str] | None:
 
 def main() -> None:
     """Deny a store write through the MCP server unless the shipped scripts are clean."""
-    data = load_event()
-    if data is None:
-        return
+    data = load_event_strict()
     tool = str(data.get("tool_name") or "")
     cli = _CLI.get(tool.rsplit("__", 1)[-1])
     if cli is None:
