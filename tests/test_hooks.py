@@ -5454,6 +5454,71 @@ def test_closure_todo_write_skips_entries_that_are_not_tasks(tmp_path, monkeypat
     assert "cr: 1 of 1 steps still open (task ids 2)" in text
 
 
+def _audit_then_deep_run():
+    """An audit seeds two steps and closes one, then deep-runs a specialist."""
+    return (
+        _Transcript()
+        .read("audit")
+        .create("1")
+        .create("2")
+        .update("2", "completed")
+        .read("security")
+        .create("3")
+    )
+
+
+def test_closure_todo_write_keeps_an_earlier_runs_open_steps(tmp_path, monkeypatch, capsys):
+    """audit-8bb7d98f: a replacement made in the deep-run cleared the audit's open
+    step too, and deleting its status read it as closed — the audit dropped out
+    of the reminder with step 1 never done."""
+    t = _todos(_audit_then_deep_run(), {"4": "pending"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 1)" in text
+    assert "security: 1 of 1 steps still open (task ids 4)" in text
+
+
+def test_closure_a_readback_after_a_wipe_keeps_the_step_open(tmp_path, monkeypatch, capsys):
+    """The server no longer lists a wiped id, which a readback otherwise takes as
+    deleted; a wiped step stays open through it."""
+    t = _todos(_audit_then_deep_run(), {"4": "completed"}).listing({"4": "completed"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 1)" in text
+    assert "security" not in text
+
+
+def test_closure_a_restart_does_not_reopen_a_closed_run(tmp_path, monkeypatch, capsys):
+    """audit-ccbbc6bf: a restarted server hands out id 1 again, and the new run's
+    open id 1 read as the finished run's id 1 — the closed run was reported open."""
+    t = _Transcript().read("audit").create("1").update("1", "completed")
+    t.read("security").create("1")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "security: 1 of 1 steps still open (task ids 1)" in text
+    assert "audit" not in text
+
+
+def test_closure_a_restart_does_not_close_an_earlier_runs_step(tmp_path, monkeypatch, capsys):
+    """audit-ccbbc6bf, other direction: closing the reused id 2 after a restart
+    closed the earlier run's never-finished step 2."""
+    t = _Transcript().read("audit").create("1").create("2").update("1", "completed")
+    t.read("security").create("1").create("2").update("1", "completed")
+    t.update("2", "completed")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 2)" in text
+    assert "security" not in text
+
+
+def test_closure_a_non_numeric_id_opens_no_epoch(tmp_path, monkeypatch, capsys):
+    """An id with no order cannot signal a restart; it is tracked as issued."""
+    t = _Transcript().read("cr").create("t-1").create("t-2").update("t-1", "completed")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 2 steps still open (task ids t-2)" in text
+
+
 # ── agent-loopholes-015b8134: a `sh -c` string is a command, not an operand ──
 
 
