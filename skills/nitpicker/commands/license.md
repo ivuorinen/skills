@@ -52,7 +52,7 @@ Out of scope: dependency health beyond licensing (unused, outdated, CVEs) routes
 
 **Auto-applicable:**
 
-- Add a `LICENSE` file and set the manifest `license` SPDX field to match the intended license
+- Add a `LICENSE` file and set the manifest `license` SPDX field only where the intended license is already declared elsewhere (manifest field, README, SPDX headers); a repo declaring none falls under Never auto-apply
 - Reconcile a file/manifest license-mismatch to one identifier
 - Add or complete a `NOTICE`/`THIRD_PARTY_LICENSES` file from the resolved dependency inventory
 - Add `SPDX-License-Identifier` headers where REUSE compliance is declared

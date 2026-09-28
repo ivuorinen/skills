@@ -104,7 +104,8 @@ review surface the skill offers.
   dependencies, missing attribution/NOTICE, bundled-asset licenses. Rarely
   fully N/A — the project itself always needs a declared license.
 - **AUD:S13 Dependencies** (`deps`) — unused, phantom, duplicate, heavyweight,
-  unmaintained, license-conflicting, drifted, misclassified dependencies.
+  unmaintained, drifted, misclassified dependencies. A dependency's license
+  compatibility belongs to `license`.
 - **AUD:S14 Migrations** (`migrations`) — destructive ops, irreversible downs,
   long-lock operations, missing FK indexes, schema-model drift, unbatched
   data migrations, deploy-order breaks. N/A when the repo has no schema or

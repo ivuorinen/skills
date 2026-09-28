@@ -18,7 +18,7 @@ Out of scope: CI/CD pipeline definitions (`.github/workflows/`, `.gitlab-ci.yml`
 3. **Manual defect-class sweep.** Check every enumerated file against every applicable class in the defect classes table. Read each Dockerfile instruction, container `securityContext`, security-group/firewall rule, IAM policy document, and storage/database resource end-to-end — grep alone misses a `USER` reset by a later stage, an IAM `Action: "*"` split across a variable, and ingress opened in a separate rule block.
 4. **Trace exposure end-to-end.** For each network-reachable resource, follow the path from the internet inward: an open security group (`0.0.0.0/0`) is Critical in front of an unauthenticated database, Advisory in front of a public CDN. A `LoadBalancer`/`Ingress` with no auth, a storage bucket with public-read ACL or policy, and a database with a public endpoint are each traced to what they expose. Missing exposure analysis is a coverage gap, not a pass.
 5. **File findings** via the store protocol in `_conventions.md`, under the `iac` auditor key. Each finding records the class, the tool sources (hadolint, checkov, manual), Evidence (file:line plus the concrete attack or blast radius), Impact (what an attacker reaches or what fails), and Fix (the exact remediation: the `securityContext` block, the CIDR to narrow to, the `encrypted = true` line, the base-image digest to pin). A committed secret is filed regardless and its rotation instructed.
-6. **Summarize and fix.** The summary states the run verdict (COMPLETE only if every enumerated file was examined and every exposed resource traced), tool coverage, and counts by resource type. Fix application and the commit gate follow `_conventions.md`, with this override: the (s)afe option applies only additive hardening that cannot break a running deploy (pinning a base image digest, adding a `securityContext`, adding `encrypted = true` to a not-yet-created resource) — never a CIDR narrowing or a resource replacement that can sever live access. After each fix, re-check the cited location and re-run the analyzer on the changed file.
+6. **Summarize and fix.** The summary states the run verdict (COMPLETE only if every enumerated file was examined and every exposed resource traced), tool coverage, and counts by resource type. Fix application and the commit gate follow `_conventions.md`, with this override: the (s)afe option applies only additive hardening that cannot break a running deploy (pinning a base image digest, adding `encrypted = true` to a not-yet-created resource) — never a CIDR narrowing or a resource replacement that can sever live access. After each fix, re-check the cited location and re-run the analyzer on the changed file.
 
 ### Defect classes
 
@@ -56,11 +56,10 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 
 **Auto-applicable:**
 
-- Add a non-root `USER`/`securityContext` (`runAsNonRoot`, `allowPrivilegeEscalation: false`, drop `ALL` capabilities)
 - Pin a base image to `tag@sha256:<digest>`
 - Add `encrypted = true` / a KMS key to a not-yet-created resource
 - Require IMDSv2 (`http_tokens = "required"`) and enable audit logging on a not-yet-created resource
-- Add `resources.limits`/`requests` and liveness/readiness probes
+- Add `resources.limits`/`requests`
 - Add a `.dockerignore` excluding `.git` and secret paths
 
 **Requires explicit approval per change:**
@@ -70,6 +69,8 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Scoping an IAM policy (can break a workload silently relying on the breadth)
 - Moving state to a remote backend, or enabling deletion protection on a live resource (a migration, not an edit)
 - Adding a Dockerfile `HEALTHCHECK` — the health command is image- and service-specific, and a wrong or unreachable command marks a healthy container unhealthy, changing restart and load-balancer routing
+- Adding a non-root `USER`/`securityContext` (`runAsNonRoot`, `allowPrivilegeEscalation: false`, drop `ALL` capabilities) — an image built to run as root fails to start (`CreateContainerConfigError`) or loses a capability it needs
+- Adding liveness/readiness probes — the same reason as `HEALTHCHECK`: a guessed path or port restart-loops a healthy pod or pulls it from the load balancer
 
 **Never auto-apply:**
 

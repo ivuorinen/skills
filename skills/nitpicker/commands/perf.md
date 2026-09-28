@@ -20,7 +20,7 @@ File a finding only when the class, the traced code path, and the growth driver 
 | **n-plus-one** | A query/fetch inside a loop over a result set, where a batch form exists (JOIN, `IN`, `prefetch`, bulk API) | The loop, the per-iteration query, the driver sizing the loop, and the batch call that replaces it |
 | **quadratic-hotspot** | O(n²)+ work (nested loops over the same driver, membership scan of a list inside a loop, repeated sort) on a traced entry-point path | Both loops/scans, the shared driver, and the O(n)/O(n log n) replacement |
 | **sync-in-async** | A blocking call (sync HTTP client, blocking file/DB read, `sleep`) inside an async handler, coroutine, or event-loop callback | The blocking call site, the event loop it stalls, and the async equivalent or executor offload |
-| **unbounded-growth** | A cache, queue, buffer, or in-memory index with no size bound or eviction; a retry loop with no cap or backoff | The insertion site, the absent bound, the driver filling it, and the exact bound/eviction/cap to add |
+| **unbounded-growth** | A queue, buffer, or in-memory index with no size bound or eviction (not a cache — an unbounded cache is `/nitpicker cache`'s `unbounded-cache`); a retry loop with no cap or backoff | The insertion site, the absent bound, the driver filling it, and the exact bound/eviction/cap to add |
 | **missing-pagination** | A query or list endpoint returning an unbounded result set in one response or one fetch | The query, the driver sizing the result, and the pagination/limit mechanism the framework provides |
 | **loop-invariant-work** | Work inside a loop whose result is identical every iteration — compilation, parsing, connection setup, a constant-input computation | The invariant expression, the loop's driver, and the hoisted form |
 | **chatty-io** | Per-item network or disk round-trips over a driver-sized collection, where a batch/bulk/streaming form exists | The per-item call, the round-trip count as a function of the driver, and the batch form |
@@ -41,7 +41,7 @@ File a finding only when the class, the traced code path, and the growth driver 
 
 | Severity | Condition |
 | --- | --- |
-| Critical | O(n²)+ or per-item round-trip work on an unbounded driver on a hot production path (request handling, job processing); unbounded in-memory growth (cache/queue/buffer with no bound) that a normal workload fills until the process dies |
+| Critical | O(n²)+ or per-item round-trip work on an unbounded driver on a hot production path (request handling, job processing); unbounded in-memory growth (queue/buffer with no bound) that a normal workload fills until the process dies |
 | High | N+1 query on an unbounded result set; sync-blocking call inside an async request path or event loop; missing pagination on an unbounded result set exposed to callers; unbounded retries against a failing dependency |
 | Medium | Loop-invariant work redone per iteration over an unbounded driver; chatty disk I/O with an available batch form; retry loop capped but without backoff |
 | Low | Superlinear work on an input bounded today by deployment reality, with a named, realistic path to unbounded (the finding names that path) |
@@ -54,14 +54,14 @@ File a finding only when the class, the traced code path, and the growth driver 
 - Hoist loop-invariant work out of the loop
 - Replace a per-item query with the batch form the same API already exposes (`IN` clause, `prefetch`/`select_related`, bulk fetch)
 - Replace list-membership-in-loop with a set/dict lookup
-- Add a size bound to an unbounded cache (`maxsize`) or an explicit cap to an unbounded retry loop
+- Add an explicit cap to an unbounded retry loop — only when exhaustion already has a controlled disposition (a synchronous caller receives the error, or a dead-letter/durable-parking path exists); otherwise the cap is approval-gated per `reliability.md` Fix strategy
 - Buffer per-item disk writes into one batched write within the same function
 
 **Requires explicit approval per change:**
 
 - Adding pagination (changes the API contract for callers)
 - Converting a sync call to its async equivalent or offloading to an executor (changes control flow)
-- Adding cache eviction policy, backoff strategy, or a DB index
+- Adding an eviction policy to a queue or buffer, a backoff strategy, or a DB index
 - Any fix that changes observable output ordering, timing guarantees, or error behavior — state the behavior change in the finding
 
 **Never:**
