@@ -287,8 +287,9 @@ _TYPES: dict[str, tuple[type | tuple[type, ...], str]] = {
 def _check_value(name: str, spec: dict, value: Any) -> str | None:
     """One violation of a property `spec` by `value`, or None when it conforms.
 
-    Covers what this server's flat schemas use — `type`, `enum`, `minimum` and
-    scalar `items` — and nothing more; see the module docstring for the ceiling.
+    Covers what this server's flat schemas use — `type`, `enum`, `minimum`,
+    `minItems` and scalar `items` — and nothing more; see the module docstring
+    for the ceiling.
 
     A whole-number float is an integer, as JSON Schema defines one: clients
     serialise `5` as `5.0`, and refusing it shut a conforming caller out of every
@@ -304,6 +305,8 @@ def _check_value(name: str, spec: dict, value: Any) -> str | None:
         return f"{name} must be one of {tuple(spec['enum'])}, got {value!r}"
     if "minimum" in spec and value < spec["minimum"]:
         return f"{name} must be at least {spec['minimum']}, got {value!r}"
+    if "minItems" in spec and isinstance(value, list) and len(value) < spec["minItems"]:
+        return f"{name} must hold at least {spec['minItems']} item(s), got {len(value)}"
     if "properties" in spec and isinstance(value, dict) and (bad := _validate(spec, value)):
         return f"{name}: {bad}"
     if "items" in spec and isinstance(value, list):
@@ -1537,7 +1540,10 @@ def _task_update(args: dict) -> dict:
     "np_task_create and np_task_update instead.",
     {
         "type": "object",
-        "properties": {"todos": {"type": "array", "items": _TODO_ITEM}},
+        # `minItems: 1`: an empty `todos` passed every item check and cleared the
+        # whole shared list, other runs' steps included, reporting success
+        # (audit-c0240efb). Removing tasks is np_task_update's `status: deleted`.
+        "properties": {"todos": {"type": "array", "items": _TODO_ITEM, "minItems": 1}},
         "required": ["todos"],
         "additionalProperties": False,
     },

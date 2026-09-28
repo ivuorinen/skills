@@ -316,8 +316,8 @@ tool, `openWorldHint` true only on the PR tools (the only ones reaching the
 network), `destructiveHint` true on `np_resolve_finding` (it deletes the open
 file and appends to an append-only ledger — neither half reversible here), on
 `np_task_update` (`status: deleted` removes a task) and on `np_todo_write` (it
-replaces the whole list), `idempotentHint` true only on `np_write_index`
-(`INDEX.md` is generated wholly from the store). These are hints a client
+replaces the whole list; an empty one is refused), `idempotentHint` true only
+on `np_write_index` (`INDEX.md` is generated from the store). These are hints a client
 weighs before calling, not access control; the root confinement above is the
 actual boundary.
 

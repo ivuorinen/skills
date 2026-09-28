@@ -2111,6 +2111,18 @@ def test_todo_write_validates_each_item():
     assert _structured(_call(mod, "np_task_list", {})) == {"tasks": []}
 
 
+def test_todo_write_refuses_an_empty_list_and_keeps_every_task():
+    """audit-c0240efb: `todos: []` cleared the whole shared list — another run's
+    steps included — and reported success. It is refused at dispatch now."""
+    mod = _load()
+    mine, theirs = _create(mod, "run A step 1"), _create(mod, "run B step 1")
+    result = _call(mod, "np_todo_write", {"todos": []})
+    assert result["isError"] is True
+    assert "todos must hold at least 1 item(s), got 0" in result["content"][0]["text"]
+    listed = _structured(_call(mod, "np_task_list", {}))["tasks"]
+    assert [t["id"] for t in listed] == [mine, theirs]
+
+
 @pytest.mark.parametrize(
     ("tool", "args"),
     [
