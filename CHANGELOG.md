@@ -12,6 +12,13 @@ names its own commit and date, so this section's position relative to the
 generated release sections below carries no meaning — release-please inserts
 each new release directly beneath the header above, and these notes stay here.
 
+> **Correction (2026-09-28):** 3.1.0 listed five ruff bumps (#121, #122, #127,
+> #130, #138) under Bug Fixes. Each changes only dev tooling, so they are
+> chores and now sit under Miscellaneous Chores. #138 was retitled `chore` after
+> auto-merge had captured its `fix` title, and merged as `fix`; the `Lint PR
+> title` check now fails on that mismatch. The version is unaffected: 3.1.0
+> carries features.
+>
 > **Correction (2026-08-09):** commits `8f1c411` ("chore(deps)!: update
 > astral-sh/setup-uv action", [#79]) and `b394d25` ("chore(deps)!: update
 > pre-commit hook pre-commit/pre-commit-hooks", [#71]) each change a single line
@@ -58,15 +65,19 @@ each new release directly beneath the header above, and these notes stay here.
 ### Bug Fixes
 
 * a CodeRabbit rate-limit window is a floor, not a guarantee ([#135](https://github.com/ivuorinen/skills/issues/135)) ([2d1836c](https://github.com/ivuorinen/skills/commit/2d1836ca3abf442fe50f31ceb6fb61a6000e6bb6))
+* migrate the v1 documents agents actually wrote ([#145](https://github.com/ivuorinen/skills/issues/145)) ([d24446a](https://github.com/ivuorinen/skills/commit/d24446afdfe88c699542c4810fc7234e951d4775))
+* rather than docs: because SKILL.md and mcp_server.py are shipped paths, and ([bc9434a](https://github.com/ivuorinen/skills/commit/bc9434a5c1f963700823501e00c89c2b2fb502e5))
+* rather than docs:, by the clause added in [#124](https://github.com/ivuorinen/skills/issues/124): docs: covers prose under ([cb8fba3](https://github.com/ivuorinen/skills/commit/cb8fba3a2f0e634fdceceec7f6e609a0c43200fd))
+* strip credentials on a same-host scheme-downgrade redirect ([#123](https://github.com/ivuorinen/skills/issues/123)) ([675d3eb](https://github.com/ivuorinen/skills/commit/675d3eb1e5d9e2ee2b878a3bcbe87e773840b7fc))
+
+
+### Miscellaneous Chores
+
 * **deps:** update ruff ([#121](https://github.com/ivuorinen/skills/issues/121)) ([bb47c92](https://github.com/ivuorinen/skills/commit/bb47c92207bc68323305eb1cbb581bc295def70d))
 * **deps:** update ruff ([#122](https://github.com/ivuorinen/skills/issues/122)) ([11c361f](https://github.com/ivuorinen/skills/commit/11c361f2de6ecd34118968e8908686eb39869307))
 * **deps:** update ruff ([#127](https://github.com/ivuorinen/skills/issues/127)) ([ddb7938](https://github.com/ivuorinen/skills/commit/ddb7938bb4ce1706329ff050212633612f09fe5c))
 * **deps:** update ruff ([#130](https://github.com/ivuorinen/skills/issues/130)) ([55092fd](https://github.com/ivuorinen/skills/commit/55092fd3f9ab3f520d415a8c2d9594930928f783))
 * **deps:** update ruff to v0.16.7 ([#138](https://github.com/ivuorinen/skills/issues/138)) ([194ab0e](https://github.com/ivuorinen/skills/commit/194ab0eb386fdfc98b1f74554ba80b4f00154ef7))
-* migrate the v1 documents agents actually wrote ([#145](https://github.com/ivuorinen/skills/issues/145)) ([d24446a](https://github.com/ivuorinen/skills/commit/d24446afdfe88c699542c4810fc7234e951d4775))
-* rather than docs: because SKILL.md and mcp_server.py are shipped paths, and ([bc9434a](https://github.com/ivuorinen/skills/commit/bc9434a5c1f963700823501e00c89c2b2fb502e5))
-* rather than docs:, by the clause added in [#124](https://github.com/ivuorinen/skills/issues/124): docs: covers prose under ([cb8fba3](https://github.com/ivuorinen/skills/commit/cb8fba3a2f0e634fdceceec7f6e609a0c43200fd))
-* strip credentials on a same-host scheme-downgrade redirect ([#123](https://github.com/ivuorinen/skills/issues/123)) ([675d3eb](https://github.com/ivuorinen/skills/commit/675d3eb1e5d9e2ee2b878a3bcbe87e773840b7fc))
 
 ## [3.0.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v2.0.0...ivuorinen-skills-v3.0.0) (2026-08-12)
 
