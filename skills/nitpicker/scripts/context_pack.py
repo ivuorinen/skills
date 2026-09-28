@@ -62,6 +62,19 @@ CHARS_PER_TOKEN = 4
 # recorded as "errored" either.
 GIT_TIMEOUT = 60
 
+# Largest file `_read` will load, in bytes (perf-379e4ae8). Every mode that
+# reads source reads it whole, so an uncapped read of a multi-GB asset — model
+# weights, a database dump — allocated about twice its size inside the
+# long-lived, single-threaded MCP server before the decode failed and the file
+# was discarded anyway. 2 MiB is well past any source file a lens can use as
+# evidence, and a file skipped for size is counted in `omitted` as
+# `files_oversize`, never folded into "unreadable" or "absent".
+MAX_READ_BYTES = 2 * 1024 * 1024
+
+# Bytes sniffed for a NUL before a file is read in full. A NUL in the head marks
+# a binary, which is skipped without reading the rest of it.
+_SNIFF_BYTES = 8192
+
 MODES = ("inventory", "symbols", "diff", "evidence")
 
 # Extension -> language label. Not exhaustive by design: an unmapped extension
@@ -361,6 +374,12 @@ def _tracked_files(root: Path) -> list[Path]:
     the walk ran instead, which does not apply `.gitignore`, so a secrets file
     and build output joined the pack with exit 0 and no note. Nothing in this
     call came from the caller, so any other failure is `PackEnvironmentError`.
+
+    Names are deduplicated in first-seen order (audit-f3e79009): during a merge
+    conflict `ls-files --cached` prints an unmerged path once per index stage,
+    so a conflicted file was enumerated up to three times — tripling its budget
+    cost and skewing every count at exactly the moment it most needs review.
+    `--deduplicate` would do the same but needs git 2.31 or later.
     """
     try:
         listing = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
@@ -368,7 +387,8 @@ def _tracked_files(root: Path) -> list[Path]:
         if "not a git repository" in str(exc):
             return sorted(_walk(root))
         raise PackEnvironmentError(str(exc)) from exc
-    return [root / name for name in listing.split("\0") if name]
+    names = dict.fromkeys(name for name in listing.split("\0") if name)
+    return [root / name for name in names]
 
 
 def _changed_files(root: Path, base: str) -> list[Path]:
@@ -417,8 +437,8 @@ def _language(path: Path) -> str:
     return LANGUAGES.get(path.suffix.lower(), path.suffix.lstrip(".") or "none")
 
 
-def _read(path: Path, root: Path) -> str | None:
-    """File text, or None for anything unreadable, not text, or outside `root`.
+def _read(path: Path, root: Path) -> tuple[str | None, bool]:
+    """`(text, oversize)`; text is None when unreadable, not text, too large, or outside `root`.
 
     Binary and undecodable files are skipped rather than raised on: a pack over
     a repository containing one PNG must still answer.
@@ -437,13 +457,41 @@ def _read(path: Path, root: Path) -> str | None:
     a leading `\\ufeff`, which makes `ast.parse` raise and stops the regex
     fallback's `^\\s*` from matching, so a BOM'd file reported zero declarations
     — an empty outline indistinguishable from a file that genuinely has none.
+
+    perf-379e4ae8: this called `read_text` on every file with no size or
+    binary check, so a 400 MB weights file was read whole — peak memory about
+    twice its size — before the decode failed and the file was discarded. Three
+    bounds now apply before any decode. `stat` refuses a file over
+    `MAX_READ_BYTES` without opening it. The first `_SNIFF_BYTES` are checked
+    for a NUL, so a binary is refused after one small read. And the full read
+    itself stops at `MAX_READ_BYTES + 1`, because `stat` can understate — a file
+    growing while it is read, or a pseudo-file reporting size zero — and a cap
+    that trusted it would be no cap.
+
+    `oversize` is returned rather than folded into `None` because the callers
+    count it into `omitted` as its own key: a file skipped for size is not
+    unreadable and not absent, and a caller deciding whether to read it directly
+    needs to know which. Text mode's newline translation is kept by hand, since
+    the bytes are now decoded here rather than by `read_text`.
     """
     try:
         if not path.resolve().is_relative_to(root):
-            return None
-        return path.read_text(encoding="utf-8-sig")
+            return None, False
+        if path.stat().st_size > MAX_READ_BYTES:
+            return None, True
+        with path.open("rb") as handle:
+            head = handle.read(_SNIFF_BYTES)
+            if b"\0" in head:
+                return None, False
+            # Clamped at zero: `read` with a negative size reads to EOF, the
+            # unbounded read this function exists to prevent.
+            data = head + handle.read(max(0, MAX_READ_BYTES + 1 - len(head)))
+        if len(data) > MAX_READ_BYTES:
+            return None, True
+        text = data.decode("utf-8-sig")
     except (OSError, UnicodeError):
-        return None
+        return None, False
+    return text.replace("\r\n", "\n").replace("\r", "\n"), False
 
 
 def _line_count(path: Path, root: Path) -> int | None:
@@ -604,12 +652,19 @@ def _inventory(root: Path, files: list[Path], pack: Pack) -> None:
 
 
 def _symbols(root: Path, files: list[Path], pack: Pack) -> None:
-    """Level B: declaration outlines, signature coordinates only, never bodies."""
+    """Level B: declaration outlines, signature coordinates only, never bodies.
+
+    A file refused by the size cap is counted as `files_oversize`, apart from
+    the unreadable ones in `files` (perf-379e4ae8), so an outline missing a
+    large file never reads as a tree without it.
+    """
     skipped = 0
+    oversize = 0
     for path in sorted(files):
-        source = _read(path, root)
+        source, too_big = _read(path, root)
         if source is None:
-            skipped += 1
+            oversize += too_big
+            skipped += not too_big
             continue
         outline = symbols_of(path, source)
         if not outline:
@@ -621,7 +676,12 @@ def _symbols(root: Path, files: list[Path], pack: Pack) -> None:
                 "symbols": [{"name": n, "lines": [s, e]} for n, s, e in outline],
             }
         )
-    pack.omitted = {"files": skipped, "reason": "unreadable or not text"}
+    pack.omitted = {
+        "files": skipped,
+        "files_oversize": oversize,
+        "max_read_bytes": MAX_READ_BYTES,
+        "reason": "unreadable or not text (files), or larger than max_read_bytes (files_oversize)",
+    }
 
 
 def _diff_reason(count: int, current: Path | None) -> tuple[str, ...]:
@@ -635,6 +695,19 @@ def _diff_reason(count: int, current: Path | None) -> tuple[str, ...]:
     if current is None:
         return ("deleted-file",)
     return ("changed-hunk",) if count else ("deleted-lines",)
+
+
+def _header_name(line: str) -> str:
+    """The path in a `--- `/`+++ ` diff header, without git's trailing TAB.
+
+    audit-31dcb352: git ends a header line with a TAB when the name contains a
+    space, and `core.quotePath` does not affect it. Taking `line[4:]` whole
+    produced `my file.py\\t`, which never matched the changed-file scope, so
+    every hunk of that file was dropped while `omitted` stayed empty. A name
+    that genuinely ends in a tab is C-quoted by git, so stripping one trailing
+    TAB cannot eat part of a real name.
+    """
+    return line[4:].removesuffix("\t")
 
 
 def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
@@ -666,6 +739,7 @@ def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
     previous: Path | None = None
     outline: list[tuple[str, int, int]] = []
     in_header = False
+    oversize = 0
     for line in raw.splitlines():
         # Every entry resets the per-file state here. Keying only on `+++ `
         # meant a deleted file — whose post-image header is `+++ /dev/null` —
@@ -681,11 +755,12 @@ def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
         # renders as `+++ b/foo`, re-pointed `current` at another file and
         # dropped every later hunk of this one — and this repo's docs quote diffs.
         if in_header and line.startswith("--- "):
-            previous = None if line == "--- /dev/null" else root / line[4:]
+            previous = None if line == "--- /dev/null" else root / _header_name(line)
             continue
         if in_header and line.startswith("+++ "):
-            current = None if line == "+++ /dev/null" else root / line[4:]
-            source = (_read(current, root) or "") if current else ""
+            current = None if line == "+++ /dev/null" else root / _header_name(line)
+            source, too_big = _read(current, root) if current else (None, False)
+            oversize += too_big
             outline = symbols_of(current, source) if source and current else []
             continue
         hunk = _HUNK.match(line)
@@ -714,6 +789,14 @@ def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
                 )
             )
         )
+    # A hunk in a file over the size cap is still emitted; only its enclosing
+    # symbol is unresolved. Counted so an empty `symbol` on such a hunk reads as
+    # "not looked up", not as "top-level code" (perf-379e4ae8).
+    pack.omitted = {
+        "files_oversize": oversize,
+        "max_read_bytes": MAX_READ_BYTES,
+        "reason": "enclosing symbol not resolved: file larger than max_read_bytes",
+    }
     pack.notes.append(f"base: {base}")
 
 
@@ -736,10 +819,12 @@ def _evidence(root: Path, files: list[Path], pack: Pack, goal: str, budget: int)
         raise PackError("goal contains no searchable term; state what is being looked for")
     found: list[Candidate] = []
     unreadable = 0
+    oversize = 0
     for path in sorted(files):
-        source = _read(path, root)
+        source, too_big = _read(path, root)
         if source is None:
-            unreadable += 1
+            oversize += too_big
+            unreadable += not too_big
             continue
         found.extend(_file_candidates(root, path, source, terms))
     found.sort(key=lambda c: (-c.score, c.path, c.start))
@@ -748,11 +833,18 @@ def _evidence(root: Path, files: list[Path], pack: Pack, goal: str, budget: int)
     pack.budget = {"requested": budget, "estimated": spent, "unit": "estimated-tokens"}
     pack.omitted = {
         "files_scanned": len(files),
-        "files_unmatched": len(files) - unreadable - len({c.path for c in found}),
+        "files_unmatched": len(files) - unreadable - oversize - len({c.path for c in found}),
         "files_unreadable": unreadable,
+        # perf-379e4ae8: a file refused by the size cap was never searched, so
+        # it is neither unmatched nor unreadable and is counted on its own.
+        "files_oversize": oversize,
+        "max_read_bytes": MAX_READ_BYTES,
         "candidates_over_budget": len(found) - len(packed),
         "terms": sorted(terms),
-        "reason": "no goal term matched, or the candidate did not fit the token budget",
+        "reason": (
+            "no goal term matched, the candidate did not fit the token budget, "
+            "or the file exceeded max_read_bytes and was not searched"
+        ),
     }
 
 
@@ -790,7 +882,7 @@ def _file_candidates(root: Path, path: Path, source: str, terms: set[str]) -> li
                 tokens=estimate_tokens(body),
             )
         )
-    return _merge(out)
+    return _merge(out, lines)
 
 
 def _range_for(
@@ -803,32 +895,38 @@ def _range_for(
     return max(1, line - 8), min(total, line + 8)
 
 
-def _merge(items: list[Candidate]) -> list[Candidate]:
+def _merge(items: list[Candidate], lines: list[str]) -> list[Candidate]:
     """Collapse overlapping ranges in one file into a single candidate.
 
     Without this, a term appearing eight times in one function yields eight
     candidates covering identical lines, and the budget is spent proving the
     same thing repeatedly.
+
+    `lines` is the file's source, so the merged estimate is recomputed from the
+    merged range itself (audit-3fe3c6ad).
     """
     out: list[Candidate] = []
     for item in sorted(items, key=lambda c: (c.start, c.end)):
         if out and item.start <= out[-1].end:
             previous = out[-1]
+            end = max(previous.end, item.end)
             out[-1] = Candidate(
                 path=previous.path,
                 start=previous.start,
-                end=max(previous.end, item.end),
+                end=end,
                 score=previous.score + item.score,
                 reason=tuple(sorted(set(previous.reason) | set(item.reason))),
                 symbol=previous.symbol or item.symbol,
-                # Summed, not `max`. The merged range can span more lines than
-                # either input — a no-symbol window (line ±8) overlapping a
-                # symbol's span widens it — and `max` then carried an estimate
-                # for fewer lines than the candidate covers, so
-                # `_pack_to_budget` under-counted what it had spent. Summing
-                # over-estimates an overlap, which errs toward staying under
-                # the caller's ceiling rather than over it.
-                tokens=previous.tokens + item.tokens,
+                # Recomputed from the merged range, neither `max` nor a sum.
+                # `max` under-counted a range wider than either input — a
+                # no-symbol window (line ±8) overlapping a symbol's span widens
+                # it (audit-2635df3b). Summing fixed that and broke the common
+                # case: every matched line snaps to the same symbol span, so a
+                # symbol with N matches was estimated at N times its size and
+                # `_pack_to_budget` skipped the best-matching evidence as over
+                # budget (audit-3fe3c6ad). The range's own text is exact for
+                # both.
+                tokens=estimate_tokens("\n".join(lines[previous.start - 1 : end])),
             )
         else:
             out.append(item)

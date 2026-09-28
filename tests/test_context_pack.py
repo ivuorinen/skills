@@ -92,8 +92,88 @@ def test_language_falls_back_to_the_bare_suffix_rather_than_dropping_the_file():
 def test_read_returns_none_for_a_binary_file_instead_of_raising(tmp_path):
     blob = tmp_path / "b.bin"
     blob.write_bytes(b"\xff\xfe\x00\x01")
-    assert cp._read(blob, tmp_path) is None
-    assert cp._read(tmp_path / "missing", tmp_path) is None
+    assert cp._read(blob, tmp_path) == (None, False)
+    assert cp._read(tmp_path / "missing", tmp_path) == (None, False)
+    undecodable = tmp_path / "u.txt"
+    undecodable.write_bytes(b"\xff\xfe no nul here")
+    assert cp._read(undecodable, tmp_path) == (None, False)
+
+
+def test_read_refuses_an_oversize_file_by_stat_without_reading_it(tmp_path, monkeypatch):
+    """perf-379e4ae8: a large asset was read whole before being discarded.
+
+    The file is sparse, so the test costs no disk; `open` is made to fail, so
+    a pass proves the refusal came from `stat` and not from a read.
+    """
+    big = tmp_path / "weights.bin"
+    with big.open("wb") as handle:
+        handle.truncate(cp.MAX_READ_BYTES + 1)
+
+    def no_open(*_args, **_kwargs):
+        raise AssertionError("an oversize file must not be opened")
+
+    monkeypatch.setattr(cp.Path, "open", no_open)
+    assert cp._read(big, tmp_path) == (None, True)
+
+
+def test_read_at_exactly_the_cap_is_still_read(tmp_path):
+    exact = tmp_path / "exact.txt"
+    exact.write_bytes(b"a" * cp.MAX_READ_BYTES)
+    text, oversize = cp._read(exact, tmp_path)
+    assert oversize is False
+    assert text is not None and len(text) == cp.MAX_READ_BYTES
+
+
+def test_read_caps_the_read_itself_when_stat_understates(tmp_path, monkeypatch):
+    """A pseudo-file or a file growing mid-read reports a size `stat` cannot be trusted on."""
+    grown = tmp_path / "grown.txt"
+    grown.write_text("x" * 100, encoding="utf-8")
+    monkeypatch.setattr(cp, "MAX_READ_BYTES", 10)
+    real_stat = cp.Path.stat
+
+    def understated(self, *args, **kwargs):
+        result = real_stat(self, *args, **kwargs)
+        return os.stat_result((*result[:6], 0, *result[7:]))
+
+    monkeypatch.setattr(cp.Path, "stat", understated)
+    assert cp._read(grown, tmp_path) == (None, True)
+
+
+def test_read_sniffs_a_nul_and_skips_the_binary(tmp_path):
+    blob = tmp_path / "image.png"
+    blob.write_bytes(b"PNG\x00" + b"a" * 20_000)
+    assert cp._read(blob, tmp_path) == (None, False)
+
+
+def test_read_keeps_text_modes_newline_translation(tmp_path):
+    """The bytes are decoded by hand now; `read_text` used to translate CR and CRLF."""
+    mixed = tmp_path / "m.txt"
+    mixed.write_bytes(b"\xef\xbb\xbfa\r\nb\rc\n")
+    assert cp._read(mixed, tmp_path) == ("a\nb\nc\n", False)
+
+
+def test_symbols_and_evidence_count_an_oversize_file_on_its_own(tmp_path):
+    """A file skipped for size must never read as absent, unreadable or unmatched."""
+    root = _repo(tmp_path, {"a.py": "def target():\n    return 1\n"})
+    with (root / "dump.sql").open("wb") as handle:
+        handle.truncate(cp.MAX_READ_BYTES + 1)
+    symbols = cp.build(root=root, goal="", mode="symbols")["omitted"]
+    assert (symbols["files"], symbols["files_oversize"]) == (0, 1)
+    assert symbols["max_read_bytes"] == cp.MAX_READ_BYTES
+    evidence = cp.build(root=root, goal="target", mode="evidence")["omitted"]
+    assert evidence["files_scanned"] == 2
+    assert evidence["files_oversize"] == 1
+    assert evidence["files_unreadable"] == 0
+    assert evidence["files_unmatched"] == 0
+
+
+def test_diff_still_emits_a_hunk_in_an_oversize_file_and_counts_it(tmp_path, monkeypatch):
+    root = _repo(tmp_path, {"a.py": PY, "small.py": PY})
+    (root / "a.py").write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+    monkeypatch.setattr(cp, "MAX_READ_BYTES", 64)
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert [(c["path"], c["symbol"]) for c in pack["candidates"]] == [("a.py", "")]
+    assert pack["omitted"]["files_oversize"] == 1
 
 
 def test_git_raises_pack_error_naming_the_failure_rather_than_returning_empty(tmp_path):
@@ -864,20 +944,93 @@ def test_a_broken_git_exits_one_while_a_bad_argument_exits_two(tmp_path, capsys,
     assert cp.main(["--root", str(root), "--mode", "evidence", "--goal", ""]) == 2
 
 
-def test_merging_two_ranges_sums_their_estimates(tmp_path):
-    """audit-2635df3b: `max` under-counted a range wider than either input.
+def test_merging_two_ranges_estimates_the_merged_span_itself(tmp_path):
+    """audit-2635df3b and audit-3fe3c6ad: the estimate is the merged range's own.
 
-    A no-symbol window (line ±8) overlapping a symbol's span widens the merged
-    range, so carrying one input's estimate let `_pack_to_budget` report having
-    spent less than it did — and `budget.estimated` is what a caller reads to
-    decide whether to widen.
+    `max` under-counted a range wider than either input — a no-symbol window
+    (line ±8) overlapping a symbol's span widens it. Summing fixed that and
+    inflated the common case N-fold. The span's own text is exact for both, so
+    the merged estimate must equal it and exceed the wider input's.
     """
-    left = cp.Candidate(path="a.py", start=1, end=13, score=1.0, reason=("x",), tokens=40)
-    right = cp.Candidate(path="a.py", start=10, end=50, score=1.0, reason=("y",), tokens=120)
-    merged = cp._merge([left, right])
+    lines = [f"line_{n:03d} = {'x' * 30}" for n in range(1, 51)]
+
+    def span(start, end):
+        return cp.estimate_tokens("\n".join(lines[start - 1 : end]))
+
+    left = cp.Candidate(path="a.py", start=1, end=13, score=1.0, reason=("x",), tokens=span(1, 13))
+    right = cp.Candidate(
+        path="a.py", start=10, end=50, score=1.0, reason=("y",), tokens=span(10, 50)
+    )
+    merged = cp._merge([left, right], lines)
     assert len(merged) == 1
     assert (merged[0].start, merged[0].end) == (1, 50)
-    assert merged[0].tokens == 160  # summed: never below what the span costs
+    assert merged[0].tokens == span(1, 50)
+    assert merged[0].tokens > right.tokens
+    assert merged[0].tokens < left.tokens + right.tokens
+
+
+def test_a_symbol_matching_on_every_line_is_estimated_once_and_packed(tmp_path):
+    """audit-3fe3c6ad: 61 matches in one function were estimated at 61x its size.
+
+    The whole file fits a 6000-token budget many times over, yet the summed
+    estimate made the pack skip it as over budget and return nothing.
+    """
+    body = "def handle_token(request):\n" + "".join(
+        f"    token_{n} = request.token_field_{n}\n" for n in range(61)
+    )
+    root = _repo(tmp_path, {"auth.py": body})
+    pack = cp.build(root=root, goal="token", mode="evidence", budget_tokens=6000)
+    assert pack["omitted"]["candidates_over_budget"] == 0
+    [hit] = pack["candidates"]
+    assert (hit["path"], hit["symbol"], hit["start"], hit["end"]) == (
+        "auth.py",
+        "handle_token",
+        1,
+        62,
+    )
+    assert hit["tokens"] == cp.estimate_tokens(body.rstrip("\n"))
+    assert pack["budget"]["estimated"] == hit["tokens"]
+
+
+def test_a_merge_conflicted_file_is_enumerated_once(tmp_path):
+    """audit-f3e79009: `ls-files --cached` prints an unmerged path once per stage."""
+    root = _repo(tmp_path, {"a.py": "value = 0\n"})
+    git = ["git", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "checkout", "-qb", "other"], cwd=root, check=True)
+    (root / "a.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run([*git, "commit", "-qam", "other"], cwd=root, check=True)
+    subprocess.run([*git, "checkout", "-q", "-"], cwd=root, check=True)
+    (root / "a.py").write_text("value = 2\n", encoding="utf-8")
+    subprocess.run([*git, "commit", "-qam", "main"], cwd=root, check=True)
+    merge = subprocess.run([*git, "merge", "-q", "other"], cwd=root, capture_output=True)
+    assert merge.returncode != 0  # the fixture is only meaningful mid-conflict
+    staged = subprocess.run(
+        ["git", "ls-files", "--cached"], cwd=root, capture_output=True, text=True, check=True
+    )
+    assert staged.stdout.splitlines().count("a.py") == 3  # the stages the dedupe collapses
+    assert [row["path"] for row in cp.build(root=root, goal="", mode="inventory")["files"]] == [
+        "a.py"
+    ]
+    evidence = cp.build(root=root, goal="value", mode="evidence")
+    assert evidence["omitted"]["files_scanned"] == 1
+    assert len(evidence["candidates"]) == 1
+
+
+def test_diff_reaches_a_change_to_a_file_whose_name_has_a_space(tmp_path):
+    """audit-31dcb352: git ends the ---/+++ header with a TAB for such a name."""
+    root = _repo(tmp_path, {"my file.py": PY, "plain.py": PY})
+    for name in ("my file.py", "plain.py"):
+        (root / name).write_text(PY.replace("return 1", "return 2"), encoding="utf-8")
+    raw = subprocess.run(["git", "diff"], cwd=root, capture_output=True, text=True, check=True)
+    assert "my file.py\t\n" in raw.stdout  # the header shape the fix strips
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert sorted(c["path"] for c in pack["candidates"]) == ["my file.py", "plain.py"]
+    assert {c["symbol"] for c in pack["candidates"]} == {"method"}
+
+
+def test_header_name_strips_only_the_trailing_tab():
+    assert cp._header_name("+++ my file.py\t") == "my file.py"
+    assert cp._header_name("--- plain.py") == "plain.py"
 
 
 def test_cli_io_error_exits_one(tmp_path, capsys, monkeypatch):
