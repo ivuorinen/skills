@@ -28,8 +28,8 @@ def _load_mod():
         "bump_version_module",
         SCRIPTS_DIR / "bump-version.py",
     )
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
     return mod
 
 

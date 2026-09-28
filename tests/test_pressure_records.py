@@ -64,8 +64,8 @@ def test_the_registry_is_well_formed():
     does (agent-loopholes-17e0386b). Checked here too, so a shape error also
     fails the unit run beside the coverage checks above."""
     spec = importlib.util.spec_from_file_location("validate_evals", _VALIDATOR)
-    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
     errors: list[str] = []
     module.validate_pressure_records(_REGISTRY, "nitpicker", errors)
     assert errors == []

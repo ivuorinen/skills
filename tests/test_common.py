@@ -6,7 +6,7 @@ import inspect
 import textwrap
 from pathlib import Path
 
-from common import collect_skills, parse_frontmatter  # type: ignore[import-not-found]
+from common import collect_skills, parse_frontmatter
 
 
 def _fm(text: str) -> dict:
@@ -26,7 +26,11 @@ def _body_ast(func) -> str:
     formatting, so only a real behavioural difference fails the comparison.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
-    body = tree.body[0].body  # type: ignore[attr-defined]
+    # Narrowed rather than suppressed: `.body` exists only on a def node, and a
+    # non-function source should fail here by name, not as an AttributeError.
+    node = tree.body[0]
+    assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef), type(node).__name__
+    body = node.body
     if isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
     return "\n".join(ast.dump(stmt) for stmt in body)
@@ -85,8 +89,8 @@ class TestParseFrontmatter:
             "findings_for_identity_check",
             Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
         )
-        findings = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        spec.loader.exec_module(findings)  # type: ignore[union-attr]
+        findings = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+        spec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
         assert _body_ast(parse_frontmatter) == _body_ast(findings.parse_frontmatter)
         assert parse_frontmatter.__module__ != "common"
 

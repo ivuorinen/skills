@@ -7,8 +7,8 @@ _spec = importlib.util.spec_from_file_location(
     "skill_catalog",
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "skill_catalog.py",
 )
-sc = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(sc)  # type: ignore[union-attr]
+sc = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(sc)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def test_plugin_root_is_repo_root():
@@ -270,8 +270,8 @@ def _skill_body_outside_fences() -> str:
     spec = importlib.util.spec_from_file_location(
         "validate_skill", root / "scripts" / "validate-skill.py"
     )
-    vs = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(vs)  # type: ignore[union-attr]
+    vs = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    spec.loader.exec_module(vs)  # pyright: ignore[reportOptionalMemberAccess]
     body = (root / "skills/nitpicker/SKILL.md").read_text(encoding="utf-8")
     return "\n".join(vs.strip_fences(body.splitlines()))
 

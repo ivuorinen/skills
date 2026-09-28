@@ -89,7 +89,14 @@ _IDENTITY = ("rule", "file", "message")
 
 
 def _key(d: dict) -> tuple[str, str, str]:
-    return tuple(str(d.get(f, "")) for f in _IDENTITY)  # type: ignore[return-value]
+    """A diagnostic's identity, built from exactly the `_IDENTITY` fields.
+
+    Unpacked into three `str` names so the return type holds without a
+    suppression. The `# type: ignore[return-value]` it replaced was read by
+    pyright as a blanket ignore for the whole line (types-a53e6235).
+    """
+    rule, file, message = (str(d.get(f, "")) for f in _IDENTITY)
+    return rule, file, message
 
 
 def _run(root: Path) -> dict | None:
