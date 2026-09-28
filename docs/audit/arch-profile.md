@@ -52,10 +52,10 @@ Evidence:
   are `_`-prefixed shared references and the rest are individually dispatchable
   commands.
 - The registry is **enforced 1:1**, not conventional:
-  `scripts/validate-skill.py:611-617` errors both ways — a table row with no
-  `commands/<cmd>.md`, and a `commands/*.md` absent from the table. Aliases,
-  which have no file to check against, are enforced separately by
-  `_alias_errors` (`:551`) against collision and duplication.
+  `validate_commands` in `scripts/validate-skill.py` errors both ways — a table
+  row with no `commands/<cmd>.md`, and a `commands/*.md` absent from the table.
+  Aliases, which have no file to check against, are enforced separately by
+  `_alias_errors` against collision and duplication.
 - Extension points are declared by `###` heading and are self-describing:
   SKILL.md states that each `###` heading *is* the category name and that
   `np_list_commands` filters on them, so adding a group makes it filterable in
@@ -73,24 +73,25 @@ Evidence:
 - **Driven port**: `pr_common.py` defines the domain type `Target` and the
   provider contract. Every adapter implements exactly two functions with an
   identical signature — `fetch_comments(target: pr_common.Target, pr_number: int)
-  -> dict[str, Any]` and `fetch_status(...)` — verified at `pr_github.py:457,606`,
-  `pr_gitlab.py:210,297`, `pr_bitbucket.py:199,284`.
+  -> dict[str, Any]` and `fetch_status(...)` — verified as those two top-level
+  functions in each of `pr_github.py`, `pr_gitlab.py` and `pr_bitbucket.py`.
 - **Driven adapters**: `pr_github.py`, `pr_gitlab.py`, `pr_bitbucket.py`, one per
   platform. All three import `pr_common`; `pr_common` imports none of them.
 - **Dependency inversion at the port is explicit and commented**:
-  `pr_common.py:806` maps platform → module name as literal strings; resolution
-  is deferred to `importlib.import_module` at `pr_common.py:863`, with the
+  `pr_common._PROVIDER_MODULES` maps platform → module name as literal strings;
+  resolution is deferred to `importlib.import_module` in
+  `pr_common.provider_for`, with the
   docstring stating the reason — "every provider imports this module, so a
   top-level import here would be a cycle."
 - **Driving adapters** — two, each independent of the other and of the port's
-  internals. `pr_cli.py` serves the command line: `fetch-pr-comments.py:83` and
-  `fetch-pr-status.py:88` each reduce to
-  `sys.exit(pr_cli.run_cli(__doc__, "<operation>", sys.argv[1:]))`.
+  internals. `pr_cli.py` serves the command line: `fetch-pr-comments.py` and
+  `fetch-pr-status.py` each reduce to
+  `sys.exit(pr_cli.run_cli(__doc__ or "", "<operation>", sys.argv[1:]))`.
   `mcp_server.py` serves the MCP client and exposes the same providers as
   `np_pr_comments` / `np_pr_status`. Both reach a provider only through
   `pr_common.provider_for`.
 - **The port carries no delivery mechanism.** argv parsing, stdout rendering and
-  exit codes live in `pr_cli.py` (`emit:35`, `parse_cli_args:70`, `run_cli:106`),
+  exit codes live in `pr_cli.py` (`emit`, `parse_cli_args`, `run_cli`),
   never in `pr_common`, which all three providers and the MCP server import.
   `tests/test_pr_cli.py::TestPortStaysFreeOfDeliveryConcerns` pins the split,
   since nothing about it fails at runtime if it is undone.
@@ -142,13 +143,19 @@ import graph `make ring-deps` prints:
   siblings (`md_fences`, `pr_common`, `pr_cli`, `findings`, `findings_export`,
   `context_pack`, `skill_catalog`).
 - Outward rings depend inward: `scripts/bench-retrieval.py` imports
-  `context_pack`; `scripts/common.py` and `scripts/validate-rules.py` reach
-  `findings.py` and `check-rules-anatomy.py` by path.
+  `context_pack` and `scripts/bench-recall.py` imports `findings`;
+  `scripts/common.py` reaches `findings.py` and `md_fences.py` by path,
+  `scripts/validate-rules.py` reaches `check-rules-anatomy.py` and
+  `scripts/validate-skill.py` reaches `context_pack.py`. Within the middle ring,
+  `scripts/bench-recall.py` loads `scripts/bench-retrieval.py` by path.
+  `make ring-deps` prints the current edge list; read it there rather than
+  trusting this copy.
 - The inner ring's contract is **machine-enforced**, not conventional:
   `scripts/check-stdlib-only.py` walks `SHIPPED_GLOB = "skills/*/scripts/**/*.py"`,
   rejects any non-stdlib import root, rejects a shebang that is not
   `SHIPPED_SHEBANG`, rejects a PEP-723 block, and fails when the glob itself
-  matches nothing (`check-stdlib-only.py:183,250,318`).
+  matches nothing (`find_violations`, `find_runner_violations` and `main` in
+  `check-stdlib-only.py`).
 - The **direction** is enforced separately by `scripts/check-ring-deps.py`
   (`make ring-deps`, in `make check`), which builds the graph from `import`
   statements *and* from `spec_from_file_location` loads, and exits non-zero on
@@ -166,11 +173,11 @@ Evidence — four deliberate shared modules, each with a stated single rule and
 multiple consumers, none of which import each other's owners:
 
 - `md_fences.py` — the markdown code-fence rule, defined once, consumed by
-  `findings.py`, `skill_catalog.py`, `check-agent-instructions.py` and
-  `check-rules-anatomy.py` (12 call sites total).
+  `findings.py`, `skill_catalog.py`, `check-agent-instructions.py`,
+  `check-rules-anatomy.py` and, by path, `scripts/common.py`.
 - `pr_common.py` — targets, HTTP transport, pagination, output envelope, for all
   three providers and both entry points.
-- `scripts/hooks/_hooklib.py` — imported by all 13 hook modules and by nothing
+- `scripts/hooks/_hooklib.py` — imported by every hook module and by nothing
   else.
 - `scripts/common.py` — imported by `validate-skill.py` and `list-skills.py`.
 
@@ -180,7 +187,7 @@ Governs: the instruction layer.
 
 Evidence:
 
-- `scripts/validate-skill.py:538-560` enforces the Agent Skills File Reference
+- `validate_commands` in `scripts/validate-skill.py` enforces the Agent Skills File Reference
   Depth rule: every `commands/_*.md` shared reference must be named in `SKILL.md`
   itself, because a reference reachable only as `SKILL.md → command → ref` chains
   two levels deep and is rejected.
@@ -331,7 +338,7 @@ the next run. Three were real and have been fixed; what remains is below them.
 **The repository does not import its own renderer.** The first pass reported
 `findings.py` → `findings_export.py` as a core-depends-on-presentation edge. It
 does not exist: the import sits *inside* the `export` subcommand handler
-(`findings.py:1959`), with a comment giving that exact reason — "`mcp_server`
+(the `export` branch of `findings.main`), with a comment giving that exact reason — "`mcp_server`
 imports it as a library and the PostToolUse hook shells out to it … pointing the
 core at its own adapter made every one of those callers pay for the renderer".
 The original scan walked function bodies and conflated a deferred import with a
@@ -339,9 +346,13 @@ module-level one. `make ring-deps` now distinguishes them.
 
 **Hooks do not load their validators by path.** The first pass listed
 `scripts/hooks/*` among the string-path importers. They use `subprocess`
-(`validate-audit-findings-hook.py:79,99,119`). A process boundary is not an
-import edge, is legitimately absent from a dependency graph, and cannot carry a
-ring violation. The real string-path importers are three files, not four.
+(the `subprocess.run` calls in `main` of `validate-audit-findings-hook.py`). A
+process boundary is not an import edge, is legitimately absent from a
+dependency graph, and cannot carry a ring violation. The real string-path
+importers are the modules `make ring-deps` marks `[string-path load]`:
+`scripts/common.py`, `scripts/validate-rules.py`, `scripts/validate-skill.py`
+and `scripts/bench-recall.py`, plus `mcp_server.py` and
+`check-context-tokens.py`, which load only from their own directory.
 
 ### Fixed
 
@@ -357,19 +368,23 @@ resolves `spec_from_file_location` loads into the graph and prints them beside
 ordinary imports, marked. It resolves through a variable binding (every real
 case here assigns the path first) and scopes that resolution per function
 (`mcp_server` binds `path` in two different functions; a module-flat scan
-resolves neither). A load it cannot resolve is an error, not silence. The two
-cross-ring string-path edges it recovers —
-`scripts/common.py → skills/nitpicker/scripts/findings.py` and
-`scripts/validate-rules.py → skills/nitpicker/scripts/check-rules-anatomy.py` —
-are pinned by test, so the tool cannot quietly stop resolving them.
+resolves neither). A load it cannot resolve is an error, not silence. These
+string-path edges it recovers are pinned by `tests/test_check_ring_deps.py`, so
+the tool cannot quietly stop resolving them:
+`scripts/common.py → skills/nitpicker/scripts/findings.py`,
+`scripts/common.py → skills/nitpicker/scripts/md_fences.py`,
+`scripts/validate-rules.py → skills/nitpicker/scripts/check-rules-anatomy.py`
+and `scripts/bench-recall.py → scripts/bench-retrieval.py`.
+`scripts/validate-skill.py → skills/nitpicker/scripts/context_pack.py` is
+resolved too, but no test pins it.
 
 **Aliases are validated.** `table_aliases` and `_alias_errors`
-(`scripts/validate-skill.py:530,551`) reject an alias that is also a command
+(both in `scripts/validate-skill.py`) reject an alias that is also a command
 name, one claimed by two commands, one listed twice, and one that aliases
 itself. 31 aliases across 28 commands now pass a check rather than a reading.
 
 **`check-context-tokens.py` was correctly placed; the prose was wrong.**
-`commands/agent-rules.md:151` invokes it, so it is a shipped tool a shipped
+`commands/agent-rules.md` invokes it under `## Bundled tool`, so it is a shipped tool a shipped
 command runs. SKILL.md described it as printing "a table for a person
 maintaining the skill", which explained its CLI-only status by the wrong
 property. Corrected to name the actual reason: its output is an estimate read
