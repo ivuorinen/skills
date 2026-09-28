@@ -9,7 +9,7 @@ Turn a change request into an implementation plan that survives hostile scrutiny
 - Turning a brainstorm or a rough idea into an ordered, verifiable task list
 - When a change touches security, data, migrations, public API, or concurrency, where a naive plan is expensive to unwind
 
-Not for executing an already-approved plan — that is implementation, which this command gates, not performs. Not for auditing existing code: that is `/nitpicker review` or `/nitpicker audit`. Run standalone or by the `/nitpicker` default audit flow when the user asks to plan rather than review.
+Not for executing an already-approved plan — that is implementation, which this command gates, not performs. Not for auditing existing code: that is `/nitpicker review` or `/nitpicker audit`. Run standalone; the default audit flow does not schedule it (see `_audit-coverage.md` "Not coverage lenses").
 
 ## The gate — read first
 

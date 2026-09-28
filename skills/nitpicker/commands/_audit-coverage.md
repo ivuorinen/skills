@@ -120,7 +120,9 @@ review surface the skill offers.
 - **AUD:S17 Docs** (`docs`) — documentation accuracy against the code: stale,
   missing, or wrong behavior descriptions.
 - **AUD:S18 Contributing** (`contributing`) — `CONTRIBUTING.md` against the repo's real
-  tooling. N/A when the repo has no contributor-facing documentation.
+  tooling. Never N/A: an absent guide is itself a finding — High when the repo
+  has a build system, test runner, commit convention or CI gate
+  (`contributing.md` step 7), Advisory otherwise.
 - **AUD:S19 CI/CD** (`ci`) — unpinned actions, over-broad token scope, script
   injection, privileged-trigger misuse, non-gating checks, masked failures.
   N/A when the repo has no CI/CD pipeline definitions.
@@ -134,8 +136,10 @@ review surface the skill offers.
   reachability, roles and names, contrast, focus order. N/A when there is no
   UI layer.
 - **AUD:S23 Localization** (`i18n`) — hardcoded strings, locale-unsafe number, date,
-  and sort handling against the declared locale scope. N/A when there is no
-  localization surface and single-locale is the declared scope.
+  and sort handling against the declared locale scope. Never N/A while any
+  datetime is stored or shown: with no localization surface the lens still
+  hunts `naive-datetime` (`i18n.md` step 1) and skips only the string and
+  format sweep.
 - **AUD:S24 Prompt safety** (`prompt-safety`) — LLM-integration safety: direct and
   indirect prompt injection, model output reaching a privileged sink,
   excessive tool agency, secrets in the model context, cross-tenant
@@ -149,21 +153,29 @@ review surface the skill offers.
   assumption from the absence of a directory.
 - **AUD:S26 Complexity** (`complexity`) — over-engineering: speculative
   abstractions, reinvented standard library, dead flexibility, needless
-  dependencies.
+  dependencies. Always applied inline under the `audit` key with
+  `_conventions.md` severities, never deep-run: `complexity` is stdout-only and
+  sticky once invoked.
 - **AUD:S27 Unwired code** (`unwired`) — unwired and incomplete implementations that
   are defined but never reached.
 - **AUD:S28 Dead code** (`dead-code`) — unreferenced or unreachable code: unused
   exports, dead branches, orphaned files, each proven dead through every
   reachability channel before deletion is proposed.
 
-## Agent-enforcement lenses (only when an agent project — `.claude/` exists)
+## Agent-enforcement lenses (always scheduled; each N/A only when its surface is absent)
+
+These cover every agent harness, not only Claude Code, so a missing `.claude/`
+directory closes none of them.
 
 - **AUD:A0 Agent loopholes** (`agent-loopholes`) — bypassable or unenforced
-  constraints in `.claude/rules`, hooks, settings, permissions, skills.
+  constraints in rules, hooks, settings, permissions, skills. N/A when no
+  harness has any of them.
 - **AUD:A1 Agent hooks** (`agent-hooks`) — hook coverage against the project's
-  evidence base; recurring failures no hook guards.
-- **AUD:A2 Agent rules** (`agent-rules`) — `.claude/rules/` quality; conventions
-  that should be codified as rules.
+  evidence base; recurring failures no hook guards. N/A when `agent-hooks`'
+  harness detection finds none.
+- **AUD:A2 Agent rules** (`agent-rules`) — rule-file quality; conventions
+  that should be codified as rules. N/A when no root instruction file or rules
+  directory from `agent-rules`' harness table exists.
 
 ## Not coverage lenses
 

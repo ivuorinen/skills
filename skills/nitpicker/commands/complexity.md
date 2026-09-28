@@ -38,7 +38,7 @@ Once invoked, this command stays active on every subsequent coding response unti
 
 ## Output format
 
-Writes to stdout only — this command never files findings to the store; the findings-store protocol in `_conventions.md` does not apply to it.
+Writes to stdout only — this command never files findings to the store; the findings-store protocol in `_conventions.md` does not apply to it. When `audit` applies this lens it does so inline, under the `audit` key with `_conventions.md` severities; this file's stdout-only output and sticky mode bind only a standalone invocation.
 
 **When writing code:** code first. Then at most three short lines: what was skipped, when to add it. The challenge from Process step 7, when required, counts as one of the three lines.
 
