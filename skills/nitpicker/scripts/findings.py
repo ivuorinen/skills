@@ -50,7 +50,9 @@ import re
 import subprocess  # nosec B404
 import sys
 import tempfile
+import time
 from pathlib import Path
+from typing import IO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import md_fences
@@ -72,10 +74,14 @@ CATEGORIES = (
 STATUSES = ("open", "fixed", "invalid")
 OPEN_SECTIONS = ("Problem", "Evidence", "Impact", "Fix")
 
-_LEGACY_ID = re.compile(r"^[A-Z]+-\d+$")
-_HASH_ID = re.compile(r"^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$")
-_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_AUDITOR = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# `\Z`, not `$`: `$` also matches before a final newline, so `re.match` took
+# `security\n` as an auditor key and `x-deadbeef\n` as an id — both become path
+# components, and a newline-bearing store directory lists apart from its twin
+# (audit-4a51ffd0). Anchoring the pattern fixes every `.match` caller at once.
+_LEGACY_ID = re.compile(r"^[A-Z]+-\d+\Z")
+_HASH_ID = re.compile(r"^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}\Z")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}\Z")
+_AUDITOR = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 # Frontmatter keys with a dedicated column; anything else is preserved under
 # the ledger record's "extra" object (e.g. cve:).
@@ -111,7 +117,12 @@ _SECRET_RE = re.compile(
     # `_` belongs in the class: Anthropic and OpenAI project keys carry one, and a
     # class without it masked only up to the first (security-20a7426d).
     r"|sk-[A-Za-z0-9_-]{20,}"
-    r"|AKIA[0-9A-Z]{16}"
+    # Stripe secret and restricted keys, STS temporary key ids, and Hugging Face
+    # tokens — shapes `security` quotes from gitleaks and trivy hits, which all
+    # passed through unchanged (security-61c840da).
+    r"|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"
+    r"|(?:AKIA|ASIA)[0-9A-Z]{16}"
+    r"|hf_[A-Za-z0-9]{30,}"
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
     r"|npm_[A-Za-z0-9]{36}"  # npm automation token
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
@@ -122,8 +133,19 @@ _SECRET_RE = re.compile(
 # match before a leading `-`, so a private key can never match inside it. The
 # whole block is consumed rather than just the header — masking `-----BEGIN ...`
 # alone would leave the key body in the record and read as redacted.
+#
+# `(?: BLOCK)?` admits armoured PGP keys (`PRIVATE KEY BLOCK-----`), which the
+# bare `PRIVATE KEY-----` never matched (security-61c840da). The closed form's
+# body refuses to cross another `-----BEGIN`: `[\s\S]*?` alone scanned to the end
+# of the text for every header lacking an END, so repeated headers made
+# `redact()` quadratic — seconds per call on hostile evidence (security-6bfd9bed).
+# The regex-dos rule flags the tempered body's nested quantifier by shape; the
+# lookahead is what bounds each lazy scan to the next header, and
+# test_repeated_unclosed_headers_redact_in_linear_time pins it.
+# nosemgrep: python.lang.security.audit.regex-dos.regex_dos
 _PEM_RE = re.compile(
-    r"-----BEGIN[A-Z ]*PRIVATE KEY-----[\s\S]*?-----END[A-Z ]*PRIVATE KEY-----"
+    r"-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN)[\s\S])*?"
+    r"-----END[A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
     # Truncated evidence: no END marker. The body is consumed too — matching the
     # header alone replaces it with "[REDACTED ...]" and leaves the key material
     # on the next line, which reads as redacted and is not.
@@ -135,7 +157,12 @@ _PEM_RE = re.compile(
     # and it stops at the first line that is not. The `(?=\n|$)` is load-bearing:
     # without it the run matches a PREFIX of the next line, so evidence reading
     # "found at src/app.py:42" lost its first word to the redaction.
-    r"|-----BEGIN[A-Z ]*PRIVATE KEY-----(?:\n[A-Za-z0-9+/=]+(?=\n|$))*"
+    #
+    # An armoured PGP body opens with `Key: value` header lines and a blank line
+    # before the base64, so a clipped PGP key has both consumed first — without
+    # them the blank line ends the run and the whole key body survives.
+    r"|-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+    r"(?:\n[A-Za-z-]+: [^\n]*)*(?:\n(?=\n))?(?:\n[A-Za-z0-9+/=]+(?=\n|$))*"
 )
 
 # A bare AWS secret access key is 40 base64 characters with no prefix. Matching
@@ -147,7 +174,13 @@ _PEM_RE = re.compile(
 # a version (`checkout@v4.1.1`, `lodash@4.17.21`) is a pin, not an address — the
 # old pattern rewrote exactly the subjects `ci` and `deps` findings name. Ceiling:
 # an address on an all-numeric or `v<digit>`-leading domain goes unredacted.
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@(?![vV]?\d)[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
+#
+# security-6bfd9bed: the opener was `\b`, which restarts at every word boundary
+# inside a long `[\w.+-]` run — `a.a.a.…` with no `@` rescanned the rest of the
+# run from each one, 1.4 s for 16 KB. The lookbehind admits one start per run
+# and matches the same addresses; a leading `.`, `+` or `-` glued to one is now
+# replaced with it.
+_EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@(?![vV]?\d)[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
 
 
 def _mask(token: str) -> str:
@@ -285,6 +318,25 @@ def _check_auditor(auditor: str) -> None:
     """Reject auditor keys that are not plain kebab-case (they become path parts)."""
     if not _AUDITOR.match(auditor):
         raise FindingError(f"invalid auditor {auditor!r}: want lowercase kebab-case")
+
+
+def _check_not_blank(**fields: str) -> None:
+    """Refuse a title or area that is empty once stripped.
+
+    audit-d9cb8593: `new_finding` hashed and wrote a blank pair, and `validate`
+    then failed the store — one call left the pre-commit and CI gate red, with
+    the blank pair's content-hashed id taken. Checked after redaction and strip,
+    on the text that would actually be written.
+    """
+    for name, value in fields.items():
+        if not value.strip():
+            raise FindingError(f"{name} must not be blank")
+
+
+def _check_date(date: str) -> None:
+    """Refuse a `--date` that is not `YYYY-MM-DD`; shared by the API and the CLI."""
+    if not _DATE.match(date):
+        raise FindingError(f"invalid --date {date!r}: want YYYY-MM-DD")
 
 
 def _check_id(fid: str) -> None:
@@ -514,7 +566,7 @@ def store_lock(root: Path):
     # needs to open it, and CodeQL's py/overly-permissive-file flags the wider mode.
     fd = os.open(lock, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        _acquire_with_deadline(f, lock)
         try:
             yield
         finally:
@@ -522,6 +574,40 @@ def store_lock(root: Path):
 
 
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # absent on Windows, where links are rare
+
+# Seconds a writer waits for the store lock before giving up, and the poll step.
+_LOCK_TIMEOUT = 30.0
+_LOCK_POLL = 0.05
+
+
+def _acquire_with_deadline(f: IO[str], lock: Path) -> None:
+    """Take the exclusive flock on `f`, or raise `FindingError` after `_LOCK_TIMEOUT`.
+
+    reliability-244ecb0f: a blocking `LOCK_EX` waited forever on a holder that
+    never released — a CLI mutation suspended with Ctrl-Z, or one blocked writing
+    into a full pipe. The MCP server serves one frame at a time, so that one wait
+    left every later tool call in the session unanswered with nothing naming the
+    lock. Polling a non-blocking lock turns the hang into an error that says what
+    is held and how to find the holder.
+    """
+    # store_lock returns before calling here when fcntl is absent; this narrows
+    # the Optional module for the type checker and fails loudly, rather than
+    # silently skipping the lock, should a future caller skip that check.
+    if fcntl is None:  # pragma: no cover — non-POSIX
+        raise FindingError(f"{lock}: cannot lock the findings store without fcntl")
+    deadline = time.monotonic() + _LOCK_TIMEOUT
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise FindingError(
+                    f"{lock}: findings store locked by another process for "
+                    f"{_LOCK_TIMEOUT:g}s — retry, or find the holder (fuser {lock})"
+                ) from None
+            time.sleep(_LOCK_POLL)
+
 
 # The line `build_index` writes into every INDEX.md. A store is recognised by
 # this signature or by its ledger — never by the name `INDEX.md` alone, which a
@@ -1337,6 +1423,10 @@ def new_finding(
     names `--force`, so a duplicate is reported rather than silently
     overwriting a body that may have been edited since.
 
+    A title or area blank after redaction and strip is refused before anything
+    is hashed or written, since `validate` rejects the file it would produce
+    (audit-d9cb8593).
+
     `location` (`path:12-40`) is optional provenance — named for the coordinate,
     not for the `## Evidence` body section, which is prose. It is recorded
     alongside a fingerprint of the source there so `reverify` can skip a finding
@@ -1352,6 +1442,7 @@ def new_finding(
     # whitespace-padded title as a false collision.
     title = redact(title).strip()
     area = redact(area).strip()
+    _check_not_blank(title=title, area=area)
     fid = finding_id(auditor, area, title)
     if not body.strip():
         body = "\n\n".join(f"## {s}\n" for s in OPEN_SECTIONS)
@@ -1444,8 +1535,8 @@ def resolve_finding(
     # Notes land in the append-only ledger, where a leaked secret is permanent.
     notes = redact(notes)
     _check_id(fid)
-    if date is not None and not _DATE.match(date):
-        raise FindingError(f"invalid --date {date!r}: want YYYY-MM-DD")
+    if date is not None:
+        _check_date(date)
     resolved_at = date or _today()
     # The whole read-modify-write plus the unlink is one critical section: split
     # apart, two concurrent resolves compute their rewrite from the same snapshot,
@@ -1852,6 +1943,9 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # n
     sources, so a record `validate` rejects — a legacy `sec_001` id — used to
     leave a store the pre-commit hook blocks, recoverable only by hand-editing
     the ledger. It aborts instead, naming every rejection.
+
+    The dry-run plan is printed after the store lock is released, so a reader
+    that stops draining stdout cannot hold every writer out (reliability-244ecb0f).
     """
     files = sorted(root.glob("*/resolved/*.md"))
     with store_lock(root):
@@ -1909,22 +2003,25 @@ def migrate_resolved(root: Path, dry_run: bool = False) -> tuple[int, int]:  # n
                 "refusing to migrate records `validate` would reject — fix the sources:\n"
                 + "\n".join(invalid)
             )
+        plan: list[str] = []
         if dry_run:
-            for path, rec in planned:
-                print(f"WOULD APPEND {rec['id']} from {path}")
+            plan = [f"WOULD APPEND {rec['id']} from {path}" for path, rec in planned]
+            plan += [f"WOULD DELETE {p}" for p in [*(p for p, _ in planned), *deletable]]
+        else:
+            for _path, rec in planned:
+                append_ledger(root, rec)
+                existing[rec["id"]] = rec
+            # Only now, with every record durably appended, remove the sources.
             for path in [*(p for p, _ in planned), *deletable]:
-                print(f"WOULD DELETE {path}")
-            return len(planned), len(planned) + len(deletable)
-
-        for _path, rec in planned:
-            append_ledger(root, rec)
-            existing[rec["id"]] = rec
-        # Only now, with every record durably appended, remove the sources.
-        for path in [*(p for p, _ in planned), *deletable]:
-            path.unlink()
-        for d in sorted(root.glob("*/resolved")):
-            with contextlib.suppress(OSError):  # only removes an already-empty dir
-                d.rmdir()
+                path.unlink()
+            for d in sorted(root.glob("*/resolved")):
+                with contextlib.suppress(OSError):  # only removes an already-empty dir
+                    d.rmdir()
+    # reliability-244ecb0f: the plan is printed only once the lock is released.
+    # Printed under it, `migrate-resolved --dry-run | less` held the store lock
+    # for as long as the pager sat on a full pipe, blocking every other writer.
+    for line in plan:
+        print(line)
     return len(planned), len(planned) + len(deletable)
 
 
@@ -2023,6 +2120,11 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
     and so does any planned file or record `validate` would reject
     (migrations-0078af5d). A migration that reported success used to leave a
     store the pre-commit hook blocks, with an ambiguous `resolve` target.
+
+    A resolved entry whose legacy id is already in the ledger is skipped only
+    when the ledger holds this same finding; a different one sharing the id
+    aborts (migrations-84744122). The dry-run plan is printed after the store
+    lock is released (reliability-244ecb0f).
     """
     text = src.read_text(encoding="utf-8")
     auditor = v1_auditor(src.name)
@@ -2205,6 +2307,20 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 to_write_files.append((path, content))
             else:  # resolved
                 if fid in existing_resolved:
+                    # migrations-84744122: legacy ids recur across v1 documents, so
+                    # an id already in the ledger is only a re-run when the record
+                    # there is this finding. Skipping unconditionally dropped a
+                    # different finding with a success exit, before its source was
+                    # offered for deletion — the same collision migrate_resolved
+                    # and the open branch above refuse.
+                    prior = existing_resolved[fid]
+                    if _comparable(prior) != _comparable(item[2]) or prior.get("auditor") != item[
+                        2
+                    ].get("auditor"):
+                        raise FindingError(
+                            f"duplicate id {fid} while migrating {src.name}: "
+                            "already resolved with different content"
+                        )
                     continue  # already in the ledger — idempotent re-run
                 if list(root.glob(f"*/open/{fid}.md")):
                     raise FindingError(f"duplicate id {fid} while migrating {src.name}")
@@ -2217,22 +2333,23 @@ def migrate_v1(src: Path, root: Path, dry_run: bool = False) -> int:  # noqa: C9
                 f"refusing to migrate {src.name}: `validate` would reject the result:\n"
                 + "\n".join(invalid)
             )
+        plan: list[str] = []
         if dry_run:
-            for path, _content in to_write_files:
-                print(f"WOULD WRITE {path}")
+            plan = [f"WOULD WRITE {path}" for path, _content in to_write_files]
+            plan += [f"WOULD APPEND {rec['id']}" for rec in to_append]
+        else:
+            for path, content in to_write_files:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                # Atomic like every other writer here: a bare write_text truncates,
+                # and an interrupted migration would leave a partial file that the
+                # idempotence check above then reports as a misleading "duplicate id".
+                _atomic_write(path, content)
             for rec in to_append:
-                print(f"WOULD APPEND {rec['id']}")
-            return len(to_write_files) + len(to_append)
-
-        for path, content in to_write_files:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # Atomic like every other writer here: a bare write_text truncates,
-            # and an interrupted migration would leave a partial file that the
-            # idempotence check above then reports as a misleading "duplicate id".
-            _atomic_write(path, content)
-        for rec in to_append:
-            append_ledger(root, rec)
-        return len(to_write_files) + len(to_append)
+                append_ledger(root, rec)
+    # Outside the lock, like migrate_resolved's plan (reliability-244ecb0f).
+    for line in plan:
+        print(line)
+    return len(to_write_files) + len(to_append)
 
 
 def gather_findings(
@@ -2343,7 +2460,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         help="provenance as path:LINE or path:START-END; a fingerprint of that "
         "source is recorded so reverify can skip the finding while it is unchanged",
     )
-    p_new.add_argument("--force", action="store_true", help="overwrite an existing finding")
+    # docs-318027e3: the one route that removes a ledger record said only "overwrite".
+    p_new.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite an existing open finding, or re-open a resolved one "
+        "(removes its resolved.jsonl record)",
+    )
     p_new.add_argument("title", help="one-line finding title; part of the content-hashed id")
 
     p_res = sub.add_parser("resolve", help="mark a finding fixed/invalid")
@@ -2452,6 +2575,21 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         except FindingError as e:
             print(f"ERROR  {e}", file=sys.stderr)
             return 2
+
+    # audit-3652ec5c: an invalid --auditor, a malformed --date and a blank title
+    # or area are the same class of wrong invocation as a malformed id, and they
+    # exited 1 — telling the caller the store or environment failed rather than
+    # that a corrected retry would succeed. The functions raise the same errors
+    # for API callers; the CLI answers them here with 2, before any store access.
+    try:
+        if args.cmd == "new":
+            _check_auditor(args.auditor)
+            _check_not_blank(title=args.title, area=args.area)
+        if args.cmd == "resolve" and args.date is not None:
+            _check_date(args.date)
+    except FindingError as e:
+        print(f"ERROR  {e}", file=sys.stderr)
+        return 2
 
     if args.cmd == "new":
         body = sys.stdin.read() if args.body == "-" else args.body
