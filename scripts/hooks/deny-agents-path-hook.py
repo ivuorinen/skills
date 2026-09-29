@@ -699,11 +699,17 @@ def _shell_glob(base: Path, pattern: str) -> list[Path]:
     fail-closed on the exception was the other option and is wrong here:
     `Path.glob` raises on ordinary tokens, so `python -c "print(2**8)"` would be
     denied.
+
+    IndexError is caught for the same reason. CPython 3.12 raises it for a
+    pattern with no parts (`.`), where 3.14 raises ValueError. The hook runs
+    under the project's 3.12 venv, so the uncaught IndexError reached `main`'s
+    fail-closed handler and denied `ls <repo>/*.patch` as an internal failure
+    (agent-loopholes-407fc703).
     """
     for candidate in (pattern, re.sub(r"\*{2,}", "*", pattern)):
         try:
             return list(base.glob(candidate))
-        except (OSError, ValueError, NotImplementedError):
+        except (OSError, ValueError, NotImplementedError, IndexError):
             continue
     return []
 
@@ -842,14 +848,17 @@ def _glob_reaches_agents(command: str) -> bool:
         # token itself is still expanded, so `cat .claude/**` stays caught.
         probes = (token,) if PurePosixPath(parent).name == "**" else (token, parent)
         for pattern in probes:
-            if not pattern or pattern in (".", "/"):
-                continue
             rel = pattern
             if PurePosixPath(pattern).is_absolute():
                 try:
                     rel = str(PurePosixPath(pattern).relative_to(_REPO_ROOT))
                 except ValueError:
                     continue  # absolute but outside the repo — nothing to check
+            # Judged after the rebase, not before: the parent of `<repo>/*.patch`
+            # is the repo root, which rebases to `.` — a pattern that names
+            # the base itself, never a path under it (agent-loopholes-407fc703).
+            if rel in ("", ".", "/"):
+                continue
             for base in bases:
                 if any(_hit_in_agents(hit, agents_dir) for hit in _shell_glob(base, rel)):
                     return True

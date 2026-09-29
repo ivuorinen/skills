@@ -7336,3 +7336,50 @@ def test_guard_deadline_falls_back_to_a_timer_without_setitimer(monkeypatch):
     with lib.guard_deadline("probe guard", 7):
         assert started[0].running and started[0].daemon and started[0].seconds == 7
     assert not started[0].running
+
+
+# ── agent-loopholes-407fc703: a glob directly under the repo root crashed on 3.12 ──
+
+
+def _glob_like_python_3_12(monkeypatch):
+    """Make `Path.glob(".")` raise IndexError, as CPython 3.12 does, whatever
+    interpreter runs the suite. 3.14 raises ValueError there, which the guard
+    already caught, so a suite run only under 3.14 never saw the crash that the
+    hook — run by uv under the project's 3.12 venv — hit on every such call."""
+    original = Path.glob
+
+    def glob(self, pattern, *args, **kwargs):
+        if str(pattern) in ("", "."):
+            raise IndexError("tuple index out of range")
+        return original(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", glob)
+
+
+def test_deny_agents_shell_glob_swallows_the_python_3_12_index_error(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    _glob_like_python_3_12(monkeypatch)
+    assert mod._shell_glob(mod._REPO_ROOT, ".") == []
+
+
+def test_deny_agents_never_globs_the_repo_root_itself(monkeypatch):
+    """The `.` check ran before an absolute token was rebased, so the parent of
+    `<repo>/*.patch` rebased to `.` and reached Path.glob (agent-loopholes-407fc703)."""
+    mod = _load("deny-agents-path-hook")
+    seen: list[str] = []
+    real = mod._shell_glob
+    monkeypatch.setattr(
+        mod, "_shell_glob", lambda base, pattern: seen.append(pattern) or real(base, pattern)
+    )
+    assert mod._references_agents(f"cd /tmp/x && ls {mod._REPO_ROOT}/*.patch") is False
+    assert "*.patch" in seen
+    assert "." not in seen and "" not in seen
+
+
+def test_deny_agents_allows_a_glob_directly_under_the_repo_root(monkeypatch, capsys):
+    """An ordinary absolute glob at the repo root was denied as an internal failure."""
+    mod = _load("deny-agents-path-hook")
+    _glob_like_python_3_12(monkeypatch)
+    command = f"cd /tmp/x && ls {mod._REPO_ROOT}/*.patch"
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)
+    assert capsys.readouterr().err == ""
