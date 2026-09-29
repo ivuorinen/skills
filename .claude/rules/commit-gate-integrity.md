@@ -12,11 +12,17 @@ Never pass `--no-verify` when committing changes to skill files, version
 manifests, or the findings store — it skips the pre-commit validators that guard
 them. A PreToolUse hook (`deny-unsafe-git-hook.py`) denies `--no-verify` and
 `-n` including stacked clusters (`-nm`) and abbreviations git accepts
-(`--no-veri`), `-c core.hooksPath=` and `--config-env` in either form, the same
+(`--no-veri`) — on `git commit` and `git am`, and in its long forms on `merge`,
+`pull`, `rebase` and `cherry-pick`, where `-n` means something else — and
+`git commit-tree`, which writes a commit no hook sees
+(agent-loopholes-4e3689a1). Plain `git am` stays allowed. It also denies
+`-c core.hooksPath=` and `--config-env` in either form, the same
 assignment made through `GIT_CONFIG_*` in the environment, a `git config` write
 to `core.hooksPath` or `alias.*`, and an alias body that resolves to a denied
 call — spelled in the command or already in git config, and including a
-`!`-prefixed body, which is a shell command rather than a git subcommand. It
+`!`-prefixed body, which is a shell command rather than a git subcommand. When
+git config cannot be read, a subcommand that is not a git command is denied,
+since it may be an alias nobody could judge (agent-loopholes-92626f23). It
 also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit` — in front of
 it or exported earlier in the same command — and `pre-commit uninstall`. A
 command nested in `$(...)`, backticks or a subshell is judged as its own stage,
@@ -38,7 +44,7 @@ those are not theoretical:
   rc alias defined by an earlier call, a script the hook sees only by its own
   name (`./deploy.sh`), a string assembled at runtime whose text never appears
   in the command (`eval "$(cat cmd.txt)"`), a variable exported by an earlier
-  call, a pathspec read from a file (`git add --pathspec-from-file`)
+  call
 - a wrapper outside the list `_hooklib._WRAPPERS` names, or a runner that
   takes a command string the guard does not open (`watch`, `su -c`, `ssh`)
 

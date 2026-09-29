@@ -79,14 +79,18 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   cannot be edited around via `sed -i` or a redirect.
   `.claude/rules/enforcement-surface-owner.md` says who makes those edits.
 - matcher `Bash` and the context-mode shell tools — `deny-unsafe-git-hook.py`,
-  which blocks `git` with `--no-verify` or `-n` (stacked clusters and the
-  abbreviations git accepts included), a `-c core.hooksPath=`, `include.path`
+  which blocks `git commit` and `git am` with `--no-verify` or `-n` (stacked
+  clusters and the abbreviations git accepts included), `--no-verify` on
+  `merge`, `pull`, `rebase` and `cherry-pick`, and `git commit-tree`
+  (agent-loopholes-4e3689a1), a `-c core.hooksPath=`, `include.path`
   or `includeIf.*.path` set through `-c`, `--config-env` (either form) or
   `GIT_CONFIG_*`, and `GIT_CONFIG_PARAMETERS` at all
   (agent-loopholes-3736b057), a `git config` write to any of those keys or to
   `alias.*`, an alias whose body
   resolves to any of those (a `!` shell body included, and aliases already in
-  git config judged by their body), a pre-commit skip variable, `HOME` or
+  git config judged by their body — and, when git config cannot be read, any
+  subcommand that is not a git command; agent-loopholes-92626f23), a
+  pre-commit skip variable, `HOME` or
   `XDG_CONFIG_HOME` on `git commit`,
   in front of it or exported earlier in the same command
   (`.claude/rules/commit-gate-integrity.md` names them), `pre-commit uninstall`,
@@ -95,8 +99,9 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   and a push to a protected branch — including one routed there by a glob
   refspec, the bare `:` matching refspec, or `remote.*.push`, `push.default`
   or `branch.*.merge` set through `-c`, the environment or a `git config`
-  write (agent-loopholes-3f71784c). A `git add` pathspec read from a file
-  (`--pathspec-from-file`) is not judged. It reads a command
+  write (agent-loopholes-3f71784c). `git add --pathspec-from-file` is
+  denied, abbreviations included, since its list is not in the command
+  (agent-loopholes-499ec51d). It reads a command
   nested in `$(...)`, backticks or a subshell as its own stage, and judges the
   command behind a wrapper (`env`, `sudo`, `xargs`, …) as well as the wrapper,
   the command string of `sh -c`/`bash -c`/`fish --command`
@@ -144,7 +149,9 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   which denies a script that writes (a git write, a file-changing command,
   `sed -i`, a redirect into a file) after a `cd` or `pushd` that can fail. A
   `cd` counts as guarded by `|| …`, an `&&` chain reaching the write, or an
-  earlier `set -e` that no `set +e` has cleared. What counts as a write is
+  earlier `set -e` that no `set +e` has cleared — except where bash suspends
+  errexit: before `&&` or `||`, in an if/elif/while/until condition, and under
+  `!` (agent-loopholes-45d0747b). What counts as a write is
   `_hooklib.write_targets` and `_hooklib.redirect_targets`, shared with the
   protected-write guard (agent-loopholes-6bb5ff99, agent-loopholes-ff4a37fd).
   Bash is out of scope, since its working directory is the project;
