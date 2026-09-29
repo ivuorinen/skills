@@ -12,6 +12,21 @@ names its own commit and date, so this section's position relative to the
 generated release sections below carries no meaning — release-please inserts
 each new release directly beneath the header above, and these notes stay here.
 
+> **Correction (2026-09-29):** commits `c092f90` ("fix: fence MCP tool errors
+> and tighten tool argument contracts") and `912acbc` ("fix: refuse an empty
+> np_todo_write replacement") make the MCP server refuse inputs v3.1.0
+> accepted: `np_todo_write` with an empty `todos`, `np_list_findings` with a
+> `limit` below 1, `np_task_update` renaming a task to a blank subject, and
+> `np_pr_comments`/`np_pr_status` given a `project_dir` outside the root
+> alongside `repo`. `/nitpicker contract` rates stricter validation on an
+> existing input as breaking. These are deliberately typed `fix:` and carry no
+> breaking marker: each refused input was a defect rather than a use — the
+> empty list silently wiped every tracked task, a zero limit returned an empty
+> listing reported as success, a blank subject left a step with no name, and
+> the `project_dir` was accepted and then ignored. A client that sent one
+> of them now gets an `isError` result naming the parameter
+> (contract-054d930b).
+>
 > **Correction (2026-09-28):** 3.1.0 listed five ruff bumps (#121, #122, #127,
 > #130, #138) under Bug Fixes. Each changes only dev tooling, so they are
 > chores and now sit under Miscellaneous Chores. #138 was retitled `chore` after
