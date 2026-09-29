@@ -7,7 +7,8 @@
 1. `git commit --no-verify` / `-n` skips the pre-commit validators that guard
    skill files, the version manifests, and the findings store
    (.claude/rules/commit-gate-integrity.md, which states no in-session hook
-   enforces it).
+   enforces it). The same holds for `--no-verify` on merge, pull, rebase,
+   cherry-pick and am, and for `git commit-tree`, which runs no hook at all.
 2. `git push` onto a protected branch
    (skills/nitpicker/commands/cr.md Step 6: never push directly to main/master).
 3. `git add -A` / `--all` / `.` — staging the whole tree is a recurring source
@@ -49,7 +50,6 @@ from _hooklib import (
 
 REPO_ROOT = repo_root()
 PROTECTED = frozenset({"main", "master"})
-_NO_VERIFY = frozenset({"--no-verify", "-n"})
 # git accepts any UNAMBIGUOUS abbreviation of a long option, so `--no-veri` runs
 # `--no-verify` and a membership test against the full spelling matches neither.
 # Generated from `--no-v` rather than from a shorter stem: `--no-verbose` also
@@ -151,10 +151,15 @@ def _reads_pathspecs_from_file(args: list[str]) -> bool:
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
 _COMMIT_DENIAL = (
-    "  DENIED  git commit --no-verify skips the pre-commit validators that guard\n"
+    "  DENIED  git {sub} --no-verify skips the pre-commit validators that guard\n"
     "          skill files, version manifests, and the findings store.\n"
     "          See .claude/rules/commit-gate-integrity.md — commit without the\n"
     "          flag, or fix what pre-commit reports."
+)
+_COMMIT_TREE_DENIAL = (
+    "  DENIED  git commit-tree writes a commit object without running any hook,\n"
+    "          so the commit-msg and pre-commit checks never see it.\n"
+    "          Use git commit — see .claude/rules/commit-gate-integrity.md."
 )
 _PUSH_DENIAL = (
     "  DENIED  push targets a protected branch (HEAD is '{branch}').\n"
@@ -364,7 +369,7 @@ def _global_config(tokens: list[str], env: dict[str, str] | None = None) -> list
     return pairs
 
 
-def _carries_no_verify(args: list[str]) -> bool:
+def _carries_no_verify(args: list[str], value_shorts: frozenset[str] | None = None) -> bool:
     """True when any argument carries `-n`, stacked, standalone, or abbreviated.
 
     `-nm "msg"` is `--no-verify` plus `-m`, and a membership test against
@@ -372,17 +377,41 @@ def _carries_no_verify(args: list[str]) -> bool:
     which git accepts as an abbreviation of the same option — the cluster scan
     below is entered only when `arg[1] != "-"`, so nothing here saw a long
     option that was not spelled in full.
+
+    `value_shorts` are the subcommand's short options that take the rest of a
+    cluster as their value; `None` means `-n` is not `--no-verify` for this
+    subcommand, so only the long form counts.
     """
     for arg in args:
-        if arg in _NO_VERIFY or arg in _NO_VERIFY_PREFIXES:
+        if arg in _NO_VERIFY_PREFIXES:
+            return True
+        if value_shorts is None:
+            continue
+        if arg == "-n":
             return True
         if len(arg) > 1 and arg[0] == "-" and arg[1] != "-":
             for char in arg[1:]:
                 if char == "n":
                     return True
-                if char in _COMMIT_VALUE_SHORTS:
+                if char in value_shorts:
                     break
     return False
+
+
+# Every subcommand that makes a commit and takes `--no-verify` to skip its
+# hooks, mapped to the short options that consume a cluster's remainder — or
+# to None where `-n` means something else: `--no-stat` on merge, pull and
+# rebase, `--no-commit` on cherry-pick. Judging `commit` alone let `git merge
+# --no-verify` land a commit the commit-msg hooks never saw
+# (agent-loopholes-4e3689a1).
+_NO_VERIFY_SUBCOMMANDS: dict[str, frozenset[str] | None] = {
+    "commit": _COMMIT_VALUE_SHORTS,
+    "am": frozenset("CpS"),
+    "merge": None,
+    "pull": None,
+    "rebase": None,
+    "cherry-pick": None,
+}
 
 
 _CONFIG_WRITE_DENIAL = (
@@ -476,8 +505,12 @@ def _persistent_aliases() -> dict[str, str]:
 
 def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
-    if subcommand == "commit" and _carries_no_verify(args):
-        return _COMMIT_DENIAL
+    if subcommand in _NO_VERIFY_SUBCOMMANDS and _carries_no_verify(
+        args, _NO_VERIFY_SUBCOMMANDS[subcommand]
+    ):
+        return _COMMIT_DENIAL.format(sub=subcommand)
+    if subcommand == "commit-tree":
+        return _COMMIT_TREE_DENIAL
     if subcommand == "config" and (reason := _config_write_denial(args)):
         return reason
     if subcommand == "add":

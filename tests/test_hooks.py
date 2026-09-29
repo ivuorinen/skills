@@ -7459,3 +7459,53 @@ def test_git_guard_denies_add_with_pathspecs_from_a_file(command, monkeypatch, c
 def test_git_guard_allows_add_with_named_pathspecs(command, monkeypatch, capsys):
     _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-4e3689a1: every commit-making subcommand honours no-verify ──
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git merge --no-verify feature", "skips the pre-commit"),
+        ("git pull --no-verify origin feature", "skips the pre-commit"),
+        ("git rebase --no-verify main", "skips the pre-commit"),
+        ("git cherry-pick --no-verify abc123", "skips the pre-commit"),
+        ("git am --no-verify 0001.patch", "skips the pre-commit"),
+        ("git am -n 0001.patch", "skips the pre-commit"),
+        ("git am -3n 0001.patch", "skips the pre-commit"),
+        ("git am --no-veri 0001.patch", "skips the pre-commit"),
+        ("git commit-tree HEAD^{tree} -p HEAD -m x", "commit-tree"),
+        ("echo x | git commit-tree 4b825dc", "commit-tree"),
+    ],
+)
+def test_git_guard_denies_no_verify_on_every_commit_making_subcommand(
+    command, expected, monkeypatch, capsys
+):
+    """`_carries_no_verify` was applied to `commit` alone, so a merge, am, rebase,
+    cherry-pick or pull could skip the commit-msg hooks, and `commit-tree`
+    writes a commit that runs no hook at all (agent-loopholes-4e3689a1)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert expected in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git am 0001.patch 0002.patch",
+        "git am -3 0001.patch",
+        "git merge -n feature",
+        "git merge --no-ff feature",
+        "git pull -n origin feature",
+        "git rebase -n main",
+        "git cherry-pick -n abc123",
+        "git merge --verify feature",
+    ],
+)
+def test_git_guard_allows_what_is_not_no_verify(command, monkeypatch, capsys):
+    """Controls: plain `git am` (how the owner applies patch series), and `-n`
+    where it means --no-stat (merge, pull, rebase) or --no-commit (cherry-pick)."""
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
