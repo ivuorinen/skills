@@ -7566,3 +7566,51 @@ def test_git_guard_allows_builtins_when_aliases_are_unreadable(
     _alias_lookup_fails(monkeypatch, failure)
     _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── perf-a458886e: the stop reminder dedupes changed paths in linear time ──
+
+
+class _CountingPath(str):
+    """A path that counts the equality comparisons made against it."""
+
+    compared = 0
+
+    def __eq__(self, other):
+        type(self).compared += 1
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
+
+
+def test_stop_reminder_dedupes_without_list_membership(monkeypatch, capsys):
+    """`p not in paths` compared each path against every one kept so far, so a
+    mass change cost seconds per turn end (perf-a458886e). Dedupe by hash: the
+    comparisons stay near zero, first-seen order holds, and a path dirty in two
+    scopes is listed once."""
+    mod = _load("stop-reminder")
+    staged = [f"skills/x/commands/c{i}.md" for i in range(1000)]
+    unstaged = [f"skills/x/commands/w{i}.md" for i in range(1000)]
+    worktree = [staged[5], *unstaged, staged[0]]
+
+    def _run_git(argv, *a, **k):
+        paths = staged if "--cached" in argv else worktree if "diff" in argv else []
+
+        class _Out:
+            def split(self, _sep):
+                return [_CountingPath(p) for p in [*paths, ""]]
+
+        class _Result:
+            returncode = 0
+            stdout = _Out()
+            stderr = ""
+
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_git)
+    monkeypatch.setattr(_CountingPath, "compared", 0)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    mod.main()
+    assert _CountingPath.compared < len(staged) + len(worktree)
+    listed = [line.strip() for line in _stop_output(capsys)[0].splitlines() if "skills/" in line]
+    assert listed == [*staged, *unstaged]

@@ -84,10 +84,13 @@ def main() -> None:
                 f"git exited {result.returncode}: {result.stderr.strip()[:200]}",
                 "git status",
             )
-        paths += [p for p in result.stdout.split("\0") if p and p not in paths]
+        paths += [p for p in result.stdout.split("\0") if p]
+    # Deduped by hash, first-seen order kept: `p not in paths` compared every
+    # path against every one kept so far, seconds per turn end after a mass
+    # change (perf-a458886e).
     changed = [
         f
-        for f in paths
+        for f in dict.fromkeys(paths)
         if "skills/" in f and (f.endswith("SKILL.md") or ("/commands/" in f and f.endswith(".md")))
     ]
     if changed:
