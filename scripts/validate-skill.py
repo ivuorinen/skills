@@ -14,7 +14,7 @@ Usage: validate-skill.py [SKILL.md ...]
 With no arguments, validates skills/*/SKILL.md and .claude/skills/*/SKILL.md.
 `--help`/`-h` is answered before any argument is read as a path (audit-24b0f17a).
 
-Exit codes: 0 valid, 1 validation errors, 2 usage error.
+Exit codes: 0 valid, 1 validation errors or no SKILL.md discovered, 2 usage error.
 """
 
 import importlib.util
@@ -157,12 +157,33 @@ _UNSAFE_SHELL_RE = re.compile(
     # bounded for the same backtracking reason as the env run below.
     r"(?:(?:sudo|doas)(?:\s+-\S+){0,8}\s+(?:\S*/)?)?"
     r"(?:env(?:\s+\S+){0,8}?\s+(?:\S*/)?)?"
-    r"(?:ba|z|k|da)?sh\b"
-    # Either flag order, and a root glob: `rm -rf /*` deletes as much as
-    # `rm -rf /` and slipped through a pattern demanding space or end after `/`
-    # (audit-f086be8d).
-    r"|rm\s+-(?:rf|fr)\s+/(?:\*|\s|$)"  # delete from root
-    r"|chmod\s+777"
+    # A shell takes any arguments, but another interpreter executes the pipe
+    # only when it has no program of its own: `| python3` and `| perl -` run
+    # the download, while `| python3 -m json.tool` and `| perl -ne '…'` read it
+    # as data. So an interpreter counts only with bare flags up to the end of
+    # the command (audit-9ab4d785).
+    r"(?:(?:ba|z|k|da)?sh\b"
+    r"|(?:python[\d.]*|perl|ruby|node|php)(?:\s+-[A-Za-z]*){0,4}\s*(?:$|[;&|)]))"
+    # Process and command substitution feed a download to a shell with no pipe
+    # at all: `bash <(curl …)`, `source <(curl …)`, `sh -c "$(curl …)"`.
+    # `cat <(curl …)` and `echo "$(curl …)"` do not execute, so the consumer
+    # has to be a shell or `source`/`.` (audit-9ab4d785).
+    r"|(?:\b(?:(?:ba|z|k|da)?sh|source)|(?<!\S)\.)"
+    r"(?:\s+-\S+){0,4}\s+(?:<\(|[\"']?\$\(|[\"']?`)\s*(?:curl|wget)\b"
+    # Recursive delete of root or home, whatever spells the recursion: a flag
+    # cluster in any case and order (`-Rf`, `-rfv`, `-vfr`), split flags
+    # (`-r -f`), the long form, or `--` and `--no-preserve-root` in the run.
+    # Enumerating spellings kept missing the next one (audit-f086be8d, then
+    # audit-9ab4d785), so the pattern names the property instead: one flag in
+    # the run is recursive. `-f` is not required — `rm -r /` destroys the same
+    # tree. The target is the root or home itself, optionally with `/` or `/*`,
+    # so `rm -rf /tmp/x` and `rm -rf ~/tmp` stay clean. Both flag runs are
+    # bounded like the env run above, so a long run cannot backtrack.
+    r"|\brm(?:\s+-\S*){0,8}?\s+-(?:[A-Za-z]*[rR][A-Za-z]*|-recursive)(?:\s+-\S*){0,8}\s+"
+    r"[\"']?(?:/|~|\$HOME|\$\{HOME\})[\"']?/?\*?[\"']?(?:$|[\s;&|)])"
+    # World-writable, recursive or not, with or without the leading 0 — a
+    # bare `chmod\s+777` let `chmod -R 777` and `chmod 0777` past.
+    r"|\bchmod(?:\s+-\S+){0,8}\s+0?777\b"
     r"|:\(\)\s*\{.*\|.*&\s*\}"  # fork bomb
     r"|>\s*/dev/sd[a-z]"  # write to a raw device
     r"|~/\.ssh|~/\.aws|id_rsa|/etc/shadow"  # credential material
@@ -278,8 +299,20 @@ def resolve_scalar(inline: str, nested: list[str]) -> str:
     folded form for long descriptions, so this shape has to resolve.
 
     `>` folds line breaks to spaces, `|` keeps them.
+
+    A quoted inline value is unquoted: the quotes are YAML syntax, and this
+    repo mandates single quotes around a description holding ': ', so measuring
+    them rejected a 1024-char description as 1026 (audit-e1a75cf6). `''` is a
+    single-quoted apostrophe; `\\"` and `\\\\` are the double-quoted escapes
+    a description plausibly carries. The rest of YAML's double-quoted escapes
+    are not decoded — the ceiling is a length off by one per such escape, far
+    closer than the quotes it replaces.
     """
     if inline not in _BLOCK_INDICATORS:
+        if len(inline) >= 2 and inline[0] == inline[-1] == "'":
+            return inline[1:-1].replace("''", "'")
+        if len(inline) >= 2 and inline[0] == inline[-1] == '"':
+            return re.sub(r"\\([\"\\])", r"\1", inline[1:-1])
         return inline
     joiner = "\n" if inline[0] == "|" else " "
     return joiner.join(ln.strip() for ln in nested).strip()
@@ -842,7 +875,8 @@ def main() -> None:
 
     targets = _path_args(sys.argv[1:])
 
-    if not targets:
+    discovered = not targets
+    if discovered:
         repo_root = Path(__file__).parent.parent
         targets = sorted(
             [*repo_root.glob("skills/*/SKILL.md"), *repo_root.glob(".claude/skills/*/SKILL.md")]
@@ -853,9 +887,14 @@ def main() -> None:
         print(f"  SKIP   {name} (vendored — not authored by us, not validated)")
 
     if not targets:
-        if not skipped:
-            print("No SKILL.md files found.")
-        sys.exit(0)
+        # Default discovery that finds nothing we authored has validated
+        # nothing, so it fails: if the skills directory moves, `make validate`
+        # must not go green over an empty set (audit-07dcd473). Named paths
+        # that were all vendored are a deliberate skip, and still pass.
+        if not discovered:
+            sys.exit(0)
+        print("No SKILL.md files found.", file=sys.stderr)
+        sys.exit(1)
 
     for t in targets:
         validate(t, errors, warnings)

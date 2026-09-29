@@ -217,10 +217,32 @@ def test_a_marker_inside_a_string_is_not_a_marker(tool, tmp_path):
     assert [(m[0], m[1]) for m in found] == [("pkg/a.py", 3)]
 
 
-@pytest.mark.parametrize("spelling", ["# nosemgrep: r", "# nosem: r", "#nosemgrep"])
+@pytest.mark.parametrize(
+    "spelling",
+    # audit-15247a0d: opengrep suppresses under `# NOSEMGREP` too, so an
+    # uppercase marker left behind after its call went unreported as stale.
+    ["# nosemgrep: r", "# nosem: r", "#nosemgrep", "# NOSEMGREP: r", "# NoSem: r"],
+)
 def test_both_accepted_spellings_are_recognised(tool, tmp_path, spelling):
     (tmp_path / "pkg" / "a.py").write_text(f"x = 1  {spelling}\n", encoding="utf-8")
     assert len(tool._markers_in(tool._scanned_sources())) == 1
+
+
+@pytest.mark.parametrize(
+    ("comment", "expected"),
+    [
+        ("# noqa: S603  # nosemgrep: r", 1),  # a second `#` after whitespace opens a marker
+        ("# the rule honours `# NOSEMGREP` too", 0),  # quoted inside prose
+        ("# reason; nosemgrep: r", 0),  # opengrep ignores a mid-comment marker
+    ],
+)
+def test_only_a_marker_that_opens_a_comment_counts(tool, tmp_path, comment, expected):
+    """Matching anywhere in the comment read this tool's own explanation, which
+    quotes `# NOSEMGREP`, as a stale suppression once the match became
+    case-insensitive (audit-15247a0d). opengrep honours the marker only where a
+    `#` starts it, so prose that mentions the marker is not one."""
+    (tmp_path / "pkg" / "a.py").write_text(f"x = 1  {comment}\n", encoding="utf-8")
+    assert len(tool._markers_in(tool._scanned_sources())) == expected
 
 
 def test_a_file_that_cannot_be_tokenized_is_an_error(tool, tmp_path):

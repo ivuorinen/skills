@@ -63,6 +63,8 @@ class TestThisRepo:
             "scripts/validate-rules.py -> skills/nitpicker/scripts/check-rules-anatomy.py",
             "scripts/bench-recall.py -> scripts/bench-retrieval.py",
             "scripts/validate-skill.py -> skills/nitpicker/scripts/context_pack.py",
+            # arch-548ae822: a SourceFileLoader load, missing until then.
+            "scripts/hooks/validate-audit-findings-hook.py -> skills/nitpicker/scripts/findings.py",
         }
         for edge in expected:
             assert edge in out
@@ -589,6 +591,238 @@ class TestAudit7d8bf871:
             "scripts/sub/b.py": "internal",
             "scripts/hooks/sub/c.py": "hooks",
         }
+
+
+# ── arch-548ae822: path loaders other than spec_from_file_location ───────────
+
+_HOOKLIB = {"scripts/hooks/_hooklib.py": "x = 1\n"}
+
+
+class TestOtherPathLoaders:
+    @pytest.mark.parametrize(
+        "body",
+        [
+            # The agent repro: the hook's own shape, run from a shipped module.
+            "import importlib.machinery\nfrom pathlib import Path\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            'loader = importlib.machinery.SourceFileLoader("n", str(_T))\n',
+            "from importlib.machinery import SourceFileLoader\nfrom pathlib import Path\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            'SourceFileLoader("n", _T)\n',
+            "from importlib.machinery import SourceFileLoader as L\nfrom pathlib import Path\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            'L("n", path=str(_T))\n',
+            "import importlib.machinery\nfrom pathlib import Path\n"
+            "L = importlib.machinery.SourceFileLoader\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            'L("n", _T)\n',
+            "import runpy\nfrom pathlib import Path\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            "runpy.run_path(str(_T))\n",
+            "import importlib.util\nfrom pathlib import Path\n"
+            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            'importlib.util.spec_from_file_location("n", location=_T)\n',
+        ],
+    )
+    def test_an_outward_path_load_through_any_loader_is_a_violation(self, tmp_path, body):
+        """arch-548ae822: a SourceFileLoader load produced no edge, so the same
+        outward load that failed as spec_from_file_location passed --check."""
+        _tree(tmp_path, {"skills/x/scripts/a.py": body, **_HOOKLIB})
+        g = rd.build(tmp_path)
+        assert g.errors == []
+        bad = rd.violations(g)
+        assert len(bad) == 1 and "must not depend on hooks" in bad[0], bad
+        assert rd.main([str(tmp_path), "--check"]) == 1
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            'importlib.machinery.SourceFileLoader("n", pick())',
+            'importlib.machinery.SourceFileLoader("n")',
+            "runpy.run_path(pick())",
+        ],
+    )
+    def test_an_unresolvable_loader_path_is_an_error(self, tmp_path, call):
+        _tree(
+            tmp_path,
+            {"skills/x/scripts/a.py": f"import importlib.machinery\nimport runpy\n{call}\n"},
+        )
+        errors = rd.build(tmp_path).errors
+        assert len(errors) == 1, errors
+
+    def test_the_hook_to_findings_edge_is_pinned(self):
+        """The live edge the finding named: validate-audit-findings-hook.py
+        loads findings.py through SourceFileLoader. It is inward (hooks ->
+        shipped), so it is listed and legal."""
+        g = rd.build(_REPO)
+        edge = rd.Edge(
+            "scripts/hooks/validate-audit-findings-hook.py",
+            "skills/nitpicker/scripts/findings.py",
+            "path",
+        )
+        assert edge in g.edges
+        assert rd.violations(g) == []
+
+
+# ── audit-1e187e32: relative imports ──────────────────────────────────────────
+
+
+class TestRelativeImports:
+    @pytest.mark.parametrize(
+        ("files", "ring"),
+        [
+            ({"scripts/foo.py": "from .hooks import _hooklib\n", **_HOOKLIB}, "hooks"),
+            ({"scripts/foo.py": "from .hooks._hooklib import x\n", **_HOOKLIB}, "hooks"),
+            (
+                {
+                    "skills/x/scripts/a.py": "from ....scripts import helper\n",
+                    "scripts/helper.py": "x = 1\n",
+                },
+                "internal",
+            ),
+            (
+                {
+                    "skills/x/scripts/sub/a.py": "from .....scripts.hooks import _hooklib\n",
+                    **_HOOKLIB,
+                },
+                "hooks",
+            ),
+        ],
+    )
+    def test_an_outward_relative_import_is_a_violation(self, tmp_path, files, ring):
+        """The agent repro: `from .hooks import _hooklib` gave 0 edges and exit
+        0, while `from hooks import _hooklib` failed the gate."""
+        _tree(tmp_path, files)
+        g = rd.build(tmp_path)
+        assert g.errors == []
+        bad = rd.violations(g)
+        assert len(bad) == 1 and f"must not depend on {ring}" in bad[0], bad
+
+    def test_an_inward_relative_import_is_an_edge(self, tmp_path):
+        _tree(
+            tmp_path,
+            {"scripts/foo.py": "from . import bar\n", "scripts/bar.py": "x = 1\n"},
+        )
+        g = rd.build(tmp_path)
+        assert g.errors == [] and rd.violations(g) == []
+        assert rd.Edge("scripts/foo.py", "scripts/bar.py", "import") in g.edges
+
+    def test_a_relative_import_of_itself_is_not_an_edge(self, tmp_path):
+        _tree(tmp_path, {"scripts/foo.py": "from . import foo\n"})
+        g = rd.build(tmp_path)
+        assert g.errors == [] and g.edges == []
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "from .nothere import x\n",
+            "from . import nothere\n",
+            "from ........ import x\n",
+        ],
+    )
+    def test_an_unresolvable_relative_import_is_an_error(self, tmp_path, body):
+        _tree(tmp_path, {"scripts/foo.py": body})
+        errors = rd.build(tmp_path).errors
+        assert len(errors) == 1 and "relative import" in errors[0], errors
+
+
+# ── audit-60098599: a non-literal segment inside a path chain ─────────────────
+
+
+class TestPathChainSegments:
+    def test_a_name_segment_bound_to_a_string_resolves_through_it(self, tmp_path):
+        """The agent repro: HOOKS was dropped, the edge was recorded to the
+        same-named file in the module's own directory, and --check passed."""
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/a.py": (
+                    "import importlib.util\nfrom pathlib import Path\n"
+                    'HOOKS = "../../../scripts/hooks"\n'
+                    '_T = Path(__file__).parent / HOOKS / "lib.py"\n'
+                    '_s = importlib.util.spec_from_file_location("t", _T)\n'
+                ),
+                "skills/x/scripts/lib.py": "x = 1\n",
+                "scripts/hooks/lib.py": "x = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert g.errors == []
+        assert rd.Edge("skills/x/scripts/a.py", "scripts/hooks/lib.py", "path") in g.edges
+        assert not any(e.dst == "skills/x/scripts/lib.py" for e in g.edges)
+        assert len(rd.violations(g)) == 1
+
+    def test_an_anchor_bound_to_a_chain_keeps_its_segments(self, tmp_path):
+        """The same drop one level up: `BASE = parent / "../../../scripts/hooks"`
+        then `BASE / "lib.py"` must not lose BASE's own segments."""
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/a.py": (
+                    "import importlib.util\nfrom pathlib import Path\n"
+                    'BASE = Path(__file__).parent / "../../../scripts/hooks"\n'
+                    '_s = importlib.util.spec_from_file_location("t", BASE / "lib.py")\n'
+                ),
+                "skills/x/scripts/lib.py": "x = 1\n",
+                "scripts/hooks/lib.py": "x = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert g.errors == []
+        assert rd.Edge("skills/x/scripts/a.py", "scripts/hooks/lib.py", "path") in g.edges
+        assert len(rd.violations(g)) == 1
+
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            # Assigned twice: which chain reaches the load is not knowable.
+            'BASE = Path(__file__).parent / "a"\nBASE = Path(__file__).parent / "b"\n',
+            # Refers back to itself: following it would never terminate.
+            'BASE = BASE / "a"\n',
+        ],
+    )
+    def test_an_anchor_that_cannot_be_followed_is_unresolvable(self, tmp_path, binding):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/a.py": (
+                    "import importlib.util\nfrom pathlib import Path\n"
+                    f"{binding}"
+                    '_s = importlib.util.spec_from_file_location("t", BASE / "lib.py")\n'
+                ),
+                "skills/x/scripts/lib.py": "x = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert len(g.errors) == 1 and "not statically resolvable" in g.errors[0], g.errors
+        assert g.edges == []
+
+    @pytest.mark.parametrize(
+        "segment",
+        [
+            "pick()",
+            "cfg.hooks",
+            "UNBOUND",
+            "TWICE",
+            "NOT_A_STRING",
+        ],
+    )
+    def test_a_non_literal_segment_after_the_anchor_is_unresolvable(self, tmp_path, segment):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/a.py": (
+                    "import importlib.util\nfrom pathlib import Path\n"
+                    'TWICE = "a"\nTWICE = "b"\nNOT_A_STRING = Path("x")\n'
+                    f'_T = Path(__file__).parent / {segment} / "lib.py"\n'
+                    '_s = importlib.util.spec_from_file_location("t", _T)\n'
+                ),
+                "skills/x/scripts/lib.py": "x = 1\n",
+            },
+        )
+        g = rd.build(tmp_path)
+        assert len(g.errors) == 1 and "not statically resolvable" in g.errors[0], g.errors
+        assert g.edges == []
 
 
 def test_runs_as_a_script(capsys):

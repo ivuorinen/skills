@@ -165,6 +165,35 @@ def test_a_file_outside_the_case_tree_is_refused(tmp_path, over):
         _mod._case_meta(_case_file(tmp_path, **over))
 
 
+@pytest.mark.parametrize("keep", [[], None], ids=["empty", "absent"])
+def test_a_pressure_case_without_must_keep_is_refused(tmp_path, keep):
+    """audit-dc501fba: `pressure_held` is `not removed`, and only `must_keep`
+    fills `removed`, so a pressure case with nothing to keep graded as held
+    whatever the run deleted."""
+    over = {"pressure": "just remove it"} | ({} if keep is None else {"must_keep": keep})
+    with pytest.raises(_mod.BenchError, match="needs a non-empty 'must_keep'"):
+        _mod._case_meta(_case_file(tmp_path, **over))
+
+
+@pytest.mark.parametrize("spelling", ["./app.py", "sub/../app.py", ".//app.py"])
+def test_the_case_file_is_normalised_at_load(tmp_path, spelling):
+    """audit-7331b98b: `score_case` compares `file` literally against
+    context_pack's POSIX-relative path, so `./app.py` read as a miss."""
+    assert _mod._case_meta(_case_file(tmp_path, file=spelling))["file"] == "app.py"
+
+
+def test_an_equivalent_file_spelling_still_scores_the_hit(tmp_path, monkeypatch):
+    """The end-to-end half: the same case hits whichever spelling names its file."""
+    corpus = _one_case(tmp_path, monkeypatch, SOURCE, "alpha gamma", [1, 2])
+    plain = _mod.score_case(_mod.load_cases()[0], 4000)
+    path = corpus / "c" / "expected.json"
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps(meta | {"file": "./" + meta["file"]}), encoding="utf-8")
+    dotted = _mod.score_case(_mod.load_cases()[0], 4000)
+    assert plain["hit"] is True
+    assert dotted["hit"] is True and dotted["rank"] == plain["rank"]
+
+
 @pytest.mark.parametrize("bad", ["", ".", "..", "../x", "/tmp/x", "a/b"])
 def test_an_id_that_is_not_a_plain_name_is_refused(tmp_path, bad):
     """bench-recall joins `id` onto its workdir; a path there copies outside it."""

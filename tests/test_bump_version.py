@@ -264,6 +264,33 @@ class TestMain:
         assert market["plugins"][0]["version"] == "1.1.0"
         assert manifest["."] == "1.1.0"
 
+    def test_next_steps_stage_by_path_and_leave_tags_to_release_please(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """audit-5dcff502: the printed steps ran `git add -A`, which the git
+        guard denies, and hand-wrote a CHANGELOG entry and a tag that collide
+        with release-please's. They now name every manifest by path."""
+        self._make_repo(tmp_path)
+        mod = _load_mod()
+        mod.__dict__["REPO_ROOT"] = tmp_path
+        monkeypatch.setattr(mod.shutil, "which", lambda _n: None)
+        monkeypatch.setattr(sys, "argv", ["bump-version.py", "minor"])
+        assert mod.main() == 0
+        steps = capsys.readouterr().out.split("Next steps:", 1)[1]
+        assert "git add -A" not in steps
+        assert "git tag" not in steps and "--tags" not in steps
+        assert "Add an entry to CHANGELOG" not in steps
+        assert "release-please" in steps
+        for rel_path in ["pyproject.toml", *(p for p, _ in mod.FILES), "uv.lock"]:
+            assert rel_path in steps, rel_path
+
+    def test_the_docstring_documents_every_exit_code(self):
+        """audit-5dcff502: `main` exits 1 on a missing [project] version, and the
+        docstring listed only 0 and 2."""
+        doc = _load_mod().__doc__
+        assert doc is not None
+        assert all(f"{code} " in doc.split("Exit codes:", 1)[1] for code in ("0", "1", "2"))
+
     def test_main_unknown_part_is_a_usage_error(self, tmp_path, monkeypatch, capsys):
         """audit-24b0f17a: a usage error is exit 2 on stderr, not 1 on stdout."""
         self._make_repo(tmp_path)

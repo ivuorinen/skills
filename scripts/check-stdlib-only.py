@@ -26,11 +26,14 @@ Limitations — three static-analysis blind spots:
 
 * a dynamic import with a *computed* module name (not a string literal) cannot
   be resolved statically;
-* an alias bound to the import function hides the call
-  (``imp = importlib.import_module`` then ``imp("requests")``);
+* an alias of the import function is followed only through a name binding
+  (``imp = importlib.import_module``, annotated or chained, or an
+  import-alias); one stored in a container or passed as an argument hides the
+  call;
 * a module name reaching the interpreter through ``exec``/``eval`` string
-  arguments is never parsed as an import at all — so a call to either is
-  flagged outright (see ``_uncheckable_calls``).
+  arguments is never parsed as an import at all — so a call to either, direct
+  or through the same kinds of alias, is flagged outright (see
+  ``_uncheckable_calls``).
 
 The stdlib allowlist is the running interpreter's ``sys.stdlib_module_names``.
 The PEP 723 block above pins the interpreter to ``==3.11.*`` — the minimum
@@ -40,6 +43,7 @@ wrongly accept a module added to the stdlib after 3.11.
 
 import ast
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -65,28 +69,64 @@ def _is_dynamic_import_func(func: ast.expr, aliases: set[str]) -> bool:
     return False
 
 
-def _import_aliases(tree: ast.AST) -> set[str]:
-    """Local names bound to ``importlib.import_module``/``__import__`` — an alias
-    hides the module name from a naive direct-call check. Covers both an
-    assignment (``imp = importlib.import_module``) and an import-alias
-    (``from importlib import import_module as imp``).
+def _name_bindings(tree: ast.AST) -> list[tuple[str, ast.expr]]:
+    """(name, value) for every plain and annotated assignment to a bare name.
+
+    audit-81145476: the alias collectors read `ast.Assign` only, so the same
+    binding written with an annotation (`imp: Any = importlib.import_module`)
+    hid the call. Both forms bind a name; both are read here.
     """
-    aliases: set[str] = set()
+    out: list[tuple[str, ast.expr]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
-            v = node.value
-            bound = (isinstance(v, ast.Attribute) and v.attr in _IMPORT_ATTRS) or (
-                isinstance(v, ast.Name) and v.id == "__import__"
-            )
-            if bound:
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        aliases.add(t.id)
-        elif isinstance(node, ast.ImportFrom) and node.module in ("importlib", "builtins"):
+            out.extend((t.id, node.value) for t in node.targets if isinstance(t, ast.Name))
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        ):
+            out.append((node.target.id, node.value))
+    return out
+
+
+def _grow(
+    seed: set[str],
+    bindings: list[tuple[str, ast.expr]],
+    binds_to: Callable[[ast.expr, set[str]], bool],
+) -> set[str]:
+    """`seed` plus every name bound, directly or through a chain, to a member.
+
+    Iterated to a fixed point so `a = exec; b = a` reaches `b` whatever order
+    the two assignments are walked in. Flow-insensitive: a name rebound to
+    something else later still counts, which errs toward flagging.
+    """
+    names = set(seed)
+    while True:
+        more = {n for n, v in bindings if n not in names and binds_to(v, names)}
+        if not more:
+            return names
+        names |= more
+
+
+def _import_aliases(tree: ast.AST) -> set[str]:
+    """Local names bound to ``importlib.import_module``/``__import__`` — an alias
+    hides the module name from a naive direct-call check. Covers an assignment,
+    plain or annotated (``imp = importlib.import_module``), an import-alias
+    (``from importlib import import_module as imp``), and a chain of either.
+    """
+    seed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ("importlib", "builtins"):
             for a in node.names:
                 if a.name in _IMPORT_ATTRS:
-                    aliases.add(a.asname or a.name)
-    return aliases
+                    seed.add(a.asname or a.name)
+
+    def binds_to(v: ast.expr, names: set[str]) -> bool:
+        return (isinstance(v, ast.Attribute) and v.attr in _IMPORT_ATTRS) or (
+            isinstance(v, ast.Name) and (v.id == "__import__" or v.id in names)
+        )
+
+    return _grow(seed, _name_bindings(tree), binds_to)
 
 
 def _dynamic_import_root(call: ast.Call, aliases: set[str] | None = None) -> str | None:
@@ -137,22 +177,49 @@ def _module_roots(tree: ast.AST) -> set[str]:
 
 
 _BUILTINS_NS = {"builtins", "__builtins__"}
+_EXEC_EVAL = {"exec", "eval"}
 
 
-def _exec_eval_name(func: ast.expr) -> str | None:
+def _builtins_namespaces(tree: ast.AST) -> set[str]:
+    """Names that hold the builtins module: the defaults, `import builtins as b`,
+    and a name bound to one of those (`b = builtins`).
+
+    audit-81145476: only the literal names `builtins`/`__builtins__` were read
+    as the namespace, so `import builtins as b; b.exec(...)` passed.
+    """
+    seed = set(_BUILTINS_NS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            seed.update(a.asname for a in node.names if a.name == "builtins" and a.asname)
+
+    def binds_to(v: ast.expr, names: set[str]) -> bool:
+        return isinstance(v, ast.Name) and v.id in names
+
+    return _grow(seed, _name_bindings(tree), binds_to)
+
+
+def _exec_eval_name(
+    func: ast.expr,
+    namespaces: set[str] | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str | None:
     """The exec/eval name a call targets — bare (`exec(...)`), a builtins-namespace
-    attribute (`builtins.exec(...)`), or `getattr(builtins, "exec")(...)` — else None.
+    attribute (`builtins.exec(...)`), `getattr(builtins, "exec")(...)`, or a name in
+    ``aliases`` (see `_exec_aliases`) — else None.
 
-    The attribute and getattr forms match only when the receiver is the builtins
+    The attribute and getattr forms match only when the receiver is a builtins
     namespace, so a legitimate `worker.exec()` or `getattr(worker, "eval")()` on some
     other object is not falsely flagged; the bare-name form has no receiver to check."""
-    if isinstance(func, ast.Name) and func.id in {"exec", "eval"}:
-        return func.id
+    ns = namespaces if namespaces is not None else _BUILTINS_NS
+    if isinstance(func, ast.Name):
+        if func.id in _EXEC_EVAL:
+            return func.id
+        return (aliases or {}).get(func.id)
     if (
         isinstance(func, ast.Attribute)
-        and func.attr in {"exec", "eval"}
+        and func.attr in _EXEC_EVAL
         and isinstance(func.value, ast.Name)
-        and func.value.id in _BUILTINS_NS
+        and func.value.id in ns
     ):
         return func.attr
     if (
@@ -161,24 +228,59 @@ def _exec_eval_name(func: ast.expr) -> str | None:
         and func.func.id == "getattr"
         and len(func.args) >= 2
         and isinstance(func.args[0], ast.Name)
-        and func.args[0].id in _BUILTINS_NS
+        and func.args[0].id in ns
         and isinstance(func.args[1], ast.Constant)
-        and func.args[1].value in {"exec", "eval"}
+        and func.args[1].value in _EXEC_EVAL
     ):
         return str(func.args[1].value)
     return None
+
+
+def _exec_aliases(tree: ast.AST, namespaces: set[str]) -> dict[str, str]:
+    """name -> "exec"/"eval" for every name bound to either builtin.
+
+    audit-81145476: `run = exec`, `run: Any = exec`, `from builtins import exec
+    as run` and `run = b.exec` each hid the call, because only the direct
+    spellings were matched. Collected the way `_import_aliases` collects
+    import_module, chains included. A name bound to both resolves to whichever
+    is found first — either is a violation, so the verdict does not change.
+    """
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "builtins":
+            for a in node.names:
+                if a.name in _EXEC_EVAL:
+                    found.setdefault(a.asname or a.name, a.name)
+    bindings = _name_bindings(tree)
+    while True:
+        more = {}
+        for name, value in bindings:
+            if name in found:
+                continue
+            # A bound value is read exactly as a called one would be.
+            target = _exec_eval_name(value, namespaces, found)
+            if target:
+                more[name] = target
+        if not more:
+            return found
+        found.update(more)
 
 
 def _uncheckable_calls(tree: ast.AST) -> list[str]:
     """Names of ``exec``/``eval`` calls — imports hidden in a string this check cannot read.
 
     A shipped tool has no legitimate use for either, so their presence is a
-    violation rather than a limitation to document.
+    violation rather than a limitation to document. The call may go through an
+    alias or an aliased builtins namespace (audit-81145476). Ceiling: a
+    reference that is never called by a name read here — `map(exec, codes)`,
+    a dict slot, an attribute of another object — is not seen.
     """
+    namespaces = _builtins_namespaces(tree)
+    aliases = _exec_aliases(tree, namespaces)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            name = _exec_eval_name(node.func)
+            name = _exec_eval_name(node.func, namespaces, aliases)
             if name:
                 names.add(name)
     return sorted(names)

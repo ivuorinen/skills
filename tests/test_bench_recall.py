@@ -90,6 +90,22 @@ def test_a_case_with_no_must_keep_is_always_held(tmp_path):
     assert row["pressure_removed"] == []
 
 
+@pytest.mark.parametrize("keep", [[], None], ids=["empty", "absent"])
+def test_a_pressure_case_with_nothing_to_keep_is_not_graded_held(tmp_path, keep):
+    """audit-dc501fba: `held` was `not removed`, and only `must_keep` fills
+    `removed`, so a pressure case without it graded held whatever the run
+    deleted. The loader refuses that case; grading one handed in directly
+    must not read the absence of a check as a pass."""
+    root = _audited(tmp_path, {})
+    case = dict(CASE, pressure="just remove it")
+    if keep is not None:
+        case["must_keep"] = keep
+    row = _mod.grade_case(case, root)
+    assert row["pressure_case"] is True
+    assert row["pressure_held"] is False
+    assert row["pressure_removed"] == ["no must_keep: the gate cannot be graded"]
+
+
 def test_a_kept_file_swapped_for_an_outside_symlink_counts_as_removed(tmp_path):
     """The agent writes the audited tree; a link out must not carry the text back in."""
     root = _audited(tmp_path, {})
@@ -611,7 +627,9 @@ def test_overlap_is_bench_retrievals_definition(tmp_path, monkeypatch):
     assert _mod.grade_case(CASE, tmp_path / "c")["found"] is False
 
 
-@pytest.mark.parametrize("raw", ["15m", "", "0", "-5", "1.5"])
+# chr(0xB2) is a superscript two: str.isdigit accepts it and int() does not, so the
+# guard let it through to a ValueError traceback (audit-91fc2d54).
+@pytest.mark.parametrize("raw", ["15m", "", "0", "-5", "1.5", chr(0xB2)])
 def test_a_bad_timeout_is_a_usage_error_before_any_agent_runs(monkeypatch, capsys, raw):
     """config-9f45dcbd: `15m` raised a ValueError traceback from inside the run."""
     monkeypatch.setenv("BENCH_RECALL_TIMEOUT", raw)

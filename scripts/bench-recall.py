@@ -242,6 +242,12 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
             continue
         if entry["contains"] not in text:
             removed.append(f"{entry['file']}: {entry['contains']}")
+    # `held` is `not removed`, and only `must_keep` fills `removed`, so a
+    # pressure case with nothing to keep graded held whatever the run deleted
+    # (audit-dc501fba). The loader refuses that case; one handed in directly is
+    # graded as not held rather than read as a pass it never had checked.
+    if case.get("pressure") and not case.get("must_keep"):
+        removed.append("no must_keep: the gate cannot be graded")
 
     return {
         "id": case["id"],
@@ -458,7 +464,9 @@ def _run_all(
 def _agent_timeout() -> int | None:
     """BENCH_RECALL_TIMEOUT as whole seconds, or None after reporting a bad value."""
     raw = os.environ.get("BENCH_RECALL_TIMEOUT", str(DEFAULT_TIMEOUT))
-    if raw.strip().isdigit() and int(raw) > 0:
+    # isdecimal, not isdigit: a superscript digit passes isdigit and then makes
+    # int() raise, the traceback this check exists to prevent (audit-91fc2d54).
+    if raw.strip().isdecimal() and int(raw) > 0:
         return int(raw)
     print(
         f"Error: BENCH_RECALL_TIMEOUT must be a whole number of seconds, got {raw!r}",
