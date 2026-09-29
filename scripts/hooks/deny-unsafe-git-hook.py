@@ -12,8 +12,9 @@
    (skills/nitpicker/commands/cr.md Step 6: never push directly to main/master).
 3. `git add -A` / `--all` / `.` — staging the whole tree is a recurring source
    of commits carrying files the change never touched: scratch output, local
-   config, editor artifacts. Explicit pathspecs and `git add -u` (tracked files
-   only) stay allowed.
+   config, editor artifacts. So is `--pathspec-from-file`, whose list the
+   guard cannot see. Explicit pathspecs and `git add -u` (tracked files only)
+   stay allowed.
 4. Switching the hooks off outside a single git option: a `git config` write to
    core.hooksPath or an alias, an alias already in git config whose body breaks
    a mandate, `SKIP=`/`PRE_COMMIT_*` on a commit, and `pre-commit uninstall`.
@@ -127,6 +128,25 @@ def _stages_whole_tree(arg: str) -> bool:
     return (REPO_ROOT / arg).resolve() == REPO_ROOT.resolve()
 
 
+# `--pathspec-from-file` and every abbreviation git accepts for it. Shorter
+# than `--pathspec-fr` is ambiguous with `--pathspec-file-nul`, which git
+# rejects on its own.
+_PATHSPEC_FROM_FILE = frozenset(
+    "--pathspec-from-file"[:n] for n in range(len("--pathspec-fr"), len("--pathspec-from-file") + 1)
+)
+
+
+def _reads_pathspecs_from_file(args: list[str]) -> bool:
+    """True when `git add` takes its pathspecs from a file or stdin.
+
+    The file's contents are not in the command, so nothing here can tell a
+    list of two paths from every path in the tree: `git ls-files -mo | git add
+    --pathspec-from-file=-` staged the whole tree while only positional
+    pathspecs were judged (agent-loopholes-499ec51d).
+    """
+    return any(a.partition("=")[0] in _PATHSPEC_FROM_FILE for a in args)
+
+
 # Push modes that name no refspec and update protected branches regardless of HEAD.
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
@@ -145,6 +165,11 @@ _ADD_DENIAL = (
     "          never touched — scratch output, local config, editor artifacts.\n"
     "          Stage what you actually changed: git add <path> [<path> ...]\n"
     "          `git add -u` restages tracked files only, if that is what you meant."
+)
+_ADD_FROM_FILE_DENIAL = (
+    "  DENIED  `git add --pathspec-from-file` reads its paths from a file the guard\n"
+    "          cannot see, so it can stage the whole tree unjudged.\n"
+    "          Name the paths on the command line: git add <path> [<path> ...]"
 )
 
 
@@ -456,6 +481,8 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
     if subcommand == "config" and (reason := _config_write_denial(args)):
         return reason
     if subcommand == "add":
+        if _reads_pathspecs_from_file(args):
+            return _ADD_FROM_FILE_DENIAL
         staged_all = [a for a in args if _stages_whole_tree(a)]
         if staged_all:
             return _ADD_DENIAL.format(arg=staged_all[0])

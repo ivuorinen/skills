@@ -7426,3 +7426,36 @@ def test_unguarded_cd_guard_keeps_errexit_where_bash_applies_it(code, monkeypatc
     the script under errexit when it fails."""
     _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-499ec51d: pathspecs read from a file are never seen ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git add --pathspec-from-file=/tmp/all",
+        "git add --pathspec-from-file /tmp/all",
+        "git ls-files -mo | git add --pathspec-from-file=-",
+        "git ls-files -z -mo | git add --pathspec-file-nul --pathspec-from-file=-",
+        "git add --pathspec-fr=/tmp/all",
+        "git -C . add --pathspec-from-fil /tmp/all",
+    ],
+)
+def test_git_guard_denies_add_with_pathspecs_from_a_file(command, monkeypatch, capsys):
+    """Only positional pathspecs were judged, so a file listing every path staged
+    the whole tree past a guard documented as catching every spelling
+    (agent-loopholes-499ec51d). git accepts any unambiguous abbreviation."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "--pathspec-from-file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git add scripts/x.py", "git add -u", "git restore --pathspec-f=x", "git add --patch f"],
+)
+def test_git_guard_allows_add_with_named_pathspecs(command, monkeypatch, capsys):
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
