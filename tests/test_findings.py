@@ -380,6 +380,35 @@ def test_location_fingerprint_returns_none_rather_than_raising(tmp_path, spec):
     assert findings.location_fingerprint(repo, spec) is None
 
 
+@pytest.mark.parametrize("brk", ["\x0c", "\x1c", "\u2028", "\x85"])
+def test_location_fingerprint_numbers_lines_by_newline_only(tmp_path, brk):
+    """audit-3837502b: `splitlines()` also breaks on form feeds, \\x1c-\\x1e and
+    U+2028/U+0085, so a cited range drifted off the lines grep and an editor
+    number — and a fingerprint of `path:3` hashed a different line than the one
+    the finding quoted. Line 3 here is `third` by every newline-counting tool."""
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    (repo / "src" / "brk.py").write_text(
+        f"first{brk}still first\nsecond\nthird\n", encoding="utf-8"
+    )
+    (repo / "src" / "plain.py").write_text("x\ny\nthird\n", encoding="utf-8")
+    assert findings.location_fingerprint(repo, "src/brk.py:3") == findings.location_fingerprint(
+        repo, "src/plain.py:3"
+    )
+    assert findings.location_fingerprint(repo, "src/brk.py:4") is None
+
+
+def test_location_fingerprint_counts_a_last_line_with_no_final_newline(tmp_path):
+    # Only a final newline adds the trailing empty element that is dropped; a
+    # file ending mid-line keeps its last line citable.
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    (repo / "src" / "open.py").write_text("x\ny\nthird", encoding="utf-8")
+    (repo / "src" / "closed.py").write_text("x\ny\nthird\n", encoding="utf-8")
+    assert findings.location_fingerprint(repo, "src/open.py:3") == findings.location_fingerprint(
+        repo, "src/closed.py:3"
+    )
+    assert findings.location_fingerprint(repo, "src/open.py:4") is None
+
+
 def test_location_fingerprint_skips_a_binary_file(tmp_path):
     repo, _ = _repo_with_store(tmp_path, SOURCE)
     (repo / "src" / "blob.bin").write_bytes(b"\xff\xfe\x00")
@@ -3618,6 +3647,98 @@ def test_resolve_finding_still_refuses_a_malformed_date_for_api_callers(tmp_path
     path = _new(tmp_path)
     with pytest.raises(findings.FindingError, match="invalid --date"):
         findings.resolve_finding(tmp_path, path.stem, "fixed", "n", date="2026/01/01")
+
+
+class TestImpossibleDates:
+    """audit-e351bd48: dates were checked for shape only, so `2026-13-45` was
+    accepted into the append-only ledger and `validate` reported it consistent."""
+
+    @pytest.mark.parametrize("date", ["2026-13-45", "2026-02-30", "2026-00-10", "2026-04-31"])
+    def test_resolve_refuses_an_impossible_date(self, tmp_path, date):
+        path = _new(tmp_path)
+        with pytest.raises(findings.FindingError, match="invalid --date"):
+            findings.resolve_finding(tmp_path, path.stem, "fixed", "n", date=date)
+        assert path.exists()
+        assert findings.read_ledger(tmp_path) == []
+
+    def test_cli_resolve_exits_two_on_an_impossible_date(self, tmp_path, capsys):
+        path = _new(tmp_path)
+        argv = ["resolve", "--root", str(tmp_path), path.stem, "--status", "fixed", "--notes", "n"]
+        assert findings.main([*argv, "--date", "2026-13-45"]) == 2
+        assert "invalid --date" in capsys.readouterr().err
+        assert findings.read_ledger(tmp_path) == []
+
+    def test_validate_flags_impossible_dates_in_files_and_ledger(self, tmp_path):
+        path = _new(tmp_path)
+        text = path.read_text(encoding="utf-8").replace("found: 2026-07-08", "found: 2026-02-30")
+        path.write_text(text, encoding="utf-8")
+        assert any("found date" in e for e in findings.validate_file(path))
+
+        other = _new(tmp_path, title="Other finding")
+        findings.resolve_finding(tmp_path, other.stem, "fixed", "done", date="2026-07-09")
+        lp = findings.ledger_path(tmp_path)
+        lp.write_text(
+            lp.read_text(encoding="utf-8")
+            .replace('"resolved": "2026-07-09"', '"resolved": "2026-13-45"')
+            .replace('"found": "2026-07-08"', '"found": "2026-99-01"'),
+            encoding="utf-8",
+        )
+        errors = findings.validate_store(tmp_path)
+        assert any("resolved date '2026-13-45'" in e for e in errors)
+        assert any("found date '2026-99-01'" in e for e in errors)
+
+    def test_validate_flags_an_impossible_resolved_date_in_a_resolved_file(self, tmp_path):
+        fm = {
+            "id": "security-00000000",
+            "auditor": "security",
+            "severity": "low",
+            "category": "security",
+            "area": "a",
+            "status": "fixed",
+            "found": "2026-07-08",
+            "resolved": "2026-13-45",
+        }
+        path = tmp_path / "f.md"
+        path.write_text(findings.render_finding(fm, "T", "## Resolution\nx\n"), "utf-8")
+        assert any("invalid resolved date" in e for e in findings.validate_file(path))
+
+    def test_migrate_v1_skips_an_impossible_fixed_date(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(
+            V1_DOC.replace("Fixed: 2026-07-06", "Fixed: 2026-13-45, then 2026-07-05"), "utf-8"
+        )
+        root = tmp_path / "findings"
+        findings.migrate_v1(src, root)
+        assert findings.resolved_records(root)["N-102"]["resolved"] == "2026-07-05"
+        assert findings.validate_store(root) == []
+
+
+class TestMultiLineTitleAndArea:
+    """audit-8effe9aa: a multi-line title or area is a wrong invocation, and
+    `new` exited 1 for it — the runtime-error code — while a blank one exits 2."""
+
+    @pytest.mark.parametrize(
+        "extra, message",
+        [
+            (["--area", "src/a.py", "a\nb"], "title must be single-line"),
+            (["--area", "src/a.py\nx", "t"], "area must be single-line"),
+            (["--area", "src/a.py", "a\rb"], "title must be single-line"),
+            (["--area", "src/a.py" + chr(0x2028) + "x", "t"], "area must be single-line"),
+        ],
+        ids=["title-lf", "area-lf", "title-cr", "area-line-separator"],
+    )
+    def test_cli_new_exits_two_on_a_multi_line_field(self, tmp_path, capsys, extra, message):
+        base = ["new", "--root", str(tmp_path), "--auditor", "security"]
+        base += ["--severity", "low", "--category", "docs"]
+        assert findings.main(base + extra) == 2
+        assert message in capsys.readouterr().err
+        assert not list(tmp_path.rglob("*.md"))
+
+    @pytest.mark.parametrize("field", ["title", "area"])
+    def test_new_finding_still_refuses_a_multi_line_field_for_api_callers(self, tmp_path, field):
+        with pytest.raises(findings.FindingError, match="single-line"):
+            _new(tmp_path, **{field: "a\nb"})
+        assert not list(tmp_path.rglob("*.md"))
 
 
 def test_cli_new_force_help_names_the_ledger_record_it_removes(capsys):

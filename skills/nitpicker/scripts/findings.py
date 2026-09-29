@@ -359,9 +359,26 @@ def _check_not_blank(**fields: str) -> None:
             raise FindingError(f"{name} must not be blank")
 
 
+def _is_date(value: str) -> bool:
+    """Whether `value` is a real `YYYY-MM-DD` calendar date.
+
+    audit-e351bd48: the shape regex alone accepted `2026-13-45`, which then sat
+    in the append-only ledger with `validate` calling the store consistent.
+    `fromisoformat` rejects the impossible month or day; the regex stays because
+    `fromisoformat` also accepts shapes the store does not write (`20260101`).
+    """
+    if not _DATE.match(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_date(date: str) -> None:
     """Refuse a `--date` that is not `YYYY-MM-DD`; shared by the API and the CLI."""
-    if not _DATE.match(date):
+    if not _is_date(date):
         raise FindingError(f"invalid --date {date!r}: want YYYY-MM-DD")
 
 
@@ -1349,9 +1366,16 @@ def location_fingerprint(repo_root: Path, spec: str) -> str | None:
     if not target.is_relative_to(repo_root.resolve()) or not target.is_file():
         return None
     try:
-        lines = target.read_text(encoding="utf-8").splitlines()
+        text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
+    # `\n` only, after read_text's universal-newline translation: splitlines()
+    # also breaks on form feeds, \x1c-\x1e and U+0085/U+2028, so `path:3` hashed
+    # a different line than the one grep and the finding's quote call line 3
+    # (audit-3837502b). The trailing empty element is what a final newline adds.
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
     start = int(match.group("start"))
     end = int(match.group("end") or start)
     if start < 1 or end < start or start > len(lines):
@@ -1671,7 +1695,7 @@ def validate_file(path: Path, text: str | None = None) -> list[str]:  # noqa: C9
             err(f"missing {key}")
     if status and status not in STATUSES:
         err(f"invalid status {status!r}")
-    if fm.get("found") and not _DATE.match(fm["found"]):
+    if fm.get("found") and not _is_date(fm["found"]):
         err(f"invalid found date {fm['found']!r}")
 
     severity = fm.get("severity", "")
@@ -1708,7 +1732,7 @@ def validate_file(path: Path, text: str | None = None) -> list[str]:  # noqa: C9
         resolved = fm.get("resolved", "")
         if not resolved:
             err("resolved finding missing resolved date")
-        elif not _DATE.match(resolved):
+        elif not _is_date(resolved):
             err(f"invalid resolved date {resolved!r}")
 
     if not title:
@@ -1740,9 +1764,9 @@ def validate_ledger_record(  # noqa: C901
     for key in ("auditor", "found", "resolved", "title"):
         if not rec.get(key):
             err(f"missing {key}")
-    if rec.get("found") and not _DATE.match(str(rec["found"])):
+    if rec.get("found") and not _is_date(str(rec["found"])):
         err(f"invalid found date {rec['found']!r}")
-    if rec.get("resolved") and not _DATE.match(str(rec["resolved"])):
+    if rec.get("resolved") and not _is_date(str(rec["resolved"])):
         err(f"invalid resolved date {rec['resolved']!r}")
     severity = rec.get("severity", "")
     category = rec.get("category", "")
@@ -2100,11 +2124,17 @@ def _build_v1(
 
     # migrations-0078af5d: v1 `Fixed:` is prose as often as a date ("in commit
     # abc1234"), and storing it verbatim wrote a resolved date `validate` rejects.
-    # Take the first ISO date in it, else fall back as a missing one does.
-    fixed = re.search(r"\d{4}-\d{2}-\d{2}", fields.get("Fixed", ""))
-    resolved = (
-        (fixed.group() if fixed else "") or entry.get("pass_date", "") or generated or "1970-01-01"
+    # Take the first ISO date in it, else fall back as a missing one does. Only a
+    # real calendar date counts (audit-e351bd48): `2026-13-45` is skipped, not kept.
+    fixed = next(
+        (
+            m.group()
+            for m in re.finditer(r"\d{4}-\d{2}-\d{2}", fields.get("Fixed", ""))
+            if _is_date(m.group())
+        ),
+        "",
     )
+    resolved = fixed or entry.get("pass_date", "") or generated or "1970-01-01"
     notes = fields.get("Notes", "").strip()
     body = f"## Resolution\n{notes}" if notes else "## Resolution\n(none recorded)"
     pass_bits = ", ".join(
@@ -2607,10 +2637,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # exited 1 — telling the caller the store or environment failed rather than
     # that a corrected retry would succeed. The functions raise the same errors
     # for API callers; the CLI answers them here with 2, before any store access.
+    # A multi-line title or area is the same class (audit-8effe9aa): the refusal
+    # lived only in render_finding, whose FindingError the `new` branch maps to 1.
     try:
         if args.cmd == "new":
             _check_auditor(args.auditor)
             _check_not_blank(title=args.title, area=args.area)
+            for name, value in (("title", args.title), ("area", args.area)):
+                if _multiline(value):
+                    raise FindingError(f"{name} must be single-line")
         if args.cmd == "resolve" and args.date is not None:
             _check_date(args.date)
     except FindingError as e:
