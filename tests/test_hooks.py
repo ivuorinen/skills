@@ -6528,3 +6528,52 @@ def test_write_targets_edge_spellings(tokens, expected):
     """The model's less common spellings: `-t` puts the destination first, a
     lone operand is its own destination, and each extractor's defaults."""
     assert _hooklib().write_targets(tokens) == expected
+
+
+# ── agent-loopholes-88dddd67: patch is judged like git apply, not by its operands ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "patch -p1 < /tmp/evil.diff",
+        "patch -p1 -i /tmp/evil.diff",
+        "patch --input=/tmp/evil.diff --strip=1",
+        "cat /tmp/evil.diff | patch -p1",
+        "patch -d scripts -p1 -i /tmp/evil.diff",
+        "patch --directory=.claude -p0 -i /tmp/evil.diff",
+        "patch -o scripts/hooks/ruff-hook.py /tmp/orig.py /tmp/evil.diff",
+        "patch scripts/hooks/ruff-hook.py /tmp/evil.diff",
+        "cd /tmp/x && patch -p1 -i /tmp/evil.diff",
+    ],
+)
+def test_agents_guard_judges_patch_like_git_apply(command):
+    """`git apply` of a diff was denied because the diff chooses what it
+    writes, while `patch -p1 < evil.diff` of the same diff was judged by its
+    operands and passed (agent-loopholes-88dddd67). Its directory is now a
+    tree: the checkout root, or anything above or on the surface, counts."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "patch -d /tmp/x -p1 -i /tmp/evil.diff",
+        "patch --dry-run -p1 -i /tmp/evil.diff",
+        "patch -o /tmp/out.py README.md /tmp/fix.diff",
+    ],
+)
+def test_agents_guard_allows_a_patch_scoped_off_the_surface(command):
+    """Controls: a patch run in a directory outside the checkout, a dry run,
+    and one whose output goes to a named file elsewhere."""
+    assert not _guard_blocks(command)
+
+
+def test_unguarded_cd_guard_counts_patch_as_a_write_and_a_dry_run_as_not(monkeypatch, capsys):
+    """The shared model: `patch` writes after a failed cd; `--dry-run` does not."""
+    guard = _load("deny-unguarded-cd-hook")
+    with pytest.raises(SystemExit):
+        _run(guard, _ctx(language="shell", code="cd /nope\npatch -p1 -i x.diff"), monkeypatch)
+    capsys.readouterr()
+    _run(guard, _ctx(language="shell", code="cd /nope\npatch --dry-run -p1 -i x.diff"), monkeypatch)
+    assert capsys.readouterr().err == ""

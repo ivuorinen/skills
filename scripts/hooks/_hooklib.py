@@ -762,7 +762,7 @@ def git_calls(command: str) -> list[tuple[str, list[str]]]:
 WRITE_VERBS = frozenset(
     {
         *("cp", "mv", "rm", "rmdir", "unlink", "install", "ln", "link", "truncate"),
-        *("dd", "tee", "patch", "chmod", "chown", "chgrp", "chattr", "setfacl"),
+        *("dd", "tee", "chmod", "chown", "chgrp", "chattr", "setfacl"),
         *("shred", "touch", "ed", "ex", "sponge", "mkdir", "mkfifo", "mknod"),
         *("rename", "rsync", "scp"),
     }
@@ -988,6 +988,24 @@ def _compressor_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
     return args, []
 
 
+def _patch_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`patch`: the diff, not the command line, names the files it rewrites.
+
+    Judged by its operands alone, `patch -p1 < evil.diff` rewrote every hook
+    while `git apply` of the same diff was denied (agent-loopholes-88dddd67).
+    So its directory — `-d DIR`, else where it runs — is a tree, as an archive
+    extraction's is. `-o FILE` sends all output to FILE instead, which is then
+    the one path written; `--dry-run` writes nothing. Its operands (an original
+    file, a reject file) are written paths as well.
+    """
+    if "--dry-run" in args:
+        return None
+    operands = [a for a in args if not a.startswith("-")]
+    if option_values(args, "-o", "--output"):
+        return operands + option_values(args, "-o", "--output"), []
+    return operands, option_values(args, "-d", "--directory") or ["."]
+
+
 def _sort_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
     """`sort -o FILE` writes FILE; a bare `sort` prints."""
     outs = option_values(args, "-o", "--output")
@@ -1000,6 +1018,7 @@ _WRITE_HANDLERS = {
     **dict.fromkeys(("tar", "bsdtar"), _tar_targets),
     **dict.fromkeys(_COMPRESSORS, _compressor_targets),
     "find": _find_targets,
+    "patch": _patch_targets,
     "unzip": _unzip_targets,
     "cpio": _cpio_targets,
     "curl": _curl_targets,
