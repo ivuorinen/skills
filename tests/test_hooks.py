@@ -6295,3 +6295,63 @@ def test_restore_guard_expands_a_tilde_target(target, asks, monkeypatch, tmp_pat
     else:
         _run(mod, _bash(command), monkeypatch)
         assert capsys.readouterr().out == ""
+
+
+# ── agent-loopholes-5cdfb163: a cd target resolved the way the shell resolves it ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd -- scripts/hooks && rm ruff-hook.py",
+        "cd -P -- scripts/hooks && rm ruff-hook.py",
+        "pushd -- .claude; touch settings.json",
+        "CDPATH=scripts cd hooks && rm ruff-hook.py",
+        "export CDPATH=/nope:scripts; cd hooks && rm ruff-hook.py",
+        "CDPATH=.claude/skills cd graphify && rm .graphify_version",
+        "CDPATH=$X cd hooks && rm ruff-hook.py",
+        "CDPATH=~no-such-user-5cdfb163 cd hooks && rm ruff-hook.py",
+        "D=scripts/hooks; cd $D && rm ruff-hook.py",
+        'D=scripts; cd "${D}/hooks" && rm ruff-hook.py',
+        # self-referential: the expansion never settles, so the landing is unknown
+        "D=x$D; cd $D && rm ruff-hook.py",
+        "cd $HOME/checkout/scripts/hooks && rm ruff-hook.py",
+        "cd $(git rev-parse --show-toplevel)/scripts/hooks && rm ruff-hook.py",
+        "D=scripts; git -C $D checkout -- hooks",
+        "git -C $HOME/checkout/scripts checkout -- hooks",
+        "git --work-tree=$X/scripts restore hooks/ruff-hook.py",
+    ],
+)
+def test_agents_guard_resolves_a_cd_target_like_the_shell(command, monkeypatch):
+    """`cd --` took `--` as the directory, CDPATH was never modelled, and a
+    variable target was compared as the literal `$D`, so each landed in a
+    protected directory unseen (agent-loopholes-5cdfb163). A landing the guard
+    cannot know is judged as standing on the surface."""
+    monkeypatch.delenv("CDPATH", raising=False)
+    assert _guard_blocks(command)
+
+
+def test_agents_guard_reads_cdpath_from_the_environment(monkeypatch):
+    """A CDPATH inherited by the hook moves a relative `cd` just the same."""
+    monkeypatch.setenv("CDPATH", "scripts")
+    assert _guard_blocks("cd hooks && rm ruff-hook.py")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd -- /tmp/x && rm y",
+        "CDPATH=/tmp cd build && rm -rf out",
+        "D=/tmp/x; cd $D && rm y",
+        'cd "$TMPDIR" && rm y',
+        'tmp=$(mktemp -d); cd "$tmp" && rm -rf y',
+        "cd\nrm build.log",
+        "D=/tmp/w; git -C $D checkout -- hooks",
+        "cd -- scripts/hooks && cat ruff-hook.py > /tmp/copy.py",
+    ],
+)
+def test_agents_guard_allows_a_cd_that_lands_off_the_surface(command, monkeypatch):
+    """Controls: a resolvable landing elsewhere, an inherited variable whose
+    text cannot reach the surface, and a read after a `cd --` stay allowed."""
+    monkeypatch.delenv("CDPATH", raising=False)
+    assert not _guard_blocks(command)

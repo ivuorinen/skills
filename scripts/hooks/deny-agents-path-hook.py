@@ -21,6 +21,7 @@ different shapes:
 """
 
 import functools
+import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -71,8 +72,12 @@ _AGENTS_INDIRECT_RE = re.compile(r"[=/$]agents?\b|\.claude/a")
 # quantifier stops the lookahead from being satisfied by a shorter name.
 _WORKTREE_RE = re.compile(r"\.claude/worktrees/[^./\s;&|<>()][^/\s;&|<>()]*+(?!/\.\.)")
 _GLOB_META_RE = re.compile(r"[*?\[]")
-# A directory change: `cd` or `pushd`, past `-L`/`-P`/`-e`/`-@`, to its target.
-_CD_RE = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd)\s+(?:-[LPe@]+\s+)*([^\s;&|()<>]+)")
+# A directory change: `cd` or `pushd`, past `-L`/`-P`/`-e`/`-@`/`-n` and the
+# `--` that ends them, to its target. Skipping only the option letters took
+# the `--` of `cd -- scripts/hooks` as the directory, so the real target was
+# never a base (agent-loopholes-5cdfb163). Blanks, not `\s`: a bare `cd` at a
+# line end goes home, and must not take the next line's verb as its target.
+_CD_RE = re.compile(r"(?:^|[\s;&|(])(?:cd|pushd)[ \t]+(?:(?:-[LPe@n]+|--)[ \t]+)*([^\s;&|()<>]+)")
 DENIED = ".claude/agents"
 
 # 3. Content-addressed reach — a command can locate a definition by its FILE
@@ -527,11 +532,11 @@ def _stage_writes_protected(tokens: list[str], c: str) -> bool:
     if PurePosixPath(tokens[0]).name == "git":
         if _git_rewrites_worktree(tokens):
             return True
-        bases = _git_bases(tokens, bases)
+        bases = _git_bases(tokens, bases, c)
     return any(_token_writes_protected(a, c, bases) for a in _written_operands(tokens))
 
 
-def _git_bases(tokens: list[str], bases: list[Path]) -> list[Path]:
+def _git_bases(tokens: list[str], bases: list[Path], command: str) -> list[Path]:
     """`bases` plus the directories a git stage's `-C` and `--work-tree` move it to.
 
     `git -C scripts checkout HEAD~3 -- hooks` resolves `hooks` from `scripts`,
@@ -540,24 +545,25 @@ def _git_bases(tokens: list[str], bases: list[Path]) -> list[Path]:
     `a/b` — so each one moves the current set of bases on; `--work-tree` is
     added as a base of its own. Over-approximates, which only adds places a path
     is checked from, and grows linearly with the options given.
+
+    A value is spelled out like a `cd` target (see `_cd_spellings`): `-C ~/…`
+    (agent-loopholes-0f3351b2) and `-C $D` (agent-loopholes-5cdfb163) name
+    the directory they expand to, and one that can land anywhere adds
+    `_ANYWHERE`.
     """
     out, current = list(bases), list(bases)
     i = 1
     while i < len(tokens) and tokens[i].startswith("-"):
         opt, _, inline = tokens[i].partition("=")
         value = inline or (tokens[i + 1] if i + 1 < len(tokens) else "")
-        # `-C ~/…` is a home-relative directory (agent-loopholes-0f3351b2); one
-        # this guard cannot resolve may be anywhere, the surface included.
-        expanded = _expand_tilde(value)
-        if expanded is None:
+        spellings = _cd_spellings(value, command) if opt in ("-C", "--work-tree") else []
+        if spellings is None:
             out += _ANYWHERE
-        else:
-            value = expanded
-        if opt == "-C" and value:
-            current = [base / value for base in current]
+        elif opt == "-C" and spellings:
+            current = [base / s for base in current for s in spellings]
             out += current
-        elif opt == "--work-tree" and value:
-            out += [base / value for base in bases]
+        elif spellings:
+            out += [base / s for base in bases for s in spellings]
         i += 1 if inline or opt not in _VALUE_OPTS else 2
     return out
 
@@ -656,26 +662,102 @@ def _cd_bases(command: str) -> list[Path]:
     from both the root and the chain over-approximates the shell, which only
     adds places a path is checked from.
 
-    A `~` target is expanded first (agent-loopholes-0f3351b2); one that cannot
-    be resolved makes `_ANYWHERE` the current base.
+    A target is resolved the way the shell resolves it — see `_cd_spellings`
+    and `_cd_landing`. One whose landing cannot be known makes `_ANYWHERE` the
+    current base, so a mutating stage after it is judged as standing on the
+    surface.
     """
     bases = [_REPO_ROOT]
     current = [_REPO_ROOT]
+    cdpath = _cdpath(command)
     for match in _CD_RE.finditer(command):
-        raw = _expand_tilde(match.group(1))
-        if raw is None:
+        landed = _cd_landing(match.group(1), command, current, cdpath)
+        if landed is None:
             current = list(_ANYWHERE)
             bases += current
             continue
-        if _GLOB_META_RE.search(raw):
-            from_root = _shell_glob(_REPO_ROOT, raw)
-            reached = [hit for base in current for hit in _shell_glob(base, raw)]
-        else:
-            from_root = [_REPO_ROOT / raw]
-            reached = [base / raw for base in current]
+        from_root, reached = landed
         current = list(dict.fromkeys(reached)) or current
         bases += from_root + current
     return list(dict.fromkeys(bases))
+
+
+def _cd_spellings(raw: str, command: str) -> list[str] | None:
+    """Every literal directory a `cd`/`-C` target can name, or None for anywhere.
+
+    A `~` is expanded (agent-loopholes-0f3351b2), and a `$` from the variables
+    the command binds itself, as for a written operand (see `_expansions`):
+    `D=scripts/hooks; cd $D && rm ruff-hook.py` compared the literal `$D`
+    and never matched (agent-loopholes-5cdfb163). What stays unresolved takes
+    the operand rule of `_candidate_writes_protected`: a computed value, or an
+    inherited variable whose surrounding text reaches the surface
+    (`$HOME/…/scripts/hooks`), may land anywhere; any other inherited variable
+    (`cd "$TMPDIR"`) names somewhere this guard does not track.
+    """
+    expanded = _expand_tilde(raw)
+    if expanded is None:
+        return None
+    if "$" not in expanded and "`" not in expanded:
+        return [expanded]
+    candidates = _expansions(expanded, _bindings(command))
+    if candidates is None:
+        return None
+    literal = [c for c in candidates if "$" not in c and "`" not in c]
+    dynamic = [c for c in candidates if c not in literal]
+    if any(_candidate_writes_protected(c, [_REPO_ROOT]) for c in dynamic):
+        return None
+    return literal
+
+
+def _cdpath(command: str) -> list[str] | None:
+    """The directory prefixes a relative `cd` is tried under; None if unknowable.
+
+    `CDPATH=scripts cd hooks` lands in `scripts/hooks`, which the guard never
+    modelled (agent-loopholes-5cdfb163). The value is what the command assigns
+    and what the hook's environment carries; an empty entry, and the implicit
+    one bash always tries, is the current directory. A value the guard cannot
+    resolve makes every relative `cd` land anywhere. Ceiling: a CDPATH that
+    only the tool's shell profile sets, and this hook's environment lacks, is
+    not seen.
+    """
+    values = [*_bindings(command).get("CDPATH", ()), os.environ.get("CDPATH", "")]
+    prefixes = [""]
+    for entry in (e for value in values for e in value.split(":") if e):
+        expanded = _expand_tilde(entry)
+        if expanded is None or "$" in expanded or "`" in expanded:
+            return None
+        prefixes.append(expanded)
+    return list(dict.fromkeys(prefixes))
+
+
+def _cd_landing(
+    raw: str, command: str, current: list[Path], cdpath: list[str] | None
+) -> tuple[list[Path], list[Path]] | None:
+    """Where `cd raw` lands: (resolved from the root, from the current bases).
+
+    None when it can land anywhere — an unresolvable spelling, or a relative
+    target under a CDPATH the guard cannot read. A glob target is expanded.
+    """
+    spellings = _cd_spellings(raw, command)
+    if spellings is None:
+        return None
+    from_root: list[Path] = []
+    reached: list[Path] = []
+    for target in spellings:
+        if target.startswith("/"):
+            prefixes = [""]
+        elif cdpath is None:
+            return None
+        else:
+            prefixes = cdpath
+        for path in (f"{p}/{target}" if p else target for p in prefixes):
+            if _GLOB_META_RE.search(path):
+                from_root += _shell_glob(_REPO_ROOT, path)
+                reached += [hit for base in current for hit in _shell_glob(base, path)]
+            else:
+                from_root.append(_REPO_ROOT / path)
+                reached += [base / path for base in current]
+    return from_root, reached
 
 
 def _glob_reaches_agents(command: str) -> bool:
