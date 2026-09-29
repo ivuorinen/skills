@@ -28,7 +28,39 @@ from typing import NoReturn
 # `\$\(` precedes the character class so the `$` is consumed with its paren
 # rather than left behind as a one-token stage. The closing `)` splits too —
 # what follows it is back in the outer command.
-_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>)")
+#
+# A `|` straight after `>` is the clobber redirection `>|`, not a pipe. Cutting
+# there left `echo x >` as one stage and the target as the verb of the next, so
+# no guard saw what `echo x >| scripts/hooks/ruff-hook.py` wrote
+# (agent-loopholes-ff4a37fd).
+_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|(?<!>)\||[;\n`()]|(?<![<>])&(?!>)")
+
+# Every redirection operator that opens a file for writing, and its target:
+# `>`, `>>`, `>|` (clobber past noclobber), `>&`/`&>`/`&>>` (stdout and stderr),
+# `<>` (read-write, writable through the descriptor) and any of them behind a
+# descriptor number (`2>`, `1>|`). The first version matched `>{1,2}` alone, so
+# `>|` and `>&` each wrote the enforcement surface past both write guards
+# (agent-loopholes-ff4a37fd). A `&` or digit prefix needs no alternative of its
+# own: the operator after it is matched anyway.
+_REDIRECT = re.compile(r"(>>|>\||>&|<>|>)\s*([^\s;&|<>()]+)")
+# `>&1`, `2>&-`: after `>&`, a descriptor number or `-` duplicates or closes a
+# descriptor and names no file. After any other operator it is a file name.
+_FD_TARGET = re.compile(r"\d+-?|-")
+
+
+def redirect_targets(text: str) -> list[str]:
+    """Every file a redirection in `text` writes, in order.
+
+    Shared by the protected-write guard and the unguarded-cd guard, whose
+    private copies had drifted to the same blind spot. Ceiling: a target the
+    shell builds at runtime is returned as spelled, for the caller to judge.
+    """
+    return [
+        target
+        for op, target in _REDIRECT.findall(text)
+        if not (op == ">&" and _FD_TARGET.fullmatch(target))
+    ]
+
 
 # Command wrappers: the token that runs is the one AFTER these, so a guard
 # reading `tokens[0]` sees the wrapper and skips the stage. `env git commit

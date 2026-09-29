@@ -6120,3 +6120,94 @@ def test_strip_reserved_keeps_an_operand_spelled_like_a_keyword():
     assert lib.strip_reserved(["then", "!", "git", "push"]) == ["git", "push"]
     assert lib.strip_reserved(["echo", "then"]) == ["echo", "then"]
     assert lib.strip_reserved(["do"]) == []
+
+
+# ── agent-loopholes-ff4a37fd: every redirection operator that writes a file ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x >| scripts/hooks/ruff-hook.py",
+        "echo x >|scripts/hooks/ruff-hook.py",
+        "echo x 1>| scripts/hooks/ruff-hook.py",
+        "echo x >& scripts/hooks/ruff-hook.py",
+        "echo x &> scripts/hooks/ruff-hook.py",
+        "echo x &>> scripts/hooks/ruff-hook.py",
+        "echo x 2> scripts/hooks/ruff-hook.py",
+        "exec 3<> scripts/hooks/ruff-hook.py",
+        "echo '{}' >| .claude/settings.local.json",
+        "echo 0.0 >& .claude/skills/graphify/.graphify_version",
+    ],
+)
+def test_agents_guard_judges_every_redirection_operator(command):
+    """`>{1,2}` was the only operator the guard knew, and the stage split cut
+    `>|` as a pipe, so a clobber or a `>&` redirect rewrote a hook or set
+    `disableAllHooks` in settings.local.json (agent-loopholes-ff4a37fd)."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make check 2>&1 | tail -5",
+        "echo x >&2",
+        "ls 2>&- 1>&-",
+        "echo x >| /tmp/out.txt",
+        "echo x &> /dev/null",
+        "cat scripts/hooks/ruff-hook.py >| /tmp/copy.py",
+    ],
+)
+def test_agents_guard_allows_redirections_that_write_no_surface(command):
+    """Controls: a descriptor duplication names no file, and a redirect that
+    writes elsewhere — even of a protected file's contents — stays allowed."""
+    assert not _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    ("text", "targets"),
+    [
+        ("echo x >| f", ["f"]),
+        ("a 2>&1 >&g <>h", ["g", "h"]),
+        ("a >&- b &>> c", ["c"]),
+        ("a >> d > e", ["d", "e"]),
+    ],
+)
+def test_redirect_targets_names_each_written_file(text, targets):
+    """The shared model: files only, never a duplicated or closed descriptor."""
+    assert _hooklib().redirect_targets(text) == targets
+
+
+def test_clobber_redirect_is_not_a_pipe():
+    """`>|` stays inside its stage; a real pipe still splits."""
+    lib = _hooklib()
+    assert lib.shell_stages("echo x >| f") == [["echo", "x", ">|", "f"]]
+    assert lib.shell_stages("echo x | tee f") == [["echo", "x"], ["tee", "f"]]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "cd /nope\necho x >| out.txt",
+        "cd /nope\necho x >& out.txt",
+        "cd /nope\necho x &> out.txt",
+        "cd /nope\nexec 3<> out.txt",
+    ],
+)
+def test_unguarded_cd_guard_sees_every_redirection_operator(code, monkeypatch, capsys):
+    """The cd guard's private copy of both patterns had the same blind spot: a
+    clobber after a failed cd wrote wherever the shell started."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["cd /nope || exit 1\necho x >| out.txt", "cd /nope\nls 2>&1 >&2", "cd /nope\nls &>/dev/null"],
+)
+def test_unguarded_cd_guard_allows_a_guarded_or_descriptor_redirect(code, monkeypatch, capsys):
+    """Controls: a guarded cd, and redirects that write no file."""
+    _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert capsys.readouterr().err == ""

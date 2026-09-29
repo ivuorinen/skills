@@ -31,17 +31,22 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     _COMMENT,
     _CONTINUATION,
+    _STAGE_SPLIT,
     _mask_quoted,
     _tool_input,
     _unmask,
     _wrapper_variants,
     load_event_strict,
+    redirect_targets,
     skip_git_global_opts,
     strip_reserved,
 )
 
 # _hooklib's stage separators, captured, so the separator after each stage is known.
-_SPLIT = re.compile(r"(\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>))")
+# Built from the pattern rather than copied: the copy had drifted, and cut
+# `>|` as a pipe exactly where _hooklib had to stop doing so
+# (agent-loopholes-ff4a37fd).
+_SPLIT = re.compile(f"({_STAGE_SPLIT.pattern})")
 _CHDIR = frozenset({"cd", "pushd"})
 _OPENERS = frozenset({"(", "$("})
 _WRITE_VERBS = frozenset(
@@ -75,7 +80,6 @@ _IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 _GIT_READS = frozenset(
     {"status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "grep"}
 )
-_REDIRECT = re.compile(r">{1,2}\s*([^\s&][^\s;|&()<>]*)")
 _ERREXIT = re.compile(r"[-+][a-zA-Z]*e[a-zA-Z]*")
 
 
@@ -100,8 +104,12 @@ def _writes(tokens: list[str]) -> bool:
 
 
 def _redirects(segment: str) -> bool:
-    """True if a stage redirects output into a file other than /dev/null."""
-    return any(match.group(1) != "/dev/null" for match in _REDIRECT.finditer(segment))
+    """True if a stage redirects output into a file other than /dev/null.
+
+    Every operator `_hooklib.redirect_targets` knows counts: `>|` and `>&` wrote
+    a file after a failed cd unseen (agent-loopholes-ff4a37fd).
+    """
+    return any(target != "/dev/null" for target in redirect_targets(segment))
 
 
 def _errexit_after(tokens: list[str], errexit: bool) -> bool:

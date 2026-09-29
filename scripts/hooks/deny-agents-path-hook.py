@@ -31,6 +31,7 @@ from _hooklib import (
     event_command,
     foreign_code,
     load_event_strict,
+    redirect_targets,
     repo_root,
     shell_stages,
     skip_git_global_opts,
@@ -119,7 +120,6 @@ PROTECTED_WRITE = (
     ".claude/skills/graphify/.graphify_version",
 )
 
-_REDIR_RE = re.compile(r">{1,2}\s*([^\s;&|<>()]+)")
 _WRITE_VERBS = frozenset(
     {
         "cp",
@@ -429,9 +429,11 @@ def _redirects_into_protected(c: str) -> bool:
     """True if any redirection target lands under a protected-write root.
 
     Checked separately from the verb scan because `> scripts/hooks/x.py` names
-    no command at all — the shell does the writing.
+    no command at all — the shell does the writing. The operators come from
+    `_hooklib.redirect_targets`, so `>|`, `>&`, `&>` and `<>` count as `>` does
+    (agent-loopholes-ff4a37fd).
     """
-    return any(_token_writes_protected(m.group(1), c) for m in _REDIR_RE.finditer(c))
+    return any(_token_writes_protected(t, c) for t in redirect_targets(c))
 
 
 # Verbs whose LEADING operands are sources and whose last one is the
