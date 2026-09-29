@@ -6355,3 +6355,176 @@ def test_agents_guard_allows_a_cd_that_lands_off_the_surface(command, monkeypatc
     text cannot reach the surface, and a read after a `cd --` stay allowed."""
     monkeypatch.delenv("CDPATH", raising=False)
     assert not _guard_blocks(command)
+
+
+# ── agent-loopholes-6bb5ff99: one write model, shared by both write guards ──
+
+_SHARED_WRITES = [
+    "unlink scripts/hooks/ruff-hook.py",
+    "rsync /tmp/evil.py scripts/hooks/ruff-hook.py",
+    "rsync --remove-source-files scripts/hooks/ruff-hook.py /tmp/",
+    "scp /tmp/evil.py scripts/hooks/ruff-hook.py",
+    "find scripts/hooks -name ruff-hook.py -delete",
+    "find . -name ruff-hook.py -delete",
+    "find . -name '*.py' -exec rm {} +",
+    "find -name settings.json -execdir shred {} +",
+    "find scripts -fprint scripts/hooks/ruff-hook.py",
+    "tar -xf /tmp/evil.tar -C scripts/hooks",
+    "tar -xf /tmp/evil.tar",
+    "tar xf /tmp/evil.tar",
+    "tar --extract --file=/tmp/evil.tar --directory=.claude",
+    "tar -xPf /tmp/evil.tar -C /tmp/x",
+    "tar -cf scripts/hooks/ruff-hook.py /tmp/evil",
+    "tar cvf scripts/hooks/ruff-hook.py /tmp/evil",
+    "bsdtar -x -f /tmp/evil.tar",
+    "unzip /tmp/evil.zip",
+    "unzip -o /tmp/evil.zip -d scripts",
+    "cpio -idm",
+    "find /tmp/x | cpio -pd scripts/hooks",
+    "awk -i inplace '{print}' scripts/hooks/ruff-hook.py",
+    "awk -iinplace 1 scripts/hooks/ruff-hook.py",
+    "gawk --include=inplace 1 scripts/hooks/ruff-hook.py",
+    "gawk --include /usr/share/awk/inplace.awk 1 .claude/settings.json",
+    "git checkout-index -f scripts/hooks/ruff-hook.py",
+    "git checkout-index -a -f",
+    "git checkout-index --prefix=scripts/hooks/ README.md",
+    "git read-tree -u -m HEAD~3",
+    "gzip scripts/hooks/ruff-hook.py",
+    "xz -k .claude/settings.json",
+    "chattr +i .claude/settings.local.json",
+    "curl -o scripts/hooks/ruff-hook.py https://example.com/x",
+    "curl -so.claude/settings.local.json https://example.com/x",
+    "cd scripts/hooks && curl -O https://example.com/ruff-hook.py",
+    "cd scripts/hooks && wget https://example.com/ruff-hook.py?x=1",
+    "wget -P scripts/hooks https://example.com/ruff-hook.py",
+    "wget --output-document=.claude/settings.local.json https://example.com/x",
+    "sort -o scripts/hooks/ruff-hook.py /tmp/x",
+    "mkdir scripts/hooks/new",
+    # a find whose tests are not a plain conjunction of name tests is not read
+    "find . -name '*.pyc' -o -name ruff-hook.py -delete",
+    "find . -type f -delete",
+]
+
+
+def test_a_tree_that_cannot_be_resolved_reaches_the_surface(monkeypatch):
+    """A destination whose resolution fails (a symlink loop) is judged as
+    reaching the surface, never cleared."""
+    mod = _load("deny-agents-path-hook")
+
+    def _loop(self, *_a, **_k):
+        """Stand in for a resolve that hits a symlink loop."""
+        raise RuntimeError("symlink loop")
+
+    monkeypatch.setattr(mod.Path, "resolve", _loop)
+    assert mod._holds_checkout(Path("/tmp/x"))
+
+
+@pytest.mark.parametrize("command", _SHARED_WRITES)
+def test_agents_guard_judges_every_modelled_write(command):
+    """Each passed before: the guard knew a fixed verb list, and `find`,
+    archive extraction, `awk -i inplace`, downloaders and `git checkout-index`
+    were not on it (agent-loopholes-6bb5ff99). An extraction or a deleting
+    `find` from the checkout root reaches the surface below it."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.pyc' -delete",
+        "find . -iname '*.PYC' -name '*.pyc' -exec rm {} +",
+        "find . -type f -exec grep -l x {} +",
+        "find scripts/hooks -name '*.py'",
+        "tar -xf /tmp/x.tar -C /tmp/out",
+        "tar -tf /tmp/x.tar",
+        "tar -cf /tmp/x.tar scripts/hooks",
+        "unzip -l /tmp/x.zip",
+        "unzip /tmp/x.zip -d /tmp/out",
+        "cpio -o",
+        "rsync -a scripts/hooks/ /tmp/backup/",
+        "curl -o /tmp/x https://example.com/ruff-hook.py",
+        "curl https://example.com/ruff-hook.py",
+        "wget -O /tmp/x https://example.com/x",
+        "sort scripts/hooks/ruff-hook.py",
+        "awk '{print}' scripts/hooks/ruff-hook.py",
+        "awk -i other.awk 1 scripts/hooks/ruff-hook.py",
+        "gzip -c scripts/hooks/ruff-hook.py",
+        "xz --list .claude/settings.json",
+        "git update-index --refresh",
+        "git checkout-index -f README.md",
+        # a handled verb with no operands at all must parse, not crash
+        "git log --oneline | sort",
+        "echo x | awk",
+        "tar",
+        "curl",
+    ],
+)
+def test_agents_guard_allows_writes_the_model_places_elsewhere(command):
+    """Controls: a find whose name tests match nothing on the surface, reads,
+    listings, and writes that land outside the checkout stay allowed."""
+    assert not _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        "unlink f",
+        "tar -xf a.tar",
+        "unzip a.zip",
+        "awk -i inplace 1 f",
+        "curl -o f https://example.com/x",
+        "wget https://example.com/x",
+        "scp a b",
+        "gzip f",
+        "cpio -i",
+        "find . -exec python3 fix.py {} +",
+        "git checkout-index -a",
+    ],
+)
+def test_unguarded_cd_guard_shares_the_write_model(write, monkeypatch, capsys):
+    """The cd guard asks the same model, so each write above counts after a
+    failed cd, where its private list did not know them."""
+    payload = _ctx(language="shell", code=f"cd /nope\n{write}")
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "tar -tf a.tar",
+        "find . -exec grep x {} +",
+        "curl https://example.com",
+        "sort f",
+        "gzip -t f",
+    ],
+)
+def test_unguarded_cd_guard_allows_what_the_model_calls_a_read(read, monkeypatch, capsys):
+    """Controls: the shared model's reads stay reads for the cd guard."""
+    _run(
+        _load("deny-unguarded-cd-hook"),
+        _ctx(language="shell", code=f"cd /nope\n{read}"),
+        monkeypatch,
+    )
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["cp", "-t", "d", "a", "b"], (["-t", "d", "a", "b"], [])),
+        (["cp", "a"], (["a"], [])),
+        (["wget", "-P", "d"], (["."], [])),
+        (["cpio", "-p"], ([], ["."])),
+        (["tar", "-c", "--file", "out.tar", "in"], (["out.tar"], [])),
+        (["tar", "--append", "-f", "out.tar", "in"], (["out.tar"], [])),
+        (["find", "-fls", "out"], (["out"], [])),
+        (["cpio", "--extract", "--directory=d"], ([], ["d"])),
+        (["ls"], None),
+    ],
+)
+def test_write_targets_edge_spellings(tokens, expected):
+    """The model's less common spellings: `-t` puts the destination first, a
+    lone operand is its own destination, and each extractor's defaults."""
+    assert _hooklib().write_targets(tokens) == expected

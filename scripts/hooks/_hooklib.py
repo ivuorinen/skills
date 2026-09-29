@@ -5,11 +5,13 @@ shebang and no `# /// script` block. Pure stdlib. Mirrors the sibling-import
 precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 """
 
+import itertools
 import json
 import os
 import re
 import shlex
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -738,3 +740,269 @@ def git_calls(command: str) -> list[tuple[str, list[str]]]:
         if i < len(tokens):
             calls.append((tokens[i], tokens[i + 1 :]))
     return calls
+
+
+# ── What a stage writes: one model for every write guard ─────────────────────
+#
+# The protected-write guard and the unguarded-cd guard each kept a verb list,
+# and the two had drifted: the cd guard counted rsync and `find -delete`, the
+# protected-write guard did not, and neither knew `unlink`, `tar -x`,
+# `awk -i inplace` or `curl -o` (agent-loopholes-6bb5ff99). Both now ask
+# `write_targets`. Git is left to each guard, because the two ask different
+# questions of it: the cd guard treats every non-read subcommand as a write,
+# the protected-write guard needs the paths a subcommand touches.
+#
+# Ceiling: a closed list cannot name every program that writes a file. A write
+# made by an interpreter (`python -c`), by a script, or by a program listed
+# nowhere here is not recognised.
+
+# Verbs that write, or remove, every path operand they are given — or, for the
+# `_DEST_LAST` ones, the last. Verbs that write only in some modes (a
+# compressor, `sed -i`, `tar -x`) are in `_WRITE_HANDLERS` instead.
+WRITE_VERBS = frozenset(
+    {
+        *("cp", "mv", "rm", "rmdir", "unlink", "install", "ln", "link", "truncate"),
+        *("dd", "tee", "patch", "chmod", "chown", "chgrp", "chattr", "setfacl"),
+        *("shred", "touch", "ed", "ex", "sponge", "mkdir", "mkfifo", "mknod"),
+        *("rename", "rsync", "scp"),
+    }
+)
+# Verbs whose leading operands are sources and whose last is the destination.
+# Scanning every operand as a destination denied `cp scripts/hooks/_hooklib.py
+# /tmp/x`, a read. `mv` is NOT here: it removes its sources, so `mv scripts
+# /tmp/s` writes the tree it names (agent-loopholes-0426afd8). `ln` is: its
+# leading operands are link targets, which it only reads.
+_DEST_LAST = frozenset({"cp", "install", "ln", "link", "scp", "rsync"})
+# Stream editors write only in place; a bare `sed`/`perl` reads and prints.
+_IN_PLACE_EDITORS = frozenset({"sed", "perl", "ruby"})
+_IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+# gawk's in-place extension, loaded as `-i inplace`, `--include=inplace` or
+# by its file name.
+_AWK_INPLACE_LIB = re.compile(r"(?:\S*/)?inplace(?:\.awk)?")
+# `find` writes through these actions; `-exec`'s command runs once per match.
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_OUTPUTS = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
+# Commands `find -exec` runs that only read. Any other command is taken to
+# write: which file it writes is `{}`, and `{}` is every match.
+_READERS = frozenset(
+    {
+        *("cat", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "head", "tail"),
+        *("wc", "md5sum", "sha1sum", "sha256sum", "sha512sum", "echo", "printf"),
+        *("test", "[", "basename", "dirname", "readlink", "realpath", "du", "diff"),
+        *("cmp", "less", "more", "jq", "true", "false"),
+    }
+)
+
+
+def write_targets(tokens: list[str]) -> tuple[list[str], list[str]] | None:
+    """What a non-git stage writes: (paths, trees), or None when it writes nothing.
+
+    `paths` are operands written as named. `trees` are directories the command
+    writes *below*, at paths its input chooses rather than its command line: an
+    archive's members, `find`'s matches. A caller judges a tree as reaching
+    everything under it, the checkout root included.
+    """
+    verb = Path(tokens[0]).name
+    args = tokens[1:]
+    handler = _WRITE_HANDLERS.get(verb)
+    if handler is not None:
+        return handler(args)
+    if verb in WRITE_VERBS:
+        return _plain_operands(verb, args), []
+    return None
+
+
+def _plain_operands(verb: str, args: list[str]) -> list[str]:
+    """The operands a plain writer writes: all of them, or the destination.
+
+    `-t DIR` / `--target-directory` puts the destination first, and rsync's
+    `--remove-source-files` deletes the sources too; either falls back to every
+    operand, since over-blocking an unusual spelling costs one command and the
+    other direction is a write nothing sees.
+    """
+    if verb not in _DEST_LAST:
+        return args
+    if any(a.startswith(("-t", "--target-directory", "--remove-source")) for a in args):
+        return args
+    operands = [a for a in args if not a.startswith("-")]
+    return operands[-1:] if len(operands) > 1 else args
+
+
+def _in_place_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`sed -i`, `perl -pi`, `ruby -i`: every operand, when editing in place."""
+    return (args, []) if any(_IN_PLACE_RE.match(a) for a in args) else None
+
+
+def _with_next(words: list[str]) -> Iterator[tuple[str, str]]:
+    """Each word with the one after it, the last with "" — empty for no words.
+
+    Not `zip(words, [*words[1:], ""], strict=True)`: for an empty list that
+    pairs nothing with one "", raises, and a bare `sort` in a pipeline sent the
+    guard to its fail-closed arm.
+    """
+    return itertools.zip_longest(words, words[1:], fillvalue="")
+
+
+def _awk_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`awk -i inplace` / `gawk --include=inplace`: every operand is rewritten."""
+    for arg, following in _with_next(args):
+        if arg in ("-i", "--include"):
+            library = following
+        elif arg.startswith(("-i", "--include=")):
+            library = arg.removeprefix("--include=").removeprefix("-i")
+        else:
+            continue
+        if _AWK_INPLACE_LIB.fullmatch(library):
+            return args, []
+    return None
+
+
+def _find_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`find`: its `-fprint`/`-fls` files, and its start points when it deletes.
+
+    `-delete`, or an `-exec`/`-ok` running anything but a reader, writes every
+    match, so the start points are trees. No start point means `.`.
+    """
+    starts: list[str] = []
+    for arg in args:
+        if arg.startswith(("-", "(", "!")):
+            break
+        starts.append(arg)
+    outputs = [b for a, b in itertools.pairwise(args) if a in _FIND_OUTPUTS]
+    runs = [args[i + 1 : i + 2] for i, a in enumerate(args) if a in _FIND_EXEC]
+    writes = "-delete" in args or any(r and Path(r[0]).name not in _READERS for r in runs)
+    if writes:
+        return outputs, starts or ["."]
+    return (outputs, []) if outputs else None
+
+
+def option_values(args: list[str], short: str, long: str) -> list[str]:
+    """Every value given to an option: `-X v`, `-Xv`, `--long v`, `--long=v`, or
+    the letter inside a short cluster (`-sSLo v`, `-cvf v`), whose value is the
+    rest of the cluster or the next word."""
+    out: list[str] = []
+    letter = short[1:]
+    for arg, following in _with_next(args):
+        if arg in (short, long):
+            out.append(following)
+        elif arg.startswith(long + "="):
+            out.append(arg.split("=", 1)[1])
+        elif arg.startswith("-") and not arg.startswith("--") and letter in arg[1:]:
+            out.append(arg[arg.index(letter, 1) + 1 :] or following)
+    return out
+
+
+def _short_flags(args: list[str]) -> str:
+    """Every letter of every short-option cluster, plus tar's dashless first word."""
+    letters = [a[1:] for a in args if a.startswith("-") and not a.startswith("--")]
+    if args and not args[0].startswith("-"):
+        letters.append(args[0])
+    return "".join(letters)
+
+
+def _tar_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`tar`: extraction writes below its `-C` directory; creation writes `-f`.
+
+    Extraction is unscoped the way `git apply` is: the archive's member names,
+    not the command line, decide what is written, so the destination is a tree.
+    `-P`/`--absolute-names` lets members name any path, which is the root `/`.
+    """
+    flags = _short_flags(args)
+    if "x" in flags or "--extract" in args or "--get" in args:
+        if "P" in flags or "--absolute-names" in args:
+            return [], ["/"]
+        return [], option_values(args, "-C", "--directory") or ["."]
+    if any(m in flags for m in "cruA") or "--create" in args or "--append" in args:
+        return _tar_archive(args), []
+    return None
+
+
+def _tar_archive(args: list[str]) -> list[str]:
+    """The archive a creating `tar` writes: `-f X`, `--file=X`, `-cvf X`, or the
+    word after a dashless first word that names `f` (`tar cvf X`)."""
+    found = option_values(args, "-f", "--file")
+    if args and not args[0].startswith("-") and "f" in args[0]:
+        found += args[1:2]
+    return found
+
+
+def _unzip_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`unzip` extracts below `-d DIR` (default `.`) unless it only lists or pipes."""
+    listing = [a for a in args if a.startswith("-") and not a.startswith("-d")]
+    if any(set(a[1:]) & set("ltvpcZz") for a in listing):
+        return None
+    return [], option_values(args, "-d", "--dest") or ["."]
+
+
+def _cpio_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`cpio -i` extracts below `-D DIR`; `cpio -p DIR` copies into DIR."""
+    flags = _short_flags(args)
+    if "i" in flags or "--extract" in args:
+        return [], option_values(args, "-D", "--directory") or ["."]
+    if "p" in flags or "--pass-through" in args:
+        return [], [a for a in args if not a.startswith("-")][-1:] or ["."]
+    return None
+
+
+# A URL operand. `:/` rather than `://`: a guard that folds repeated slashes
+# before asking (the protected-write guard does) turns one into the other.
+_URL = re.compile(r"[A-Za-z][\w+.-]*:/")
+
+
+def _url_names(args: list[str]) -> list[str]:
+    """The file name a download of each URL operand is saved under."""
+    return [Path(a.split("?", 1)[0]).name for a in args if _URL.match(a)]
+
+
+def _curl_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`curl -o FILE`, and `-O`, which saves under the URL's own file name."""
+    outs = option_values(args, "-o", "--output")
+    if "-O" in args or "--remote-name" in args or "--remote-name-all" in args:
+        outs += _url_names(args)
+    return (outs, []) if outs else None
+
+
+def _wget_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`wget` always saves: `-O FILE`, else the URL's name under `-P DIR`."""
+    outs = option_values(args, "-O", "--output-document")
+    if outs:
+        return outs, []
+    prefix = (option_values(args, "-P", "--directory-prefix") or [""])[-1]
+    return [f"{prefix}/{n}" if prefix else n for n in _url_names(args)] or ["."], []
+
+
+_COMPRESSORS = (
+    *("gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma"),
+    *("zstd", "unzstd", "compress", "uncompress"),
+)
+# Compressor options that print, test or list rather than replace a file.
+_COMPRESSOR_READS = frozenset({"--stdout", "--to-stdout", "--test", "--list"})
+
+
+def _compressor_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """A compressor replaces each operand with its (de)compressed file, unless it
+    only writes to stdout (`-c`), tests (`-t`) or lists (`-l`)."""
+    short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+    if set(short) & set("ctl") or _COMPRESSOR_READS.intersection(args):
+        return None
+    return args, []
+
+
+def _sort_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`sort -o FILE` writes FILE; a bare `sort` prints."""
+    outs = option_values(args, "-o", "--output")
+    return (outs, []) if outs else None
+
+
+_WRITE_HANDLERS = {
+    **dict.fromkeys(_IN_PLACE_EDITORS, _in_place_targets),
+    **dict.fromkeys(("awk", "gawk"), _awk_targets),
+    **dict.fromkeys(("tar", "bsdtar"), _tar_targets),
+    **dict.fromkeys(_COMPRESSORS, _compressor_targets),
+    "find": _find_targets,
+    "unzip": _unzip_targets,
+    "cpio": _cpio_targets,
+    "curl": _curl_targets,
+    "wget": _wget_targets,
+    "sort": _sort_targets,
+}

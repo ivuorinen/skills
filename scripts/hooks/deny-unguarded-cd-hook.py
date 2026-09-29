@@ -12,8 +12,9 @@ nothing checked it (agent-hooks-da747c0c).
 
 A `cd` (or `pushd`) counts as guarded when `|| …` handles its failure, when it
 heads an `&&` chain that reaches the write, or when `set -e`/`set -o errexit`
-ran before it and no `set +e`/`set +o errexit` has cleared it since. `find`
-with `-delete` or `-exec` and `rsync` count as writes. A `cd` inside a
+ran before it and no `set +e`/`set +o errexit` has cleared it since. What
+counts as a write is `_hooklib.write_targets` — `find -delete`, `rsync`,
+`tar -x` and the rest — shared with the protected-write guard. A `cd` inside a
 `( … )` or `$( … )` subshell is forgotten when the subshell closes. Each
 batch command is judged on its own, as each runs in its own shell. Bash is out
 of scope: its working directory is the project.
@@ -40,6 +41,7 @@ from _hooklib import (
     redirect_targets,
     skip_git_global_opts,
     strip_reserved,
+    write_targets,
 )
 
 # _hooklib's stage separators, captured, so the separator after each stage is known.
@@ -49,33 +51,6 @@ from _hooklib import (
 _SPLIT = re.compile(f"({_STAGE_SPLIT.pattern})")
 _CHDIR = frozenset({"cd", "pushd"})
 _OPENERS = frozenset({"(", "$("})
-_WRITE_VERBS = frozenset(
-    {
-        "rm",
-        "rmdir",
-        "mv",
-        "cp",
-        "ln",
-        "chmod",
-        "chown",
-        "touch",
-        "tee",
-        "truncate",
-        "dd",
-        "patch",
-        "mkdir",
-        "install",
-        # rsync writes its destination, and `--delete` removes from it
-        # (agent-loopholes-d707fb69).
-        "rsync",
-    }
-)
-# `find` reads, unless an action deletes or runs a command per match: `find .
-# -delete` after a failed cd was a recursive delete the guard never saw
-# (agent-loopholes-d707fb69).
-_FIND_ACTIONS = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir"})
-_IN_PLACE = frozenset({"sed", "perl", "ruby"})
-_IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 # git subcommands that only read; every other one is treated as a write.
 _GIT_READS = frozenset(
     {"status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "grep"}
@@ -84,16 +59,16 @@ _ERREXIT = re.compile(r"[-+][a-zA-Z]*e[a-zA-Z]*")
 
 
 def _verb_writes(tokens: list[str]) -> bool:
-    """True if this stage's own verb changes files or the repository."""
-    verb = PurePosixPath(tokens[0]).name
-    if verb == "git":
+    """True if this stage's own verb changes files or the repository.
+
+    Which non-git verbs write is `_hooklib.write_targets`, the model the
+    protected-write guard uses too. This guard kept its own list, which had
+    drifted from that guard's in both directions (agent-loopholes-6bb5ff99).
+    """
+    if PurePosixPath(tokens[0]).name == "git":
         index = skip_git_global_opts(tokens, 1)
         return index < len(tokens) and tokens[index] not in _GIT_READS
-    if verb in _IN_PLACE:
-        return any(_IN_PLACE_RE.match(arg) for arg in tokens[1:])
-    if verb == "find":
-        return any(arg in _FIND_ACTIONS for arg in tokens[1:])
-    return verb in _WRITE_VERBS
+    return write_targets(tokens) is not None
 
 
 def _writes(tokens: list[str]) -> bool:

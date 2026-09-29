@@ -20,7 +20,9 @@ different shapes:
   contradict the permission model and break ordinary work.
 """
 
+import fnmatch
 import functools
+import itertools
 import os
 import re
 import sys
@@ -36,6 +38,7 @@ from _hooklib import (
     repo_root,
     shell_stages,
     skip_git_global_opts,
+    write_targets,
 )
 
 _REPO_ROOT = repo_root()
@@ -103,9 +106,9 @@ _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
 # those exactly as it does for the agents tree. Reading them is allowed, so this
 # half matches a MUTATION only.
 #
-# Ceiling, stated rather than implied: this matches redirection targets, a fixed
-# set of mutating verbs, in-place stream editors, and the `git` subcommands that
-# write the working tree. A write performed *inside* an interpreter
+# Ceiling, stated rather than implied: this matches redirection targets, the
+# writes `_hooklib.write_targets` models, and the `git` subcommands that write
+# the working tree. A write performed *inside* an interpreter
 # (`python -c "open(p, 'w')"`), by a script that takes the path as data, or
 # through a symlink is not matched, and neither is an operation on the whole
 # checkout spelled as its root (`rm -rf .`) — an ancestor of a protected root
@@ -136,33 +139,20 @@ _ANYWHERE = tuple(
     )
 )
 
-_WRITE_VERBS = frozenset(
-    {
-        "cp",
-        "mv",
-        "rm",
-        "rmdir",
-        "install",
-        "truncate",
-        "dd",
-        "tee",
-        "patch",
-        "chmod",
-        "chown",
-        "chgrp",
-        "ln",
-        "shred",
-        "touch",
-        "ed",
-        "ex",
-        "sponge",
-    }
-)
-# Only in-place invocations write; a bare `sed`/`perl` reads and prints.
-_STREAM_EDITORS = frozenset({"sed", "perl", "ruby"})
-_INPLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+# Which non-git stages write, and what, is `_hooklib.write_targets`, shared with
+# the unguarded-cd guard (agent-loopholes-6bb5ff99).
+#
+# `checkout-index` writes the files it names, or all of them with `-a`, and
+# `read-tree -u` rewrites the worktree to match the tree it reads. Neither was
+# here, so `git checkout-index -f scripts/hooks/ruff-hook.py` restored an old
+# hook unjudged (agent-loopholes-6bb5ff99). `update-index` is absent on
+# purpose: it writes the index only, and what later carries the index into
+# the worktree (`checkout-index`, `restore`, `reset --hard`) is judged here.
 _GIT_WRITE_SUBCMDS = frozenset(
-    {"checkout", "restore", "apply", "mv", "rm", "clean", "stash", "reset"}
+    {
+        *("checkout", "restore", "apply", "mv", "rm", "clean", "stash", "reset"),
+        *("checkout-index", "read-tree"),
+    }
 )
 
 # Git subcommands that rewrite tracked files across the WHOLE worktree while
@@ -199,7 +189,9 @@ def _git_rewrites_worktree(tokens: list[str]) -> bool:
         return any(a in _RESET_WORKTREE_MODES for a in args)
     if sub in ("checkout", "restore"):
         return any(a in _WHOLE_TREE for a in args)
-    return False
+    if sub == "checkout-index":
+        return "-a" in args or "--all" in args
+    return sub == "read-tree" and "-u" in args
 
 
 def _under_protected(rel: str) -> bool:
@@ -459,16 +451,11 @@ def _expansions(token: str, bindings: dict[str, tuple[str, ...]]) -> list[str] |
 
 
 def _stage_is_mutating(tokens: list[str]) -> bool:
-    """True if this pipeline stage's verb writes files."""
-    verb = PurePosixPath(tokens[0]).name
-    if verb in _WRITE_VERBS:
-        return True
-    if verb in _STREAM_EDITORS:
-        return any(_INPLACE_RE.match(a) for a in tokens[1:])
-    if verb == "git":
+    """True if this pipeline stage writes files: `write_targets`, or a git write."""
+    if PurePosixPath(tokens[0]).name == "git":
         i = skip_git_global_opts(tokens, 1)
         return i < len(tokens) and tokens[i] in _GIT_WRITE_SUBCMDS
-    return False
+    return write_targets(tokens) is not None
 
 
 def _redirects_into_protected(c: str) -> bool:
@@ -482,44 +469,82 @@ def _redirects_into_protected(c: str) -> bool:
     return any(_token_writes_protected(t, c) for t in redirect_targets(c))
 
 
-# Verbs whose LEADING operands are sources and whose last one is the
-# destination. Scanning every operand as a destination denied `cp
-# scripts/hooks/_hooklib.py /tmp/x` — a read, refused by a guard whose own
-# message says "Reading these paths is allowed". `cat` of the same file was
-# always allowed, so the asymmetry was in the verb, not in the policy.
-#
-# `mv` is NOT here: it removes its sources, so `mv scripts/hooks/x.py /tmp` and
-# `mv scripts /tmp/s` write the protected tree they name (agent-loopholes-0426afd8).
-# `ln` is: its leading operands are link targets, which it only reads.
-_DEST_LAST = frozenset({"cp", "install", "ln"})
+def _written_operands(tokens: list[str]) -> tuple[list[str], list[str]]:
+    """(the operands this stage WRITES, the trees it writes below).
 
-
-def _written_operands(tokens: list[str]) -> list[str]:
-    """The operands this stage actually WRITES.
-
-    For most verbs that is all of them — `rm a b`, `chmod +x a b`, `mv a b`
-    each write every path they name. For the copy-shaped verbs the leading
-    operands are sources, so only the last is written. For git, the operands
-    are what follows the subcommand: a `-C scripts` value is a directory the
-    stage stands in (see `_git_bases`), and reading it as a written operand
-    would make every `git -C scripts checkout -- x` a write to the ancestor of
-    `scripts/hooks`.
-
-    `-t DIR` / `--target-directory=DIR` inverts the position, putting the
-    destination first. Rather than model that, seeing one falls back to scanning
-    every operand: over-blocking one unusual spelling costs a blocked command,
-    and getting it wrong the other way is a write to the enforcement surface
-    that nothing sees.
+    For git, the operands are what follows the subcommand: a `-C scripts` value
+    is a directory the stage stands in (see `_git_bases`), and reading it as a
+    written operand would make every `git -C scripts checkout -- x` a write to
+    the ancestor of `scripts/hooks`. Every other verb is `write_targets`.
     """
-    verb = PurePosixPath(tokens[0]).name
-    if verb == "git":
-        return tokens[skip_git_global_opts(tokens, 1) + 1 :]
-    if verb not in _DEST_LAST:
-        return tokens[1:]
-    if any(a.startswith(("-t", "--target-directory")) for a in tokens[1:]):
-        return tokens[1:]
-    operands = [a for a in tokens[1:] if not a.startswith("-")]
-    return operands[-1:] if len(operands) > 1 else tokens[1:]
+    if PurePosixPath(tokens[0]).name == "git":
+        return tokens[skip_git_global_opts(tokens, 1) + 1 :], []
+    return write_targets(tokens) or ([], [])
+
+
+def _tree_reaches_protected(tree: str, command: str, bases: list[Path]) -> bool:
+    """True if a directory written below at input-chosen paths can reach the surface.
+
+    `tar -x` and `find … -delete` write under their directory at paths the
+    archive or the match decides, so the directory counts when it is at, under
+    or above a protected root — and, unlike a named operand, when it is the
+    checkout root or above it too, since everything is below that
+    (agent-loopholes-6bb5ff99). A spelling that can land anywhere counts.
+    """
+    if _token_writes_protected(tree, command, bases):
+        return True
+    spellings = _cd_spellings(tree, command)
+    return spellings is None or any(_holds_checkout(base / s) for base in bases for s in spellings)
+
+
+def _holds_checkout(path: Path) -> bool:
+    """True if `path` is the checkout root or a directory above it."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return True
+    root = _REPO_ROOT.resolve()
+    return resolved == root or resolved in root.parents
+
+
+def _find_misses_surface(tokens: list[str]) -> bool:
+    """True if a `find` stage's name tests cannot match anything on the surface.
+
+    Refusing every `find . -name '*.pyc' -delete` would make the guard a thing
+    to route around. A find whose tests are a conjunction of `-name`/`-iname`
+    reaches only paths whose name matches them all, so it is cleared when no
+    name on the surface — a protected root's components or any file under one
+    — matches. With `-o`, `!`, `-not` or no name test, the tests are not read.
+    """
+    if PurePosixPath(tokens[0]).name != "find":
+        return False
+    args = tokens[1:]
+    if any(a in ("-o", "-or", "!", "-not", ",") for a in args):
+        return False
+    tests = [(a, b) for a, b in itertools.pairwise(args) if a in ("-name", "-iname")]
+    if not tests:
+        return False
+    return not any(
+        all(
+            fnmatch.fnmatch(n.lower(), p.lower()) if t == "-iname" else fnmatch.fnmatchcase(n, p)
+            for t, p in tests
+        )
+        for n in _surface_names()
+    )
+
+
+@functools.cache
+def _surface_names() -> frozenset[str]:
+    """Every name a path on the surface carries: root components and the files below.
+
+    Bytecode caches are left out: Python rewrites them from the source on the
+    next import, so `find . -name '*.pyc' -delete` removes nothing the guards
+    run on. Ceiling: a crafted `.pyc` written in place of one is not matched.
+    """
+    names = set(_PROTECTED_COMPONENTS)
+    for root in PROTECTED_WRITE:
+        names.update(p.name for p in (_REPO_ROOT / root).rglob("*") if "__pycache__" not in p.parts)
+    return frozenset(names)
 
 
 def _stage_writes_protected(tokens: list[str], c: str) -> bool:
@@ -533,7 +558,12 @@ def _stage_writes_protected(tokens: list[str], c: str) -> bool:
         if _git_rewrites_worktree(tokens):
             return True
         bases = _git_bases(tokens, bases, c)
-    return any(_token_writes_protected(a, c, bases) for a in _written_operands(tokens))
+    paths, trees = _written_operands(tokens)
+    if trees and _find_misses_surface(tokens):
+        trees = []
+    if any(_tree_reaches_protected(t, c, bases) for t in trees):
+        return True
+    return any(_token_writes_protected(a, c, bases) for a in paths)
 
 
 def _git_bases(tokens: list[str], bases: list[Path], command: str) -> list[Path]:
@@ -919,7 +949,10 @@ def main() -> None:
             "  DENIED  Bash command writes to the enforcement surface "
             f"({', '.join(PROTECTED_WRITE)}).\n"
             "          permissions.deny covers the edit tools, not Bash. Reading\n"
-            "          these paths is allowed; changing them is the owner's call.",
+            "          these paths is allowed; changing them is the owner's call.\n"
+            "          An extraction or a deleting `find` is judged from the checkout\n"
+            "          root even after a `cd`; name a destination outside it\n"
+            "          (`tar -C <dir>`, `unzip -d <dir>`) to extract elsewhere.",
             file=sys.stderr,
             flush=True,
         )
