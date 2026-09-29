@@ -45,7 +45,9 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   the binding control, not this hook. The same hook also blocks a shell
   **write** to any `PROTECTED_WRITE` path — `scripts/hooks/`,
   `.claude/settings.json`, `.claude/settings.local.json`,
-  `.claude/skills/graphify/.graphify_version` — resolving each written operand
+  `.claude/skills/graphify/.graphify_version`, and the git dir's `.git/hooks`
+  holding the installed pre-commit scripts (agent-loopholes-3736b057; a linked
+  worktree's hooks live outside it) — resolving each written operand
   from the repo root, every `cd`/`pushd` target, a context-mode `cwd` and a git
   stage's `-C`/`--work-tree` (agent-loopholes-6442185e), and treating a write
   to an ancestor directory (`mv scripts …`, `rm -rf .claude`, `git rm -r
@@ -78,16 +80,22 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   `.claude/rules/enforcement-surface-owner.md` says who makes those edits.
 - matcher `Bash` and the context-mode shell tools — `deny-unsafe-git-hook.py`,
   which blocks `git` with `--no-verify` or `-n` (stacked clusters and the
-  abbreviations git accepts included), a `-c core.hooksPath=`, `--config-env`
-  (either form) or `GIT_CONFIG_*` override that disables the repository's hooks,
-  a `git config` write to `core.hooksPath` or `alias.*`, an alias whose body
+  abbreviations git accepts included), a `-c core.hooksPath=`, `include.path`
+  or `includeIf.*.path` set through `-c`, `--config-env` (either form) or
+  `GIT_CONFIG_*`, and `GIT_CONFIG_PARAMETERS` at all
+  (agent-loopholes-3736b057), a `git config` write to any of those keys or to
+  `alias.*`, an alias whose body
   resolves to any of those (a `!` shell body included, and aliases already in
-  git config judged by their body), a pre-commit skip variable on `git commit`,
+  git config judged by their body), a pre-commit skip variable, `HOME` or
+  `XDG_CONFIG_HOME` on `git commit`,
   in front of it or exported earlier in the same command
   (`.claude/rules/commit-gate-integrity.md` names them), `pre-commit uninstall`,
   a `git add` whose pathspec operand resolves to the whole tree (`.`, `:/`,
   `*`, the root spelled absolutely or through `$PWD`, `:(top)`, an exclude),
-  and a push to a protected branch. A pathspec read from a file
+  and a push to a protected branch — including one routed there by a glob
+  refspec, the bare `:` matching refspec, or `remote.*.push`, `push.default`
+  or `branch.*.merge` set through `-c`, the environment or a `git config`
+  write (agent-loopholes-3f71784c). A `git add` pathspec read from a file
   (`--pathspec-from-file`) is not judged. It reads a command
   nested in `$(...)`, backticks or a subshell as its own stage, and judges the
   command behind a wrapper (`env`, `sudo`, `xargs`, …) as well as the wrapper,
@@ -114,8 +122,10 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
 - matcher `Bash` and the context-mode shell tools —
   `ask-destructive-restore-hook.py`, which asks before a `git checkout` of paths
   (with or without `--`) or a `git restore` that would discard uncommitted
-  tracked changes, treating pathspec magic and globs as covering every dirty
-  path. It judges every restore in the command, not only the first, and
+  tracked changes, treating pathspec magic, globs and `--pathspec-from-file`
+  (a file or stdin, abbreviations included; agent-loopholes-a79daccb) as
+  covering every dirty path. It judges every restore in the command, not only
+  the first, and
   compares against every dirty path when a git call relocates with `-C`,
   `--work-tree`, `--git-dir` or `GIT_DIR`/`GIT_WORK_TREE`
   (agent-loopholes-6ae4667d). A `~` target is expanded, and a restore behind an

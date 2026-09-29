@@ -67,8 +67,8 @@ proof that skips this reports the same green whether the fix is there or not.
 
 `scripts/hooks/ask-destructive-restore-hook.py` asks for confirmation when a
 `git checkout` of paths (with or without `--`) or a `git restore` would discard
-uncommitted tracked changes; pathspec magic and globs count as covering every
-dirty path. It covers one surface only: a Bash or context-mode shell command the
+uncommitted tracked changes; pathspec magic, globs and `--pathspec-from-file`
+count as covering every dirty path. It covers one surface only: a Bash or context-mode shell command the
 agent issues directly.
 
 A `git checkout --` written *inside* a shell script is invisible to it. The hook
