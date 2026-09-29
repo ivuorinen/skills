@@ -5,7 +5,8 @@
 """SessionStart + PostToolUse hook — report a change to the enforcement surface.
 
 Every guard for `scripts/hooks/**`, `.claude/settings.json`,
-`.claude/settings.local.json` and the graphify pin is a PreToolUse text parser,
+`.claude/settings.local.json`, the graphify pin and the git dir's `.git/hooks`
+is a PreToolUse text parser,
 and each spelling it does not know rewrites the surface with no signal at all:
 the ledger holds six fixed bypasses of that class, and one audit found six more
 — a redirect, a `~` path, a verb, `patch`, an alias, `eval`

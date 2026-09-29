@@ -181,7 +181,8 @@ reads it with `_hooklib.load_event_strict` (errors-4a2d2f34).
 `enforcement-surface-integrity.py` is the detective control behind the text
 guards (agent-hooks-c8ad2907). At SessionStart it records a SHA-256 of every
 file under `scripts/hooks/`, `.claude/settings.json`,
-`.claude/settings.local.json` and the graphify pin; after every Bash,
+`.claude/settings.local.json`, the graphify pin and the git dir's
+`.git/hooks`; after every Bash,
 context-mode shell or Write/Edit call it hashes them again and, on any file
 changed, added or removed, exits 2 with `enforcement surface changed: <paths>`.
 It parses no command, so it sees a change whatever spelling made it — but only
