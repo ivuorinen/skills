@@ -7219,3 +7219,33 @@ def test_quote_masking_is_linear_on_unterminated_quotes(payload):
     start = time.perf_counter()
     lib.shell_stages(payload)
     assert time.perf_counter() - start < 2.0
+
+
+# ── perf-eca62177: the agents guard does not canonicalize every wrapper suffix ─
+
+
+def test_agents_guard_is_not_quadratic_in_a_wrapper_led_stage():
+    """perf-eca62177: a wrapper-led stage yields one suffix per word, and every
+    token of every suffix was canonicalized before any was filtered — about W^2/2
+    calls, 18 s at 4000 words. Stages are now filtered on the verb first."""
+    import time
+
+    mod = _load("deny-agents-path-hook")
+    command = "env echo " + " ".join(f"w{i}" for i in range(8000))
+    start = time.perf_counter()
+    assert not mod._writes_protected(command)
+    assert time.perf_counter() - start < 5.0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env rm -f scripts/hooks/ruff-hook.py",
+        "env -i FOO=1 nice -n 5 rm scripts//hooks/./ruff-hook.py",
+        "env '/bin//rm' scripts/hooks/ruff-hook.py",
+        "sudo sed -i s/a/b/ 'scripts/hooks/ruff-hook.py'",
+    ],
+)
+def test_agents_guard_still_denies_wrapped_protected_writes(command):
+    """The verb-first filter keeps every wrapped write it caught before."""
+    assert _guard_blocks(command)

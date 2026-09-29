@@ -505,20 +505,30 @@ def strip_reserved(tokens: list[str]) -> list[str]:
     return tokens[i:]
 
 
-def _assignments(tokens: list[str]) -> dict[str, str]:
-    """Every `NAME=value` operand in `tokens`, in order.
+def _suffix_variants(expanded: list[str]) -> list[tuple[dict[str, str], list[str]]]:
+    """Each suffix of a wrapper-led stage that starts at a plain word, with the
+    assignments of the prefix it skipped.
 
-    Shared by the stage prefix and the wrapper prefix, which differ only in
-    where the assignments sit: a stage's lead it, while `env`'s follow the
-    wrapper name and may be interleaved with its own options
-    (`env -u FOO A=1 git …`). Matching the shape rather than a position covers
-    both without modelling either grammar.
+    An assignment is any `NAME=value` operand, wherever it sits: `env`'s follow
+    the wrapper name and may be interleaved with its own options
+    (`env -u FOO A=1 git …`), so matching the shape rather than a position
+    covers them without modelling the grammar.
+
+    The prefix's assignments are accumulated as the scan moves right rather
+    than re-read for every suffix: re-reading `expanded[:i]` per word walked
+    the prefix once per suffix, O(W^2) Python steps for a W-word stage
+    (perf-eca62177). A new map is made only when an assignment adds to it, so
+    suffixes between two assignments share one; no caller mutates it.
     """
-    out: dict[str, str] = {}
-    for token in tokens:
-        if "=" in token and not token.startswith("-"):
-            name, _, value = token.partition("=")
-            out[name] = value
+    out: list[tuple[dict[str, str], list[str]]] = []
+    env: dict[str, str] = {}
+    for i in range(1, len(expanded)):
+        prev, word = expanded[i - 1], expanded[i]
+        if "=" in prev and not prev.startswith("-"):
+            name, _, value = prev.partition("=")
+            env = {**env, name: value}
+        if not word.startswith("-") and "=" not in word:
+            out.append((env, expanded[i:]))
     return out
 
 
@@ -566,12 +576,7 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
         # The scan runs over the `-S`-expanded form so a payload-carried call is
         # reachable, while the original stage is kept unexpanded: it is what the
         # ctx-ok guard and the unrecognised-verb path must still judge.
-        expanded = _split_string_payload(tokens)
-        variants += [
-            (_assignments(expanded[:i]), expanded[i:])
-            for i in range(1, len(expanded))
-            if not expanded[i].startswith("-") and "=" not in expanded[i]
-        ]
+        variants += _suffix_variants(_split_string_payload(tokens))
     return variants + [
         (env | inner_env, inner)
         for env, variant in variants

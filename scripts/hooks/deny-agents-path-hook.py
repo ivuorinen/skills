@@ -464,6 +464,17 @@ def _stage_is_mutating(tokens: list[str]) -> bool:
     return write_targets(tokens) is not None
 
 
+def _verb_mutates(tokens: list[str]) -> bool:
+    """`_stage_is_mutating` with only the verb canonicalized (see `_writes_protected`).
+
+    The stage is copied only when canonicalizing changes its verb, so the
+    common case costs no copy of a suffix that may be thousands of words long.
+    The caller passes a non-empty stage.
+    """
+    verb = _canonicalize(tokens[0])
+    return _stage_is_mutating(tokens if verb == tokens[0] else [verb, *tokens[1:]])
+
+
 def _redirects_into_protected(c: str) -> bool:
     """True if any redirection target lands under a protected-write root.
 
@@ -628,8 +639,16 @@ def _writes_protected(command: str) -> bool:
     # into `bash -c rm scripts/hooks/x` — a `-c` string of `rm` alone, with the
     # path demoted to a positional argument — so the unwrapped inner stage only
     # exists in the raw parse (agent-loopholes-015b8134).
-    raw = [[_canonicalize(t) for t in s] for s in shell_stages(command)]
-    stages = [t for t in shell_stages(c) + raw if t and _stage_is_mutating(t)]
+    #
+    # Filtered before canonicalizing: a wrapper-led stage yields one suffix per
+    # word, and canonicalizing every token of every suffix first cost ~W^2/2
+    # regex passes — 58 s at 8000 words, past a hook timeout that does not
+    # block (perf-eca62177). Only the verb decides a stage's write class once
+    # `shell_stages` has unquoted the words, so it is canonicalized for the test
+    # and only the surviving stages are canonicalized whole.
+    raw = [[_canonicalize(t) for t in s] for s in shell_stages(command) if s and _verb_mutates(s)]
+    stages = [t for t in shell_stages(c) if t and _stage_is_mutating(t)]
+    stages += [t for t in raw if t and _stage_is_mutating(t)]
     if not stages:
         return False
     if any(_stage_writes_protected(t, c) for t in stages):
@@ -639,8 +658,12 @@ def _writes_protected(command: str) -> bool:
     return any(_protected_path(base) for base in _cd_bases(c))
 
 
+@functools.cache
 def _canonicalize(command: str) -> str:
     """Fold the spellings a shell resolves identically into one comparable form.
+
+    Cached: the same words recur across a wrapper-led stage's suffixes, and the
+    whole command is canonicalized by several callers (perf-eca62177).
 
     Escaped separators, quotes, backslashes, repeated slashes and `.`
     segments all reach the same path, so without this the textual pass misses
