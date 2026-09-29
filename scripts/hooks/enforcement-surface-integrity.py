@@ -49,6 +49,7 @@ SURFACE = (
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/skills/graphify/.graphify_version",
+    ".git/hooks",
 )
 STATE_DIR = Path(tempfile.gettempdir()) / "nitpicker-enforcement-surface"
 # SessionStart sources that begin a new baseline; `resume` and `compact` keep

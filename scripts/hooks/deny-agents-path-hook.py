@@ -120,12 +120,18 @@ _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
 # `disableAllHooks`, so one redirect there turned off every hook
 # (agent-loopholes-bbe241dd). The graphify pin decides which installed binary the
 # Bash/Read/Glob guards trust, so rewriting it re-trusts any binary
-# (agent-loopholes-8c3cdf74).
+# (agent-loopholes-8c3cdf74). The git dir's hooks directory holds the installed
+# pre-commit and commit-msg scripts: `pre-commit uninstall` is denied by the git
+# guard, and `rm .git/hooks/pre-commit` removed the same scripts past both
+# guards (agent-loopholes-3736b057). Ceiling: a linked worktree's hooks live in
+# the main checkout's git dir, outside this root, and a `core.hooksPath` set
+# before the session points git somewhere this list does not name.
 PROTECTED_WRITE = (
     "scripts/hooks",
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/skills/graphify/.graphify_version",
+    ".git/hooks",
 )
 # Where a directory change the guard cannot resolve may have landed: at every
 # protected root and in the directory holding each. Used as the `cd` base for

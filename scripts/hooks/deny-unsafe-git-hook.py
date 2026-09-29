@@ -213,6 +213,21 @@ _COMMIT_VALUE_SHORTS = frozenset("CcFmtSu")
 _HOOKS_DISABLING = ("core.hookspath",)
 
 
+def _disables_hooks(key: str) -> bool:
+    """True for a (case-folded) config key that can switch the hooks off.
+
+    core.hooksPath by name, and the include keys by mechanism: `include.path`
+    and `includeIf.<cond>.path` pull in a file that can set core.hooksPath, so
+    `git -c include.path=/tmp/hp.cfg commit` disabled the gate while the guard
+    looked for core.hooksPath alone (agent-loopholes-3736b057).
+    """
+    return (
+        key in _HOOKS_DISABLING
+        or key == "include.path"
+        or (key.startswith("includeif.") and key.endswith(".path"))
+    )
+
+
 def _routes_a_push(key: str) -> bool:
     """True for a (case-folded) config key that decides where a push lands.
 
@@ -239,7 +254,15 @@ _PUSH_CONFIG_DENIAL = (
 # `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` repoint config wholesale at a file the
 # caller wrote. Both disable the pre-commit gate exactly as
 # `git -c core.hooksPath=/dev/null` does, which this guard blocks.
-_HOOKS_DISABLING_FILES = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+# `GIT_CONFIG_PARAMETERS` is the variable `-c` itself travels in to child git
+# processes; set directly it carries any key past the `-c` parse
+# (agent-loopholes-3736b057).
+_HOOKS_DISABLING_FILES = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_PARAMETERS")
+# Where git finds the global config file: a commit run under a HOME or
+# XDG_CONFIG_HOME the caller chose reads a core.hooksPath the caller wrote
+# (agent-loopholes-3736b057). Judged on a commit stage only — everything else
+# may legitimately run under another home.
+_CONFIG_HOME_VARS = ("HOME", "XDG_CONFIG_HOME")
 _ENV_DENIAL = (
     "  DENIED  {var} disables the repository's hooks through the environment.\n"
     "          Same effect as `git -c core.hooksPath=…`, which this guard blocks.\n"
@@ -257,7 +280,7 @@ def _env_denial(env: dict[str, str]) -> str | None:
     from the guard while git still reads it.
     """
     for name, value in env.items():
-        if name.startswith("GIT_CONFIG_KEY_") and value.strip().lower() in _HOOKS_DISABLING:
+        if name.startswith("GIT_CONFIG_KEY_") and _disables_hooks(value.strip().lower()):
             return _HOOKSPATH_DENIAL.format(
                 key=value.strip().lower(),
                 value=env.get(name.replace("_KEY_", "_VALUE_"), ""),
@@ -382,7 +405,7 @@ def _config_write_denial(args: list[str]) -> str | None:
     if any(a in _CONFIG_NON_WRITES for a in args):
         return None
     for key in (a.lower() for a in args if not a.startswith("-")):
-        if key in _HOOKS_DISABLING or key.startswith("alias."):
+        if _disables_hooks(key) or key.startswith("alias."):
             return _CONFIG_WRITE_DENIAL.format(key=key)
         if _routes_a_push(key):
             return _PUSH_CONFIG_DENIAL.format(key=key)
@@ -406,7 +429,10 @@ def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
     if name != "git" or index >= len(tokens) or tokens[index] != "commit":
         return None
     skipped = [var for var in env if var == "SKIP" or var.startswith("PRE_COMMIT_")]
-    return _SKIP_DENIAL.format(var=skipped[0]) if skipped else None
+    if skipped:
+        return _SKIP_DENIAL.format(var=skipped[0])
+    homes = [var for var in _CONFIG_HOME_VARS if var in env]
+    return _ENV_DENIAL.format(var=homes[0]) if homes else None
 
 
 def _persistent_aliases() -> dict[str, str]:
@@ -516,7 +542,7 @@ def _global_denial(
         return None
     config = _global_config(tokens, env)
     for key, value in config:
-        if key in _HOOKS_DISABLING:
+        if _disables_hooks(key):
             return _HOOKSPATH_DENIAL.format(key=key, value=value)
         if _routes_a_push(key):
             return _PUSH_CONFIG_DENIAL.format(key=key)

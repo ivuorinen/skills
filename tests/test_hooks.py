@@ -4662,6 +4662,77 @@ def test_git_guard_allows_config_reads_and_unrelated_settings(command, monkeypat
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_PARAMETERS=\"'core.hookspath'='/dev/null'\" git commit -m x",
+        "export GIT_CONFIG_PARAMETERS=x; git commit -m x",
+        "git -c include.path=/tmp/hp.cfg commit -m x",
+        "git -c includeIf.gitdir:/.path=/tmp/hp.cfg commit -m x",
+        "git --config-env=include.path=F commit -m x",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/h git commit",
+        "git config include.path /tmp/hp.cfg",
+        "git config --add includeIf.onbranch:main.path /tmp/hp.cfg",
+        "HOME=/tmp/x git commit -m x",
+        "XDG_CONFIG_HOME=/tmp/x git commit -m x",
+        "export HOME=/tmp/x && git commit -m x",
+        "env HOME=/tmp/x git commit -m x",
+    ],
+)
+def test_git_guard_denies_hook_disabling_channels_by_mechanism(command, monkeypatch, capsys):
+    """agent-loopholes-3736b057: the config checks knew core.hooksPath by name, so
+    the channels that reach it without naming it passed — GIT_CONFIG_PARAMETERS
+    (what `-c` itself travels in), an include file that sets it, and a HOME or
+    XDG_CONFIG_HOME that repoints the global config git reads it from."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "HOME=/tmp/x make check",  # no commit stage
+        "git config --get include.path",
+        "git config --unset include.path",
+        "HOME=/tmp/x git status",
+    ],
+)
+def test_git_guard_allows_include_reads_and_home_off_a_commit(command, monkeypatch, capsys):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm .git/hooks/pre-commit .git/hooks/commit-msg",
+        "rm -rf .git/hooks",
+        "echo 'exit 0' > .git/hooks/pre-commit",
+        "cp /dev/null .git/hooks/commit-msg",
+        "mv .git/hooks /tmp/h",
+        "cd .git/hooks && rm pre-commit",
+    ],
+)
+def test_agents_guard_denies_writes_to_the_installed_git_hooks(command):
+    """agent-loopholes-3736b057: `pre-commit uninstall` is denied, yet deleting the
+    scripts it installed was not — the git dir's hooks are part of the gate."""
+    assert _guard_blocks(command)
+
+
+def test_integrity_surface_is_the_protected_write_list():
+    """The after-the-fact check says it snapshots `PROTECTED_WRITE`; a root added
+    to one list and not the other is guarded before the fact only."""
+    guard = _load("deny-agents-path-hook")
+    integrity = _load("enforcement-surface-integrity")
+    assert tuple(integrity.SURFACE) == tuple(guard.PROTECTED_WRITE)
+
+
 def _alias_repo(monkeypatch, tmp_path: Path, **aliases: str):
     """A real git repo carrying `aliases`, with global and system config isolated."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
