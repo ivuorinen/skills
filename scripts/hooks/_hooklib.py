@@ -877,26 +877,88 @@ def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str,
 
 
 # Aliases git config holds, per checkout, read once per process: every guard
-# parses the same command several times.
-_ALIASES: dict[str, dict[str, str]] = {}
+# parses the same command several times. None records a lookup that failed.
+_ALIASES: dict[str, dict[str, str] | None] = {}
+
+# Every command git ships (`git --list-cmds=main`). git runs its own command
+# before it looks for an alias, so none of these names can be one. When the
+# alias lookup fails, a subcommand outside this set might be an alias nobody
+# could read; see `git_aliases_unreadable`. A name missing here only denies
+# more, and only in that failure case.
+GIT_COMMANDS = frozenset(
+    {
+        *("add", "am", "annotate", "apply", "archive", "bisect", "blame", "branch"),
+        *("bugreport", "bundle", "cat-file", "check-attr", "check-ignore", "check-mailmap"),
+        *("check-ref-format", "checkout", "checkout--worker", "checkout-index", "cherry"),
+        *("cherry-pick", "clean", "clone", "column", "commit", "commit-graph", "commit-tree"),
+        *("config", "count-objects", "credential", "credential-cache"),
+        *("credential-cache--daemon", "credential-store", "daemon", "describe", "diagnose"),
+        *("diff", "diff-files", "diff-index", "diff-tree", "difftool", "difftool--helper"),
+        *("fast-export", "fast-import", "fetch", "fetch-pack", "filter-branch"),
+        *("fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch", "fsck"),
+        *("fsck-objects", "fsmonitor--daemon", "gc", "get-tar-commit-id", "grep"),
+        *("hash-object", "help", "hook", "http-backend", "http-fetch", "http-push"),
+        *("imap-send", "index-pack", "init", "init-db", "instaweb", "interpret-trailers"),
+        *("log", "ls-files", "ls-remote", "ls-tree", "mailinfo", "mailsplit", "maintenance"),
+        *("merge", "merge-base", "merge-file", "merge-index", "merge-octopus"),
+        *("merge-one-file", "merge-ours", "merge-recursive", "merge-recursive-ours"),
+        *("merge-recursive-theirs", "merge-resolve", "merge-subtree", "merge-tree"),
+        *("mergetool", "mktag", "mktree", "multi-pack-index", "mv", "name-rev", "notes"),
+        *("pack-objects", "pack-redundant", "pack-refs", "patch-id", "pickaxe", "prune"),
+        *("prune-packed", "pull", "push", "quiltimport", "range-diff", "read-tree", "rebase"),
+        *("receive-pack", "reflog", "remote", "remote-ext", "remote-fd", "remote-ftp"),
+        *("remote-ftps", "remote-http", "remote-https", "repack", "replace", "request-pull"),
+        *("rerere", "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "send-pack"),
+        *("sh-i18n--envsubst", "shell", "shortlog", "show", "show-branch", "show-index"),
+        *("show-ref", "sparse-checkout", "stage", "stash", "status", "stripspace", "submodule"),
+        *("submodule--helper", "subtree", "switch", "symbolic-ref", "tag", "unpack-file"),
+        *("unpack-objects", "update-index", "update-ref", "update-server-info"),
+        *("upload-archive", "upload-archive--writer", "upload-pack", "var", "verify-commit"),
+        *("verify-pack", "verify-tag", "version", "web--browse", "whatchanged"),
+        *("worktree", "write-tree"),
+    }
+)
 
 
 def git_aliases(root: Path | None = None) -> dict[str, str]:
     """Every alias git config holds for `root` (default: `repo_root()`), name to body.
 
-    Empty when git cannot answer. It lived privately in the git guard, so the
-    protected-write and restore guards judged `git nah` by its name while its
-    body ran `reset --hard` (agent-loopholes-911e2929). Ceiling: `git -C
+    Empty when git cannot answer; `git_aliases_unreadable` tells that case
+    apart from a config holding no alias. It lived privately in the git guard,
+    so the protected-write and restore guards judged `git nah` by its name while
+    its body ran `reset --hard` (agent-loopholes-911e2929). Ceiling: `git -C
     <other repo>` reads that repository's aliases, not these.
     """
+    return _cached_aliases(root) or {}
+
+
+def git_aliases_unreadable(root: Path | None = None) -> bool:
+    """True when git could not say which aliases `root` holds.
+
+    Reading that as "no aliases" failed open: a stored `ci = commit
+    --no-verify` then ran as the unjudged name `ci` whenever the lookup timed
+    out or the config did not parse (agent-loopholes-92626f23). The git guard
+    denies a non-`GIT_COMMANDS` subcommand in that case, as it denies a push
+    when HEAD cannot be read; it runs on every call the other alias-expanding
+    guards see, so one fail-closed check covers them.
+    """
+    return _cached_aliases(root) is None
+
+
+def _cached_aliases(root: Path | None) -> dict[str, str] | None:
+    """The per-checkout alias lookup, read once."""
     key = str(root or repo_root())
     if key not in _ALIASES:
         _ALIASES[key] = _read_aliases(key)
     return _ALIASES[key]
 
 
-def _read_aliases(cwd: str) -> dict[str, str]:
-    """Ask git for `alias.*`; {} when git is missing, fails or times out."""
+def _read_aliases(cwd: str) -> dict[str, str] | None:
+    """Ask git for `alias.*`; None when git is missing, fails or times out.
+
+    Exit 1 with nothing on stderr is `--get-regexp` matching no key — a config
+    with no alias, not a failure.
+    """
     try:
         result = subprocess.run(
             ["git", "config", "--get-regexp", r"^alias\."],
@@ -906,9 +968,13 @@ def _read_aliases(cwd: str) -> dict[str, str]:
             timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 1 and not result.stderr.strip():
         return {}
+    if result.returncode != 0:
+        return None
     aliases: dict[str, str] = {}
-    for line in result.stdout.splitlines() if result.returncode == 0 else []:
+    for line in result.stdout.splitlines():
         name, _, body = line.partition(" ")
         aliases[name.removeprefix("alias.")] = body
     return aliases

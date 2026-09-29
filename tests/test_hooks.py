@@ -7509,3 +7509,60 @@ def test_git_guard_allows_what_is_not_no_verify(command, monkeypatch, capsys):
     where it means --no-stat (merge, pull, rebase) or --no-commit (cherry-pick)."""
     _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-92626f23: an unreadable git config fails closed on aliases ──
+
+
+def _alias_lookup_fails(monkeypatch, failure: str) -> None:
+    """Make `git config --get-regexp ^alias.` fail as `failure`; other calls run."""
+    real = subprocess.run
+
+    def fake(argv, *args, **kwargs):
+        if argv[:2] == ["git", "config"] and "--get-regexp" in argv:
+            if failure == "oserror":
+                raise OSError("git is missing")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(argv, 10)
+            if failure == "no-match":
+                return _Result(returncode=1)
+            return _Result(returncode=128, stderr="fatal: bad config line 1")
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+@pytest.mark.parametrize("failure", ["oserror", "timeout", "bad-config"])
+@pytest.mark.parametrize(
+    "command", ["git ci -m x", "git -c user.name=x ci -m x", "env git ci -m x"]
+)
+def test_git_guard_denies_an_alias_it_cannot_read(failure, command, monkeypatch, capsys):
+    """An unreadable config read as no aliases, so a stored `ci = commit
+    --no-verify` ran as the unjudged name `ci` while an unreadable HEAD failed
+    closed (agent-loopholes-92626f23)."""
+    _alias_lookup_fails(monkeypatch, failure)
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "could not be read" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("failure", "command"),
+    [
+        ("timeout", "git status"),
+        ("timeout", "git commit -m x"),
+        ("oserror", "git log --oneline -1"),
+        ("bad-config", "git -c alias.ci=commit ci -m x"),
+        ("no-match", "git ci -m x"),
+    ],
+)
+def test_git_guard_allows_builtins_when_aliases_are_unreadable(
+    failure, command, monkeypatch, capsys
+):
+    """Controls: an alias never shadows a git command, so those still pass; an
+    alias the command defines itself is judged by its body; and exit 1 with no
+    error is `--get-regexp` finding no alias, not a failure."""
+    _alias_lookup_fails(monkeypatch, failure)
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""

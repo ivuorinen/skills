@@ -37,9 +37,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     _VALUE_OPTS,
+    GIT_COMMANDS,
     event_command,
     foreign_code,
     git_aliases,
+    git_aliases_unreadable,
     git_calls,
     guard_deadline,
     load_event_strict,
@@ -503,6 +505,24 @@ def _persistent_aliases() -> dict[str, str]:
     return git_aliases(REPO_ROOT)
 
 
+def _aliases_unreadable() -> bool:
+    """True when git could not list the aliases, so a stored one cannot be judged.
+
+    `_persistent_aliases` then reads as empty, which let `alias.ci = commit
+    --no-verify` run as `git ci` unjudged whenever the lookup timed out
+    (agent-loopholes-92626f23). Fails closed, like `_head_is_protected`.
+    """
+    return git_aliases_unreadable(REPO_ROOT)
+
+
+_ALIAS_UNREADABLE_DENIAL = (
+    "  DENIED  `git {sub}` is not a git command, so it may be an alias — and git\n"
+    "          config could not be read to see what that alias runs.\n"
+    "          Fix the config (git config --get-regexp '^alias\\.') or run the\n"
+    "          git command the alias stands for."
+)
+
+
 def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
     if subcommand in _NO_VERIFY_SUBCOMMANDS and _carries_no_verify(
@@ -622,6 +642,8 @@ def _global_denial(
     aliases = _persistent_aliases() | {
         k.split(".", 1)[1]: v for k, v in config if k.startswith("alias.") and "." in k
     }
+    if subcommand not in aliases and subcommand not in GIT_COMMANDS and _aliases_unreadable():
+        return _ALIAS_UNREADABLE_DENIAL.format(sub=subcommand)
     return _alias_denial(aliases.get(subcommand, ""), args, depth)
 
 
