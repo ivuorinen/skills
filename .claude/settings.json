@@ -95,6 +95,34 @@
             "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-bash-revalidate.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|mcp__(plugin_context-mode_)?context-mode__ctx_(execute|execute_file|batch_execute)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, no baseline taken' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
       }
     ],
     "Stop": [

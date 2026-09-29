@@ -178,6 +178,59 @@ def test_shell_guard_matchers_do_not_widen_past_shell_tools(event, script):
         assert not any(re.fullmatch(m, tool) for m in _matchers_for(event, script)), tool
 
 
+INTEGRITY = "enforcement-surface-integrity.py"
+
+
+@pytest.mark.parametrize("tool", [*SHELL_TOOLS, "Write", "Edit"])
+def test_surface_integrity_check_follows_every_tool_that_can_write(tool):
+    """The detective control for the enforcement surface (agent-hooks-c8ad2907)
+    runs after every call that can change a file: each shell tool, and the file
+    tools the deny list already binds."""
+    matchers = _matchers_for("PostToolUse", INTEGRITY)
+    assert any(re.fullmatch(m, tool) for m in matchers), f"{INTEGRITY} never sees {tool}"
+
+
+def test_surface_integrity_baseline_is_taken_at_session_start():
+    """Without a SessionStart baseline, a change made before the first tool call
+    would become the baseline."""
+    assert INTEGRITY in _commands("SessionStart")
+
+
+def _integrity_commands() -> list[str]:
+    """Every registered command that runs the integrity check."""
+    return [
+        cmd
+        for entries in _settings()["hooks"].values()
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if INTEGRITY in (cmd := h.get("command", ""))
+    ]
+
+
+@pytest.mark.parametrize("command", _integrity_commands())
+@pytest.mark.parametrize(("hook_exit", "expected"), [(None, 2), (1, 2), (0, 0), (2, 2)])
+def test_surface_integrity_check_that_cannot_run_says_so(command, hook_exit, expected, tmp_path):
+    """Exit 2 is the only PostToolUse exit whose stderr reaches the agent, so a
+    check that cannot start — `uv` missing (None), or dying with exit 1 —
+    reports as 2 rather than passing in silence."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if hook_exit is not None:
+        fake_uv = bin_dir / "uv"
+        fake_uv.write_text(f"#!/bin/sh\nexit {hook_exit}\n", encoding="utf-8")
+        fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/sh", "-c", command],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={"PATH": str(bin_dir), "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
+    )
+    assert result.returncode == expected, result.stderr
+    assert hook_exit in (0, 2) or result.stderr
+
+
 def test_stop_reminder_registered():
     assert "stop-reminder.py" in _commands("Stop")
 

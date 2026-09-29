@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -6830,3 +6831,138 @@ def test_trap_without_an_action_carries_no_command():
     assert lib._command_string(["trap", "x"]) is None
     assert lib._command_string(["trap"]) is None
     assert lib.strip_reserved(["coproc", "P", "{", "git", "push"]) == ["git", "push"]
+
+
+# ── agent-hooks-c8ad2907: a changed enforcement surface is detected after the fact ──
+
+
+def _surface(monkeypatch, tmp_path):
+    """The integrity hook over a fake checkout, with its baseline kept in tmp_path."""
+    mod = _load("enforcement-surface-integrity")
+    root = tmp_path / "repo"
+    (root / "scripts" / "hooks" / "__pycache__").mkdir(parents=True)
+    (root / "scripts" / "hooks" / "guard.py").write_text("v1\n", encoding="utf-8")
+    (root / "scripts" / "hooks" / "__pycache__" / "guard.pyc").write_bytes(b"\0")
+    (root / ".claude").mkdir()
+    (root / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", root)
+    monkeypatch.setattr(mod, "STATE_DIR", tmp_path / "state")
+    return mod, root
+
+
+def _event(name: str, **fields) -> str:
+    """A hook event for one session."""
+    return json.dumps({"hook_event_name": name, "session_id": "s1", **fields})
+
+
+def _post_tool(mod, monkeypatch, capsys) -> str:
+    """Run the PostToolUse arm; return its report, or "" when it stayed quiet."""
+    try:
+        _run(mod, _event("PostToolUse", tool_name="Bash"), monkeypatch)
+    except SystemExit as exc:
+        assert exc.code == 2
+        return capsys.readouterr().err
+    assert capsys.readouterr().err == ""
+    return ""
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda r: (r / "scripts/hooks/guard.py").write_text("v2\n"), "guard.py (changed)"),
+        (lambda r: (r / "scripts/hooks/guard.py").unlink(), "guard.py (removed)"),
+        (lambda r: (r / "scripts/hooks/new.py").write_text("x"), "new.py (added)"),
+        (
+            lambda r: (r / ".claude/settings.local.json").write_text('{"disableAllHooks": true}'),
+            ".claude/settings.local.json (added)",
+        ),
+        (lambda r: (r / ".claude/settings.json").write_text("[]"), "settings.json (changed)"),
+    ],
+)
+def test_surface_integrity_reports_any_change_whatever_its_spelling(
+    mutate, expected, monkeypatch, tmp_path, capsys
+):
+    """Every protected-write bypass so far rewrote the surface with no signal
+    (agent-hooks-c8ad2907). The hook compares hashes, not command text, so a
+    change is reported however the write was spelled — here, by no command
+    at all."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+    mutate(root)
+    report = _post_tool(mod, monkeypatch, capsys)
+    assert "enforcement surface changed:" in report and expected in report
+    assert expected in _post_tool(mod, monkeypatch, capsys)  # keeps reporting
+
+
+def test_surface_integrity_ignores_bytecode_caches(monkeypatch, tmp_path, capsys):
+    """Control: Python rewrites `__pycache__` on every import; that is no change."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    (root / "scripts/hooks/__pycache__/guard.pyc").write_bytes(b"changed")
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+
+
+def test_surface_integrity_keeps_the_baseline_through_resume_and_compact(
+    monkeypatch, tmp_path, capsys
+):
+    """A compaction or resume must not launder a change into the baseline; a
+    fresh start or `/clear` takes a new one."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    (root / "scripts/hooks/guard.py").write_text("v2\n")
+    for source in ("compact", "resume"):
+        _run(mod, _event("SessionStart", source=source), monkeypatch)
+        assert "guard.py (changed)" in _post_tool(mod, monkeypatch, capsys)
+    _run(mod, _event("SessionStart", source="clear"), monkeypatch)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+
+
+def test_surface_integrity_takes_a_baseline_when_it_has_none(monkeypatch, tmp_path, capsys):
+    """Added mid-session, or resumed with no saved state: take one, report nothing."""
+    mod, _root = _surface(monkeypatch, tmp_path)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+    _run(mod, json.dumps({"hook_event_name": "SessionStart", "source": "resume"}), monkeypatch)
+    assert mod._state_file({}).exists()
+
+
+def test_surface_integrity_rebuilds_an_unreadable_baseline(monkeypatch, tmp_path, capsys):
+    """A baseline that is not a JSON object is replaced, not trusted."""
+    mod, _root = _surface(monkeypatch, tmp_path)
+    state = mod._state_file({"session_id": "s1"})
+    state.parent.mkdir(parents=True)
+    for junk in ("[]", "{not json"):
+        state.write_text(junk, encoding="utf-8")
+        assert _post_tool(mod, monkeypatch, capsys) == ""
+        assert isinstance(json.loads(state.read_text(encoding="utf-8")), dict)
+
+
+def test_surface_integrity_marks_a_file_it_cannot_read(tmp_path):
+    """A digest that cannot be computed is a value of its own, never an error."""
+    mod = _load("enforcement-surface-integrity")
+    assert mod._digest(tmp_path / "missing").startswith("unreadable")
+
+
+def test_surface_integrity_runs_as_a_script_and_reports_internal_failure(
+    monkeypatch, tmp_path, capsys
+):
+    """The `__main__` wiring passes a report through, and a crash reports too:
+    a detective control that dies quietly detects nothing."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    script = str(HOOKS_DIR / "enforcement-surface-integrity.py")
+    state_dir = tmp_path / "nitpicker-enforcement-surface"
+    probe = runpy.run_path(script, run_name="probe")
+    state = probe["_state_file"]({"session_id": "s1"})
+    state_dir.mkdir()
+    state.write_text('{"scripts/hooks/_hooklib.py": "stale"}', encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_event("PostToolUse")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(script, run_name="__main__")
+    assert exc.value.code == 2
+    assert "_hooklib.py (changed)" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(script, run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
