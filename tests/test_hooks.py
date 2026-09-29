@@ -49,6 +49,20 @@ def _run(mod, stdin_text: str, monkeypatch):
     mod.main()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_alias_cache(monkeypatch):
+    """Give each test an empty `_hooklib._ALIASES`.
+
+    The hooks import `_hooklib` by name, so one module object — and its
+    per-process alias cache — outlives a test. A test that fakes
+    `subprocess.run` would otherwise leave its fake's answer cached for the
+    next one.
+    """
+    lib = sys.modules.get("_hooklib")
+    if lib is not None:
+        monkeypatch.setattr(lib, "_ALIASES", {}, raising=False)
+
+
 # ── shared contract across the four stdin-driven PostToolUse hooks ─────────────
 
 STDIN_HOOKS = [
@@ -6577,3 +6591,93 @@ def test_unguarded_cd_guard_counts_patch_as_a_write_and_a_dry_run_as_not(monkeyp
     capsys.readouterr()
     _run(guard, _ctx(language="shell", code="cd /nope\npatch --dry-run -p1 -i x.diff"), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-911e2929: every guard judges what a git alias runs ──
+
+
+def _with_persistent_aliases(monkeypatch, mod, **aliases: str):
+    """Seed the shared alias lookup, as if git config held `aliases`."""
+    lib = sys.modules["_hooklib"]
+    monkeypatch.setattr(lib, "_ALIASES", {str(lib.repo_root()): aliases}, raising=False)
+    return mod
+
+
+@pytest.mark.parametrize(
+    ("aliases", "command"),
+    [
+        ({"nah": "!git reset --hard && git clean -df"}, "git nah"),
+        ({"wipe": "checkout --"}, "git wipe scripts/hooks/ruff-hook.py"),
+        ({"x": "!rm"}, "git x scripts/hooks/ruff-hook.py"),
+        ({}, "git -c alias.z='reset --hard' z"),
+        ({}, "git -c alias.w='checkout -- scripts/hooks' w"),
+        ({}, "BODY='reset --hard' git --config-env=alias.z=BODY z"),
+        ({}, "BODY='reset --hard' git --config-env alias.z=BODY z"),
+        ({}, "git -c alias.a=b -c alias.b='reset --hard' a"),
+        ({}, "git -c alias.z='!sed -i s/a/b/ scripts/hooks/ruff-hook.py' z"),
+    ],
+)
+def test_agents_guard_judges_what_a_git_alias_runs(aliases, command, monkeypatch):
+    """Alias expansion lived in the git guard alone, so `git nah` and
+    `git -c alias.z='reset --hard' z` were judged by the alias name and
+    rewrote the worktree (agent-loopholes-911e2929)."""
+    mod = _with_persistent_aliases(monkeypatch, _load("deny-agents-path-hook"), **aliases)
+    assert mod._writes_protected(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git -c alias.st=status st", "git nah", "git -c user.name=x -c k st", "git -c alias.z=z z"],
+)
+def test_agents_guard_allows_an_alias_that_writes_nothing(command, monkeypatch):
+    """Controls: a harmless alias, an unknown name, a config pair that defines
+    no alias, and a self-referential alias the expansion stops on."""
+    mod = _with_persistent_aliases(monkeypatch, _load("deny-agents-path-hook"))
+    assert not mod._writes_protected(command)
+
+
+@pytest.mark.parametrize(
+    ("aliases", "command"),
+    [
+        ({}, "git -c alias.rs=restore rs README.md"),
+        ({"rs": "restore"}, "git rs README.md"),
+        ({"undo": "!git checkout -- README.md"}, "git undo"),
+    ],
+)
+def test_restore_guard_asks_through_a_git_alias(aliases, command, monkeypatch, tmp_path, capsys):
+    """A one-word alias for `restore` discarded dirty work with no prompt."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    _with_persistent_aliases(monkeypatch, mod, **aliases)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+def test_alias_expansion_is_bounded_and_survives_a_malformed_body(monkeypatch):
+    """A body that re-invokes itself stops at the depth cap and is split
+    coarsely; a body shlex cannot split is split on whitespace."""
+    lib = _hooklib()
+    monkeypatch.setattr(lib, "git_aliases", lambda root=None: {})
+    assert ["git", "z"] in lib.shell_stages("git -c 'alias.z=!git z' z")
+    assert ["z"] in lib.shell_stages("git -c alias.z=z z")
+    broken = lib.shell_stages('git -c "alias.q=reset --hard \'x" q')
+    assert any(stage[-3:] == ["reset", "--hard", "'x"] for stage in broken)
+
+
+def test_git_aliases_is_read_once_per_checkout(monkeypatch, tmp_path):
+    """The lookup is cached per root, and a failing git reads as no aliases."""
+    lib = _hooklib()
+    calls: list[str] = []
+
+    def _fake(argv, cwd, **_k):
+        """Answer `git config --get-regexp` with one alias, counting the calls."""
+        calls.append(cwd)
+        return _Result(stdout="alias.st status\n")
+
+    monkeypatch.setattr(lib.subprocess, "run", _fake)
+    assert lib.git_aliases(tmp_path) == {"st": "status"}
+    assert lib.git_aliases(tmp_path) == {"st": "status"}
+    assert calls == [str(tmp_path)]
+    monkeypatch.setattr(lib.subprocess, "run", lambda *_a, **_k: _Result(returncode=1))
+    assert lib.git_aliases(tmp_path / "other") == {}

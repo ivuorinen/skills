@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -666,6 +667,9 @@ def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str,
 
     `_depth` counts the `sh -c` payloads already opened to reach `command`; it
     is internal, and bounds the recursion through `_shell_c_stages`.
+
+    A git stage that invokes an alias is followed by the stages its body runs
+    (see `_alias_stages`), so every guard judges the expansion, not the name.
     """
     masked, spans = _mask_quoted(command)
     # Comments first, then continuations: `foo # bar \` is comment to end of line,
@@ -680,14 +684,108 @@ def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str,
             name, _, value = tokens[i].partition("=")
             env[name] = value
             i += 1
-        if i < len(tokens):
-            # The wrapper's assignments are layered over the stage's, not merged
-            # blindly: `A=1 env A=2 git …` is what real `env` does, and the
-            # closer one is what reaches git.
-            stages.extend(
-                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:], _depth)
-            )
+        # The wrapper's assignments are layered over the stage's, not merged
+        # blindly: `A=1 env A=2 git …` is what real `env` does, and the closer
+        # one is what reaches git.
+        for extra, variant in _wrapper_variants(tokens[i:], _depth) if i < len(tokens) else []:
+            stages.append((env | extra, variant))
+            stages.extend(_alias_stages(env | extra, variant, _depth))
     return stages
+
+
+# Aliases git config holds, per checkout, read once per process: every guard
+# parses the same command several times.
+_ALIASES: dict[str, dict[str, str]] = {}
+
+
+def git_aliases(root: Path | None = None) -> dict[str, str]:
+    """Every alias git config holds for `root` (default: `repo_root()`), name to body.
+
+    Empty when git cannot answer. It lived privately in the git guard, so the
+    protected-write and restore guards judged `git nah` by its name while its
+    body ran `reset --hard` (agent-loopholes-911e2929). Ceiling: `git -C
+    <other repo>` reads that repository's aliases, not these.
+    """
+    key = str(root or repo_root())
+    if key not in _ALIASES:
+        _ALIASES[key] = _read_aliases(key)
+    return _ALIASES[key]
+
+
+def _read_aliases(cwd: str) -> dict[str, str]:
+    """Ask git for `alias.*`; {} when git is missing, fails or times out."""
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get-regexp", r"^alias\."],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    aliases: dict[str, str] = {}
+    for line in result.stdout.splitlines() if result.returncode == 0 else []:
+        name, _, body = line.partition(" ")
+        aliases[name.removeprefix("alias.")] = body
+    return aliases
+
+
+def _inline_aliases(options: list[str], env: dict[str, str]) -> dict[str, str]:
+    """Aliases a git call defines for itself: `-c alias.X=body`, `--config-env`.
+
+    `--config-env alias.X=VAR` names an environment variable, resolved from the
+    stage's assignments where the command sets it.
+    """
+    out: dict[str, str] = {}
+    for opt, following in _with_next(options):
+        if opt in ("-c", "--config-env"):
+            pair = following
+        elif opt.startswith("--config-env="):
+            pair = opt.split("=", 1)[1]
+        else:
+            continue
+        key, sep, body = pair.partition("=")
+        if sep and key.lower().startswith("alias."):
+            out[key[len("alias.") :].lower()] = body if opt == "-c" else env.get(body, body)
+    return out
+
+
+def _alias_stages(
+    env: dict[str, str], tokens: list[str], depth: int
+) -> list[tuple[dict[str, str], list[str]]]:
+    """The stages a git alias runs when `tokens` invokes one, else [].
+
+    Expansion lived in the git guard alone, so `git -c alias.z='reset --hard' z`
+    and a persistent `alias.nah = !git reset --hard` reached the worktree past
+    the protected-write guard, and `git -c alias.rs=restore rs f` discarded f
+    past the restore prompt (agent-loopholes-911e2929). A plain body runs as
+    git with the call's own global options; a `!` body is a shell command, parsed
+    as one. The call's arguments follow the body, on every stage it runs. A body
+    naming another alias is expanded again, to `_MAX_SHELL_DEPTH`, then split
+    coarsely rather than left unread.
+    """
+    if Path(tokens[0]).name != "git":
+        return []
+    i = skip_git_global_opts(tokens, 1)
+    if i >= len(tokens):
+        return []
+    aliases = git_aliases() | _inline_aliases(tokens[1:i], env)
+    body = aliases.get(tokens[i].lower())
+    if body is None:
+        return []
+    args = tokens[i + 1 :]
+    if depth >= _MAX_SHELL_DEPTH:
+        return _coarse_stages(f"{body.removeprefix('!')} {' '.join(args)}")
+    if body.startswith("!"):
+        inner = shell_stages_with_env(body[1:], _depth=depth + 1)
+        return [(env | e, t + args) for e, t in inner]
+    try:
+        words = shlex.split(body)
+    except ValueError:
+        words = body.split()
+    expanded = [*tokens[:i], *words, *args]
+    return [(env, expanded), *_alias_stages(env, expanded, depth + 1)]
 
 
 def shell_stages(command: str) -> list[list[str]]:

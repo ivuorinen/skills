@@ -37,6 +37,7 @@ from _hooklib import (
     _VALUE_OPTS,
     event_command,
     foreign_code,
+    git_aliases,
     git_calls,
     load_event_strict,
     repo_root,
@@ -375,31 +376,17 @@ def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
     return _SKIP_DENIAL.format(var=skipped[0]) if skipped else None
 
 
-@functools.cache
 def _persistent_aliases() -> dict[str, str]:
     """Every alias git config already holds, name to body; empty if git cannot say.
 
     Aliases were resolved only from `-c alias.…` in the same command, so an alias
     defined by an earlier call or outside the session — `alias.ci = commit
     --no-verify`, then `git ci -m x` — ran its body unjudged
-    (agent-loopholes-f376faa5). Cached: this hook runs on every shell call.
-    Ceiling: `git -C <other repo>` reads that repo's aliases, not these.
+    (agent-loopholes-f376faa5). The lookup is `_hooklib.git_aliases`, shared
+    with every guard that expands an alias (agent-loopholes-911e2929); this
+    guard keeps its own judgement of the body so a denial can name the alias.
     """
-    try:
-        result = subprocess.run(
-            ["git", "config", "--get-regexp", r"^alias\."],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    aliases: dict[str, str] = {}
-    for line in result.stdout.splitlines() if result.returncode == 0 else []:
-        name, _, body = line.partition(" ")
-        aliases[name.removeprefix("alias.")] = body
-    return aliases
+    return git_aliases(REPO_ROOT)
 
 
 def _denial(subcommand: str, args: list[str]) -> str | None:
