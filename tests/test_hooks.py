@@ -6681,3 +6681,152 @@ def test_git_aliases_is_read_once_per_checkout(monkeypatch, tmp_path):
     assert calls == [str(tmp_path)]
     monkeypatch.setattr(lib.subprocess, "run", lambda *_a, **_k: _Result(returncode=1))
     assert lib.git_aliases(tmp_path / "other") == {}
+
+
+# ── agent-loopholes-df530242: eval, source, coproc and here-strings are unwrapped ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "coproc git push origin main",
+        "coproc P { git push origin main; }",
+        "eval 'git commit --no-verify -m x'",
+        "eval git push origin main",
+        "builtin eval 'git push origin main'",
+        "trap 'git push origin main' EXIT",
+        "trap -- 'git commit --no-verify -m x' EXIT",
+        "C='git push origin main'; eval $C",
+        "bash -c \"$(printf 'git push origin main')\"",
+        "bash <<< 'git push origin main'",
+        "bash <<<'git commit --no-verify -m x'",
+        "sh -s <<< 'git push origin main'",
+        "bash 2>/dev/null <<< 'git push origin main'",
+        "source <(echo git push origin main)",
+        ". <(echo git push origin main)",
+        ". /dev/stdin <<< 'git push origin main'",
+        "source /dev/stdin <<< 'git commit --no-verify -m x'",
+        "bash -s < <(echo git push origin main)",
+    ],
+)
+def test_git_guard_unwraps_eval_source_coproc_and_here_strings(command, monkeypatch, capsys):
+    """Each exited 0: `coproc` was no reserved word, `eval` and `trap` were
+    judged by their name, a here-string made `<<<` the shell's "script file",
+    and `source`/`.` were no shell at all (agent-loopholes-df530242). A string
+    built by expansion, or stdin fed from elsewhere, gets the name-based
+    refusal of code in another language."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval echo hi",
+        "trap 'rm -f /tmp/x' EXIT",
+        "trap - EXIT",
+        "source ./env.sh",
+        ". .venv/bin/activate",
+        "bash <<< 'echo hi'",
+        "coproc sleep 1",
+        "bash run.sh <<< 'git push origin main'",
+    ],
+)
+def test_git_guard_allows_an_ordinary_eval_source_or_here_string(command, monkeypatch, capsys):
+    """Controls: an unwrapped string is judged like a top-level one, no more
+    harshly, and a here-string into a script file is that script's data."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval rm scripts/hooks/ruff-hook.py",
+        "bash <<< 'rm scripts/hooks/ruff-hook.py'",
+        "coproc rm scripts/hooks/ruff-hook.py",
+        "trap 'rm scripts/hooks/ruff-hook.py' EXIT",
+        "source <(echo rm scripts/hooks/ruff-hook.py)",
+        'F=scripts/hooks/ruff-hook.py; eval "rm $F"',
+    ],
+)
+def test_agents_guard_unwraps_eval_source_coproc_and_here_strings(command, monkeypatch, capsys):
+    """A one-word prefix deleted a hook past the protected-write guard."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "enforcement surface" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command", ["eval cat scripts/hooks/ruff-hook.py", "bash <<< 'cat .claude/settings.json'"]
+)
+def test_agents_guard_allows_a_read_behind_eval_or_a_here_string(command, monkeypatch, capsys):
+    """Controls: a read stays a read once unwrapped."""
+    _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "coproc git restore README.md",
+        "eval git restore README.md",
+        "bash <<< 'git checkout -- README.md'",
+    ],
+)
+def test_restore_guard_asks_behind_eval_coproc_or_a_here_string(
+    command, monkeypatch, tmp_path, capsys
+):
+    """A restore of dirty work behind a prefix asks like the bare one."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize("write", ["eval rm -rf build", "bash <<< 'rm -rf build'"])
+def test_unguarded_cd_guard_unwraps_eval_and_here_strings(write, monkeypatch):
+    """The cd guard reads the shared stages, so the write behind the prefix counts."""
+    payload = _ctx(language="shell", code=f"cd /nope\n{write}")
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["bash", "<<<", "x"], ("c", "x")),
+        (["bash", "<<<x"], ("c", "x")),
+        (["bash", "<<", "EOF"], ("stdin", None)),
+        (["bash", "<"], ("stdin", None)),
+        (["bash", "<", "f.sh"], ("stdin", None)),
+        (["bash", ">"], ("stdin", None)),
+        (["bash", "2>/dev/null", "run.sh"], ("file", "run.sh")),
+        (["bash", ">", "out", "run.sh"], ("file", "run.sh")),
+        (["bash", "-c", "<<<x"], ("c", "<<<x")),
+        (["source", "x.sh"], ("file", "x.sh")),
+        ([".", "/dev/stdin", "<<<", "y"], ("c", "y")),
+        (["source", "/dev/fd/63"], ("stdin", None)),
+    ],
+)
+def test_shell_invocation_reads_redirections_and_source(tokens, expected):
+    """Redirections are read, not taken for the script operand; `source` and
+    `.` are shells whose input is a file, stdin, or a here-string."""
+    assert _hooklib()._shell_invocation(tokens) == expected
+
+
+def test_trap_without_an_action_carries_no_command():
+    """`trap 'x'` alone names no signal, and `trap` with none prints the list."""
+    lib = _hooklib()
+    assert lib._command_string(["trap", "x"]) is None
+    assert lib._command_string(["trap"]) is None
+    assert lib.strip_reserved(["coproc", "P", "{", "git", "push"]) == ["git", "push"]

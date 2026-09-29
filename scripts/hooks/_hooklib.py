@@ -97,8 +97,10 @@ _SHELL_VALUE_OPTS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"
 # Reserved words that may open a stage before the command it runs. A guard
 # reading `tokens[0]` saw `then` in `if true; then git commit --no-verify; fi`
 # and judged nothing — every shell guard passed a command behind `if`, `then`,
-# `do`, `{` or `!`. `strip_reserved` drops them.
-_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{"})
+# `do`, `{` or `!`. `strip_reserved` drops them. `coproc` runs the command after
+# it in the background, and was missing: `coproc git push origin main` passed
+# every guard (agent-loopholes-df530242).
+_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{", "coproc"})
 # How many nested `sh -c` payloads are unwrapped precisely; past it, the payload
 # is split coarsely (see `_coarse_stages`), never left folded.
 _MAX_SHELL_DEPTH = 4
@@ -471,10 +473,14 @@ def strip_reserved(tokens: list[str]) -> list[str]:
     where no guard looked for it. The same held for `do` in a loop body, `{`
     in a group, `!` in a negation, and `while`/`until` conditions. Only the
     leading words are dropped: an operand spelled `then` is still an operand.
+
+    `coproc NAME { …; }` names the coprocess before its group, so the name is
+    dropped with it.
     """
     i = 0
     while i < len(tokens) and tokens[i] in _RESERVED:
-        i += 1
+        named = tokens[i] == "coproc" and tokens[i + 2 : i + 3] == ["{"]
+        i += 2 if named else 1
     return tokens[i:]
 
 
@@ -555,12 +561,26 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
 def _shell_verb_end(tokens: list[str]) -> int | None:
     """Index just past the shell's own name, or None when the stage is no shell.
 
-    `busybox sh` names the shell one word late, so it ends at 2.
+    `busybox sh` names the shell one word late, so it ends at 2. `source` and
+    `.` run a file's commands in the current shell, so they are shells whose
+    only input is that file (agent-loopholes-df530242).
     """
+    if tokens[0] in _SOURCERS:
+        return 1
     name = Path(tokens[0]).name
     if name == "busybox":
         return 2 if len(tokens) > 1 and Path(tokens[1]).name in _SHELLS else None
     return 1 if name in _SHELLS else None
+
+
+# `source FILE` / `. FILE`.
+_SOURCERS = frozenset({"source", "."})
+# A redirection word in a shell stage, input or output, with any attached target.
+_IN_REDIRECT = re.compile(r"\d*(<<<|<<-|<<|<>|<&|<)(.*)", re.DOTALL)
+_OUT_REDIRECT = re.compile(r"\d*(?:&>>|&>|>>|>\||>&|>)(.*)", re.DOTALL)
+# Files that are a descriptor rather than a script: stdin itself, and the
+# `/dev/fd/N` a process substitution `<(…)` expands to.
+_STDIN_FILES = ("/dev/stdin", "/dev/fd/", "/proc/self/fd/", "-")
 
 
 def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
@@ -573,15 +593,25 @@ def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
     spells it `--command`. With no `-c` and no operand, or with `-s`, the shell
     reads its commands from stdin — the `… | bash` shape. An operand without
     `-c` is a script file, whose contents no text guard can see.
+
+    Redirections are read rather than taken for the operand
+    (agent-loopholes-df530242): `bash <<< 'git push'` was a "script file" named
+    `<<<`. A here-string into a shell that reads stdin is its command string,
+    judged like `-c`; any other input redirection — a file, a heredoc, a
+    process substitution `<(…)` — makes it read stdin. Only before `-c` is seen,
+    so a command string that begins with `<` is never mistaken for one.
     """
     i = _shell_verb_end(tokens)
     if i is None:
         return None
-    command_flag = stdin_flag = False
+    flags = {"c": False, "s": False}
+    here: list[str | None] = []
     while i < len(tokens):
-        # `word`, not `token`: bandit reads `token == "--"` as a hardcoded
-        # password comparison (B105).
-        word = tokens[i]
+        step = 0 if flags["c"] else _redirection_step(tokens, i, here)
+        if step:
+            i += step
+            continue
+        word = tokens[i]  # `word`, not `token`: bandit reads `token == "--"` as B105
         if word.startswith("--command="):
             return ("c", word.split("=", 1)[1])
         if word in _SHELL_VALUE_OPTS or word == "--":
@@ -590,16 +620,51 @@ def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
                 break
         elif len(word) > 1 and word[0] in "-+":
             short = word[0] == "-" and not word.startswith("--")
-            command_flag |= word == "--command" or (short and "c" in word[1:])
-            stdin_flag |= short and "s" in word[1:]
+            flags["c"] |= word == "--command" or (short and "c" in word[1:])
+            flags["s"] |= short and "s" in word[1:]
         else:
             break
         i += 1
-    if command_flag:
+    return _invocation_result(tokens, i, flags, here)
+
+
+def _redirection_step(tokens: list[str], i: int, here: list[str | None]) -> int:
+    """Words the redirection at `tokens[i]` spans (0 if none); records stdin's source.
+
+    `here` gets the here-string's text for `<<<`, or None for any other input
+    redirection. A bare operator takes the next word as its target, when there
+    is one: the stage split leaves `<(…)` as a lone `<`.
+    """
+    word = tokens[i]
+    match = _IN_REDIRECT.fullmatch(word)
+    if match is None:
+        out = _OUT_REDIRECT.fullmatch(word)
+        return 0 if out is None else (1 if out.group(1) or i + 1 >= len(tokens) else 2)
+    op, attached = match.groups()
+    target = attached or (tokens[i + 1] if i + 1 < len(tokens) else "")
+    here.append(target if op == "<<<" else None)
+    return 1 if attached or i + 1 >= len(tokens) else 2
+
+
+def _invocation_result(
+    tokens: list[str], i: int, flags: dict[str, bool], here: list[str | None]
+) -> tuple[str, str | None] | None:
+    """The verdict `_shell_invocation` reached, once its scan has stopped at `i`."""
+    if flags["c"]:
         return ("c", tokens[i]) if i < len(tokens) else None
-    if stdin_flag or i >= len(tokens) or tokens[i] == "-":
-        return ("stdin", None)
-    return ("file", tokens[i])
+    operand = tokens[i] if i < len(tokens) else None
+    if operand is not None and not flags["s"] and not operand.startswith(_STDIN_FILES):
+        return ("file", operand)
+    strings = [h for h in here + _later_here_strings(tokens, i + 1) if h is not None]
+    return ("c", strings[-1]) if strings else ("stdin", None)
+
+
+def _later_here_strings(tokens: list[str], i: int) -> list[str | None]:
+    """Input redirections after a stdin-file operand: `source /dev/stdin <<< 'cmd'`."""
+    here: list[str | None] = []
+    while i < len(tokens):
+        i += _redirection_step(tokens, i, here) or 1
+    return here
 
 
 def _coarse_stages(payload: str) -> list[tuple[dict[str, str], list[str]]]:
@@ -629,26 +694,62 @@ def _shell_c_stages(tokens: list[str], depth: int) -> list[tuple[dict[str, str],
     `shell_stages_with_env` gives the inner command the same treatment as a
     top-level one — quoting, wrappers, and a further `-c` — bounded by
     `_MAX_SHELL_DEPTH`.
+
+    `eval`, `trap` and a here-string into a shell carry a command string the
+    same way (see `_command_string`), and are opened the same way.
     """
-    invocation = _shell_invocation(tokens)
-    if invocation is None or invocation[0] != "c" or not invocation[1]:
+    payload = _command_string(tokens)
+    if not payload:
         return []
     if depth >= _MAX_SHELL_DEPTH:
-        return _coarse_stages(invocation[1])
-    return shell_stages_with_env(invocation[1], _depth=depth + 1)
+        return _coarse_stages(payload)
+    return shell_stages_with_env(payload, _depth=depth + 1)
+
+
+def _command_string(tokens: list[str]) -> str | None:
+    """The command text a stage runs from a string, or None.
+
+    A shell's `-c` string or here-string (`_shell_invocation`); `eval`'s
+    operands joined, as eval joins them; and the action of `trap 'cmd' SIG`.
+    `eval 'git commit --no-verify -m x'` and `eval rm scripts/hooks/x` passed
+    every guard, which judged the word `eval` (agent-loopholes-df530242).
+    """
+    invocation = _shell_invocation(tokens)
+    if invocation is not None:
+        return invocation[1] if invocation[0] == "c" else None
+    name, args = Path(tokens[0]).name, tokens[1:]
+    if name == "eval":
+        return " ".join(args)
+    if name == "trap":
+        actions = args[1:] if args[:1] == ["--"] else args
+        if len(actions) >= 2 and not actions[0].startswith("-"):
+            return actions[0]
+    return None
+
+
+# A command string whose text the shell expands before running it.
+_DYNAMIC = re.compile(r"[$`]")
 
 
 def feeds_a_shell(command: str) -> bool:
-    """True if any stage is a shell that reads its commands from stdin.
+    """True if a stage runs commands no stage of this text carries.
 
-    `echo 'git push origin main' | bash` runs a command that is data on the
-    outer command line, so no stage carries it (agent-loopholes-015b8134).
-    Callers treat such a command the way they treat code in another language.
+    A shell reading stdin — `echo 'git push origin main' | bash`, `. /dev/stdin`,
+    `source <(…)`, `bash < file` — runs a command that is data on the outer
+    command line (agent-loopholes-015b8134, agent-loopholes-df530242). So does
+    a command string built by expansion: `eval "$CMD"`, `bash -c "$(cat x)"`
+    run whatever the variable holds. Callers treat such a command the way they
+    treat code in another language, refusing it where it names what they
+    protect. Ceiling: a script file operand (`bash run.sh`) is not read.
     """
-    return any(
-        (invocation := _shell_invocation(tokens)) is not None and invocation[0] == "stdin"
-        for tokens in shell_stages(command)
-    )
+    for tokens in shell_stages(command):
+        invocation = _shell_invocation(tokens)
+        if invocation is not None and invocation[0] == "stdin":
+            return True
+        payload = _command_string(tokens)
+        if payload and _DYNAMIC.search(payload):
+            return True
+    return False
 
 
 def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str, str], list[str]]]:
