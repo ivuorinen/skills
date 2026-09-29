@@ -7148,3 +7148,74 @@ def test_surface_integrity_runs_as_a_script_and_reports_internal_failure(
         runpy.run_path(script, run_name="__main__")
     assert exc.value.code == 2
     assert "failed internally" in capsys.readouterr().err
+
+
+# ── perf-2d1e28b2: quote masking is linear in the payload ─────────────────────
+
+# The masking rule as it stood before perf-2d1e28b2, kept here as the reference
+# the linear scan must agree with: a quote that never closes is a literal
+# character, and scanning resumes right after it.
+_REFERENCE_QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
+
+
+def _reference_mask(command: str) -> tuple[str, list[str]]:
+    spans: list[str] = []
+
+    def take(match):
+        spans.append(match.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    return _REFERENCE_QUOTED.sub(take, command), spans
+
+
+def _masking_inputs() -> list[str]:
+    """Hand-picked shapes plus a seeded fuzz over the quoting alphabet."""
+    import random
+
+    fixed = [
+        "",
+        "echo \"a 'b' c",  # unterminated double quote, single pair after it
+        'echo \'a "b" c',  # unterminated single quote, double pair after it
+        'echo "a" \'b',
+        'echo "a\\" b',  # the only double quote closing is escaped
+        'echo "abc\\',  # trailing backslash inside an unterminated quote
+        'git push origin main # "' + '\\"' * 20,
+        "a 'b' \"c\" 'd",
+        "\"'\"'\"'",
+    ]
+    rng = random.Random(0x2D1E28B2)
+    fuzz = [
+        "".join(rng.choice("ab '\"\\\n#;") for _ in range(rng.randint(0, 40))) for _ in range(3000)
+    ]
+    return fixed + fuzz
+
+
+def test_quote_masking_matches_the_reference_rule():
+    """The linear scan is a performance change only: every input masks exactly
+    as the old rule masked it."""
+    lib = _hooklib()
+    for command in _masking_inputs():
+        assert lib._mask_quoted(command) == _reference_mask(command), repr(command)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        'echo "' + '\\"' * 65536,  # 128 KB: one open quote, every later one escaped
+        "echo '" + '"' * 131072,  # an open single quote, then only doubles
+        '"' + "'" * 131072,  # an open double quote, then only singles
+        'git push origin main # "' + '\\"' * 65536,  # the comment-hidden padding
+    ],
+    ids=["escaped-doubles", "open-single", "open-double", "comment-padding"],
+)
+def test_quote_masking_is_linear_on_unterminated_quotes(payload):
+    """perf-2d1e28b2: every start of an unterminated quote rescanned to the end
+    of input, so n escaped quotes after one open quote cost O(n^2) — 11 s at
+    32 KB, past a hook timeout well short of this size. A timed-out hook does
+    not block, so this was a fail-open."""
+    import time
+
+    lib = _hooklib()
+    start = time.perf_counter()
+    lib.shell_stages(payload)
+    assert time.perf_counter() - start < 2.0

@@ -120,14 +120,22 @@ _MAX_SHELL_DEPTH = 4
 # `'a'#b`, which bash also reads as one word. Still a character class, no retry.
 _COMMENT = re.compile(r"(?<![^\s;&|()])#[^\n]*")
 # Single-quoted spans are literal; double-quoted spans honour backslash escapes.
-# Possessive quantifiers (`*+`, Python 3.11+). The two inner alternatives are
-# already disjoint, so a *terminated* quote never backtracks — but an
-# unterminated one makes the engine unwind the whole span one character at a
-# time, once per starting position. A hook payload is attacker-influenced, and
-# an unterminated quote is exactly what a hostile one would carry. Possessive
-# matching forbids that unwind; the match simply fails, which is the correct
-# answer for an unterminated span.
-_QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
+# Possessive quantifiers (`*+`, Python 3.11+) stop the engine unwinding a span
+# one character at a time, but they did not make masking linear: a quote that
+# never closes still failed only after scanning to the end of input, and the
+# scan restarted from every later quote character, so `"` followed by n `\"`
+# cost O(n^2) — 11 s at 32 KB on a hook payload (perf-2d1e28b2).
+#
+# So a span may also end at end of input (`\Z`, after an optional lone
+# backslash), which consumes an unterminated one in a single pass; the group
+# records whether the closing quote was found. `_mask_quoted` then treats an
+# unterminated quote as a literal character, as the old rule did, and scans the
+# rest for the OTHER kind only: no later quote of the same kind can close either
+# (after an open `"` every later `"` is escaped; after an open `'` there is no
+# other `'`), so skipping them changes no answer.
+_QUOTED = re.compile(r"'[^']*+(?:(')|\Z)|\"(?:\\.|[^\"\\])*+(?:(\")|\\?\Z)")
+_SINGLE_QUOTED = re.compile(r"'[^']*+(?:(')|\Z)")
+_DOUBLE_QUOTED = re.compile(r"\"(?:\\.|[^\"\\])*+(?:(\")|\\?\Z)")
 _MASK = re.compile("\x00(\\d+)\x00")
 # The escapes bash removes before a command sees its argv. A guard comparing
 # tokens that still carry them read `\-\-no-verify` and `$'--no-verify'` as
@@ -343,6 +351,9 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
     beginning `b"`, and `grep '# ctx-ok'` looked like a trailing comment.
     Masking is enough to fix both without a full shell parser — notably it leaves
     newlines, redirections and subshells splitting exactly as they did.
+
+    Linear in the command: an unterminated quote is consumed once and its tail
+    rescanned once for the other kind of quote (see `_QUOTED`).
     """
     spans: list[str] = []
 
@@ -353,9 +364,19 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
         restores the exact original text rather than a re-quoted approximation.
         The NUL delimiters keep it from colliding with anything a real shell
         command can contain.
+
+        A span that reached end of input unclosed is not a span: its opening
+        quote stays a literal character, and the rest is masked for the other
+        kind of quote only — or left as it is when that kind is spent too.
         """
-        spans.append(match.group(0))
-        return f"\x00{len(spans) - 1}\x00"
+        text = match.group(0)
+        if any(group is not None for group in match.groups()):
+            spans.append(text)
+            return f"\x00{len(spans) - 1}\x00"
+        if match.re is not _QUOTED:
+            return text  # both kinds are unterminated from here on
+        other = _DOUBLE_QUOTED if text[0] == "'" else _SINGLE_QUOTED
+        return text[0] + other.sub(take, text[1:])
 
     return _QUOTED.sub(take, command), spans
 
