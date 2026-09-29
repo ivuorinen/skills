@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     _VALUE_OPTS,
     event_command,
+    find_writes_past_matches,
     foreign_code,
     guard_deadline,
     load_event_strict,
@@ -533,8 +534,16 @@ def _find_misses_surface(tokens: list[str]) -> bool:
     reaches only paths whose name matches them all, so it is cleared when no
     name on the surface — a protected root's components or any file under one
     — matches. With `-o`, `!`, `-not` or no name test, the tests are not read.
+
+    A name test bounds which paths `{}` stands for, not what an `-exec` body
+    does. `find . -name nomatch -exec rm -rf scripts/hooks +` matched nothing
+    on the surface and was cleared while its body deleted the hooks; that body
+    is now a stage of its own (`_hooklib._find_exec_stages`). A writing body
+    that reaches past `{}` — `{}/..`, a shell string, a nested `find` — is
+    bounded by no name test, so its find is never cleared (CodeRabbit PR #151
+    review; `find_writes_past_matches`).
     """
-    if PurePosixPath(tokens[0]).name != "find":
+    if PurePosixPath(tokens[0]).name != "find" or find_writes_past_matches(tokens):
         return False
     args = tokens[1:]
     if any(a in ("-o", "-or", "!", "-not", ",") for a in args):

@@ -180,8 +180,15 @@ def _covers(target: str, entry: str) -> bool:
     was, `git restore ~/…/README.md` compared as a relative path and discarded
     the dirty file silently (agent-loopholes-0f3351b2). One that cannot be
     expanded covers everything, as a glob does.
+
+    `{}` is the operand a `find -exec` body receives for each path found, which
+    the guard cannot enumerate, so it covers everything too: `find . -name
+    README.md -exec git restore {} ';'` discarded the file with no prompt
+    (CodeRabbit PR #151 review).
     """
     t = target.strip("\"'").rstrip("/")
+    if "{}" in t:
+        return True
     if t.startswith("~"):
         try:
             t = str(Path(t).expanduser())

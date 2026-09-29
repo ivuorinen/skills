@@ -7614,3 +7614,153 @@ def test_stop_reminder_dedupes_without_list_membership(monkeypatch, capsys):
     assert _CountingPath.compared < len(staged) + len(worktree)
     listed = [line.strip() for line in _stop_output(capsys)[0].splitlines() if "skills/" in line]
     assert listed == [*staged, *unstaged]
+
+
+# ── CodeRabbit PR #151 review: the command a `find -exec` runs is a stage ─────
+#
+# Start points in the allow cases are `/opt/x`, not `/tmp`: a clone checked out
+# under /tmp makes `/tmp` an ancestor of the checkout, and a writing find whose
+# start point is above the checkout rightly reaches the surface.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /tmp -maxdepth 0 -exec rm -rf scripts/hooks ';'",
+        "find . -name nomatch -exec rm -rf scripts/hooks +",
+        "find /tmp -maxdepth 0 -execdir cp /tmp/evil.py scripts/hooks/ruff-hook.py \\;",
+        "find /tmp -maxdepth 0 -ok mv /tmp/x .claude/settings.json ';'",
+        "find /tmp -maxdepth 0 -exec sh -c 'rm -rf scripts/hooks' ';'",
+        "find /tmp -maxdepth 0 -exec git checkout HEAD~3 -- scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -okdir rm scripts/hooks/ruff-hook.py \\;",
+        "find /opt/x -maxdepth 0 -exec env rm -rf scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -exec find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';' ';'",
+        "find /opt/x -maxdepth 0 -exec echo ok ';' -exec rm -rf scripts/hooks ';'",
+        "cd scripts && find /opt/x -maxdepth 0 -exec rm -rf hooks ';'",
+        "find scripts/hooks -name ruff-hook.py -exec git checkout HEAD~3 -- {} ';'",
+        # a name test that misses the surface bounds `{}`, not a path built from it
+        "find . -name nomatch -exec rm -rf {}/.. ';'",
+        "find . -name nomatch -exec sh -c 'rm -rf -- \"$0\"' {} ';'",
+    ],
+)
+def test_agents_guard_judges_the_command_find_exec_runs(command, monkeypatch):
+    """CodeRabbit PR #151 review: the body of `-exec`/`-execdir`/`-ok`/`-okdir`
+    reached the guard only as operands of `find`, judged by the start points and
+    cleared by a name test, so `find /tmp -maxdepth 0 -exec rm -rf scripts/hooks
+    ';'` deleted the hooks. Each body is now a stage, and a body that reaches
+    past `{}` keeps its find's start points from being cleared."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf scripts/hooks",
+    ],
+)
+def test_agents_guard_find_exec_control_still_denies(command, monkeypatch):
+    """The plain write the find repros wrap is denied as it was."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find scripts/hooks -name '*.py' -exec cat {} ';'",
+        "find . -name '*.pyc' -delete",
+        "find /opt/x -name '*.log' -exec rm {} +",
+        "find /opt/x -name x -exec cp {} /opt/y ';'",
+        "find scripts/hooks -exec grep -l TODO {} +",
+    ],
+)
+def test_agents_guard_allows_find_exec_that_misses_the_surface(command, monkeypatch):
+    """A reader body, a cache clean, and a writer whose `{}` stands for paths
+    outside the checkout keep their verdict."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+    assert not mod._writes_protected(command)
+
+
+def test_find_exec_bodies_end_at_each_terminator():
+    """`;` in any spelling ends a body, `+` only straight after `{}`, and an
+    unterminated body runs to the end of the stage."""
+    lib = _hooklib()
+    tokens = [
+        *("find", ".", "-exec", "rm", "+", "x", ";"),
+        *("-execdir", "cp", "{}", "+", "-ok", "mv", "a"),
+    ]
+    assert lib.find_exec_bodies(tokens) == [["rm", "+", "x"], ["cp", "{}"], ["mv", "a"]]
+    assert lib.find_exec_bodies(["find", ".", "-exec", "rm", "a", "\\"]) == [["rm", "a"]]
+    assert lib.find_exec_bodies(["find", ".", "-exec", ";", "-print"]) == []  # empty body
+    assert lib.find_exec_bodies(["xargs", "-exec", "rm"]) == []
+
+
+@pytest.mark.parametrize(
+    ("command", "past"),
+    [
+        ("find . -name x -exec rm {} +", False),
+        ("find . -name x -exec env rm -f {} ';'", False),
+        ("find . -name x -exec cat {}/.. ';'", False),  # a reader writes nothing
+        ("find . -name x -exec rm {}/.. ';'", True),
+        ("find . -name x -exec sh -c 'rm $0' {} ';'", True),
+        ("find . -name x -exec env bash -c 'rm $0' {} ';'", True),
+        ("find . -name x -exec find {} -delete ';'", True),
+        ("find . -name x -delete", False),
+    ],
+)
+def test_find_writes_past_matches(command, past):
+    """Only a writing body that builds on `{}`, runs a command string or nests a
+    find escapes what the name tests bound."""
+    lib = _hooklib()
+    assert lib.find_writes_past_matches(lib.shell_stages(command)[0]) is past
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /tmp -maxdepth 0 -exec git push origin main ';'",
+        "find /opt/x -maxdepth 0 -exec git commit --no-verify -m x \\;",
+        "find /opt/x -maxdepth 0 -exec sh -c 'git push origin main' ';'",
+    ],
+)
+def test_git_guard_judges_the_git_call_find_exec_runs(command, monkeypatch):
+    """CodeRabbit PR #151 review: `git` behind `find -exec` was an operand of
+    `find`, so no rule of the git guard reached it."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_git_guard_allows_a_read_find_exec_runs(monkeypatch, capsys):
+    """A read git call behind `find -exec` is judged and passed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _assert_git_allowed(mod, "find . -name '*.py' -exec git log -1 -- {} ';'", monkeypatch, capsys)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /opt/x -maxdepth 0 -exec git checkout -- README.md ';'",
+        "find . -name README.md -exec git restore {} ';'",
+    ],
+)
+def test_restore_guard_asks_for_a_restore_find_exec_runs(command, monkeypatch, tmp_path, capsys):
+    """CodeRabbit PR #151 review: a restore behind `find -exec` discarded a
+    dirty file without the prompt; `{}` stands for the start point `.`."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
+    assert "README.md" in out["permissionDecisionReason"]

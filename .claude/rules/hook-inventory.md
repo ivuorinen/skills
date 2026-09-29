@@ -72,7 +72,11 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   apply` is denied (agent-loopholes-88dddd67). Such a directory counts when it
   is the checkout root or above it, so an extraction or a deleting `find`
   needs a destination outside the checkout; a `find` whose `-name` tests match
-  no name on the surface is cleared. `git checkout-index` and `git read-tree -u`
+  no name on the surface is cleared, unless a writing `-exec` body reaches past
+  `{}` (`{}/..`, a shell string, a nested `find`). The command each
+  `-exec`/`-execdir`/`-ok`/`-okdir` runs is a stage of its own in `_hooklib`,
+  so this guard, the git guard and the restore guard judge it as they judge a
+  top-level command (CodeRabbit PR #151 review). `git checkout-index` and `git read-tree -u`
   count as worktree writes. It also refuses context-mode code in another
   language, or shell text a shell reads from stdin, that names one of them or
   the agents tree, where reading stays allowed — so the enforcement surface

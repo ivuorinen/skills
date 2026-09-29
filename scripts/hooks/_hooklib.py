@@ -625,7 +625,9 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
 
     A variant that is itself a shell given `-c` adds the stages of its command
     string, so `bash -c '…'` and `env sudo sh -c '…'` are judged by what they
-    run (agent-loopholes-015b8134); see `_shell_c_stages`.
+    run (agent-loopholes-015b8134); see `_shell_c_stages`. A variant that is a
+    `find` adds the command each `-exec`-family action runs; see
+    `_find_exec_stages`.
     """
     variants = [({}, tokens)]
     if Path(tokens[0]).name in _WRAPPERS:
@@ -633,11 +635,129 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
         # reachable, while the original stage is kept unexpanded: it is what the
         # ctx-ok guard and the unrecognised-verb path must still judge.
         variants += _suffix_variants(_split_string_payload(tokens))
-    return variants + [
-        (env | inner_env, inner)
-        for env, variant in variants
-        for inner_env, inner in _shell_c_stages(variant, depth)
-    ]
+    return (
+        variants
+        + [
+            (env | inner_env, inner)
+            for env, variant in variants
+            for inner_env, inner in _shell_c_stages(variant, depth)
+        ]
+        + [
+            (env | inner_env, inner)
+            for env, variant in variants
+            for inner_env, inner in _find_exec_stages(variant, depth)
+        ]
+    )
+
+
+def find_exec_bodies(tokens: list[str]) -> list[list[str]]:
+    """The command each `-exec`/`-execdir`/`-ok`/`-okdir` of a `find` stage runs.
+
+    Empty unless `tokens` is a `find`. A body runs from the word after its
+    action to its terminator: `;` (spelled `';'` or `\\;` on the command line),
+    or `+` straight after `{}` — GNU find reads any other `+` as an argument. A
+    body left unterminated runs to the end of the stage: an unquoted `;` has
+    already split the stage there, and the canonical form the protected-write
+    guard parses unquotes `';'` into exactly that. A leftover `\\` from an
+    escaped `;` the stage split cut is a terminator too, not an operand.
+    """
+    if Path(tokens[0]).name != "find":
+        return []
+    bodies: list[list[str]] = []
+    i = 1
+    while i < len(tokens):
+        if tokens[i] not in _FIND_EXEC:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(tokens) and not _ends_exec_body(tokens, j):
+            j += 1
+        if j > i + 1:
+            bodies.append(tokens[i + 1 : j])
+        i = j + 1
+    return bodies
+
+
+def _ends_exec_body(tokens: list[str], j: int) -> bool:
+    """True if `tokens[j]` terminates the `-exec` body it sits in."""
+    word = tokens[j]
+    return word in (";", "\\;", "\\", "") or (word == "+" and tokens[j - 1] == "{}")
+
+
+def find_start_points(args: list[str]) -> list[str]:
+    """A `find`'s start points: the operands before its first expression word."""
+    starts: list[str] = []
+    for arg in args:
+        if arg.startswith(("-", "(", "!")):
+            break
+        starts.append(arg)
+    return starts
+
+
+def _find_exec_stages(tokens: list[str], depth: int) -> list[tuple[dict[str, str], list[str]]]:
+    """The stages the `-exec`-family actions of a `find` stage run, parsed as stages.
+
+    The body of `find … -exec rm -rf scripts/hooks ';'` is a command that runs,
+    yet it reached every guard as operands of a `find` stage: the
+    protected-write guard judged only `find`'s start points and cleared them by
+    name test, the git guard saw no `git` verb in `-exec git push origin main`,
+    and the restore guard no `git checkout` (CodeRabbit PR #151 review). Each
+    body is now a stage of its own, so it goes through the same write model,
+    wrappers, `sh -c` unwrapping, alias expansion and nested `find` as a
+    top-level command, bounded by `_MAX_SHELL_DEPTH`.
+
+    `{}` stays in the body as spelled: it is an operand standing for the paths
+    found, and those are judged where the matches are known — as the `find`
+    stage's own trees (`_find_targets`), bounded by its name tests, and by the
+    restore guard as covering every dirty path. Replacing it with a start
+    point would throw the name tests away and deny `find . -name '*.pyc' -exec
+    rm {} +`, which reaches nothing on the surface.
+
+    Ceiling: `-execdir` and `-okdir` run the body from each match's directory,
+    so a relative operand resolves there; it is judged from the command's own
+    `cd` bases like any stage. A body that derives a path from `{}` inside a
+    shell string (`sh -c 'rm -r "$1"/..' _ {}`) is judged by what it spells,
+    and its `find` stage's start points are then never cleared by a name test
+    (see `find_writes_past_matches`).
+    """
+    stages: list[tuple[dict[str, str], list[str]]] = []
+    for body in find_exec_bodies(tokens):
+        if depth >= _MAX_SHELL_DEPTH:
+            stages += _coarse_stages(" ".join(body))
+        else:
+            stages += _wrapper_variants(body, depth + 1)
+    return stages
+
+
+def find_writes_past_matches(tokens: list[str]) -> bool:
+    """True if a `find` stage has a writing `-exec` body not bounded by its matches.
+
+    A name test bounds the paths `{}` stands for, so a caller may clear a
+    `find` whose name tests miss what it protects — but only while each writing
+    body touches `{}` as found. A body that builds a path from it (`{}/..`),
+    runs a command string (`sh -c`, `eval`) or a nested `find` reaches past the
+    matches, and was cleared by a name test that says nothing about where it
+    writes (CodeRabbit PR #151 review). Operands the body names outright are
+    not this function's concern: the body is a stage of its own.
+    """
+    return any(
+        Path(body[0]).name not in _READERS and not _bounded_by_matches(body)
+        for body in find_exec_bodies(tokens)
+    )
+
+
+def _bounded_by_matches(body: list[str]) -> bool:
+    """True if every command `body` runs uses `{}` only as a whole operand."""
+    if any("{}" in word and word != "{}" for word in body):
+        return False
+    for _env, variant in _wrapper_variants(body, _MAX_SHELL_DEPTH):
+        if (
+            Path(variant[0]).name == "find"
+            or _shell_verb_end(variant) is not None
+            or _command_string(variant) is not None
+        ):
+            return False
+    return True
 
 
 def _shell_verb_end(tokens: list[str]) -> int | None:
@@ -1208,19 +1328,20 @@ def _find_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
     """`find`: its `-fprint`/`-fls` files, and its start points when it deletes.
 
     `-delete`, or an `-exec`/`-ok` running anything but a reader, writes every
-    match, so the start points are trees. No start point means `.`.
+    match, so the start points are trees. No start point means `.`. What the
+    body writes beyond the matches is judged separately, as a stage of its own
+    (see `_find_exec_stages`).
     """
-    starts: list[str] = []
-    for arg in args:
-        if arg.startswith(("-", "(", "!")):
-            break
-        starts.append(arg)
+    starts = find_start_points(args)
     outputs = [b for a, b in itertools.pairwise(args) if a in _FIND_OUTPUTS]
-    runs = [args[i + 1 : i + 2] for i, a in enumerate(args) if a in _FIND_EXEC]
-    writes = "-delete" in args or any(r and Path(r[0]).name not in _READERS for r in runs)
-    if writes:
+    if "-delete" in args or find_runs_a_writer(["find", *args]):
         return outputs, starts or ["."]
     return (outputs, []) if outputs else None
+
+
+def find_runs_a_writer(tokens: list[str]) -> bool:
+    """True if a `find` stage has an `-exec`-family body whose verb is not a reader."""
+    return any(Path(body[0]).name not in _READERS for body in find_exec_bodies(tokens))
 
 
 def option_values(args: list[str], short: str, long: str) -> list[str]:
