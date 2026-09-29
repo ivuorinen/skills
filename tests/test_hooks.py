@@ -3526,6 +3526,74 @@ def test_git_guard_judges_a_bare_push_on_head(branch, denied, monkeypatch, capsy
         assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin 'refs/heads/*:refs/heads/*'",  # a glob matches main
+        "git push origin '+refs/heads/*:refs/heads/*'",
+        "git push origin 'feature/*:ma*'",
+        "git push origin :",  # the matching refspec: every branch both sides have
+        "git push origin +:",
+        "git push origin feature/x :",
+    ],
+)
+def test_git_guard_denies_a_refspec_that_matches_rather_than_names(command, monkeypatch, capsys):
+    """agent-loopholes-3f71784c: the refspec compare was literal, so a glob or the
+    bare `:` pushed main without naming it."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "protected branch" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c remote.origin.push=HEAD:refs/heads/main push origin",
+        "git -c Remote.Origin.Push=+refs/heads/*:refs/heads/* push",
+        "git -c push.default=matching push origin",
+        "git -c branch.wip.merge=refs/heads/main -c push.default=upstream push",
+        "V=matching git --config-env=push.default=V push origin",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=matching git push",
+        "git config remote.origin.push HEAD:refs/heads/main",
+        "git config --add remote.origin.push refs/heads/*:refs/heads/*",
+        "git config push.default matching",
+        "git config set push.default matching",
+        "git config --global push.default current",
+        "git config branch.wip.merge refs/heads/main",
+    ],
+)
+def test_git_guard_denies_config_that_routes_a_push(command, monkeypatch, capsys):
+    """agent-loopholes-3f71784c: push targets set in config reach main from a push
+    whose own text names no protected branch, in the same call through `-c` or in
+    a later one through a config write."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --get push.default",
+        "git config --unset remote.origin.push",
+        "git push origin feature/x:feature/x",
+        "git -c user.name=x push origin feature/x",
+    ],
+)
+def test_git_guard_allows_reading_push_config_and_plain_feature_pushes(
+    command, monkeypatch, capsys
+):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    _assert_git_allowed(mod, command, monkeypatch, capsys)
+
+
 def test_git_guard_denies_when_the_branch_cannot_be_resolved(monkeypatch, capsys):
     """Fail closed: an unresolvable HEAD cannot prove the push is safe."""
     mod = _load("deny-unsafe-git-hook")

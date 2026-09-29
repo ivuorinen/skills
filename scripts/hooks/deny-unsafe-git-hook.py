@@ -184,12 +184,19 @@ def _push_targets_protected(args: list[str]) -> bool:
     through the second colon form. `--all`/`--mirror` push every matching ref, so
     they are protected whatever HEAD is. A bare `HEAD` refspec resolves through
     the current branch, as does a push with no refspec at all.
+
+    A refspec that matches rather than names counts as protected: a glob
+    (`refs/heads/*:refs/heads/*`) and the bare `:` (every branch both sides
+    have) each reach main while the literal compare found nothing
+    (agent-loopholes-3f71784c).
     """
     if any(a in _ALL_REFS for a in args):
         return True
     operands = [a for a in args if not a.startswith("-")]
     if len(operands) < 2:
         return _head_is_protected()
+    if any("*" in ref or ref.lstrip("+") == ":" for ref in operands[1:]):
+        return True
     targets = [_ref_target(ref) for ref in operands[1:]]
     if any(t in PROTECTED for t in targets):
         return True
@@ -204,6 +211,28 @@ _COMMIT_VALUE_SHORTS = frozenset("CcFmtSu")
 # Config keys that disable the hooks the commit gate depends on. Git config keys
 # are case-insensitive, so comparison is case-folded.
 _HOOKS_DISABLING = ("core.hookspath",)
+
+
+def _routes_a_push(key: str) -> bool:
+    """True for a (case-folded) config key that decides where a push lands.
+
+    `remote.<r>.push` supplies refspecs, `push.default` picks the matching or
+    upstream rule, and `branch.<b>.merge` names the upstream that rule follows.
+    Set through `-c` or written by `git config`, each sends a push whose text
+    names no protected branch to main (agent-loopholes-3f71784c).
+    """
+    return (
+        key == "push.default"
+        or (key.startswith("remote.") and key.endswith(".push"))
+        or (key.startswith("branch.") and key.endswith(".merge"))
+    )
+
+
+_PUSH_CONFIG_DENIAL = (
+    "  DENIED  config key {key} decides where a push lands, so a push naming no\n"
+    "          protected branch can still reach one. Push an explicit feature\n"
+    "          refspec instead — see cr.md Step 6."
+)
 
 # The environment reaches the same setting `-c` does. `GIT_CONFIG_COUNT` plus
 # `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` assigns any config key, and
@@ -233,6 +262,8 @@ def _env_denial(env: dict[str, str]) -> str | None:
                 key=value.strip().lower(),
                 value=env.get(name.replace("_KEY_", "_VALUE_"), ""),
             )
+        if name.startswith("GIT_CONFIG_KEY_") and _routes_a_push(value.strip().lower()):
+            return _PUSH_CONFIG_DENIAL.format(key=value.strip().lower())
         if name in _HOOKS_DISABLING_FILES:
             return _ENV_DENIAL.format(var=name)
     return None
@@ -353,6 +384,8 @@ def _config_write_denial(args: list[str]) -> str | None:
     for key in (a.lower() for a in args if not a.startswith("-")):
         if key in _HOOKS_DISABLING or key.startswith("alias."):
             return _CONFIG_WRITE_DENIAL.format(key=key)
+        if _routes_a_push(key):
+            return _PUSH_CONFIG_DENIAL.format(key=key)
     return None
 
 
@@ -485,6 +518,8 @@ def _global_denial(
     for key, value in config:
         if key in _HOOKS_DISABLING:
             return _HOOKSPATH_DENIAL.format(key=key, value=value)
+        if _routes_a_push(key):
+            return _PUSH_CONFIG_DENIAL.format(key=key)
 
     index = skip_git_global_opts(tokens, 1)
     if index >= len(tokens):
