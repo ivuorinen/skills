@@ -48,6 +48,7 @@ import subprocess  # nosec B404
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Tokens are estimated at four characters each. Every consumer of this constant
 # labels the result an estimate; nothing gates on it.
@@ -266,11 +267,16 @@ class Pack:
 
     mode: str
     goal: str
-    budget: dict = field(default_factory=dict)
-    candidates: list[dict] = field(default_factory=list)
-    files: list[dict] = field(default_factory=list)
-    omitted: dict = field(default_factory=dict)
-    notes: list[str] = field(default_factory=list)
+    # Rows are JSON objects whose value types vary per mode, hence `Any`; the
+    # budget holds only counts and a unit, while `omitted` also carries evidence
+    # mode's matched-term list (types-93a4d6bd).
+    budget: dict[str, int | str] = field(default_factory=dict[str, int | str])
+    candidates: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    files: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    omitted: dict[str, int | str | list[str]] = field(
+        default_factory=dict[str, int | str | list[str]]
+    )
+    notes: list[str] = field(default_factory=list[str])
 
 
 def estimate_tokens(text: str) -> int:
@@ -553,7 +559,7 @@ def _scoped(root: Path, files: list[Path], paths: list[str]) -> list[Path]:
     """Narrow `files` to the caller's path prefixes, refusing any that escape the root."""
     if not paths:
         return files
-    prefixes = []
+    prefixes: list[Path] = []
     for raw in paths:
         resolved = (root / raw).resolve()
         if not resolved.is_relative_to(root.resolve()):
@@ -1033,7 +1039,7 @@ def build(
     paths: list[str] | None = None,
     changed_only: bool = False,
     base: str = "HEAD",
-) -> dict:
+) -> dict[str, Any]:
     """Build one context pack. The single entry point the CLI and MCP tool share.
 
     `changed_only` narrows every mode to files git reports as changed against
@@ -1091,7 +1097,7 @@ def build(
     return result
 
 
-def self_test(root: Path) -> dict:
+def self_test(root: Path) -> dict[str, Any]:
     """Known-positive control: prove the retriever still finds something known to exist.
 
     A retriever that silently returns nothing is indistinguishable from a

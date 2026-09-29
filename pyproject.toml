@@ -137,6 +137,19 @@ extraPaths = ["skills/nitpicker/scripts"]
 # it does. The Makefile gates on errorCount alone; that floor only means the same
 # thing on both sides if the mode producing the errors is fixed here.
 typeCheckingMode = "standard"
+# types-93a4d6bd: strict mode is a per-file ratchet. A module joins this list
+# once it reports no strict errors, and a later edit that reintroduces an
+# unknown type then fails the same errorCount gate as any other error. Extend
+# the list as each remaining shipped module is cleaned; never shorten it.
+strict = [
+  "skills/nitpicker/scripts/context_pack.py",
+  "skills/nitpicker/scripts/fetch-pr-comments.py",
+  "skills/nitpicker/scripts/fetch-pr-status.py",
+  "skills/nitpicker/scripts/md_fences.py",
+  "skills/nitpicker/scripts/pr_cli.py",
+  "skills/nitpicker/scripts/pr_common.py",
+  "skills/nitpicker/scripts/skill_catalog.py",
+]
 pythonPlatform = "All"
 include = ["scripts", "skills", "tests"]
 exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]

@@ -32,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
-from typing import IO, Any
+from typing import IO, Any, cast
 
 PLATFORMS = ("github", "gitlab", "bitbucket")
 
@@ -547,7 +547,9 @@ def paginate_link(url: str, headers: dict[str, str], allowed_netloc: str) -> lis
     for _ in range(_MAX_PAGES):
         body, resp_headers = http_json(url, headers, allowed_netloc)
         if isinstance(body, list):
-            results.extend(body)
+            # `isinstance` narrows parsed JSON to `list[Unknown]`; the elements
+            # are untyped JSON values, which `Any` states (types-93a4d6bd).
+            results.extend(cast("list[Any]", body))
         elif body is not None:
             results.append(body)
         url = _next_from_link(resp_headers.get("Link", ""))
@@ -569,8 +571,9 @@ def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -
         body, _ = http_json(url, headers, allowed_netloc)
         if not isinstance(body, dict):
             return results
-        results.extend(body.get("values") or [])
-        url = body.get("next") or ""
+        page = cast("dict[str, Any]", body)
+        results.extend(page.get("values") or [])
+        url = page.get("next") or ""
         if not url:
             return results
         _check_url(url, allowed_netloc)
