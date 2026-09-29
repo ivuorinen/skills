@@ -5313,16 +5313,32 @@ def test_closure_reads_status_from_the_list_readback(tmp_path, monkeypatch, caps
     assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
 
 
-def test_closure_a_deleted_task_is_not_open(tmp_path, monkeypatch, capsys):
+def test_closure_a_deleted_closed_task_stays_closed(tmp_path, monkeypatch, capsys):
     t = (
         _Transcript()
         .read("cr")
         .create("1")
         .create("2")
         .update("1", "completed")
+        .update("2", "completed")
         .update("2", "deleted")
     )
     assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+@pytest.mark.parametrize("prior", ["pending", "in_progress"])
+def test_closure_deleting_an_open_step_does_not_close_it(tmp_path, monkeypatch, capsys, prior):
+    """agent-loopholes-ddcb0d52: `deleted` popped the status, and a missing
+    status read as not open, so deleting a step skipped it and erased the
+    evidence at once. An open step deleted is marked wiped, as a replacement
+    does, and stays open through a later readback that no longer lists it."""
+    t = _Transcript().read("cr").create("1").create("2").update("1", "completed")
+    if prior == "in_progress":
+        t.update("2", "in_progress")
+    t.update("2", "deleted").listing({"1": "completed"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 2 steps still open (task ids 2)" in text
 
 
 def test_closure_does_not_loop_on_its_own_continuation(tmp_path, monkeypatch, capsys):
