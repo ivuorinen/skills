@@ -3854,6 +3854,33 @@ def test_restore_guard_asks_when_the_target_is_dirty(command, monkeypatch, tmp_p
 @pytest.mark.parametrize(
     "command",
     [
+        "git restore --pathspec-from-file=/tmp/list",
+        "git restore --pathspec-from-file /tmp/list",
+        "git ls-files -m | git restore --pathspec-from-file=-",
+        "git restore --staged --worktree --pathspec-from-file=list --pathspec-file-nul",
+        "git restore --pathspec-fr=/tmp/list",  # git accepts a unique abbreviation
+        "git checkout --pathspec-from-file=/tmp/list",
+        "git checkout --pathspec-from-file /tmp/list",
+        "git checkout HEAD --pathspec-from-file=/tmp/list",
+        "git checkout --pathspec-from-file=/tmp/list --",
+    ],
+)
+def test_restore_guard_asks_when_pathspecs_come_from_a_file(command, monkeypatch, tmp_path, capsys):
+    """agent-loopholes-a79daccb: the pathspecs are in a file the guard never reads,
+    so no operand matched a dirty entry and the discard ran without the prompt.
+    Any such restore covers every dirty path."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
+    assert "README.md" in out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "git checkout -b feature",  # branch creation, not a restore
         "git checkout feature",  # branch switch, not a restore
         "git status",

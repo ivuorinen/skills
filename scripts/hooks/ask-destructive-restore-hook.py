@@ -78,13 +78,42 @@ def _targets(command: str) -> list[str] | None:
     found = False
     targets: list[str] = []
     for subcommand, args in git_calls(command):
-        if subcommand == "restore":
+        if subcommand in ("restore", "checkout") and _reads_pathspecs_from_a_file(args):
+            found = True
+            targets.append(_WHOLE_TREE)
+        elif subcommand == "restore":
             found = True
             targets += [a for a in args if not a.startswith("-")]
         elif subcommand == "checkout" and (paths := _checkout_targets(args)) is not None:
             found = True
             targets += paths
     return targets if found else None
+
+
+# Pathspec magic that covers every entry (see `_covers`).
+_WHOLE_TREE = ":/"
+_PATHSPEC_FROM_FILE = "--pathspec-from-file"
+# The shortest prefix git accepts for it: `--pathspec-f` is ambiguous with
+# `--pathspec-file-nul`.
+_PATHSPEC_FROM_FILE_MIN = len("--pathspec-fr")
+
+
+def _reads_pathspecs_from_a_file(args: list[str]) -> bool:
+    """True when a restore or checkout takes its pathspecs from a file or stdin.
+
+    The pathspecs then live somewhere the guard does not read, so no operand
+    could match a dirty entry and the discard ran without the prompt
+    (agent-loopholes-a79daccb). Such a call is judged to cover every dirty path.
+    git accepts any unambiguous abbreviation of a long option, so a prefix
+    counts as well as the full name.
+    """
+    for arg in args:
+        if arg == "--":
+            return False
+        name = arg.partition("=")[0]
+        if len(name) >= _PATHSPEC_FROM_FILE_MIN and _PATHSPEC_FROM_FILE.startswith(name):
+            return True
+    return False
 
 
 # Options that make `git checkout` create a branch, which never restores a path.
