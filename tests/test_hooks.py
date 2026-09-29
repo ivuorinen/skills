@@ -7383,3 +7383,46 @@ def test_deny_agents_allows_a_glob_directly_under_the_repo_root(monkeypatch, cap
     command = f"cd /tmp/x && ls {mod._REPO_ROOT}/*.patch"
     _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-45d0747b: errexit does not reach a cd bash exempts from it ──
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set -e\ncd /nope && echo in\nrm -rf build",
+        "set -e\ncd /nope && true\ntouch f",
+        "set -o errexit\nif cd /nope; then :; fi\nrm -rf build",
+        "set -e\nif false; then :; elif cd /nope; then :; fi\nrm f",
+        "set -e\nwhile cd /nope; do break; done\nrm f",
+        "set -e\nuntil cd /nope; do break; done\nrm f",
+        "set -e\nif true; cd /nope; then :; fi\nrm f",
+        "set -e\n! cd /nope\nrm f",
+    ],
+)
+def test_unguarded_cd_guard_ignores_errexit_where_bash_suspends_it(code, monkeypatch, capsys):
+    """Bash ignores errexit for a command followed by `&&`/`||`, for an
+    if/elif/while/until condition and for a negated one, so each of these cds
+    fails and the write runs in the start directory. `set -e` counted as
+    guarding them all (agent-loopholes-45d0747b)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set -e\ncd /nope\nrm -rf build",
+        "set -e\nif true; then cd /nope; fi\nrm f",
+        "set -e\nwhile read -r l; do cd /nope; done\nrm f",
+        "set -e\ntrue && cd /nope\nrm f",
+    ],
+)
+def test_unguarded_cd_guard_keeps_errexit_where_bash_applies_it(code, monkeypatch, capsys):
+    """Controls: a cd in a body, or as the last command of a list, still exits
+    the script under errexit when it fails."""
+    _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert capsys.readouterr().err == ""

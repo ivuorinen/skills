@@ -12,7 +12,9 @@ nothing checked it (agent-hooks-da747c0c).
 
 A `cd` (or `pushd`) counts as guarded when `|| …` handles its failure, when it
 heads an `&&` chain that reaches the write, or when `set -e`/`set -o errexit`
-ran before it and no `set +e`/`set +o errexit` has cleared it since. What
+ran before it and no `set +e`/`set +o errexit` has cleared it since — and bash
+does not suspend it for that cd, as it does before `&&`/`||`, in an
+if/elif/while/until condition, and under `!`. What
 counts as a write is `_hooklib.write_targets` — `find -delete`, `rsync`,
 `tar -x` and the rest — shared with the protected-write guard. A `cd` inside a
 `( … )` or `$( … )` subshell is forgotten when the subshell closes. Each
@@ -108,25 +110,56 @@ def _errexit_after(tokens: list[str], errexit: bool) -> bool:
     return errexit
 
 
+_CONDITION_OPENERS = frozenset({"if", "elif", "while", "until"})
+_CONDITION_CLOSERS = frozenset({"then", "do"})
+
+
+def _in_condition(lead: list[str], condition: bool) -> bool:
+    """Whether the stage after these leading reserved words sits in a condition.
+
+    `if`/`elif`/`while`/`until` open one and `then`/`do` close it, in the order
+    they appear: `then if cd x` is back inside one.
+    """
+    for word in lead:
+        if word in _CONDITION_OPENERS:
+            condition = True
+        elif word in _CONDITION_CLOSERS:
+            condition = False
+    return condition
+
+
 def _unguarded_write(script: str) -> tuple[str, str] | None:
-    """(the unguarded cd, the write it exposes) for the first such pair, else None."""
+    """(the unguarded cd, the write it exposes) for the first such pair, else None.
+
+    errexit guards a cd only where bash applies it. Bash suspends it for a
+    command followed by `&&` or `||`, inside an if/elif/while/until condition,
+    and under `!`, so `set -e; cd /nope && echo in; rm -rf build` and `set -e;
+    if cd /nope; then :; fi; rm -rf build` both ran the delete in the start
+    directory while the guard counted the cd as guarded
+    (agent-loopholes-45d0747b).
+    """
     masked, spans = _mask_quoted(script)
     parts = _SPLIT.split(_CONTINUATION.sub(" ", _COMMENT.sub("", masked)))
     exposed: str | None = None  # a cd whose failure reaches the stages after it
     chained: str | None = None  # a cd guarded only while its `&&` chain lasts
     errexit = False
+    condition = False  # inside an if/elif/while/until condition list
     stack: list[tuple[str | None, str | None]] = []
     for index in range(0, len(parts), 2):
         # Reserved words first: `cd /nope; for f in *; do rm -rf "$f"; done`
         # put the delete behind `do`, a verb no write set names, and `then cd
         # /nope` hid the cd itself (see `_hooklib.strip_reserved`).
-        tokens = strip_reserved([_unmask(token, spans) for token in parts[index].split()])
+        raw = [_unmask(token, spans) for token in parts[index].split()]
+        tokens = strip_reserved(raw)
+        lead = raw[: len(raw) - len(tokens)]
+        condition = _in_condition(lead, condition)
         sep = parts[index + 1] if index + 1 < len(parts) else ""
         if tokens:
             if exposed and (_writes(tokens) or _redirects(parts[index])):
                 return exposed, " ".join(tokens)
             errexit = _errexit_after(tokens, errexit)
-            if PurePosixPath(tokens[0]).name in _CHDIR and not errexit and sep != "||":
+            applies = errexit and not (condition or sep == "&&" or "!" in lead)
+            if PurePosixPath(tokens[0]).name in _CHDIR and not applies and sep != "||":
                 chained, exposed = (
                     (" ".join(tokens), exposed) if sep == "&&" else (None, " ".join(tokens))
                 )
