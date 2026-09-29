@@ -50,7 +50,7 @@ Drop any folder of code, docs, papers, images, or video into graphify and get a 
 
 If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
 
-**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `graphify query "<question>"` immediately. Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
+**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `graphify query '<question>'` immediately, single-quoted with each `'` in the question written as `'\''` (`references/query.md`, Quoting). Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
 
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
@@ -489,6 +489,10 @@ Read `graphify-out/.graphify_analysis.json`. For each community key, look at its
 Then regenerate the report and save the labels for the visualizer:
 
 ```bash
+labels_file=$(mktemp)
+cat > "$labels_file" <<'GRAPHIFY_LABELS'
+LABELS_JSON
+GRAPHIFY_LABELS
 $(cat graphify-out/.graphify_python) -c "
 import sys, json
 from graphify.build import build_from_json
@@ -507,8 +511,9 @@ communities = {int(k): v for k, v in analysis['communities'].items()}
 cohesion = {int(k): v for k, v in analysis['cohesion'].items()}
 tokens = {'input': extraction.get('input_tokens', 0), 'output': extraction.get('output_tokens', 0)}
 
-# LABELS - replace these with the names you chose above
-labels = LABELS_DICT
+# LABELS - the names you chose above, read from the file the heredoc wrote
+with open(sys.argv[1], encoding='utf-8') as f:
+    labels = {int(k): v for k, v in json.load(f).items()}
 
 # Regenerate questions with real community labels (labels affect question phrasing)
 questions = suggest_questions(G, communities, labels)
@@ -517,10 +522,11 @@ report = generate(G, communities, cohesion, labels, analysis['gods'], analysis['
 Path('graphify-out/GRAPH_REPORT.md').write_text(report, encoding=\"utf-8\")
 Path('graphify-out/.graphify_labels.json').write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding=\"utf-8\")
 print('Report updated with community labels')
-"
+" "$labels_file"
+rm -f "$labels_file"
 ```
 
-Replace `LABELS_DICT` with the actual dict you constructed (e.g. `{0: "Attention Mechanism", 1: "Training Pipeline"}`).
+Replace `LABELS_JSON` with the labels you chose as one JSON object keyed by community id (e.g. `{"0": "Attention Mechanism", "1": "Training Pipeline"}`). It goes through the quoted heredoc (`<<'GRAPHIFY_LABELS'`), whose body the shell never expands, and never into the double-quoted `-c "…"` program: the labels are written from node labels, which are repository content, and backticks or `$(...)` there would execute (local modification, skill-safety-92d2d3a1).
 Replace INPUT_PATH with the actual path.
 
 ### Step 6 - Generate Obsidian vault (opt-in) + HTML
@@ -658,8 +664,10 @@ Both are non-default subcommands. `--update` re-extracts only new or changed fil
 When `graphify-out/graph.json` already exists and the user asks a question about the corpus, answer from the graph rather than rebuilding it:
 
 ```bash
-graphify query "<question>"
+graphify query '<question>'
 ```
+
+Single-quote the question, writing each `'` in it as `'\''`; never put it in double quotes, where backticks and `$(...)` execute (local modification, skill-safety-92d2d3a1).
 
 Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. If the `graphify query` CLI is unavailable, fall back to an inline NetworkX traversal of `graphify-out/graph.json`. Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. For that vocab-expansion step, the BFS/DFS traversal modes, the `--budget` cap, the NetworkX fallback, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
 
