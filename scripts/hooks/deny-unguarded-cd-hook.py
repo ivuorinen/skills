@@ -37,6 +37,7 @@ from _hooklib import (
     _tool_input,
     _unmask,
     _wrapper_variants,
+    guard_deadline,
     load_event_strict,
     redirect_targets,
     skip_git_global_opts,
@@ -171,10 +172,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — exit 1 would let the call through
-        print(f"  DENIED  unguarded-cd guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("unguarded-cd guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — exit 1 would let the call through
+            print(
+                f"  DENIED  unguarded-cd guard failed internally: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            sys.exit(2)

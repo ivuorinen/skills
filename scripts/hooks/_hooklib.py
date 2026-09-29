@@ -5,16 +5,72 @@ shebang and no `# /// script` block. Pure stdlib. Mirrors the sibling-import
 precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 """
 
+import contextlib
 import itertools
 import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
+
+# How long a PreToolUse guard may run before it denies. Claude Code cancels a
+# hook at its `timeout`, and a timed-out command hook does not block the call —
+# the call proceeds through the normal permission flow — so a guard slowed past
+# its timeout failed open (agent-loopholes-793d7db7). Each guard's `__main__`
+# runs under `guard_deadline`, which exits 2 at this bound; every PreToolUse
+# entry in .claude/settings.json sets a `timeout` at least half again above it,
+# leaving room for `uv` to start the interpreter. tests/test_settings.py pins
+# both.
+GUARD_DEADLINE_SECONDS = 30
+
+
+@contextlib.contextmanager
+def guard_deadline(hook: str, seconds: float = GUARD_DEADLINE_SECONDS) -> Iterator[None]:
+    """Deny from inside the guard once it has run for `seconds`.
+
+    SIGALRM rather than a thread: a long regex match holds the interpreter,
+    so a timer thread would not run until it returned, while the regex engine
+    checks for signals as it goes and the handler runs mid-match. The handler
+    exits with `os._exit`, since a `SystemExit` raised there could be caught
+    by the guard's own handlers. A platform without `setitimer` gets a daemon
+    timer thread instead, which still bounds everything but a single long C
+    call. The alarm is disarmed and the previous handler restored on the way
+    out, so an in-process caller (the tests) is left as it was.
+    """
+
+    def expire(*_args: object) -> None:
+        print(
+            f"  DENIED  {hook} ran past its {seconds:g}s deadline. Denying rather than\n"
+            "          letting the hook timeout allow the call — see\n"
+            "          .claude/rules/hooks-fail-closed.md.",
+            file=sys.stderr,
+            flush=True,
+        )
+        os._exit(2)
+
+    if hasattr(signal, "setitimer"):
+        previous = signal.signal(signal.SIGALRM, expire)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+    else:
+        timer = threading.Timer(seconds, expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            yield
+        finally:
+            timer.cancel()
+
 
 # `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
 # A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose

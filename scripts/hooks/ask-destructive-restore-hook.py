@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     event_command,
     git_calls,
+    guard_deadline,
     load_event_strict,
     repo_root,
     shell_stages_with_env,
@@ -307,9 +308,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — ask rather than silently allow
-        _decide("ask", f"restore guard failed internally ({exc}); confirm manually")
+    # Past the deadline this denies (exit 2) rather than asks: the ask needs the
+    # JSON channel, and a handler that interrupts a half-written decision
+    # cannot trust it. The call can be retried; a timed-out allow cannot.
+    with guard_deadline("restore guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — ask rather than silently allow
+            _decide("ask", f"restore guard failed internally ({exc}); confirm manually")

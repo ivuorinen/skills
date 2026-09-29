@@ -7249,3 +7249,90 @@ def test_agents_guard_is_not_quadratic_in_a_wrapper_led_stage():
 def test_agents_guard_still_denies_wrapped_protected_writes(command):
     """The verb-first filter keeps every wrapped write it caught before."""
     assert _guard_blocks(command)
+
+
+# ── agent-loopholes-793d7db7: a guard that runs out of time denies ────────────
+
+
+def _deadline_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+    """Run `body` under `guard_deadline("probe guard", 0.3)` in a fresh interpreter."""
+    script = tmp_path / "probe.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.path.insert(0, {str(HOOKS_DIR)!r})\n"
+        "from _hooklib import guard_deadline\n"
+        'with guard_deadline("probe guard", 0.3):\n'
+        f"    {body}\n"
+        'print("finished")\n',
+        encoding="utf-8",
+    )
+    return subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+
+
+def test_guard_deadline_denies_a_guard_that_runs_past_it(tmp_path):
+    """A timed-out command hook does not block, so a guard slowed past its hook
+    timeout used to fail open. Its own deadline fires first and exits 2 — even
+    inside one long regex match, where only the interpreter's signal check runs."""
+    result = _deadline_script(tmp_path, 'import re; re.match(r"(a+)+$", "a" * 60 + "b")')
+    assert result.returncode == 2
+    assert "probe guard" in result.stderr and "deadline" in result.stderr
+    assert "finished" not in result.stdout
+
+
+def test_guard_deadline_is_disarmed_when_the_guard_finishes(tmp_path):
+    """A guard that finishes in time is not killed later, and leaves no timer."""
+    result = _deadline_script(tmp_path, "pass\n    time.sleep(0)\ntime.sleep(0.6)")
+    assert (result.returncode, result.stdout.strip()) == (0, "finished")
+
+
+def test_guard_deadline_handler_reports_and_exits_2(monkeypatch, capsys):
+    """The handler itself, in-process: it names the guard and exits 2."""
+    import time
+
+    lib = _hooklib()
+
+    def fake_exit(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(lib.os, "_exit", fake_exit)
+    with pytest.raises(SystemExit) as exc, lib.guard_deadline("probe guard", 0.05):
+        time.sleep(5)
+    assert exc.value.code == 2
+    assert "probe guard ran past its 0.05s deadline" in capsys.readouterr().err
+
+
+def test_guard_deadline_restores_the_previous_alarm_handler():
+    import signal
+
+    lib = _hooklib()
+    before = signal.getsignal(signal.SIGALRM)
+    with lib.guard_deadline("probe guard", 30):
+        assert signal.getsignal(signal.SIGALRM) is not before
+    assert signal.getsignal(signal.SIGALRM) is before
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_guard_deadline_falls_back_to_a_timer_without_setitimer(monkeypatch):
+    """Where the platform has no interval timer, a daemon thread keeps the bound."""
+    import signal
+    import threading
+
+    lib = _hooklib()
+    started: list = []
+
+    class _Timer:
+        def __init__(self, seconds, fn):
+            self.seconds, self.fn, self.daemon = seconds, fn, False
+            started.append(self)
+
+        def start(self):
+            self.running = True
+
+        def cancel(self):
+            self.running = False
+
+    monkeypatch.delattr(signal, "setitimer")
+    monkeypatch.setattr(threading, "Timer", _Timer)
+    with lib.guard_deadline("probe guard", 7):
+        assert started[0].running and started[0].daemon and started[0].seconds == 7
+    assert not started[0].running

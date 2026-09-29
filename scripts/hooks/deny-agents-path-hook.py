@@ -33,6 +33,7 @@ from _hooklib import (
     _VALUE_OPTS,
     event_command,
     foreign_code,
+    guard_deadline,
     load_event_strict,
     redirect_targets,
     repo_root,
@@ -989,10 +990,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — exit 1 would let the call through
-        print(f"  DENIED  agents-path guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("agents-path guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — exit 1 would let the call through
+            print(
+                f"  DENIED  agents-path guard failed internally: {exc}", file=sys.stderr, flush=True
+            )
+            sys.exit(2)

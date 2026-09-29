@@ -39,6 +39,7 @@ from _hooklib import (
     foreign_code,
     git_aliases,
     git_calls,
+    guard_deadline,
     load_event_strict,
     repo_root,
     shell_stages_with_env,
@@ -631,10 +632,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — an internal error must not allow the call
-        print(f"  DENIED  git guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("git guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — an internal error must not allow the call
+            print(f"  DENIED  git guard failed internally: {exc}", file=sys.stderr, flush=True)
+            sys.exit(2)

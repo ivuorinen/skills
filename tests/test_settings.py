@@ -419,3 +419,37 @@ def test_a_guard_that_fails_to_run_blocks_the_call(name, command, hook_exit, exp
         env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
     )
     assert result.returncode == expected, f"{name}: {result.stderr}"
+
+
+def _guard_deadline_seconds() -> float:
+    """`_hooklib.GUARD_DEADLINE_SECONDS`, read without importing the hooks package."""
+    text = (HOOKS_DIR / "_hooklib.py").read_text(encoding="utf-8")
+    match = re.search(r"^GUARD_DEADLINE_SECONDS = (\d+(?:\.\d+)?)$", text, re.M)
+    assert match, "_hooklib.py no longer defines GUARD_DEADLINE_SECONDS"
+    return float(match.group(1))
+
+
+def test_every_pretooluse_hook_sets_an_explicit_timeout():
+    """agent-loopholes-793d7db7: Claude Code cancels a hook at its timeout and a
+    timed-out command hook does not block the call. Every PreToolUse hook names
+    its timeout, so the bound is a reviewed value rather than the default."""
+    for entry in _settings()["hooks"]["PreToolUse"]:
+        for hook in entry.get("hooks", []):
+            timeout = hook.get("timeout")
+            assert isinstance(timeout, int) and timeout > 0, hook.get("command", "")[:80]
+
+
+@pytest.mark.parametrize(("name", "command"), _repo_guard_commands())
+def test_every_repo_guard_denies_before_its_hook_timeout(name, command):
+    """The guard's own deadline exits 2 before Claude Code's timeout can cancel it
+    into an allow, with margin left for `uv` to start the interpreter."""
+    timeout = next(
+        h["timeout"]
+        for entry in _settings()["hooks"]["PreToolUse"]
+        for h in entry.get("hooks", [])
+        if h.get("command") == command
+    )
+    assert _guard_deadline_seconds() * 1.5 <= timeout, name
+    source = (HOOKS_DIR / name).read_text(encoding="utf-8")
+    main_block = source.split('if __name__ == "__main__":', 1)[-1]
+    assert "with guard_deadline(" in main_block, f"{name} runs without a deadline"
