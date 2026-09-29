@@ -825,6 +825,144 @@ def _bullets(n: int, word: str = "Rule") -> str:
     return "".join(f"- Always follow {word} number {i}.\n" for i in range(n))
 
 
+_ANATOMY = Path(_TOOL).parent / "check-rules-anatomy.py"
+_anatomy = load_path("check_rules_anatomy_for_agreement", _ANATOMY)
+
+
+class TestOneFrontmatterParser:
+    """arch-da222f46: path-scoping is decided by check-rules-anatomy's parser."""
+
+    # Each input the two parsers used to disagree on, with the verdict both
+    # must now give: scoped when `paths` holds at least one non-empty glob.
+    _CASES = (
+        ('---\npaths:\n  - "src/**"\n--- \nbody\n', True),  # trailing space on the fence
+        ('---\npaths: [""]\n---\nbody\n', False),  # a quoted empty glob scopes nothing
+        ("---\npaths: []\n---\nbody\n", False),
+        ('---\npaths:\n  - "src/**"\n---', True),  # closing fence at end of file
+        ("---\npaths: src/**\n---\nbody\n", False),  # a scalar is paths_not_list
+        ("---\npaths:\n  - src/**\nno closing fence\n", False),  # malformed
+    )
+
+    @pytest.mark.parametrize(("text", "scoped"), _CASES)
+    def test_is_path_scoped_agrees_with_the_anatomy_parser(self, text, scoped):
+        fm, _ = _anatomy._parse_frontmatter(text)
+        paths = (fm or {}).get("paths")
+        anatomy_scoped = isinstance(paths, list) and any(p.strip() for p in paths)
+        assert anatomy_scoped is scoped
+        assert _mod.is_path_scoped(text) is scoped
+
+    def test_the_private_parser_is_gone(self):
+        """A second parser is the defect, so its return is the regression."""
+        for name in ("_FRONTMATTER_RE", "_declares_paths", "_frontmatter_value"):
+            assert not hasattr(_mod, name), name
+
+    def test_a_trailing_space_fence_rule_leaves_the_budget(self, tmp_path):
+        _workspace(
+            tmp_path,
+            claude="# C\n",
+            rules={"s.md": '---\npaths:\n  - "src/**"\n--- \n' + _bullets(200)},
+        )
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 0
+        assert report["path_scoped_instructions"] == 200
+        assert blocking is False
+
+    def test_frontmatter_lines_are_not_counted_when_the_fence_has_a_trailing_space(self, tmp_path):
+        """The body offset comes from the same parser, so `paths:` items are metadata."""
+        text = '---\npaths:\n  - "a/**"\n  - "b/**"\n--- \n- Never do X.\n'
+        assert _mod._count_instructions(text) == 1
+
+
+class TestSymlinkedFilesCountOnce:
+    """audit-e2afb050: one file reached under two names loads once."""
+
+    def test_claude_md_symlinked_to_agents_md_is_charged_once(self, tmp_path):
+        """The repro: 80 directives, doubled to 160 and blocking."""
+        _workspace(tmp_path, agents="# A\n\n" + _bullets(80))
+        (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 80
+        assert blocking is False
+        assert not [f for f in report["findings"] if f["code"] == "instruction_budget"]
+        rows = {r["file"]: r for r in report["files"]}
+        assert rows["CLAUDE.md"]["instructions"] == 80
+        assert rows["AGENTS.md"] == {
+            "file": "AGENTS.md",
+            "instructions": 0,
+            "path_scoped": False,
+            "alias_of": "CLAUDE.md",
+        }
+        assert not [f for f in report["findings"] if f["code"] == "cross_file_duplicate"]
+
+    def test_a_rule_symlinked_to_a_root_file_is_charged_once(self, tmp_path):
+        """A different shape of the same mechanism: a rules-directory alias."""
+        _workspace(tmp_path, claude="# C\n\n" + _bullets(90))
+        rules = tmp_path / ".claude" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "mirror.md").symlink_to("../../CLAUDE.md")
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 90
+        assert [p.name for p in _mod.loaded_files(tmp_path)] == ["CLAUDE.md"]
+
+    def test_agents_md_imported_by_claude_md_is_charged_once(self, tmp_path):
+        """`@AGENTS.md` in CLAUDE.md, the layout Claude Code needs to read AGENTS.md."""
+        _workspace(tmp_path, claude="# C\n\n@AGENTS.md\n", agents="# A\n\n" + _bullets(80))
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 80
+        assert [r["file"] for r in report["files"]].count("AGENTS.md") == 1
+
+    def test_an_import_of_a_symlinked_root_files_target_is_charged_once(self, tmp_path):
+        """The import walk resolves targets; the set it compares against must too."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "x.md").write_text(_bullets(70), encoding="utf-8")
+        (tmp_path / "CLAUDE.md").symlink_to("docs/x.md")
+        _workspace(tmp_path, agents="# A\n\n@docs/x.md\n")
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 70
+
+
+class TestAlwaysLoadedFiles:
+    """audit-13eb0777: one public answer to "what does a turn carry"."""
+
+    def test_an_import_only_claude_md_lists_the_imported_file(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "big.md").write_text(_bullets(400), encoding="utf-8")
+        _workspace(tmp_path, claude="@docs/big.md\n")
+        listed = [
+            (p.relative_to(tmp_path.resolve()).as_posix(), i and i.name)
+            for p, i in _mod.always_loaded_files(tmp_path)
+        ]
+        assert listed == [("CLAUDE.md", None), ("docs/big.md", "CLAUDE.md")]
+
+    def test_it_is_the_set_check_charges(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "big.md").write_text(_bullets(4), encoding="utf-8")
+        _workspace(
+            tmp_path,
+            claude="@docs/big.md\n",
+            agents="# A\n",
+            rules={"a.md": "- x\n", "s.md": '---\npaths: ["q/**"]\n---\n- y\n'},
+        )
+        (tmp_path / ".claude" / "CLAUDE.md").symlink_to("../AGENTS.md")
+        report, _ = _mod.check(tmp_path)
+        charged = {
+            r["file"] for r in report["files"] if not r["path_scoped"] and "alias_of" not in r
+        }
+        listed = {
+            p.relative_to(tmp_path.resolve()).as_posix()
+            for p, _ in _mod.always_loaded_files(tmp_path)
+        }
+        # `.claude/CLAUDE.md` is detected before AGENTS.md, so it keeps the spelling.
+        expected = {"CLAUDE.md", ".claude/CLAUDE.md", ".claude/rules/a.md", "docs/big.md"}
+        assert listed == charged == expected
+
+    def test_harnesses_narrows_the_set(self, tmp_path):
+        _workspace(tmp_path, claude="# C\n")
+        (tmp_path / ".cursorrules").write_text("- c\n", encoding="utf-8")
+        names = [p.name for p, _ in _mod.always_loaded_files(tmp_path, ("Claude Code",))]
+        assert names == ["CLAUDE.md"]
+
+
 class TestOtherHarnessScoping:
     """audit-72ab6817: each harness's own conditional-loading key leaves the budget."""
 
@@ -915,6 +1053,9 @@ class TestImportedFilesCountAgainstTheBudget:
         }
         budget = next(f for f in report["findings"] if f["code"] == "instruction_budget")
         assert "across 2 always-loaded files" in budget["detail"]
+        # audit-5d9a53b7: the summary counted the scanned roots only, so it
+        # read 1 beside a `files` array of 2.
+        assert report["summary"]["files"] == len(report["files"]) == 2
 
     def test_a_target_imported_twice_is_counted_once(self, tmp_path):
         """A diamond is ordinary sharing; the file loads once."""

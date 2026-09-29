@@ -208,6 +208,19 @@ class TestCheckFile:
         findings = _check_file(f, tmp_path)
         assert _has(findings, "empty_glob")
 
+    @pytest.mark.parametrize("flow", ['[""]', "['']", '["src/**", ""]'])
+    def test_a_quoted_empty_glob_in_a_flow_list_is_an_empty_glob(self, tmp_path, flow):
+        """arch-da222f46: the flow form dropped `""`, so `paths: [""]` scoped the
+        rule out of the budget gate while this gate saw nothing to report."""
+        f = tmp_path / "empty-flow.md"
+        f.write_text(f"---\npaths: {flow}\n---\n\nAlways add types.\n", encoding="utf-8")
+        assert _has(_check_file(f, tmp_path), "empty_glob")
+
+    @pytest.mark.parametrize("flow", ["[]", '["src/**", ]'])
+    def test_an_empty_flow_list_or_trailing_comma_is_not_an_empty_glob(self, tmp_path, flow):
+        """Only a quoted empty item is a glob; bare brackets or a trailing comma hold none."""
+        assert "" not in _parse_frontmatter(f"---\npaths: {flow}\n---\nbody\n")[0]["paths"]
+
     def test_absolute_glob(self, tmp_path):
         f = tmp_path / "abs-glob.md"
         content = "---\npaths:\n  - /absolute/path/*.ts\n---\n\nAlways add types.\n"
@@ -740,6 +753,64 @@ class TestAdditionalCoverage:
         _mod._tracked.cache_clear()
         stale = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "stale_path"]
         assert len(stale) == 1 and "scripts/validate.py" in stale[0], stale
+
+    def test_closed_atx_and_setext_headings_are_link_targets(self, tmp_path):
+        """audit-8fd66625: `## Setup ##` and an underlined heading read as dead links.
+
+        GitHub drops a closing `#` run and slugs a setext heading like any
+        other, through the same `-N` counter. An underline inside a fence, or a
+        `---` after a blank line (a thematic break), makes no heading.
+        """
+        f = tmp_path / "shapes.md"
+        f.write_text(
+            "# S\n\n## Setup ##\n\n## C#\n\nUsage\n-----\n\nTwo word\ntitle\n=====\n\n"
+            "Usage\n=====\n\n---\n\n```\nFenced\n---\n```\n\n"
+            "See [a](#setup), [b](#usage), [c](#usage-1), [d](#two-word-title) and [e](#c).\n"
+            "Not [f](#fenced) nor [g](#setup-).\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        dead = sorted(x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "dead_anchor")
+        assert len(dead) == 2, dead
+        assert "'#fenced'" in dead[0] and "'#setup-'" in dead[1], dead
+
+    def test_a_list_item_or_quote_over_a_dash_rule_is_no_heading(self, tmp_path):
+        """A setext underline titles a paragraph only, never a list item or quote."""
+        f = tmp_path / "rule.md"
+        f.write_text(
+            "# R\n\n- item\nlazy\n---\n\n> quoted\n---\n\n"
+            "See [a](#item), [b](#lazy) and [c](#quoted).\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        dead = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "dead_anchor"]
+        assert len(dead) == 3, dead
+
+    def test_a_registry_id_or_quoted_example_path_is_not_stale(self, tmp_path):
+        """audit-5979ce46: a semgrep registry id and a quoted example read as missing files.
+
+        The two probe lines are the ones the finding cites. A real stale path on
+        the same line as a quotation, outside the quotes, is still reported.
+        """
+        f = tmp_path / "ex.md"
+        f.write_text(
+            "# E\n\n"
+            "`make opengrep` runs `r/python.lang.security.audit`, and `p/python` is empty.\n"
+            "State when to load it.\n"
+            '"Read `references/api-errors.md`\n'
+            'when the API returns a non-200" tells the agent the trigger.\n'
+            "“Read `docs/curly-example.md` first” is an example, "
+            "but `gone/missing.py` is a claim.\n"
+            'A `"` in a span opens no quote, so `gone/second.py` is a claim.\n'
+            'An unbalanced " quote mark ends with its paragraph.\n\n'
+            "So `gone/third.py` is a claim.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        stale = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "stale_path"]
+        assert len(stale) == 3, stale
+        assert "gone/missing.py" in stale[0] and "gone/second.py" in stale[1], stale
+        assert "gone/third.py" in stale[2], stale
 
     def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
         """The negative half: these checks must stay quiet on a healthy file.

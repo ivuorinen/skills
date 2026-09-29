@@ -97,6 +97,63 @@ def test_scoping_a_rule_shows_as_a_drop_in_the_per_turn_total(tmp_path):
     assert after["est_tokens"] < before["est_tokens"] - 900
 
 
+def _agent_instructions_set(root: Path) -> set[str]:
+    """What check-agent-instructions charges: non-scoped, non-alias rows of its report."""
+    report, _ = _mod._agent_instructions.check(root)
+    return {r["file"] for r in report["files"] if not r["path_scoped"] and "alias_of" not in r}
+
+
+def test_an_imported_file_is_part_of_the_always_loaded_set(tmp_path):
+    """audit-13eb0777: a CLAUDE.md that only imports reported 4 tokens for a 400-rule load."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "big.md").write_text(
+        "".join(f"- Always do thing {i}.\n" for i in range(400)), encoding="utf-8"
+    )
+    (tmp_path / "CLAUDE.md").write_text("@docs/big.md\n", encoding="utf-8")
+    rows = {r["path"]: r for r in _mod.always_loaded(tmp_path)}
+    assert set(rows) == {"CLAUDE.md", "docs/big.md"} == _agent_instructions_set(tmp_path)
+    assert rows["docs/big.md"]["imported_by"] == "CLAUDE.md"
+    assert "imported_by" not in rows["CLAUDE.md"]
+    assert rows["docs/big.md"]["est_tokens"] > 1000
+
+
+def test_the_always_loaded_set_is_check_agent_instructions_set(tmp_path):
+    """No private list: the same project answers the same files in both tools."""
+    root = _project(tmp_path, rules=2)
+    (root / ".claude" / "rules" / "s.md").write_text(
+        '---\npaths:\n  - "src/**"\n--- \n# s\n', encoding="utf-8"
+    )
+    assert {r["path"] for r in _mod.always_loaded(root)} == _agent_instructions_set(root)
+    assert [r["path"] for r in _mod.path_scoped(root)] == [".claude/rules/s.md"]
+    for name in ("ALWAYS_LOADED", "RULES_GLOB", "_rules"):
+        assert not hasattr(_mod, name), name
+
+
+def test_claude_md_symlinked_to_agents_md_is_measured_once(tmp_path):
+    """audit-e2afb050: one file under two names is one payload."""
+    root = _project(tmp_path, rules=0)
+    (root / "CLAUDE.md").unlink()
+    (root / "CLAUDE.md").symlink_to("AGENTS.md")
+    paths = [r["path"] for r in _mod.always_loaded(root)]
+    assert paths == ["CLAUDE.md"]
+
+
+def test_agents_md_imported_by_claude_md_is_measured_once(tmp_path):
+    root = _project(tmp_path, rules=0)
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    paths = [r["path"] for r in _mod.always_loaded(root)]
+    assert sorted(paths) == ["AGENTS.md", "CLAUDE.md"]
+
+
+def test_render_names_the_importer(tmp_path, capsys):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "big.md").write_text("x" * 40, encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("@docs/big.md\n", encoding="utf-8")
+    block = {"files": _mod.always_loaded(tmp_path), "totals": {"est_tokens": 0, "bytes": 0}}
+    _mod._render_set("always_loaded", block, sys.stdout)
+    assert "docs/big.md  (imported by CLAUDE.md)" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(("body", "lines"), [("", 0), ("no newline", 1), ("a\nb\n", 2)])
 def test_measure_counts_lines_not_newlines_plus_one(tmp_path, body, lines):
     """audit-029db16b: `count("\\n") + 1` overstated every newline-terminated file."""

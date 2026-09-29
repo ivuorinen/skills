@@ -20,6 +20,11 @@ Checks each rule file for:
     - Unterminated code fences, unfilled placeholders, stale dates, dead same-file
       anchors, duplicate lines, directives buried mid-file, stale repo paths
 
+A backticked path inside a double-quoted passage ("Read `references/x.md` when
+…", straight or curly quotes, wrapping within one paragraph) is an example, and
+stale_path does not check it; quote an example path to mark it as one. Rule
+registry ids (`r/…`, `p/…`) are never checked either.
+
 Outputs a JSON report to stdout. Each file entry lists findings with severity and detail.
 
 Exit codes: 0 = no High/Critical issues, 1 = High or Critical issues found, a
@@ -82,6 +87,25 @@ _ANCHOR_LINK_RE = re.compile(r"\]\(#([a-z0-9_][a-z0-9_-]*)\)")
 
 _CODE_SPAN_RE = re.compile(r"`[^`]*`")
 
+# A closed ATX heading's closing sequence: whitespace, then a run of `#`, at
+# the end of the line. Heading text that is only `#`s is left to the caller.
+_CLOSING_HASHES_RE = re.compile(r"\s+#+\s*$")
+
+# A setext underline: a paragraph line followed by a line of `=` or `-` only
+# makes that paragraph a heading, and GitHub slugs it like an ATX one.
+_SETEXT_UNDERLINE_RE = re.compile(r"^(?:=+|-+)\s*$")
+
+# A line that cannot be a paragraph a setext underline titles: a list item, a
+# blockquote or a table row. Under one of these `---` is a thematic break.
+_NOT_PARAGRAPH_RE = re.compile(r"^(?:[-*+]\s|\d+[.)]\s|>|\|)")
+
+# A code span or a double quote mark, straight or curly, for `_unquoted`.
+_QUOTE_TOKEN_RE = re.compile(r"`[^`]*`|[\"“”]")
+
+# Rule-registry namespaces (`r/python.lang…`, `p/python`) — semgrep's and
+# opengrep's config ids, which are path-shaped and never files.
+_REGISTRY_PREFIXES = ("r/", "p/")
+
 
 def _slug(heading: str) -> str:
     """GitHub's heading-to-anchor slug, close enough for a same-file link.
@@ -91,11 +115,41 @@ def _slug(heading: str) -> str:
     squeezes runs (`Foo — Bar` is `#foo--bar`) nor drops underscores or
     code-span text. The earlier copy did all three, so links that work on
     GitHub were reported as dead on a commit-time gate (audit-41dfc7f7).
+    A closed ATX heading's trailing `#` run is dropped first, as GitHub
+    does: `## Setup ##` is `#setup`, not `#setup-` (audit-8fd66625); a `#`
+    with no space before it (`## C#`) is text and stays.
     Ceiling: emoji and other symbols `\\w` keeps or drops differently from
     GitHub's slugger can still disagree.
     """
-    text = re.sub(r"[^\w\- ]", "", heading.lstrip("#").strip().lower())
+    heading = _CLOSING_HASHES_RE.sub("", heading.lstrip("#").strip())
+    text = re.sub(r"[^\w\- ]", "", heading.lower())
     return text.replace(" ", "-")
+
+
+def _unquoted(line: str, in_quote: bool) -> tuple[str, bool]:
+    """The code spans of `line` that sit outside a double-quoted passage.
+
+    A path quoted inside one is part of an example sentence the rule shows
+    ("Read `references/api-errors.md` when …"), not a claim that the file
+    exists here (audit-5979ce46). Quoting is how an author marks an example
+    path. `in_quote` carries an open quotation from the previous line of the
+    same paragraph, since a wrapped example sentence spans lines; a quote mark
+    inside a code span does not toggle it. Ceiling: a real reference written
+    inside quotes is not checked, and an unbalanced quote mark silences the
+    rest of its paragraph.
+    """
+    kept: list[str] = []
+    for tok in _QUOTE_TOKEN_RE.findall(line):
+        if tok.startswith("`"):
+            if not in_quote:
+                kept.append(tok)
+        elif tok == "“":
+            in_quote = True
+        elif tok == "”":
+            in_quote = False
+        else:
+            in_quote = not in_quote
+    return " ".join(kept), in_quote
 
 
 def _looks_illustrative(ref: str) -> bool:
@@ -109,13 +163,17 @@ def _looks_illustrative(ref: str) -> bool:
     - a deliberate example (`src/auth.py`, a glob, a `<placeholder>`), because a
       rule file teaches by showing and names paths that are meant not to exist.
 
+    A rule-registry id (`r/python.lang.security.audit`) is skipped too
+    (audit-5979ce46). Ceiling: a real top-level directory named `r` or `p` is
+    never checked.
+
     Each false positive costs more than the miss it prevents: this backs a
     commit-time gate, and a check that cries wolf gets switched off rather than
     heeded.
     """
     if any(c in ref for c in "*<>{}$"):  # glob or placeholder
         return True
-    if ref.startswith(("/", "~", "http")):  # absolute, or a URL fragment
+    if ref.startswith(("/", "~", "http", *_REGISTRY_PREFIXES)):  # absolute, URL, registry id
         return True
     if _NOT_A_PATH_SUFFIX.search(ref):  # a domain, not a file
         return True
@@ -195,9 +253,12 @@ def _parse_frontmatter(text: str) -> tuple[dict | None, str]:  # noqa: C901
             current_key = k.strip()
             v = v.strip()
             if v.startswith("[") and v.endswith("]"):
-                # YAML flow-style list, e.g. paths: ["src/**", "lib/**"]
-                items = [x.strip().strip("\"'") for x in v[1:-1].split(",")]
-                fm[current_key] = [x for x in items if x]
+                # YAML flow-style list, e.g. paths: ["src/**", "lib/**"]. A blank
+                # slot (`[]`, a trailing comma) holds no item and is dropped; a
+                # quoted `""` is an item, kept so `empty_glob` sees it. Dropping
+                # it too made `paths: [""]` read as no list at all here while
+                # the budget gate counted it as scoping (arch-da222f46).
+                fm[current_key] = [x.strip().strip("\"'") for x in v[1:-1].split(",") if x.strip()]
             elif v:
                 fm[current_key] = v.strip("\"'")
         elif not content:
@@ -343,6 +404,21 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
     # three-backtick line. A naive toggle left an unclosed fence "open" for the
     # rest of the file, silently disabling the hedged-language gate below it.
     fence = ""
+    # The open paragraph's lines, which a setext underline turns into a
+    # heading; None while a list item, quote or table row runs, since `---`
+    # under one of those is a thematic break (audit-8fd66625).
+    para: list[str] | None = []
+    # An example quotation open from an earlier line of this paragraph.
+    in_quote = False
+
+    def add_heading(slug: str) -> None:
+        # GitHub suffixes the second and later identical headings with -1,
+        # -2, …; bare slugs alone flagged a working link to the second
+        # `## Enforcement` as a dead anchor (audit-1558e13f).
+        n = heading_counts.get(slug, 0)
+        headings.add(slug if n == 0 else f"{slug}-{n}")
+        heading_counts[slug] = n + 1
+
     for body_lineno, line in enumerate(body.splitlines(), 1):
         lineno = fm_line_count + body_lineno
         stripped = line.strip()
@@ -353,6 +429,12 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
         opened = md_fences.opener(stripped)
         if opened:
             fence = opened
+            para = []
+            in_quote = False
+            continue
+        if para and _SETEXT_UNDERLINE_RE.match(stripped):
+            add_heading(_slug(" ".join(para)))
+            para = []
             continue
         # Position risk is judged on *section openers* only — a heading or a
         # bolded lead-in — never on every line. This repo's style guide requires
@@ -370,16 +452,18 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             buried.append((lineno, round(depth * 100), stripped[:70]))
 
         if stripped.startswith("#"):
-            # GitHub suffixes the second and later identical headings with -1,
-            # -2, …; bare slugs alone flagged a working link to the second
-            # `## Enforcement` as a dead anchor (audit-1558e13f).
-            slug = _slug(stripped)
-            n = heading_counts.get(slug, 0)
-            headings.add(slug if n == 0 else f"{slug}-{n}")
-            heading_counts[slug] = n + 1
+            add_heading(_slug(stripped))
+            para = []
+            in_quote = False
             continue
         if not stripped:
+            para = []
+            in_quote = False
             continue
+        if _NOT_PARAGRAPH_RE.match(stripped):
+            para = None
+        elif para is not None:
+            para.append(stripped)
 
         for anchor in _ANCHOR_LINK_RE.findall(line):
             anchors.append((lineno, anchor))
@@ -435,7 +519,8 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
                 f"Line {lineno}: hedged '{m.group()}' — rules must be unconditional: \"{snippet}\"",
             )
 
-        for ref in _REPO_PATH_RE.findall(line):
+        spans, in_quote = _unquoted(line, in_quote)
+        for ref in _REPO_PATH_RE.findall(spans):
             if _looks_illustrative(ref):
                 continue
             rel, base = _tracked(project_root)
