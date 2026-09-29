@@ -1086,6 +1086,101 @@ def test_every_command_is_a_coverage_lens_or_an_explicit_exclusion():
     )
 
 
+_COMMANDS_DIR = Path(__file__).parent.parent / "skills" / "nitpicker" / "commands"
+
+
+def _fix_tier(command: str, tier: str) -> str:
+    """The bullets under one `**<tier>:**` label of a command's Fix strategy."""
+    text = (_COMMANDS_DIR / f"{command}.md").read_text(encoding="utf-8")
+    strategy = text.split("## Fix strategy", 1)[1].split("\n## ", 1)[0]
+    return strategy.split(f"**{tier}:**", 1)[1].split("\n**", 1)[0]
+
+
+@pytest.mark.parametrize(
+    ("command", "marker"),
+    [
+        # audit-36312e91: a div is block, full width and left-aligned; a
+        # button is inline-block, shrink-to-fit and centred, so no reset the
+        # agent writes blind keeps the pixels a11y promises not to change.
+        ("a11y", "<button"),
+        # audit-5cdd47a1: a limit or request is a number the repo does not
+        # hold; guessed low it OOMKills, guessed high it leaves pods Pending.
+        ("iac", "resources.limits"),
+    ],
+)
+def test_guessed_value_fixes_are_gated_on_approval(command, marker):
+    """A fix whose correct value the repo cannot supply is never automatic.
+
+    Pinned per case: the prose cannot be parsed for "is this value guessed",
+    so each proven instance is held in the approval tier by name.
+    """
+    assert marker not in _fix_tier(command, "Auto-applicable")
+    assert marker in _fix_tier(command, "Requires explicit approval per change")
+
+
+def test_license_process_step_does_not_batch_apply_an_undeclared_license():
+    """audit-ed5ec7d6: step 6 is what runs at the fix prompt.
+
+    Its override must carry the Fix strategy's condition — a `LICENSE` only
+    where the license is already declared — or (a)ll writes a license the
+    owner never chose.
+    """
+    text = (_COMMANDS_DIR / "license.md").read_text(encoding="utf-8")
+    step = next(line for line in text.splitlines() if line.startswith("6. "))
+    assert "`LICENSE`/`NOTICE`/SPDX header is additive" not in step
+    assert "already declared" in step
+    assert "owner" in step
+
+
+def test_no_command_routes_cves_to_deps():
+    """audit-5f6b3b09 (and audit-34ec6f5c before it): deps disowns CVEs.
+
+    deps' Out-of-scope line sends known CVEs to `/nitpicker security`, so any
+    other command routing them to deps names a command that routes them away
+    again. Checked per `;`-clause across every command file rather than at the
+    one site found, because the same misroute has now been fixed twice.
+    """
+    offenders = []
+    for path in sorted(_COMMANDS_DIR.glob("*.md")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("Out of scope"):
+                continue
+            for clause in line.split(";"):
+                if "CVE" in clause and "/nitpicker deps" in clause:
+                    offenders.append(f"{path.name}: {clause.strip()[:100]}")
+    assert offenders == []
+
+
+def test_security_fix_table_names_no_checkov_autofix_flag():
+    """audit-627206b3: checkov's CLI has no `--fix`; argparse exits 2 on it.
+
+    The fix table is what the agent executes after approval, so a flag it
+    names must exist. Ceiling: this pins the one flag proven absent, not every
+    flag the table could name.
+    """
+    text = (_COMMANDS_DIR / "security.md").read_text(encoding="utf-8")
+    rows = [line for line in text.splitlines() if line.startswith("|") and "checkov" in line]
+    assert rows, "security.md no longer names checkov in a table"
+    assert not [row for row in rows if "--fix" in row]
+
+
+def test_a0_is_scoped_to_the_surface_agent_loopholes_enumerates():
+    """audit-6cb82137: agent-loopholes reads only Claude Code paths.
+
+    Scheduling A0 against every harness lets it close clean on a Cursor- or
+    Copilot-only repo whose rules it never read, so its N/A condition names
+    the Claude Code surface and the harness-agnostic claim covers A1 and A2.
+    """
+    text = (_COMMANDS_DIR / "_audit-coverage.md").read_text(encoding="utf-8")
+    section = text.split("## Agent-enforcement lenses", 1)[1].split("\n## ", 1)[0]
+    a0 = section.split("**AUD:A0", 1)[1].split("\n- **", 1)[0]
+    assert "Claude Code" in a0
+    assert ".claude/rules/" in a0
+    preamble = section.split("- **AUD:A0", 1)[0]
+    assert "A1" in preamble
+    assert "A2" in preamble
+
+
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
     monkeypatch.setattr(sys, "argv", ["validate-skill.py", str(tmp_path / "nothing")])

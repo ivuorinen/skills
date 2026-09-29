@@ -165,12 +165,15 @@ review surface the skill offers.
 
 ## Agent-enforcement lenses (always scheduled; each N/A only when its surface is absent)
 
-These cover every agent harness, not only Claude Code, so a missing `.claude/`
-directory closes none of them.
+A1 and A2 cover every agent harness, not only Claude Code, so a missing
+`.claude/` directory closes neither of them. A0 does not: its command
+enumerates only Claude Code paths.
 
 - **AUD:A0 Agent loopholes** (`agent-loopholes`) — bypassable or unenforced
-  constraints in rules, hooks, settings, permissions, skills. N/A when no
-  harness has any of them.
+  constraints in rules, hooks, settings, permissions, skills. N/A when the
+  project has no Claude Code enforcement surface (`.claude/rules/`,
+  `.claude/settings*.json`, their hooks); another harness's rules are covered
+  by A2 and its hooks by A1, never closed clean under A0.
 - **AUD:A1 Agent hooks** (`agent-hooks`) — hook coverage against the project's
   evidence base; recurring failures no hook guards. N/A when `agent-hooks`'
   harness detection finds none.

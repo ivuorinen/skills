@@ -51,7 +51,11 @@ Severity reflects actual risk, never preference.
   that count in the run summary. Record the ids returned when seeding and read
   back exactly those: the tracker's list belongs to the server process, not to
   the run, so a concurrent run's entries interleave with yours — an unscoped
-  readback either blocks on work that is not this run's or passes on it. **Where the session exposes no task tracker, print the numbered
+  readback either blocks on work that is not this run's or passes on it.
+  Deleting a seeded step does not close it: an entry this run created and then
+  removed with `np_task_update` `status: deleted` while `pending` or
+  `in_progress` counts as open in that readback even though the list no longer
+  shows it — close it as `completed` instead. **Where the session exposes no task tracker, print the numbered
   steps with a one-line outcome each in the response instead, before
   reporting.** Print it as its own visible block ahead of the command's output,
   never inside it and never hidden: a command's output format — "nothing
