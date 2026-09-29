@@ -299,11 +299,20 @@ def _git(root: Path, *args: str) -> str:
     octal-escaped quoted string no path matches (audit-90ca5e17). `LC_ALL=C`
     keeps git's stderr in English, which `_tracked_files` matches on.
 
+    Output is decoded as UTF-8 with `surrogateescape` rather than by `text=True`
+    (audit-204c7123). quotePath=false makes git print a name's raw bytes, so a
+    strict decode raised UnicodeDecodeError on one Latin-1 file name — out of
+    `ls-files`, which every mode runs — and `diff` output carries the changed
+    files' own bytes as well. `surrogateescape` cannot raise, and it is the
+    decode `os.fsdecode` applies on a POSIX host, so a name round-trips to the
+    same file `Path` opens and serialises as `\\udcXX` in the JSON.
+
     Ceiling: a `filter.<driver>.clean` command named by an in-tree
     `.gitattributes` still runs when `git diff` re-reads a stat-dirty file.
     Driver names are arbitrary, so no fixed `-c` can switch them all off, and
     names outside quotePath's reach — a tab, newline, quote or backslash —
-    are still quoted in the hunk headers.
+    are still quoted in the hunk headers. On a host whose filesystem encoding
+    is not UTF-8, a non-UTF-8 name decodes but does not round-trip.
     """
     try:
         # fixed argv, no shell, git only — reason above the marker, see the
@@ -321,7 +330,6 @@ def _git(root: Path, *args: str) -> str:
             ],
             cwd=root,
             env={**os.environ, "LC_ALL": "C"},
-            text=True,
             capture_output=True,
             check=False,
             timeout=GIT_TIMEOUT,
@@ -331,8 +339,11 @@ def _git(root: Path, *args: str) -> str:
     except OSError as exc:
         raise PackEnvironmentError(f"git is not available: {exc}") from exc
     if proc.returncode != 0:
-        raise PackError(f"git {' '.join(args)} failed: {proc.stderr.strip() or proc.returncode}")
-    return proc.stdout
+        stderr = proc.stderr.decode("utf-8", "surrogateescape").strip()
+        raise PackError(f"git {' '.join(args)} failed: {stderr or proc.returncode}")
+    # Text mode's newline translation is not reproduced: git ends its own lines
+    # with `\n`, and a `\r` inside a diff body is the changed file's content.
+    return proc.stdout.decode("utf-8", "surrogateescape")
 
 
 def _rev(base: str) -> str:
@@ -354,7 +365,7 @@ def _rev(base: str) -> str:
     return base
 
 
-def _tracked_files(root: Path) -> list[Path]:
+def _tracked_files(root: Path, unlistable: list[Path] | None = None) -> list[Path]:
     """Every tracked file, from git where possible and a filtered walk otherwise.
 
     git is preferred because it applies `.gitignore` for free; the walk is the
@@ -380,12 +391,15 @@ def _tracked_files(root: Path) -> list[Path]:
     so a conflicted file was enumerated up to three times — tripling its budget
     cost and skewing every count at exactly the moment it most needs review.
     `--deduplicate` would do the same but needs git 2.31 or later.
+
+    `unlistable` collects the directories the walk could not list; git reports
+    no equivalent, so it stays empty on the git path.
     """
     try:
         listing = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     except PackError as exc:
         if "not a git repository" in str(exc):
-            return sorted(_walk(root))
+            return sorted(_walk(root, unlistable))
         raise PackEnvironmentError(str(exc)) from exc
     names = dict.fromkeys(name for name in listing.split("\0") if name)
     return [root / name for name in names]
@@ -403,7 +417,7 @@ def _changed_files(root: Path, base: str) -> list[Path]:
     return [root / name for name in listing.split("\0") if name]
 
 
-def _walk(root: Path) -> list[Path]:
+def _walk(root: Path, unlistable: list[Path] | None = None) -> list[Path]:
     """Filtered recursive walk, used only when git cannot enumerate the tree.
 
     Symlinked entries are skipped outright. `is_dir()` follows a link, so
@@ -413,6 +427,10 @@ def _walk(root: Path) -> list[Path]:
     and `mcp_server` serves stdio single-threaded, so one such call would stall
     every later tool call in the session. The containment test in `_read`
     guards the read, not the traversal.
+
+    A directory whose listing fails is appended to `unlistable` rather than
+    skipped in silence (errors-77dd5132): its whole subtree goes unread, and
+    `build` reports it so a mode-000 directory never reads as absent.
     """
     out: list[Path] = []
     stack = [root]
@@ -421,6 +439,8 @@ def _walk(root: Path) -> list[Path]:
         try:
             entries = list(current.iterdir())
         except OSError:
+            if unlistable is not None:
+                unlistable.append(current)
             continue
         for entry in entries:
             if entry.is_symlink():
@@ -545,6 +565,22 @@ def _scoped(root: Path, files: list[Path], paths: list[str]) -> list[Path]:
 # --------------------------------------------------------------------------- symbols
 
 
+def _lines(text: str) -> list[str]:
+    """`text` split on `\\n` only, numbered the way git, editors and `ast` number it.
+
+    audit-3837502b: `str.splitlines()` also breaks on \\v, \\f, \\x1c-\\x1e,
+    \\x85, U+2028 and U+2029, so one form feed in GNU-style C or U+2028 in a
+    JavaScript string shifted every later coordinate, and a range could end
+    past EOF. `_read` has already folded `\\r\\n` and `\\r` into `\\n`. A
+    trailing newline ends the last line rather than opening an empty one, which
+    is what `splitlines()` did and what `wc -l` counts.
+    """
+    parts = text.split("\n")
+    if parts[-1] == "":
+        parts.pop()
+    return parts
+
+
 def _python_symbols(source: str) -> list[tuple[str, int, int]]:
     """(name, start, end) for every top-level and nested declaration, via `ast`.
 
@@ -571,11 +607,12 @@ def _regex_symbols(source: str) -> list[tuple[str, int, int]]:
     enclosing a hunk, and not enough to slice a body exactly.
     """
     starts: list[tuple[str, int]] = []
-    for index, line in enumerate(source.splitlines(), start=1):
+    lines = _lines(source)
+    for index, line in enumerate(lines, start=1):
         match = _DECL.match(line)
         if match:
             starts.append((match.group(1), index))
-    total = len(source.splitlines())
+    total = len(lines)
     return [
         (name, line, (starts[i + 1][1] - 1) if i + 1 < len(starts) else total)
         for i, (name, line) in enumerate(starts)
@@ -740,7 +777,9 @@ def _diff(root: Path, files: list[Path], pack: Pack, base: str) -> None:
     outline: list[tuple[str, int, int]] = []
     in_header = False
     oversize = 0
-    for line in raw.splitlines():
+    # `\n` only (audit-3837502b): a form feed inside a changed line split it,
+    # and a half reading `@@ -1 +40 @@` matched `_HUNK` as a phantom hunk.
+    for line in _lines(raw):
         # Every entry resets the per-file state here. Keying only on `+++ `
         # meant a deleted file — whose post-image header is `+++ /dev/null` —
         # left `current` pointing at the *previous* entry, so its hunks were
@@ -857,9 +896,13 @@ def _file_candidates(root: Path, path: Path, source: str, terms: set[str]) -> li
     lowercasing first would have made the cast pattern match a variable called
     `as_user`.
     """
-    lines = source.splitlines()
+    lines = _lines(source)
+    offsets = _offsets(lines)
     outline = symbols_of(path, source)
     constructs = _active_constructs(terms, _language(path))
+    # Once per file, not per matched line: `relative_to` was over half of a
+    # 40k-match file's time once the merge stopped dominating (perf-52fa0982).
+    relative = path.relative_to(root).as_posix()
     out: list[Candidate] = []
     for index, line in enumerate(lines, start=1):
         lowered = line.lower()
@@ -870,19 +913,47 @@ def _file_candidates(root: Path, path: Path, source: str, terms: set[str]) -> li
             continue
         symbol = _enclosing(outline, index)
         start, end = _range_for(outline, symbol, index, len(lines))
-        body = "\n".join(lines[start - 1 : end])
         out.append(
             Candidate(
-                path=path.relative_to(root).as_posix(),
+                path=relative,
                 start=start,
                 end=end,
                 score=float(len(matched)),
                 reason=matched,
                 symbol=symbol,
-                tokens=estimate_tokens(body),
+                tokens=_span_tokens(offsets, start, end),
             )
         )
-    return _merge(out, lines)
+    return _merge(out, offsets)
+
+
+def _offsets(lines: list[str]) -> list[int]:
+    """Prefix sums of `len(line) + 1`: `offsets[k]` is where line `k + 1` starts.
+
+    perf-52fa0982: built once per file so `_span_tokens` prices any range in
+    O(1). Re-joining the range's text on every merge made evidence mode
+    quadratic in a file's matched lines — 2.7s at 40k lines of a lockfile, and
+    the single-threaded MCP server stalls every later call behind it.
+    """
+    out = [0]
+    for line in lines:
+        out.append(out[-1] + len(line) + 1)
+    return out
+
+
+def _span_tokens(offsets: list[int], start: int, end: int) -> int:
+    """`estimate_tokens("\\n".join(lines[start - 1 : end]))`, without the join.
+
+    Exact, not approximate: the bounds are clipped the way the slice clips
+    them, and the joined text is the lines' lengths plus one `\\n` between each
+    pair — the span's offsets minus the terminator of its last line.
+    """
+    total = len(offsets) - 1
+    first, last = min(max(start - 1, 0), total), min(max(end, 0), total)
+    if last <= first:
+        return 0
+    # `estimate_tokens`'s rounding, applied to a length instead of a string.
+    return (offsets[last] - offsets[first] - 1 + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
 
 
 def _range_for(
@@ -895,15 +966,15 @@ def _range_for(
     return max(1, line - 8), min(total, line + 8)
 
 
-def _merge(items: list[Candidate], lines: list[str]) -> list[Candidate]:
+def _merge(items: list[Candidate], offsets: list[int]) -> list[Candidate]:
     """Collapse overlapping ranges in one file into a single candidate.
 
     Without this, a term appearing eight times in one function yields eight
     candidates covering identical lines, and the budget is spent proving the
     same thing repeatedly.
 
-    `lines` is the file's source, so the merged estimate is recomputed from the
-    merged range itself (audit-3fe3c6ad).
+    `offsets` is the file's `_offsets`, so the merged estimate is recomputed
+    from the merged range itself (audit-3fe3c6ad) in O(1) (perf-52fa0982).
     """
     out: list[Candidate] = []
     for item in sorted(items, key=lambda c: (c.start, c.end)):
@@ -926,7 +997,7 @@ def _merge(items: list[Candidate], lines: list[str]) -> list[Candidate]:
                 # `_pack_to_budget` skipped the best-matching evidence as over
                 # budget (audit-3fe3c6ad). The range's own text is exact for
                 # both.
-                tokens=estimate_tokens("\n".join(lines[previous.start - 1 : end])),
+                tokens=_span_tokens(offsets, previous.start, end),
             )
         else:
             out.append(item)
@@ -985,10 +1056,11 @@ def build(
     # Diff mode scopes by the changed set itself, not its intersection with
     # `ls-files`: a staged deletion is gone from `ls-files`, so the intersection
     # dropped exactly the change a reviewer most needs to see (audit-90ca5e17).
+    unlistable: list[Path] = []
     if mode == "diff":
         files = _changed_files(root, base)
     else:
-        files = _tracked_files(root)
+        files = _tracked_files(root, unlistable)
         if changed_only:
             changed = {f.resolve() for f in _changed_files(root, base)}
             files = [f for f in files if f.resolve() in changed]
@@ -1003,6 +1075,14 @@ def build(
         _diff(root, files, pack, base)
     else:
         _evidence(root, files, pack, goal, budget_tokens)
+    # Added after the mode ran because every mode replaces `omitted` whole
+    # (errors-77dd5132). Ceiling: not narrowed by `paths`, so a scoped call can
+    # report an unread directory outside its scope — over-reporting is the
+    # direction that cannot pass for clean.
+    if unlistable:
+        pack.omitted["dirs_unlistable"] = len(unlistable)
+        names = sorted(d.relative_to(root).as_posix() for d in unlistable)
+        pack.notes.append(f"dirs_unlistable (subtree not read): {json.dumps(names)}")
 
     result = asdict(pack)
     result["verification"] = (
