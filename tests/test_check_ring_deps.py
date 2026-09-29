@@ -7,22 +7,18 @@ that only ever passes on this repo is indistinguishable from one that resolves
 nothing.
 """
 
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _REPO = Path(__file__).parent.parent
 _TOOL = _REPO / "scripts" / "check-ring-deps.py"
 
-_spec = importlib.util.spec_from_file_location("check_ring_deps", _TOOL)
-rd = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-# Registered before exec, unlike the sibling tool tests: `@dataclass` resolves
-# its annotations through `sys.modules[cls.__module__]`, which is None for a
-# module that is executing but unregistered.
-sys.modules[_spec.name] = rd  # pyright: ignore[reportOptionalMemberAccess]
-_spec.loader.exec_module(rd)  # pyright: ignore[reportOptionalMemberAccess]
+# `load_path` registers the module before exec, which `@dataclass` needs: it
+# resolves annotations through `sys.modules[cls.__module__]`.
+rd = load_path("check_ring_deps", _TOOL)
 
 
 def _tree(root: Path, files: dict[str, str]) -> Path:
@@ -620,11 +616,8 @@ def test_runner_contract():
 def test_module_is_importable_without_side_effects(capsys):
     """Loading the tool must not run it — the `__main__` guard is what keeps an
     import from walking the tree and printing a graph."""
-    spec = importlib.util.spec_from_file_location("probe_ring_deps", _TOOL)
-    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    sys.modules[spec.name] = module  # pyright: ignore[reportOptionalMemberAccess]
     try:
-        spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
+        load_path("probe_ring_deps", _TOOL)
     finally:
-        del sys.modules[spec.name]  # pyright: ignore[reportOptionalMemberAccess]
+        del sys.modules["probe_ring_deps"]
     assert capsys.readouterr().out == ""

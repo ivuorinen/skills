@@ -5,18 +5,16 @@ that matter are the ones proving it still *fails* — a benchmark that cannot go
 red is a benchmark nobody has to satisfy.
 """
 
-import importlib.util
 import json
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "bench-retrieval.py"
-_spec = importlib.util.spec_from_file_location("bench_retrieval", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("bench_retrieval", _TOOL)
 
 
 def _row(**over) -> dict:

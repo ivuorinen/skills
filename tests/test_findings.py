@@ -1,6 +1,5 @@
 """Tests for skills/nitpicker/scripts/findings.py — the per-finding audit store CLI."""
 
-import importlib.util
 import json
 import os
 import re
@@ -15,11 +14,10 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
-_spec = importlib.util.spec_from_file_location("findings", _TOOL)
-findings = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
+findings = load_path("findings", _TOOL)
 
 BODY = """## Problem
 Token compared with `==`.

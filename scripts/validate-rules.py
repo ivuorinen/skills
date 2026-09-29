@@ -9,6 +9,8 @@ import re
 import sys
 from pathlib import Path
 
+from common import load_spec
+
 # Single source of truth for the frontmatter parser and the symlink-safe rules
 # walker: the shipped, stdlib-only check-rules-anatomy.py. Internal tooling
 # depending on the shipped tool points the dependency the safe direction (the
@@ -17,9 +19,9 @@ from pathlib import Path
 _ANATOMY_PATH = (
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
 )
-_spec = importlib.util.spec_from_file_location("check_rules_anatomy", _ANATOMY_PATH)
-_anatomy = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_anatomy)  # pyright: ignore[reportOptionalMemberAccess]
+_anatomy = load_spec(
+    importlib.util.spec_from_file_location("check_rules_anatomy", _ANATOMY_PATH), _ANATOMY_PATH
+)
 
 # Re-exported so callers (and tests) keep importing it from this module.
 parse_rules_frontmatter = _anatomy._parse_frontmatter

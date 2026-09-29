@@ -6,20 +6,18 @@ a threshold exit without failing anything, so the "always exit 0 on a large
 number" property is pinned explicitly.
 """
 
-import importlib.util
 import json
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = (
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-context-tokens.py"
 )
-_spec = importlib.util.spec_from_file_location("check_context_tokens", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("check_context_tokens", _TOOL)
 
 
 def _project(root: Path, *, rules: int = 2, command: str = "audit") -> Path:

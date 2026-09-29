@@ -12,15 +12,13 @@ import time
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _SERVER = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "mcp_server.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("mcp_server", _SERVER)
-    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
-    return mod
+    return load_path("mcp_server", _SERVER)
 
 
 def _rpc(mod, *requests):
@@ -927,13 +925,10 @@ def test_skill_meta_tools_registered():
 
 
 def _load_findings():
-    spec = importlib.util.spec_from_file_location(
+    return load_path(
         "findings",
         Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
     )
-    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
-    return mod
 
 
 def _seed(tmp_path):

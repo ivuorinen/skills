@@ -24,22 +24,22 @@ from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import md_fences, parse_frontmatter
+from common import load_spec, md_fences, parse_frontmatter
 
 # The token estimate has one definition, the shipped context_pack's
 # `estimate_tokens`. A private `len(body) // 4` here rounded down while
 # check-context-tokens rounded up, so the two tools disagreed at the 5000-token
 # boundary (audit-c798015a). Loaded by path, the way scripts/common.py loads
 # findings.py: internal tooling depends on the shipped tool, never the reverse.
-# Registered in sys.modules before exec because context_pack's dataclasses
-# resolve their string annotations through their own module entry.
+# `load_spec` registers it in sys.modules before exec, which context_pack's
+# dataclasses need to resolve their string annotations.
 _CONTEXT_PACK_PATH = (
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "context_pack.py"
 )
-_cp_spec = importlib.util.spec_from_file_location("context_pack_for_validate", _CONTEXT_PACK_PATH)
-_context_pack = importlib.util.module_from_spec(_cp_spec)  # pyright: ignore[reportArgumentType]
-sys.modules[_cp_spec.name] = _context_pack  # pyright: ignore[reportOptionalMemberAccess]
-_cp_spec.loader.exec_module(_context_pack)  # pyright: ignore[reportOptionalMemberAccess]
+_context_pack = load_spec(
+    importlib.util.spec_from_file_location("context_pack_for_validate", _CONTEXT_PACK_PATH),
+    _CONTEXT_PACK_PATH,
+)
 estimate_tokens = _context_pack.estimate_tokens
 
 # Vendored skills — authored by someone else and installed into this repo (e.g.

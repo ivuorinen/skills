@@ -1,18 +1,16 @@
 """Tests for skills/nitpicker/scripts/check-rules-anatomy.py."""
 
 import datetime
-import importlib.util
 import runpy
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
-_spec = importlib.util.spec_from_file_location("check_rules_anatomy", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("check_rules_anatomy", _TOOL)
 
 _parse_frontmatter = _mod._parse_frontmatter
 _check_file = _mod._check_file

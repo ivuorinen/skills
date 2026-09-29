@@ -11,20 +11,18 @@ naming, because both were defects in the first draft:
   close.
 """
 
-import importlib.util
 import json
 import runpy
 import subprocess
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 REPO_ROOT = Path(__file__).parent.parent
 _TOOL = REPO_ROOT / "scripts" / "check-opengrep.py"
 
-_spec = importlib.util.spec_from_file_location("check_opengrep", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("check_opengrep", _TOOL)
 
 
 def _result(stdout: str = "", returncode: int = 0, stderr: str = ""):

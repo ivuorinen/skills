@@ -10,18 +10,16 @@ defect only when it pointed at the right LINES. Crediting it for filing
 something — anything — is how a recall benchmark becomes a participation prize.
 """
 
-import importlib.util
 import json
 import shutil
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "bench-recall.py"
-_spec = importlib.util.spec_from_file_location("bench_recall", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("bench_recall", _TOOL)
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"))
 import findings  # noqa: E402

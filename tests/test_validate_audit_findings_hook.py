@@ -1,19 +1,17 @@
 """Tests for scripts/hooks/validate-audit-findings-hook.py (thin store-validation hook)."""
 
-import importlib.util
 import io
 import json
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 HOOK_PATH = Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit-findings-hook.py"
 FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 
-spec = importlib.util.spec_from_file_location("audit_hook", HOOK_PATH)
-hook = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-spec.loader.exec_module(hook)  # pyright: ignore[reportOptionalMemberAccess]
+hook = load_path("audit_hook", HOOK_PATH)
 
 
 def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
@@ -154,9 +152,7 @@ def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys)
     """The index is regenerated on every store edit so it cannot drift from the files it
     summarises.
     """
-    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
-    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
+    findings = load_path("findings", FINDINGS_PATH)
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(
@@ -182,9 +178,7 @@ def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
     # repo-relative paths as canonical `findings.py index` — never absolute paths,
     # which leak the checkout directory and fail make check / CI index-check.
     """Absolute paths leak the checkout directory and fail make check's index-check."""
-    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
-    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
+    findings = load_path("findings", FINDINGS_PATH)
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(
@@ -211,9 +205,7 @@ def test_main_handles_resolved_ledger_edit(monkeypatch, tmp_path, capsys):
     # A resolved.jsonl edit is store-validated and regenerates INDEX (the ledger
     # has no per-line file, so there is nothing to per-file validate).
     """The ledger has no per-line file, so it is store-validated rather than per-file validated."""
-    fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
-    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
+    findings = load_path("findings", FINDINGS_PATH)
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(

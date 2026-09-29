@@ -9,7 +9,6 @@ loosened host check still returns data, and a dropped envelope key still parses.
 import contextlib
 import email.message
 import http.server
-import importlib.util
 import io
 import json
 import runpy
@@ -23,6 +22,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _loader import load_path
 
 _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -1274,9 +1274,7 @@ def test_entry_points_run_as_scripts(script, operation, monkeypatch, capsys):
 def test_entry_points_do_nothing_when_merely_imported(script, capsys):
     """Imported rather than run, an entry point must stay inert — the `__main__`
     guard is what keeps a tool from firing a network fetch on import."""
-    spec = importlib.util.spec_from_file_location(f"probe_{script.stem}", script)
-    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
+    load_path(f"probe_{script.stem}", script)
     assert capsys.readouterr().out == ""
 
 

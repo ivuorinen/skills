@@ -3,10 +3,14 @@
 import ast
 import importlib.util
 import inspect
+import sys
 import textwrap
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 
-from common import collect_skills, parse_frontmatter
+import pytest
+from _loader import load_path
+from common import collect_skills, load_spec, parse_frontmatter
 
 
 def _fm(text: str) -> dict:
@@ -85,12 +89,10 @@ class TestParseFrontmatter:
         # implementation, path-loaded. Drift is therefore impossible by
         # construction — this pins the re-export so a future edit cannot
         # reintroduce a second copy without failing here.
-        spec = importlib.util.spec_from_file_location(
+        findings = load_path(
             "findings_for_identity_check",
             Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py",
         )
-        findings = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-        spec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
         assert _body_ast(parse_frontmatter) == _body_ast(findings.parse_frontmatter)
         assert parse_frontmatter.__module__ != "common"
 
@@ -134,3 +136,57 @@ class TestCollectSkills:
 
     def test_empty_base_directory_yields_nothing(self, tmp_path):
         assert collect_skills(tmp_path) == []
+
+
+# A dataclass with a string annotation: creating it reads
+# `sys.modules[cls.__module__]`, so it fails unless the module is registered
+# before it runs.
+_DATACLASS_MODULE = (
+    "from __future__ import annotations\n"
+    "from dataclasses import dataclass\n\n"
+    "@dataclass\nclass Point:\n    x: int\n"
+)
+
+
+class TestLoadSpec:
+    """audit-b7943908: the one checked path-load tail the internal scripts share."""
+
+    def test_a_missing_spec_names_the_path(self, tmp_path):
+        target = tmp_path / "not-python.txt"
+        with pytest.raises(ImportError, match=r"not-python\.txt"):
+            load_spec(importlib.util.spec_from_file_location("x", target), target)
+
+    def test_a_spec_without_a_loader_names_the_path(self, tmp_path):
+        target = tmp_path / "x.py"
+        with pytest.raises(ImportError, match=r"x\.py"):
+            load_spec(ModuleSpec("x", None), target)
+
+    def test_a_dataclass_module_loads_because_it_is_registered_first(self, tmp_path):
+        target = tmp_path / "points.py"
+        target.write_text(_DATACLASS_MODULE, encoding="utf-8")
+        try:
+            module = load_spec(
+                importlib.util.spec_from_file_location("points_for_load_spec", target), target
+            )
+            assert sys.modules["points_for_load_spec"] is module
+            assert module.Point(1).x == 1
+        finally:
+            sys.modules.pop("points_for_load_spec", None)
+
+
+class TestTestsLoadPath:
+    """The tests' own copy holds the same contract (audit-b7943908)."""
+
+    def test_a_missing_spec_names_the_path(self, tmp_path):
+        with pytest.raises(ImportError, match=r"not-python\.txt"):
+            load_path("x", tmp_path / "not-python.txt")
+
+    def test_a_dataclass_module_loads_because_it_is_registered_first(self, tmp_path):
+        target = tmp_path / "points.py"
+        target.write_text(_DATACLASS_MODULE, encoding="utf-8")
+        try:
+            module = load_path("points_for_load_path", target)
+            assert sys.modules["points_for_load_path"] is module
+            assert module.Point(1).x == 1
+        finally:
+            sys.modules.pop("points_for_load_path", None)

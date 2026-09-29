@@ -1,15 +1,13 @@
 """Tests for scripts/list-skills.py — collect_commands() and print_section()."""
 
-import importlib.util
 import runpy
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "list-skills.py"
-_spec = importlib.util.spec_from_file_location("list_skills", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("list_skills", _TOOL)
 collect_commands = _mod.collect_commands
 print_section = _mod.print_section
 

@@ -1,16 +1,14 @@
 """Tests for scripts/check-make-help.py."""
 
-import importlib.util
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "check-make-help.py"
-_spec = importlib.util.spec_from_file_location("check_make_help", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("check_make_help", _TOOL)
 
 _HELP_BLOCK = 'help:\n\t@echo "Available targets:"\n\t@echo "  build        — do it"\n\n'
 

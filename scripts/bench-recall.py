@@ -69,16 +69,16 @@ from typing import TextIO
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "skills/nitpicker/scripts"))
 import findings  # noqa: E402
+from common import load_spec  # noqa: E402
 
 # bench-retrieval.py owns corpus loading and the goal-honesty guard that refuses
 # a case written from its own answer. Reusing it rather than re-reading
 # expected.json keeps one definition of what a valid case is; the hyphen in the
 # filename is why this is a path load rather than an import.
-_spec = importlib.util.spec_from_file_location(
-    "bench_retrieval", _ROOT / "scripts" / "bench-retrieval.py"
+_RETRIEVAL_PATH = _ROOT / "scripts" / "bench-retrieval.py"
+_retrieval = load_spec(
+    importlib.util.spec_from_file_location("bench_retrieval", _RETRIEVAL_PATH), _RETRIEVAL_PATH
 )
-_retrieval = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_retrieval)  # pyright: ignore[reportOptionalMemberAccess]
 
 # One agent invocation per case. `{goal}`, `{lens}` and `{dir}` are substituted;
 # nothing else is, so a template cannot reach values this tool did not choose.

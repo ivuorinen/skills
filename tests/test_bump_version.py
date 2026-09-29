@@ -1,12 +1,12 @@
 """Tests for scripts/bump-version.py — bump_version(), update_toml(), render_json(), main()."""
 
-import importlib.util
 import json
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 REPO_ROOT = SCRIPTS_DIR.parent
@@ -24,13 +24,7 @@ class _Result:
 
 def _load_mod():
     """Load bump-version.py; module code lives under __main__, so import has no side effects."""
-    spec = importlib.util.spec_from_file_location(
-        "bump_version_module",
-        SCRIPTS_DIR / "bump-version.py",
-    )
-    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
-    return mod
+    return load_path("bump_version_module", SCRIPTS_DIR / "bump-version.py")
 
 
 class TestBumpVersion:

@@ -1,17 +1,15 @@
 """Tests for skills/nitpicker/scripts/process-sarif.py."""
 
-import importlib.util
 import json
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "process-sarif.py"
-_spec = importlib.util.spec_from_file_location("process_sarif", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("process_sarif", _TOOL)
 
 _normalize_severity = _mod._normalize_severity
 _extract_rules = _mod._extract_rules

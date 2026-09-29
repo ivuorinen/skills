@@ -1,17 +1,15 @@
 """Tests for scripts/validate-skill.py — validate()."""
 
-import importlib.util
 import re
 import runpy
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "validate-skill.py"
-_spec = importlib.util.spec_from_file_location("validate_skill", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("validate_skill", _TOOL)
 validate = _mod.validate
 
 

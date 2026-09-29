@@ -8,7 +8,6 @@ re-surfaces resolved threads as unresolved, and a token sent to the wrong host
 still returns a plausible-looking result.
 """
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -17,6 +16,7 @@ from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _loader import load_path
 
 _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -1038,8 +1038,5 @@ def test_module_emits_nothing_to_stdout_on_import(module, capsys):
     scope would pass whatever the module did, because that import already ran
     during collection — the assertion would hold by construction.
     """
-    spec = importlib.util.spec_from_file_location(f"probe_{module}", _SCRIPTS / module)
-    assert spec is not None
-    probe = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(probe)  # pyright: ignore[reportOptionalMemberAccess]
+    load_path(f"probe_{module}", _SCRIPTS / module)
     assert capsys.readouterr().out == ""
