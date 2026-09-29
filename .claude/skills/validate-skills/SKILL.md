@@ -68,6 +68,7 @@ description: Validates every SKILL.md and command file in this repository agains
 | Command file severity table row outside Critical/High/Medium/Low/Advisory                                          | Error   |
 | Command file names a `_conventions.md` section that has no `##` heading                                            | Error   |
 | Command file calls `${CLAUDE_SKILL_DIR}` with no note for non-Claude agents                                        | Error   |
+| SKILL.md or command file has an unsafe command (fetch-and-execute, `rm -rf /`, credential path) in a shell fence   | Error   |
 | Frontmatter key outside the Agent Skills spec (use `metadata`)                                                     | Error   |
 | Legacy output paths (`./codereview.md` etc.)                                                                       | Warning |
 | Body exceeds 500 lines                                                                                             | Warning |

@@ -1308,6 +1308,30 @@ def test_no_command_routes_cves_to_deps():
     assert offenders == []
 
 
+def test_claude_md_groups_rules_by_their_paths_frontmatter():
+    """docs-c42d7496: CLAUDE.md's Conventions list must match the rule files.
+
+    A rule without `paths:` frontmatter loads every turn and spends the shared
+    instruction budget; one with it loads only with its files. The list had
+    path-scoped rules filed as always-loaded, so a reader budgeting the
+    every-turn set miscounted it. Pinned here for the same reason as the
+    audit-coverage check above: a claim about markdown files agreeing.
+    """
+    repo_root = Path(__file__).parent.parent
+    rules = sorted((repo_root / ".claude" / "rules").glob("*.md"))
+    every_turn = {
+        p.name for p in rules if not re.search(r"^paths:", p.read_text(encoding="utf-8"), re.M)
+    }
+    claude = (repo_root / "CLAUDE.md").read_text(encoding="utf-8")
+    section = claude.split("\n## Conventions", 1)[1].split("\n## ", 1)[0]
+    listed_every_turn, listed_scoped = section.split("\nLoaded every turn:", 1)[1].split(
+        "\nPath-scoped, loaded with the files they govern:", 1
+    )
+    names = r"`([a-z0-9-]+\.md)`"
+    assert set(re.findall(r"^- " + names, listed_every_turn, re.M)) == every_turn
+    assert set(re.findall(names, listed_scoped)) == {p.name for p in rules} - every_turn
+
+
 def test_security_fix_table_names_no_checkov_autofix_flag():
     """audit-627206b3: checkov's CLI has no `--fix`; argparse exits 2 on it.
 
