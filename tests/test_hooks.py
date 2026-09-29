@@ -10,6 +10,8 @@ import fnmatch
 import importlib.util
 import io
 import json
+import os
+import pwd
 import re
 import runpy
 import shlex
@@ -6211,3 +6213,85 @@ def test_unguarded_cd_guard_allows_a_guarded_or_descriptor_redirect(code, monkey
     """Controls: a guarded cd, and redirects that write no file."""
     _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-0f3351b2: a `~` path is expanded before it is judged ──
+
+
+def _home_above_repo(monkeypatch) -> str:
+    """Point HOME at the checkout's parent; return the checkout as a `~/` path."""
+    root = _load("deny-agents-path-hook")._REPO_ROOT.resolve()
+    monkeypatch.setenv("HOME", str(root.parent))
+    return f"~/{root.name}"
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "rm {r}/scripts/hooks/ruff-hook.py",
+        "echo '{{}}' > {r}/.claude/settings.local.json",
+        "cd {r}/scripts/hooks && rm ruff-hook.py",
+        "cd {r}/.claude && touch settings.json",
+        "git -C {r}/scripts checkout HEAD~3 -- hooks",
+        "rm ~+/scripts/hooks/ruff-hook.py",
+        "cd ~+/scripts/hooks && rm ruff-hook.py",
+        "rm ~-/ruff-hook.py",
+        "cd ~no-such-user-0f3351b2 && rm ruff-hook.py",
+        "git -C ~no-such-user-0f3351b2 checkout -- ruff-hook.py",
+        "echo x > ~no-such-user-0f3351b2/x.py",
+    ],
+)
+def test_agents_guard_expands_a_tilde_path(template, monkeypatch):
+    """`~/…` read as a relative path under the repo root and never matched, so
+    the most ordinary absolute spelling wrote a hook as an operand, a `cd` base
+    and a `git -C` target alike (agent-loopholes-0f3351b2). `~+` is the shell's
+    own directory; a prefix the guard cannot resolve is judged as protected."""
+    assert _guard_blocks(template.format(r=_home_above_repo(monkeypatch)))
+
+
+def test_agents_guard_expands_a_named_users_tilde():
+    """`~user/…` resolves through that user's home, not the caller's. The
+    current user is the one every machine has; `..` segments reach the checkout
+    from that home wherever the two sit."""
+    mod = _load("deny-agents-path-hook")
+    user = pwd.getpwuid(os.getuid())
+    rel = os.path.relpath(mod._REPO_ROOT.resolve(), user.pw_dir)
+    assert mod._writes_protected(f"rm ~{user.pw_name}/{rel}/scripts/hooks/ruff-hook.py")
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "rm ~/notes.txt",
+        "cd ~/tmp && rm x",
+        "cat {r}/scripts/hooks/ruff-hook.py > /tmp/copy.py",
+        "git -C {r} status",
+        "cp {r}/scripts/hooks/ruff-hook.py ~/backup.py",
+    ],
+)
+def test_agents_guard_allows_a_tilde_path_off_the_surface(template, monkeypatch):
+    """Controls: a home path outside the checkout, and a read of the surface."""
+    assert not _guard_blocks(template.format(r=_home_above_repo(monkeypatch)))
+
+
+@pytest.mark.parametrize(
+    ("target", "asks"),
+    [
+        ("~/{name}/README.md", True),
+        ("~no-such-user-0f3351b2/README.md", True),
+        ("~/elsewhere/README.md", False),
+    ],
+)
+def test_restore_guard_expands_a_tilde_target(target, asks, monkeypatch, tmp_path, capsys):
+    """A restore spelled through `~` compared as a relative path, matched no
+    dirty entry, and discarded the file without asking."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    monkeypatch.setenv("HOME", str(tmp_path.parent))
+    command = f"git restore {target.format(name=tmp_path.name)}"
+    if asks:
+        with pytest.raises(SystemExit):
+            _run(mod, _bash(command), monkeypatch)
+        assert _ask_payload(capsys)["permissionDecision"] == "ask"
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().out == ""

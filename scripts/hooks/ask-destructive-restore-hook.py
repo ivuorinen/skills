@@ -145,8 +145,18 @@ def _covers(target: str, entry: str) -> bool:
     match, so they cover every entry: `_covers(":/", "src/a.py")` was False, and a
     whole-tree restore over dirty files passed silently (agent-loopholes-152e6d90).
     Over-asking on a narrow glob is the cheap direction for an `ask` hook.
+
+    A `~` path is expanded the way bash does before git sees it; left as it
+    was, `git restore ~/…/README.md` compared as a relative path and discarded
+    the dirty file silently (agent-loopholes-0f3351b2). One that cannot be
+    expanded covers everything, as a glob does.
     """
     t = target.strip("\"'").rstrip("/")
+    if t.startswith("~"):
+        try:
+            t = str(Path(t).expanduser())
+        except RuntimeError:  # no such user: the target could be anywhere
+            return True
     if t.startswith(":") or any(char in t for char in "*?["):
         return True
     if t.startswith("/"):

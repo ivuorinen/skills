@@ -119,6 +119,17 @@ PROTECTED_WRITE = (
     ".claude/settings.local.json",
     ".claude/skills/graphify/.graphify_version",
 )
+# Where a directory change the guard cannot resolve may have landed: at every
+# protected root and in the directory holding each. Used as the `cd` base for
+# such a target, so a relative write after it is judged from the surface itself,
+# and a mutating stage after it reads as standing in a protected directory.
+_ANYWHERE = tuple(
+    dict.fromkeys(
+        _REPO_ROOT / path
+        for root in PROTECTED_WRITE
+        for path in (root, str(PurePosixPath(root).parent))
+    )
+)
 
 _WRITE_VERBS = frozenset(
     {
@@ -304,8 +315,38 @@ def _candidate_writes_protected(candidate: str, bases: list[Path]) -> bool:
     return bool(_PROTECTED_COMPONENTS.intersection(PurePosixPath(tail).parts))
 
 
+def _expand_tilde(token: str) -> str | None:
+    """`token` with its leading tilde prefix expanded as bash would, or None.
+
+    `~/x` and `~user/x` are the most ordinary absolute spellings there are, and
+    the guard read them as relative paths under the repo root, so
+    `rm ~/…/scripts/hooks/ruff-hook.py`, a `cd ~/…/scripts/hooks` base and a
+    `git -C ~/…` each wrote the surface unmatched (agent-loopholes-0f3351b2).
+    `~+` is the shell's own directory, which the `cd` bases already model, so
+    it becomes a relative path. None when the prefix cannot be resolved here —
+    `~-` (the previous directory), a directory-stack `~N`, or a user this
+    machine does not know — and the caller then treats the path as protected,
+    as it treats a value the command computes. A token without a leading `~`
+    is returned unchanged.
+    """
+    if not token.startswith("~"):
+        return token
+    prefix, sep, rest = token[1:].partition("/")
+    if prefix == "+":
+        return "./" + rest
+    try:
+        home = Path("~" + prefix).expanduser()
+    except RuntimeError:  # no such user, or no home to be found
+        return None
+    return str(home) + sep + rest
+
+
 def _path_writes_protected(token: str, bases: list[Path]) -> bool:
     """True if a literal path token, resolved from each base, lands on the surface."""
+    expanded = _expand_tilde(token)
+    if expanded is None:
+        return True  # a home directory this guard cannot resolve: cannot clear it
+    token = expanded
     pure = PurePosixPath(token)
     if pure.is_absolute():
         bases = [_REPO_ROOT]  # an absolute token names one place, whatever the cwd
@@ -505,6 +546,13 @@ def _git_bases(tokens: list[str], bases: list[Path]) -> list[Path]:
     while i < len(tokens) and tokens[i].startswith("-"):
         opt, _, inline = tokens[i].partition("=")
         value = inline or (tokens[i + 1] if i + 1 < len(tokens) else "")
+        # `-C ~/…` is a home-relative directory (agent-loopholes-0f3351b2); one
+        # this guard cannot resolve may be anywhere, the surface included.
+        expanded = _expand_tilde(value)
+        if expanded is None:
+            out += _ANYWHERE
+        else:
+            value = expanded
         if opt == "-C" and value:
             current = [base / value for base in current]
             out += current
@@ -607,11 +655,18 @@ def _cd_bases(command: str) -> list[Path]:
     ever resolved from the root would reopen the hole one `cd` deeper. Resolving
     from both the root and the chain over-approximates the shell, which only
     adds places a path is checked from.
+
+    A `~` target is expanded first (agent-loopholes-0f3351b2); one that cannot
+    be resolved makes `_ANYWHERE` the current base.
     """
     bases = [_REPO_ROOT]
     current = [_REPO_ROOT]
     for match in _CD_RE.finditer(command):
-        raw = match.group(1)
+        raw = _expand_tilde(match.group(1))
+        if raw is None:
+            current = list(_ANYWHERE)
+            bases += current
+            continue
         if _GLOB_META_RE.search(raw):
             from_root = _shell_glob(_REPO_ROOT, raw)
             reached = [hit for base in current for hit in _shell_glob(base, raw)]
