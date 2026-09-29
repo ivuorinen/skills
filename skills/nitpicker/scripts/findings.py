@@ -126,7 +126,23 @@ _SECRET_RE = re.compile(
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
     r"|npm_[A-Za-z0-9]{36}"  # npm automation token
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    # Vendors gitleaks' default rules report and `security` then quotes as
+    # evidence; each came back from redact() whole (security-1df0778e). Every
+    # alternative opens on a fixed literal and has one bounded class, so the
+    # scan stays linear. A webhook is masked from the host on, since the path
+    # after it is the credential; the scheme before it is not secret.
+    r"|xapp-\d-[A-Za-z0-9-]{10,}"  # Slack app-level token
+    r"|hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9+/_-]{20,}"
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"  # SendGrid
+    r"|pypi-AgE[A-Za-z0-9_-]{20,}"  # PyPI upload token (macaroon)
+    r"|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}"  # Shopify
+    r"|do[por]_v1_[a-f0-9]{64}"  # DigitalOcean PAT, OAuth and refresh tokens
+    r"|dapi[a-f0-9]{32}(?:-\d)?"  # Databricks
+    r"|lin_api_[A-Za-z0-9]{40}"  # Linear
+    # Azure connection strings: the storage account key and the Service Bus /
+    # Event Hubs shared access key are the same base64 field under two names.
+    r"|(?:Account|SharedAccess)Key=[A-Za-z0-9+/]{20,}={0,2})"
 )
 
 # PEM blocks need their own pattern: `_SECRET_RE` opens with `\b`, which cannot
@@ -142,6 +158,9 @@ _SECRET_RE = re.compile(
 # The regex-dos rule flags the tempered body's nested quantifier by shape; the
 # lookahead is what bounds each lazy scan to the next header, and
 # test_repeated_unclosed_headers_redact_in_linear_time pins it.
+# A line break inside key text: LF, CRLF, or the two characters `\n` a JSON
+# string escapes it to. The three alternatives share no first character.
+_PEM_SEP = r"(?:\r?\n|\\n)"
 # nosemgrep: python.lang.security.audit.regex-dos.regex_dos
 _PEM_RE = re.compile(
     r"-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN)[\s\S])*?"
@@ -161,8 +180,15 @@ _PEM_RE = re.compile(
     # An armoured PGP body opens with `Key: value` header lines and a blank line
     # before the base64, so a clipped PGP key has both consumed first — without
     # them the blank line ends the run and the whole key body survives.
+    #
+    # The line separator is `_PEM_SEP`, not `\n`: CRLF evidence failed the
+    # lookahead on the first body line (audit-48d24c30), and a key inside a JSON
+    # string — every GCP service-account file — is split by a literal backslash-n
+    # (security-6d599c06). Both left the whole body under the marker. A `"` also
+    # ends a body line, since that is where the JSON string closes.
     r"|-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
-    r"(?:\n[A-Za-z-]+: [^\n]*)*(?:\n(?=\n))?(?:\n[A-Za-z0-9+/=]+(?=\n|$))*"
+    rf"(?:{_PEM_SEP}[A-Za-z-]+: (?:(?!\\n)[^\r\n])*)*(?:{_PEM_SEP}(?={_PEM_SEP}))?"
+    rf"(?:{_PEM_SEP}[A-Za-z0-9+/=]+(?={_PEM_SEP}|$|\"))*"
 )
 
 # A bare AWS secret access key is 40 base64 characters with no prefix. Matching

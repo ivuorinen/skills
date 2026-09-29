@@ -1790,6 +1790,28 @@ class TestRedactVendorCoverage:
         ("npm token", "npm_" + "A" * 36),
         ("slack", "xoxb-1234567890-abcdefghij"),
         ("jwt", ".".join(["eyJ" + "h" * 18, "eyJ" + "z" * 18, "s" * 12])),
+        # security-1df0778e: each of these passed through redact() unchanged. Every
+        # one is assembled from parts so no contiguous vendor shape sits in this
+        # file for a secret scanner to report.
+        ("slack app token", "xapp-" + "1-" + "A" * 11 + "-" + "1" * 13 + "-" + "a" * 64),
+        (
+            "slack webhook",
+            "hooks.slack.com/" + "services/" + "T" + "0" * 8 + "/B" + "0" * 8 + "/" + "x" * 24,
+        ),
+        (
+            "slack workflow webhook",
+            "hooks.slack.com/" + "workflows/" + "T" + "0" * 8 + "/" + "x" * 30,
+        ),
+        ("sendgrid", "SG" + "." + "A" * 22 + "." + "B" * 43),
+        ("pypi", "pypi-" + "AgEIcHlwaS5vcmc" + "A" * 60),
+        ("shopify access token", "shp" + "at_" + "a" * 32),
+        ("shopify shared secret", "shp" + "ss_" + "a" * 32),
+        ("digitalocean pat", "do" + "p_v1_" + "a" * 64),
+        ("digitalocean oauth", "do" + "o_v1_" + "a" * 64),
+        ("databricks", "dapi" + "a" * 32),
+        ("linear", "lin_" + "api_" + "A" * 40),
+        ("azure storage account key", "Account" + "Key=" + "A" * 86 + "=="),
+        ("azure shared access key", "SharedAccess" + "Key=" + "A" * 43 + "="),
     ]
 
     @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
@@ -1905,6 +1927,29 @@ class TestRedactPrivateKeys:
         out = findings.redact(self._pgp(closed=False) + "\nfound at src/app.py:42")
         assert self._BODY not in out and "=abcd" not in out
         assert out == "[REDACTED PRIVATE KEY]\nfound at src/app.py:42"
+
+    @pytest.mark.parametrize(
+        "sep",
+        ["\n", "\r\n", "\\n"],
+        ids=["lf", "crlf", "json-escaped"],
+    )
+    def test_truncated_key_is_consumed_whatever_the_line_separator(self, sep):
+        """audit-48d24c30, security-6d599c06: the clipped branch only took `\\n`.
+
+        CRLF evidence failed the `(?=\\n|$)` lookahead on the first body line, and
+        a key inside a JSON string (every GCP service-account file) is separated by
+        a literal backslash-n — both left the whole body under a marker that read
+        as redacted. The separator is one mechanism, so all three spellings are
+        pinned together, for a PEM and for an armoured PGP key.
+        """
+        body = sep.join(["A" * 64, "B" * 64, "CC=="])
+        pem = self._pem("RSA", closed=False).replace("\n", sep) + sep + body
+        pgp = self._pgp(closed=False).replace("\n", sep)
+        for text in (pem, pgp):
+            out = findings.redact(f'"private_key": "{text}{sep}found at src/app.py:42')
+            assert "A" * 64 not in out and "CC==" not in out and self._BODY not in out
+            assert "=abcd" not in out
+            assert out.endswith(f"[REDACTED PRIVATE KEY]{sep}found at src/app.py:42")
 
     def test_repeated_unclosed_headers_redact_in_linear_time(self):
         """security-6bfd9bed: each END-less header scanned to the end of the text."""
