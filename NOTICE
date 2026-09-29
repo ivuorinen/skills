@@ -30,8 +30,21 @@ The project's own code is licensed under the MIT License; see `LICENSE`.
     and the owner confirms uploading this corpus; `GOOGLE_API_KEY` no longer
     selects it, and without a yes the subagent path runs
     (skill-safety-39614de9). Ceiling: this governs what the skill tells the
-    agent to run; a graphify CLI flow given `--backend gemini` by hand is
-    outside it.
+    agent to run, not what the graphify CLI does on its own. `graphify
+    extract` and `graphify cluster-only`/`label` auto-select a backend from
+    any provider key in the environment (Gemini, Google, Moonshot, Anthropic,
+    OpenAI, DeepSeek, Azure), from `AWS_PROFILE`/`AWS_REGION`/
+    `AWS_DEFAULT_REGION` alone (bedrock) or from `OLLAMA_BASE_URL`, so a CLI
+    call made outside the flows below, by hand or by an agent ignoring them,
+    uploads corpus text without a prompt.
+  - The CLI flows the skill mandates pass graphify's no-LLM option:
+    `references/update.md` runs `graphify cluster-only . --no-label`,
+    `references/github-and-merge.md` runs `graphify extract <dir> --code-only`
+    and no longer tells the agent to add `--backend` for whichever API key is
+    set, and `references/extraction-spec.md`'s rebuild hint adds
+    `--code-only`. A `--backend` flag, and `graphify label`, are used only
+    after the owner confirms the upload to that provider. `SKILL.md` no longer
+    claims graphify reads no other provider key (skill-safety-13ef11d9).
   - `references/query.md`'s three `save-result` steps (query, path, explain)
     pass the answer through a quoted heredoc into a temporary file read with
     `--answer-file`, and single-quote the question, node labels and any
