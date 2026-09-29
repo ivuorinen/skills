@@ -447,6 +447,68 @@ class TestFetchGraphql:
         degraded = c._take_degraded()
         assert len(degraded) == 1 and "vanished mid-pagination" in degraded[0]
 
+    def test_an_abandoned_graphql_attempts_notes_do_not_reach_the_rest_envelope(self):
+        """audit-9b9819fd: a vanished-thread note outlived the GraphQL result it described.
+
+        Page 1 holds thread T1 whose comment follow-up returns node null; page 2
+        fails non-transiently, so every GraphQL thread is discarded and REST
+        answers completely. The note names a thread absent from that result.
+        """
+        page1 = _graphql_response([_thread_node(node_id="T1", has_next=True)], has_next=True)
+        forbidden = {"errors": [{"type": "FORBIDDEN", "message": "forbidden"}]}
+        c._take_degraded()
+        with (
+            patch.object(gh, "_gh_available", return_value=True),
+            patch.object(gh, "_token_for", return_value=None),
+            patch.object(
+                gh, "_gh_graphql", side_effect=[page1, {"data": {"node": None}}, forbidden]
+            ),
+            patch.object(gh, "fetch_rest", return_value=[]) as rest,
+            patch.object(gh, "_out_of_thread_notes", return_value=([], [])),
+        ):
+            out = gh.fetch_comments(_TARGET, 1)
+        assert rest.called and out["transport"] == "gh-rest"
+        assert out["degraded"] == []
+
+    def test_an_abandoned_gh_rest_attempts_notes_do_not_reach_the_token_envelope(self):
+        """audit-9b9819fd, second site: gh REST degrades, then fails, then the token answers."""
+
+        calls = []
+
+        def rest(*_a):
+            calls.append(1)
+            if len(calls) == 1:  # gh REST: a capped page, then a malformed row
+                c.degrade("stopped after 10 pages; result may be truncated")
+                raise KeyError("id")
+            return []
+
+        c._take_degraded()
+        with (
+            patch.object(gh, "_gh_available", return_value=True),
+            patch.object(gh, "_token_for", return_value="tok"),
+            patch.object(gh, "fetch_graphql", side_effect=RuntimeError("boom")),
+            patch.object(gh, "fetch_rest", side_effect=rest),
+            patch.object(gh, "_token_transport", return_value=lambda _p: []),
+            patch.object(gh, "_out_of_thread_notes", return_value=([], [])),
+        ):
+            out = gh.fetch_comments(_TARGET, 1)
+        assert out["transport"] == "token-rest"
+        assert out["degraded"] == []
+
+    def test_a_degraded_note_recorded_before_the_graphql_attempt_survives(self):
+        """The fallback discards the abandoned attempt's notes only, not earlier ones."""
+        c._take_degraded()
+        c.degrade("earlier note")
+        with (
+            patch.object(gh, "_gh_available", return_value=True),
+            patch.object(gh, "_token_for", return_value=None),
+            patch.object(gh, "fetch_graphql", side_effect=RuntimeError("boom")),
+            patch.object(gh, "fetch_rest", return_value=[]),
+            patch.object(gh, "_out_of_thread_notes", return_value=([], [])),
+        ):
+            out = gh.fetch_comments(_TARGET, 1)
+        assert out["degraded"] == ["earlier note"]
+
     def test_inner_pagination_errors_raise(self):
         first = _graphql_response([_thread_node(has_next=True)])
         with (

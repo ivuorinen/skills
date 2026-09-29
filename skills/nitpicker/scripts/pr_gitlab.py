@@ -288,7 +288,20 @@ def _checks(target: pr_common.Target, iid: int, rest_list: Callable[[str], list[
     for job in jobs:
         if not isinstance(job, dict):
             continue
-        status, conclusion = _JOB_STATES.get((job.get("status") or "").lower(), ("in_progress", ""))
+        state = (job.get("status") or "").lower()
+        status, conclusion = _JOB_STATES.get(state, ("in_progress", ""))
+        # `allow_failure` changes what a failed or manual job means, and the
+        # status alone cannot say (audit-53d39fa7). An allowed failure is a
+        # warning on a passing pipeline — GitHub's continue-on-error — so it is
+        # neutral, not a failure. A manual job with `allow_failure: false` is a
+        # blocking gate that holds the pipeline until someone runs it, so it is
+        # pending. Only an explicit `false` blocks: a manual job's GitLab default
+        # is to allow failure, and a response without the field keeps the
+        # non-blocking reading.
+        if state == "failed" and job.get("allow_failure") is True:
+            conclusion = "neutral"
+        elif state == "manual" and job.get("allow_failure") is False:
+            status, conclusion = "queued", ""
         checks.append(
             pr_common.check(
                 name=job.get("name", ""),

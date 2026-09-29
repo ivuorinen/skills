@@ -531,6 +531,7 @@ def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
     transport_label: str
 
     if _gh_available():
+        mark = pr_common.degraded_mark()
         try:
             threads = fetch_graphql(target, pr_number)
             rest_list = _gh_transport(target)
@@ -560,6 +561,9 @@ def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
                     "retry rather than fall back to resolved-blind REST."
                 ) from graphql_err
             pr_common.warn(f"GraphQL failed ({graphql_err}), falling back to REST")
+            # Every GraphQL thread is discarded here, so the notes that attempt
+            # recorded about them go too (audit-9b9819fd).
+            pr_common.discard_degraded_since(mark)
             rest_list = _gh_transport(target)
             try:
                 threads = fetch_rest(target, pr_number, rest_list)
@@ -568,6 +572,8 @@ def fetch_comments(target: pr_common.Target, pr_number: int) -> dict[str, Any]:
                 if not token:
                     raise pr_common.TransportError(f"gh REST failed: {rest_err}") from rest_err
                 pr_common.warn(f"gh REST failed ({rest_err}), falling back to token REST")
+                # The same for a gh REST attempt abandoned after a capped page.
+                pr_common.discard_degraded_since(mark)
                 rest_list = _token_transport(target, token)
                 threads = fetch_rest(target, pr_number, rest_list)
                 transport_label = "token-rest"

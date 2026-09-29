@@ -62,9 +62,12 @@ Platform differences are expressed as empty values, never as missing keys:
   * `diff_hunk` is empty on GitLab and Bitbucket, which report a line anchor
     rather than a hunk; `line` carries it there.
 
-`is_resolved` is tri-state. `null` means the transport in use could not report
-resolution (GitHub's REST fallback) — the caller must then check whether the
-flagged code still exists rather than assuming the thread is live.
+`is_resolved` is tri-state. `null` means resolution is unknown for that thread:
+GitHub's REST fallback reports none for any thread, a GitLab discussion with no
+resolvable note has none, and a Bitbucket comment without a `resolution` field
+has none. On GitLab and Bitbucket it is a per-thread fact, not a degraded fetch.
+Either way the caller must check whether the flagged code still exists rather
+than assuming the thread is live.
 
 Auth, per platform:
     GitHub    gh CLI (GraphQL, the only source of `is_resolved`) -> gh REST ->
