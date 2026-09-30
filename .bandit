@@ -46,5 +46,5 @@
 # Setting `exclude` replaces bandit's built-in default list, so the usual
 # VCS/cache directories are restated here rather than lost.
 [bandit]
-exclude = tests,*/tests/*,.venv,*/.venv/*,graphify-out,*/graphify-out/*,_extra,*/_extra/*,.git,*/.git/*,__pycache__,*/__pycache__/*,.tox,*/.tox/*,.eggs,*/.eggs/*
+exclude = tests,*/tests/*,.venv,*/.venv/*,graphify-out,*/graphify-out/*,.git,*/.git/*,__pycache__,*/__pycache__/*,.tox,*/.tox/*,.eggs,*/.eggs/*
 skips = B404,B603,B607

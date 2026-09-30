@@ -47,6 +47,12 @@ Subprocess calls are deliberately not edges — a hook that shells out to
 a validator crosses a process boundary, not an import boundary, and nothing is
 loaded into the caller.
 
+A dynamic import — `importlib.import_module(...)` or `__import__(...)` — is an
+edge too, marked as one. Its argument resolves when it is a string literal, a
+name bound once to one, or a subscript of a name bound once to a dict of string
+literals; anything else is an unresolvable load. A call reached through an alias
+(`imp = importlib.import_module`) is not recognised as a dynamic import.
+
 A dotted import (`from scripts.hooks import x`, `import scripts.hooks.x`) is
 resolved against its full path, from the importing module's directory and from
 the repository root. Ring globs are recursive, and an edge to a file outside
@@ -81,11 +87,12 @@ class UsageError(Exception):
 class Edge:
     src: str
     dst: str
-    kind: str  # "import" | "path" | "path-sibling"
+    kind: str  # "import" | "dynamic" | "path" | "path-sibling"
 
     def render(self) -> str:
         mark = {
             "import": "",
+            "dynamic": "  [dynamic import]",
             "path": "  [string-path load]",
             "path-sibling": "  [string-path load, own directory]",
         }
@@ -286,6 +293,78 @@ def _import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> 
                 g.edges.append(Edge(rel, dst, "import"))
 
 
+_DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
+
+
+def _dynamic_names(
+    expr: ast.expr,
+    local_names: dict[str, ast.expr | None],
+    module_names: dict[str, ast.expr | None],
+) -> list[str] | None:
+    """Module names a dynamic import's first argument can hold, or None if unknowable.
+
+    Resolved shapes: a string literal; a name bound once to one; and a subscript
+    of a name bound once to a dict whose values are all string literals — the
+    shape of pr_common's `import_module(_PROVIDER_MODULES[platform])`, where
+    every value the key can select is on the page.
+    """
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return [expr.value]
+    if isinstance(expr, ast.Subscript):
+        expr = expr.value
+        subscripted = True
+    else:
+        subscripted = False
+    if not isinstance(expr, ast.Name):
+        return None
+    scope_used = local_names if expr.id in local_names else module_names
+    bound = scope_used.get(expr.id)
+    if subscripted:
+        if not isinstance(bound, ast.Dict):
+            return None
+        values = [
+            v.value
+            for v in bound.values
+            if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        ]
+        return values if len(values) == len(bound.values) else None
+    if isinstance(bound, ast.Constant) and isinstance(bound.value, str):
+        return [bound.value]
+    return None
+
+
+def _dynamic_import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> None:
+    """Edges from `importlib.import_module(...)` and `__import__(...)` calls.
+
+    Neither is an `ast.Import`, so an outward edge written as a dynamic import
+    passed `--check` while the same edge as `import x` failed it
+    (audit-0dac429b). A literal target resolves exactly as an import does; an
+    argument that cannot be resolved statically is an unresolvable load, the
+    same verdict a non-literal `spec_from_file_location` gets.
+    """
+    module_names = _assignments(tree)
+    scopes: list[ast.AST] = [tree, *(n for n in ast.walk(tree) if isinstance(n, _SCOPE))]
+    for scope in scopes:
+        local_names = module_names if scope is tree else _assignments(scope)
+        for node in _walk_scope(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name not in _DYNAMIC_IMPORTERS:
+                continue
+            names = _dynamic_names(node.args[0], local_names, module_names) if node.args else None
+            if names is None or any(n.startswith(".") for n in names):
+                g.errors.append(
+                    f"{rel}: dynamic import is not statically resolvable: {ast.unparse(node)}"
+                )
+                continue
+            for target in names:
+                dst = _dotted_target(root, path, target) if "." in target else g.by_stem.get(target)
+                if dst and dst != rel:
+                    g.edges.append(Edge(rel, dst, "dynamic"))
+
+
 def _path_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> None:
     """Edges from `spec_from_file_location` loads — the ones no import graph sees."""
     module_names = _assignments(tree)
@@ -351,6 +430,7 @@ def build(root: Path) -> Graph:
             g.errors.append(f"{rel}: cannot parse ({exc})")
             continue
         _import_edges(tree, g, rel, root, path)
+        _dynamic_import_edges(tree, g, rel, root, path)
         _path_edges(tree, g, rel, root, path)
     # Deduplicate while keeping order; a module importing the same target from
     # two functions is one edge, not two.
@@ -388,16 +468,23 @@ def violations(g: Graph) -> list[str]:
 
 
 def render(g: Graph) -> str:
+    """The graph by ring, then a totals line counting each edge kind.
+
+    Counts dynamic imports separately (audit-0dac429b), so an edge the import
+    graph cannot see stays as visible as a string-path load.
+    """
     lines: list[str] = []
     for ring, _ in RINGS:
         members = [e for e in g.edges if g.modules.get(e.src) == ring]
         lines.append(f"{ring}:")
         lines.extend(e.render() for e in members) if members else lines.append("  (no edges)")
-    counts = {k: sum(1 for e in g.edges if e.kind == k) for k in ("import", "path", "path-sibling")}
+    kinds = ("import", "dynamic", "path", "path-sibling")
+    counts = {k: sum(1 for e in g.edges if e.kind == k) for k in kinds}
     lines.append("")
     lines.append(
         f"{len(g.modules)} modules, {len(g.edges)} edges "
-        f"({counts['import']} import, {counts['path']} string-path, "
+        f"({counts['import']} import, {counts['dynamic']} dynamic import, "
+        f"{counts['path']} string-path, "
         f"{counts['path-sibling']} string-path own-directory)"
     )
     return "\n".join(lines)

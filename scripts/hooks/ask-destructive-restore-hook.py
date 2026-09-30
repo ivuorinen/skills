@@ -30,14 +30,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     event_command,
     git_calls,
-    load_event,
+    load_event_strict,
     repo_root,
-    shell_stages,
+    shell_stages_with_env,
+    skip_git_global_opts,
 )
 
 REPO_ROOT = repo_root()
 # A stage that moves the shell breaks the one assumption path matching rests on.
 _CHDIR = frozenset({"cd", "pushd", "popd"})
+# ...and so does a git call that relocates itself (see `_changes_directory`).
+_RELOCATING_OPTS = frozenset({"-C", "--work-tree", "--git-dir"})
+_RELOCATING_ENV = frozenset({"GIT_DIR", "GIT_WORK_TREE"})
 
 
 def _decide(decision: str, reason: str) -> None:
@@ -64,13 +68,23 @@ def _decide(decision: str, reason: str) -> None:
 
 
 def _targets(command: str) -> list[str] | None:
-    """Path operands of the first destructive restore, or None if there is none."""
+    """Path operands of every destructive restore in the command, or None if none.
+
+    Every restore, not the first: returning on the first let a harmless one hide
+    the next, so `git checkout -- README.md && git restore <dirty file>` was
+    judged by README.md alone and discarded the dirty file without a prompt
+    (agent-loopholes-6ae4667d).
+    """
+    found = False
+    targets: list[str] = []
     for subcommand, args in git_calls(command):
         if subcommand == "restore":
-            return [a for a in args if not a.startswith("-")]
-        if subcommand == "checkout" and (targets := _checkout_targets(args)) is not None:
-            return targets
-    return None
+            found = True
+            targets += [a for a in args if not a.startswith("-")]
+        elif subcommand == "checkout" and (paths := _checkout_targets(args)) is not None:
+            found = True
+            targets += paths
+    return targets if found else None
 
 
 # Options that make `git checkout` create a branch, which never restores a path.
@@ -152,8 +166,28 @@ def _changes_directory(command: str) -> bool:
     checkout -- a.py` compares `a.py` against `src/a.py`, matches nothing, and the
     guard stays silent while the restore discards the file. Path matching cannot
     be trusted here, so the filter is skipped rather than trusted.
+
+    A git call that relocates itself breaks the same assumption without moving
+    the shell: `git -C skills checkout -- nitpicker/SKILL.md`, `--work-tree`,
+    `--git-dir`, or `GIT_DIR`/`GIT_WORK_TREE` in its environment each make the
+    operand relative to somewhere other than the root `git status` reports from,
+    so the dirty file matched nothing and was discarded silently
+    (agent-loopholes-6ae4667d).
     """
-    return any(Path(tokens[0]).name in _CHDIR for tokens in shell_stages(command))
+    for env, tokens in shell_stages_with_env(command):
+        if Path(tokens[0]).name in _CHDIR:
+            return True
+        if Path(tokens[0]).name == "git" and (
+            _RELOCATING_ENV.intersection(env) or _relocates(tokens)
+        ):
+            return True
+    return False
+
+
+def _relocates(tokens: list[str]) -> bool:
+    """True if a git stage's global options move it off the shell's directory."""
+    options = tokens[1 : skip_git_global_opts(tokens, 1)]
+    return any(opt.partition("=")[0] in _RELOCATING_OPTS for opt in options)
 
 
 def _tracked_dirty() -> list[str] | None:
@@ -211,9 +245,7 @@ def main() -> None:
     from. The listed paths are truncated because the prompt has to stay
     readable to be read at all.
     """
-    data = load_event()
-    if data is None:
-        return
+    data = load_event_strict()
 
     command = event_command(data)
     targets = _targets(command) if command else None

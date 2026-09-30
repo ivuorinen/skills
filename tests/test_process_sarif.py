@@ -10,8 +10,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "process-sarif.py"
 _spec = importlib.util.spec_from_file_location("process_sarif", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 _normalize_severity = _mod._normalize_severity
 _extract_rules = _mod._extract_rules
@@ -426,6 +426,27 @@ class TestExtractFindings:
         findings = _extract_findings(run, "x.sarif")
         assert findings[0]["start_line"] == 12
         assert findings[0]["start_column"] == 0
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (7, 7),
+            (7.9, 7),
+            ("12", 12),
+            (b"4", 4),
+            (None, 0),
+            ([3], 0),
+            ({"a": 1}, 0),
+            ("junk", 0),
+            (float("inf"), 0),
+            (float("nan"), 0),
+        ],
+    )
+    def test_int_narrows_before_converting(self, value, expected):
+        """types-a53e6235: narrowed instead of a blanket `# type: ignore`. A
+        container is 0 without reaching int(), and `Infinity` — which json.loads
+        accepts — is 0 rather than an OverflowError."""
+        assert _mod._int(value) == expected
 
     def test_string_and_int_start_lines_sort_together(self, tmp_path, capsys, monkeypatch):
         r1 = _result("r1", "warning", "a", "f.py", 5)

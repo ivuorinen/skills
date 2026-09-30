@@ -52,6 +52,21 @@ _WRAPPERS = frozenset(
         "xargs",
     }
 )
+# Shells: `bash -c '<string>'` runs a whole command line that arrives here as ONE
+# quoted token, so every guard judged the wrapper and never the git call, the
+# protected write or the restore inside it (agent-loopholes-015b8134). `busybox`
+# is here because `busybox sh -c …` is the same shape one word further in.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "busybox"})
+# Shell options whose value is the NEXT token, so that token is not the operand.
+_SHELL_VALUE_OPTS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+# Reserved words that may open a stage before the command it runs. A guard
+# reading `tokens[0]` saw `then` in `if true; then git commit --no-verify; fi`
+# and judged nothing — every shell guard passed a command behind `if`, `then`,
+# `do`, `{` or `!`. `strip_reserved` drops them.
+_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{"})
+# How many nested `sh -c` payloads are unwrapped precisely; past it, the payload
+# is split coarsely (see `_coarse_stages`), never left folded.
+_MAX_SHELL_DEPTH = 4
 # A comment runs to end of LINE, not end of string: without re.MULTILINE only the
 # final line's comment is stripped, and an earlier `#` survives to become a stage
 # whose first token is `#`.
@@ -186,6 +201,27 @@ def load_event() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def load_event_strict() -> dict:
+    """Parse the hook's stdin JSON event; raise ValueError if it cannot be judged.
+
+    The PreToolUse guards' loader. `load_event` maps an empty, truncated or
+    non-object event to None, and each guard returned on None — exit 0, an
+    allow — so a harness fault that handed over a broken event let through
+    `--no-verify`, a write to scripts/hooks and a push to a protected branch
+    alike (errors-4a2d2f34). A guard that cannot read the call must not allow
+    it: raising sends it to the guard's fail-closed arm, which denies (or, for
+    the restore guard, asks). PostToolUse and Stop hooks keep the lenient
+    loader, because an event they cannot read gives them nothing to report on.
+    """
+    try:
+        data = json.load(sys.stdin)
+    except (json.JSONDecodeError, EOFError) as exc:
+        raise ValueError(f"unreadable hook event: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"hook event is a {type(data).__name__}, not an object")
+    return data
+
+
 def _edited_path(data: dict) -> Path | None:
     """Resolved absolute path of the file a Write/Edit touched, or None if absent."""
     tool_input = data.get("tool_input") or {}
@@ -248,11 +284,17 @@ def foreign_code(data: dict) -> str:
     Each guard therefore refuses it wherever it merely names what that guard
     protects. Ceiling: a name assembled at runtime (`'.cla' + 'ude'`) carries no
     such token and passes.
+
+    Shell text that feeds a shell on stdin (`echo 'git push origin main' | bash`,
+    `curl … | sh`) is returned too. The command the inner shell runs is data on
+    the outer command line, not a stage, so no tokenizing guard can judge it
+    either (agent-loopholes-015b8134); it gets the same name-based refusal.
     """
     tool_input = _tool_input(data)
     code = tool_input.get("code")
     if tool_input.get("language") in (None, "shell") or not isinstance(code, str):
-        return ""
+        command = event_command(data)
+        return command if command and feeds_a_shell(command) else ""
     return code
 
 
@@ -386,6 +428,21 @@ def _split_string_payload(tokens: list[str], depth: int = 0) -> list[str]:
     return out
 
 
+def strip_reserved(tokens: list[str]) -> list[str]:
+    """`tokens` without the leading reserved words that only open a construct.
+
+    `if true; then git push origin main; fi` splits into stages `if true`,
+    `then git push origin main` and `fi`, and the git call sat behind `then`,
+    where no guard looked for it. The same held for `do` in a loop body, `{`
+    in a group, `!` in a negation, and `while`/`until` conditions. Only the
+    leading words are dropped: an operand spelled `then` is still an operand.
+    """
+    i = 0
+    while i < len(tokens) and tokens[i] in _RESERVED:
+        i += 1
+    return tokens[i:]
+
+
 def _assignments(tokens: list[str]) -> dict[str, str]:
     """Every `NAME=value` operand in `tokens`, in order.
 
@@ -403,7 +460,7 @@ def _assignments(tokens: list[str]) -> dict[str, str]:
     return out
 
 
-def _wrapper_variants(tokens: list[str]) -> list[tuple[dict[str, str], list[str]]]:
+def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str, str], list[str]]]:
     """The stage, plus every git call a leading wrapper hides, with its assignments.
 
     The assignments matter as much as the call. `env GIT_CONFIG_COUNT=1
@@ -437,21 +494,129 @@ def _wrapper_variants(tokens: list[str]) -> list[tuple[dict[str, str], list[str]
     The residual false positive — a wrapper-led stage whose operands literally
     read `git push` or `rm scripts/hooks/x` as data — blocks one command rather
     than admitting one, which is the direction a guard should err in.
+
+    A variant that is itself a shell given `-c` adds the stages of its command
+    string, so `bash -c '…'` and `env sudo sh -c '…'` are judged by what they
+    run (agent-loopholes-015b8134); see `_shell_c_stages`.
     """
-    if Path(tokens[0]).name not in _WRAPPERS:
-        return [({}, tokens)]
-    # The scan runs over the `-S`-expanded form so a payload-carried call is
-    # reachable, while the original stage is kept unexpanded: it is what the
-    # ctx-ok guard and the unrecognised-verb path must still judge.
-    expanded = _split_string_payload(tokens)
-    return [({}, tokens)] + [
-        (_assignments(expanded[:i]), expanded[i:])
-        for i in range(1, len(expanded))
-        if not expanded[i].startswith("-") and "=" not in expanded[i]
+    variants = [({}, tokens)]
+    if Path(tokens[0]).name in _WRAPPERS:
+        # The scan runs over the `-S`-expanded form so a payload-carried call is
+        # reachable, while the original stage is kept unexpanded: it is what the
+        # ctx-ok guard and the unrecognised-verb path must still judge.
+        expanded = _split_string_payload(tokens)
+        variants += [
+            (_assignments(expanded[:i]), expanded[i:])
+            for i in range(1, len(expanded))
+            if not expanded[i].startswith("-") and "=" not in expanded[i]
+        ]
+    return variants + [
+        (env | inner_env, inner)
+        for env, variant in variants
+        for inner_env, inner in _shell_c_stages(variant, depth)
     ]
 
 
-def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]]:
+def _shell_verb_end(tokens: list[str]) -> int | None:
+    """Index just past the shell's own name, or None when the stage is no shell.
+
+    `busybox sh` names the shell one word late, so it ends at 2.
+    """
+    name = Path(tokens[0]).name
+    if name == "busybox":
+        return 2 if len(tokens) > 1 and Path(tokens[1]).name in _SHELLS else None
+    return 1 if name in _SHELLS else None
+
+
+def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
+    """How a shell stage gets its commands: ("c", string), ("stdin", None) or ("file", path).
+
+    None when the stage's verb is not a shell. Bash reads `-c`'s command string
+    from the first NON-OPTION argument, not from the token after `-c`, so
+    `bash -c -x 'git push'` runs `git push`; the scan therefore records the flag
+    (alone or in a cluster such as `-lc`) and takes the first operand. `fish`
+    spells it `--command`. With no `-c` and no operand, or with `-s`, the shell
+    reads its commands from stdin — the `… | bash` shape. An operand without
+    `-c` is a script file, whose contents no text guard can see.
+    """
+    i = _shell_verb_end(tokens)
+    if i is None:
+        return None
+    command_flag = stdin_flag = False
+    while i < len(tokens):
+        # `word`, not `token`: bandit reads `token == "--"` as a hardcoded
+        # password comparison (B105).
+        word = tokens[i]
+        if word.startswith("--command="):
+            return ("c", word.split("=", 1)[1])
+        if word in _SHELL_VALUE_OPTS or word == "--":
+            i += 1
+            if word == "--":
+                break
+        elif len(word) > 1 and word[0] in "-+":
+            short = word[0] == "-" and not word.startswith("--")
+            command_flag |= word == "--command" or (short and "c" in word[1:])
+            stdin_flag |= short and "s" in word[1:]
+        else:
+            break
+        i += 1
+    if command_flag:
+        return ("c", tokens[i]) if i < len(tokens) else None
+    if stdin_flag or i >= len(tokens) or tokens[i] == "-":
+        return ("stdin", None)
+    return ("file", tokens[i])
+
+
+def _coarse_stages(payload: str) -> list[tuple[dict[str, str], list[str]]]:
+    """Every word-initial suffix of every segment of `payload`, quoting ignored.
+
+    The fallback past `_MAX_SHELL_DEPTH`, for the reason `_split_string_payload`
+    gives for its own cap: a nest too deep to unwrap exactly is judged coarsely
+    rather than waved through, and a coarse split only ever adds candidate
+    stages. Quote characters become spaces, so whatever the nesting, `git` and
+    `rm` still start a candidate.
+    """
+    flat = re.sub(r"[\"'\\`$()]", " ", payload)
+    stages: list[tuple[dict[str, str], list[str]]] = []
+    for segment in re.split(r"[|;&\n]+", flat):
+        words = segment.split()
+        stages += [({}, words[i:]) for i in range(len(words))]
+    return stages
+
+
+def _shell_c_stages(tokens: list[str], depth: int) -> list[tuple[dict[str, str], list[str]]]:
+    """The stages a `sh -c '<string>'` stage runs, parsed as a command of their own.
+
+    Empty unless `tokens` is a shell given a command string. The string is one
+    token by the time it gets here, and before agent-loopholes-015b8134 nothing
+    opened it: `bash -c 'git commit --no-verify -m x'` and
+    `bash -c 'rm scripts/hooks/ruff-hook.py'` passed every guard. Parsing it with
+    `shell_stages_with_env` gives the inner command the same treatment as a
+    top-level one — quoting, wrappers, and a further `-c` — bounded by
+    `_MAX_SHELL_DEPTH`.
+    """
+    invocation = _shell_invocation(tokens)
+    if invocation is None or invocation[0] != "c" or not invocation[1]:
+        return []
+    if depth >= _MAX_SHELL_DEPTH:
+        return _coarse_stages(invocation[1])
+    return shell_stages_with_env(invocation[1], _depth=depth + 1)
+
+
+def feeds_a_shell(command: str) -> bool:
+    """True if any stage is a shell that reads its commands from stdin.
+
+    `echo 'git push origin main' | bash` runs a command that is data on the
+    outer command line, so no stage carries it (agent-loopholes-015b8134).
+    Callers treat such a command the way they treat code in another language.
+    """
+    return any(
+        (invocation := _shell_invocation(tokens)) is not None and invocation[0] == "stdin"
+        for tokens in shell_stages(command)
+    )
+
+
+def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str, str], list[str]]]:
     """(env assignments, tokens) per stage — the full result `shell_stages` trims.
 
     The `VAR=value` prefix is stripped so the command can be found, and used to
@@ -464,6 +629,9 @@ def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]
     A separate function rather than a wider return type from `shell_stages`:
     every other caller wants tokens alone, and changing that signature would
     touch each of them for a question only one of them asks.
+
+    `_depth` counts the `sh -c` payloads already opened to reach `command`; it
+    is internal, and bounds the recursion through `_shell_c_stages`.
     """
     masked, spans = _mask_quoted(command)
     # Comments first, then continuations: `foo # bar \` is comment to end of line,
@@ -471,7 +639,7 @@ def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]
     joined = _CONTINUATION.sub(" ", _COMMENT.sub("", masked))
     stages: list[tuple[dict[str, str], list[str]]] = []
     for segment in _STAGE_SPLIT.split(joined):
-        tokens = [_unmask(t, spans) for t in segment.split()]
+        tokens = strip_reserved([_unmask(t, spans) for t in segment.split()])
         env: dict[str, str] = {}
         i = 0
         while i < len(tokens) and "=" in tokens[i] and not tokens[i].startswith("-"):
@@ -483,7 +651,7 @@ def shell_stages_with_env(command: str) -> list[tuple[dict[str, str], list[str]]
             # blindly: `A=1 env A=2 git …` is what real `env` does, and the
             # closer one is what reaches git.
             stages.extend(
-                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:])
+                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:], _depth)
             )
     return stages
 

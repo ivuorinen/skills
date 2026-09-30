@@ -16,8 +16,8 @@ _TOOL = (
     / "check-agent-instructions.py"
 )
 _spec = importlib.util.spec_from_file_location("check_agent_instructions", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _workspace(root: Path, claude: str = "", agents: str = "", rules: dict | None = None) -> Path:
@@ -820,3 +820,196 @@ class TestCli:
             runpy.run_path(str(_TOOL), run_name="__main__")
         assert exc.value.code == 0
         assert "total_instructions" in capsys.readouterr().out
+
+
+def _bullets(n: int, word: str = "Rule") -> str:
+    """`n` distinct directive bullets, so no two lines read as duplicates."""
+    return "".join(f"- Always follow {word} number {i}.\n" for i in range(n))
+
+
+class TestOtherHarnessScoping:
+    """audit-72ab6817: each harness's own conditional-loading key leaves the budget."""
+
+    def test_copilot_apply_to_scopes_an_instructions_file(self, tmp_path):
+        """A narrow `applyTo:` attaches the file only to matching files."""
+        (tmp_path / ".github" / "instructions").mkdir(parents=True)
+        (tmp_path / ".github" / "copilot-instructions.md").write_text(
+            "- One always rule.\n", encoding="utf-8"
+        )
+        (tmp_path / ".github" / "instructions" / "ts.instructions.md").write_text(
+            '---\napplyTo: "src/app.ts"\n---\n\n' + _bullets(160), encoding="utf-8"
+        )
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 1
+        assert report["path_scoped_instructions"] == 160
+        assert blocking is False
+
+    def test_cursor_always_apply_false_scopes_an_mdc_rule(self, tmp_path):
+        """`alwaysApply: false` is Cursor's spelling of a conditional rule."""
+        (tmp_path / ".cursor" / "rules").mkdir(parents=True)
+        (tmp_path / ".cursorrules").write_text("- One always rule.\n", encoding="utf-8")
+        (tmp_path / ".cursor" / "rules" / "py.mdc").write_text(
+            "---\nglobs: src/app.py\nalwaysApply: false\n---\n\n" + _bullets(160),
+            encoding="utf-8",
+        )
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 1
+        assert blocking is False
+
+    def test_windsurf_trigger_other_than_always_on_scopes_a_rule(self, tmp_path):
+        """A `trigger: glob` rule loads only for matching files."""
+        (tmp_path / ".windsurf" / "rules").mkdir(parents=True)
+        (tmp_path / ".windsurfrules").write_text("- One always rule.\n", encoding="utf-8")
+        (tmp_path / ".windsurf" / "rules" / "py.md").write_text(
+            "---\ntrigger: glob\nglobs: src/*.py\n---\n\n" + _bullets(160), encoding="utf-8"
+        )
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 1
+        assert blocking is False
+
+    @pytest.mark.parametrize(
+        ("rel", "frontmatter", "expected"),
+        [
+            (".github/instructions/a.instructions.md", 'applyTo: "src/**"', True),
+            (".github/instructions/a.instructions.md", 'applyTo: "**"', False),
+            (".github/instructions/a.instructions.md", "applyTo: '**/*'", False),
+            (".github/instructions/a.instructions.md", 'applyTo: "src/**, **"', False),
+            (".github/instructions/a.instructions.md", "applyTo:", False),
+            (".github/instructions/a.instructions.md", "description: x", False),
+            (".cursor/rules/a.mdc", "alwaysApply: false", True),
+            (".cursor/rules/a.mdc", "alwaysApply: true", False),
+            (".cursor/rules/a.mdc", "globs: src/*.py", False),
+            (".windsurf/rules/a.md", "trigger: model_decision", True),
+            (".windsurf/rules/a.md", "trigger: always_on", False),
+            (".windsurf/rules/a.md", "description: x", False),
+            # A key read under the wrong harness's path scopes nothing.
+            (".claude/rules/a.md", "alwaysApply: false", False),
+            ("AGENTS.md", 'applyTo: "src/**"', False),
+        ],
+    )
+    def test_each_key_is_judged_under_its_own_harness_only(self, rel, frontmatter, expected):
+        """Keyed on the pattern the file matched, not on the key alone."""
+        text = f"---\n{frontmatter}\n---\n\n- R\n"
+        assert _mod.is_path_scoped(text, rel) is expected
+
+    def test_a_file_without_frontmatter_is_never_scoped(self):
+        """No frontmatter, no condition: the file loads every turn."""
+        assert _mod.is_path_scoped("- R\n", ".cursor/rules/a.mdc") is False
+
+
+class TestImportedFilesCountAgainstTheBudget:
+    """audit-312999e8: an `@import` target loads at launch, so its directives count."""
+
+    def test_151_directives_behind_one_import_block(self, tmp_path):
+        """The evasion the finding reproduced: move the bullets behind an import."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "rules.md").write_text("# R\n\n" + _bullets(151), encoding="utf-8")
+        _workspace(tmp_path, claude="# Project\n\n@docs/rules.md\n")
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 151
+        assert blocking is True
+        row = next(f for f in report["files"] if f["file"] == "docs/rules.md")
+        assert row == {
+            "file": "docs/rules.md",
+            "instructions": 151,
+            "path_scoped": False,
+            "imported_by": "CLAUDE.md",
+        }
+        budget = next(f for f in report["findings"] if f["code"] == "instruction_budget")
+        assert "across 2 always-loaded files" in budget["detail"]
+
+    def test_a_target_imported_twice_is_counted_once(self, tmp_path):
+        """A diamond is ordinary sharing; the file loads once."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "a.md").write_text("@shared.md\n", encoding="utf-8")
+        (tmp_path / "docs" / "shared.md").write_text(_bullets(3), encoding="utf-8")
+        _workspace(tmp_path, claude="@docs/a.md\n@docs/shared.md\n")
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 3
+        assert [f["file"] for f in report["files"]].count("docs/shared.md") == 1
+
+    def test_importing_a_scanned_file_does_not_count_it_twice(self, tmp_path):
+        """A root file imported from another root is already in the set as itself."""
+        _workspace(tmp_path, claude="@AGENTS.md\n", agents=_bullets(4))
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 4
+
+    def test_a_path_scoped_target_is_not_charged_or_followed(self, tmp_path):
+        """What a scoped file imports loads only when it does."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "scoped.md").write_text(
+            "---\npaths:\n  - 'src/**'\n---\n\n@deep.md\n" + _bullets(5), encoding="utf-8"
+        )
+        (tmp_path / "docs" / "deep.md").write_text(_bullets(7), encoding="utf-8")
+        _workspace(tmp_path, claude="@docs/scoped.md\n")
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 0
+
+    def test_imports_of_a_scoped_root_are_not_charged(self, tmp_path):
+        """A path-scoped rule file is not a root the always-loaded walk starts from."""
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "t.md").write_text(_bullets(9), encoding="utf-8")
+        _workspace(
+            tmp_path,
+            claude="# C\n",
+            rules={"s.md": "---\npaths:\n  - 'src/**'\n---\n\n@../../docs/t.md\n"},
+        )
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 0
+
+    def test_a_target_past_the_hop_limit_is_not_charged(self, tmp_path):
+        """The sixth hop never arrives, so its directives are not in the session."""
+        (tmp_path / "d").mkdir()
+        for i in range(1, 7):
+            nxt = f"@f{i + 1}.md\n" if i < 6 else ""
+            (tmp_path / "d" / f"f{i}.md").write_text(nxt + f"- Always hop {i}.\n", encoding="utf-8")
+        _workspace(tmp_path, claude="@d/f1.md\n")
+        report, _ = _mod.check(tmp_path)
+        assert report["total_instructions"] == 5
+        assert "d/f6.md" not in {f["file"] for f in report["files"]}
+
+
+class TestRootFileLength:
+    """agent-hooks-9b47171a: a root instruction file's length is gated mechanically."""
+
+    @staticmethod
+    def _length(tmp_path, lines: int) -> tuple[list[dict], bool]:
+        """The `root_file_length` findings for a CLAUDE.md of `lines` lines, and blocking."""
+        _workspace(tmp_path, claude="".join(f"line {i}\n" for i in range(lines)))
+        report, blocking = _mod.check(tmp_path)
+        return [f for f in report["findings"] if f["code"] == "root_file_length"], blocking
+
+    def test_401_lines_is_blocking_high(self, tmp_path):
+        """Past 400 lines the gate blocks, as the agent-rules audit grades it High."""
+        found, blocking = self._length(tmp_path, 401)
+        assert [f["severity"] for f in found] == ["High"]
+        assert found[0]["file"] == "CLAUDE.md"
+        assert "401 lines (limit 400)" in found[0]["detail"]
+        assert blocking is True
+
+    def test_399_lines_is_medium_and_does_not_block(self, tmp_path):
+        """Just under the limit warns without failing the commit."""
+        found, blocking = self._length(tmp_path, 399)
+        assert [f["severity"] for f in found] == ["Medium"]
+        assert blocking is False
+
+    def test_201_lines_is_medium(self, tmp_path):
+        """The warn band opens one line past 200."""
+        found, _ = self._length(tmp_path, 201)
+        assert [f["severity"] for f in found] == ["Medium"]
+        assert "warn above 200, limit 400" in found[0]["detail"]
+
+    def test_200_lines_is_clean(self, tmp_path):
+        """At the warn threshold itself nothing is reported."""
+        found, _ = self._length(tmp_path, 200)
+        assert found == []
+
+    def test_a_rules_directory_file_is_not_a_root_file(self, tmp_path):
+        """A rule file's length is check-rules-anatomy.py's unit, not this gate's."""
+        _workspace(
+            tmp_path,
+            claude="# C\n",
+            rules={"long.md": "".join(f"line {i}\n" for i in range(450))},
+        )
+        report, _ = _mod.check(tmp_path)
+        assert not [f for f in report["findings"] if f["code"] == "root_file_length"]

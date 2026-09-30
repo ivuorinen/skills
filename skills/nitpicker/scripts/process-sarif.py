@@ -70,10 +70,19 @@ _TOOL_SEVERITY_MAP = {
 
 
 def _int(v: object) -> int:
-    """Coerce a possibly-hostile SARIF line/column value to int (default 0)."""
+    """Coerce a possibly-hostile SARIF line/column value to int (default 0).
+
+    Narrowed before converting rather than suppressed: the mypy-style
+    `# type: ignore[call-overload]` this carried silenced every pyright
+    diagnostic on its line, not just the overload one (types-a53e6235).
+    OverflowError is caught too, because `json.loads` accepts `Infinity` and
+    `int(float("inf"))` raises it.
+    """
+    if not isinstance(v, int | float | str | bytes | bytearray):
+        return 0
     try:
-        return int(v)  # type: ignore[call-overload]
-    except (TypeError, ValueError):
+        return int(v)
+    except (ValueError, OverflowError):
         return 0
 
 

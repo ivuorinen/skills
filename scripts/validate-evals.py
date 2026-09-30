@@ -20,9 +20,11 @@ guides; the third is this repo's:
                               (.claude/skills/skill-tester)
 
 No file is required. When one exists it must be well-formed, so an eval
-set cannot rot into a shape the eval loop silently skips.
+set cannot rot into a shape the eval loop silently skips. An `evals/`
+directory holding none of the three is an error.
 
-Exit codes: 0 = valid (or no eval sets present), 1 = malformed eval set.
+Exit codes: 0 = valid (or no eval sets present), 1 = malformed eval set,
+2 = usage error (an unknown option).
 """
 
 import json
@@ -205,8 +207,12 @@ def _query_labels(queries: list, err: Callable[[str], None]) -> dict[str, set[bo
         if not isinstance(q, dict):
             err(f"queries[{i}] must be an object")
             continue
-        if not str(q.get("query", "")).strip():
-            err(f"queries[{i}] has an empty 'query'")
+        # A string, then non-blank. `str(...)` turned null, 42, a list or an
+        # object into non-empty text and passed a query with no words in it
+        # (audit-4493b4b0) — the shape audit-e639ffa3 closed for evals.json.
+        text = q.get("query")
+        if not (isinstance(text, str) and text.strip()):
+            err(f"queries[{i}] needs a non-empty string 'query'; got {text!r}")
         labelled = isinstance(q.get("should_trigger"), bool)
         if not labelled:
             err(f"queries[{i}] needs a boolean 'should_trigger'")
@@ -352,30 +358,55 @@ def _target_dirs(args: list[str], repo_root: Path | None = None) -> list[Path]:
     return sorted(found.values())
 
 
-def _report_missing(missing: list[Path]) -> None:
-    """Fail on supplied paths that yielded no eval set, naming each one.
+def _report_missing(missing: list[Path], explicit: bool) -> None:
+    """Fail on target directories that yielded no eval set, naming each one.
 
     An explicitly supplied path with no eval set is a misconfiguration — a typo
     or a moved directory — not a clean run. Reported per path rather than as a
-    total, so one valid path cannot mask a typo'd sibling. Only the no-argument
-    sweep is allowed to find nothing, because a repo with no eval sets is
-    genuinely clean; that caller never reaches here.
+    total, so one valid path cannot mask a typo'd sibling.
+
+    The sweep reaches here too. It only ever targets a skill that has an
+    `evals/` directory, so one yielding no recognised file holds a misnamed set
+    (`trigger_queries.json`) that validated as OK under the sweep while the same
+    path named explicitly failed (audit-4493b4b0). A repo with no `evals/`
+    directory at all has no targets, and stays clean.
     """
     if not missing:
         return
     for d in missing:
-        print(
-            f"  ERROR  no eval set under supplied path {str(d)!r} — "
-            "the argument must be a skill directory",
-            file=sys.stderr,
-        )
+        if explicit:
+            msg = (
+                f"no eval set under supplied path {str(d)!r} — "
+                "the argument must be a skill directory"
+            )
+        else:
+            msg = (
+                f"{str(d / 'evals')!r} holds no recognised eval file "
+                "(evals.json, trigger-queries.json, pressure-records.json)"
+            )
+        print(f"  ERROR  {msg}", file=sys.stderr)
     sys.exit(1)
 
 
 def main() -> None:
+    """Validate the named skill directories, or sweep every skill with evals/.
+
+    An unknown `-`-prefixed argument is a usage error at exit 2. It was read as
+    a skill path and failed at exit 1, indistinguishable from a malformed eval
+    set (audit-d73756b3).
+    """
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(__doc__)
         return
+
+    unknown = [a for a in sys.argv[1:] if a.startswith("-")]
+    if unknown:
+        print(
+            f"Error: unknown option {unknown[0]!r}; validate-evals.py takes only "
+            "skill directories and --help. Pass a path beginning with '-' as './-name'.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     explicit = bool(sys.argv[1:])
     skill_dirs = _target_dirs(sys.argv[1:])
@@ -392,8 +423,7 @@ def main() -> None:
         print(f"\n{len(errors)} error(s). Fix before committing.")
         sys.exit(1)
 
-    if explicit:
-        _report_missing([d for d, was_checked in results if not was_checked])
+    _report_missing([d for d, was_checked in results if not was_checked], explicit)
 
     print(f"OK  {checked} eval set(s) validated.")
 

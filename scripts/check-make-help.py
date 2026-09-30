@@ -37,30 +37,59 @@ _TARGET_RE = re.compile(r"^([a-z][a-z0-9_-]*(?:[ \t]+[a-z][a-z0-9_-]*)*)[ \t]*:(
 # The recipe lines of `help`, which look like: @echo "  name  — description"
 _HELP_ENTRY_RE = re.compile(r'@echo\s+"\s+([a-z][a-z0-9_-]*)\s')
 _PHONY_RE = re.compile(r"^\.PHONY:\s*(.+)$", re.M)
+# A backslash-newline joins two physical lines into one logical line, as Make
+# reads them.
+_CONTINUATION_RE = re.compile(r"\\\n")
+
+
+def _help_recipe(text: str) -> str:
+    """The recipe lines of the `help` rule, and nothing after them.
+
+    The block ends at the first line that is neither tab-indented nor the
+    continuation of a line ending in `\\`. Reading to the next blank line took
+    a following target's `@echo` lines as help entries whenever no blank line
+    came between that rule and `help`, so an undocumented target read as documented
+    (audit-283cc399).
+
+    Prefixed with a newline so `help:` is found as the first line too. Without
+    it the search misses a Makefile that opens with the help target, no help
+    entries are collected, and every target is reported as undocumented — a
+    confident wrong answer rather than an error.
+    """
+    prefixed = "\n" + text
+    if "\nhelp:" not in prefixed:
+        return ""
+    # Drop the rest of the `help:` line itself (its prerequisites, if any).
+    after = prefixed.split("\nhelp:", 1)[1].split("\n", 1)
+    lines = after[1].split("\n") if len(after) > 1 else []
+    body: list[str] = []
+    continued = False
+    for line in lines:
+        if not (line.startswith("\t") or continued):
+            break
+        body.append(line)
+        continued = line.endswith("\\")
+    return "\n".join(body)
 
 
 def read_makefile(path: Path) -> tuple[set[str], set[str], set[str]]:
     """(targets, help entries, .PHONY names) parsed from one Makefile.
 
-    The help block is taken as the lines from `help:` to the next blank line —
-    the recipe itself. Scanning the whole file for `@echo` would collect every
-    other target's output as though it were a help entry.
+    Help entries come from the `help` recipe alone (`_help_recipe`). Scanning
+    the whole file for `@echo` would collect every other target's output as
+    though it were a help entry.
+
+    `.PHONY` is read after joining backslash continuations. A single-line
+    pattern lost every name past the first `\\`, so a wrapped `.PHONY` raised a
+    false MISMATCH (audit-283cc399).
     """
     text = path.read_text(encoding="utf-8")
     targets = {name for m in _TARGET_RE.finditer(text) for name in m.group(1).split()}
 
-    # Prefixed with a newline so `help:` is found as the first line too. Without
-    # it the search misses a Makefile that opens with the help target, no help
-    # entries are collected, and every target is reported as undocumented — a
-    # confident wrong answer rather than an error.
-    prefixed = "\n" + text
-    help_body = ""
-    if "\nhelp:" in prefixed:
-        help_body = prefixed.split("\nhelp:", 1)[1].split("\n\n", 1)[0]
-    listed = set(_HELP_ENTRY_RE.findall(help_body))
+    listed = set(_HELP_ENTRY_RE.findall(_help_recipe(text)))
 
     phony: set[str] = set()
-    for m in _PHONY_RE.finditer(text):
+    for m in _PHONY_RE.finditer(_CONTINUATION_RE.sub(" ", text)):
         phony.update(m.group(1).split())
     return targets, listed, phony
 
@@ -81,11 +110,16 @@ def drift(targets: set[str], listed: set[str], phony: set[str]) -> list[str]:
 
 
 def main() -> None:
-    """CLI entry point: parse argv, report drift, exit per the outcome."""
+    """CLI entry point: parse argv, report drift, exit per the outcome.
+
+    A `-`-prefixed argument other than the help flags is a usage error at exit
+    2. It was read as a Makefile path and failed at exit 1 as "cannot read",
+    indistinguishable from real drift (audit-d73756b3).
+    """
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(__doc__)
         return
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 2 or any(a.startswith("-") for a in sys.argv[1:]):
         print("Usage: check-make-help.py [<makefile>]", file=sys.stderr)
         sys.exit(2)
 

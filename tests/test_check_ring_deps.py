@@ -17,12 +17,12 @@ _REPO = Path(__file__).parent.parent
 _TOOL = _REPO / "scripts" / "check-ring-deps.py"
 
 _spec = importlib.util.spec_from_file_location("check_ring_deps", _TOOL)
-rd = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+rd = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
 # Registered before exec, unlike the sibling tool tests: `@dataclass` resolves
 # its annotations through `sys.modules[cls.__module__]`, which is None for a
 # module that is executing but unregistered.
-sys.modules[_spec.name] = rd  # type: ignore[union-attr]
-_spec.loader.exec_module(rd)  # type: ignore[union-attr]
+sys.modules[_spec.name] = rd  # pyright: ignore[reportOptionalMemberAccess]
+_spec.loader.exec_module(rd)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _tree(root: Path, files: dict[str, str]) -> Path:
@@ -66,6 +66,7 @@ class TestThisRepo:
             "scripts/common.py -> skills/nitpicker/scripts/md_fences.py",
             "scripts/validate-rules.py -> skills/nitpicker/scripts/check-rules-anatomy.py",
             "scripts/bench-recall.py -> scripts/bench-retrieval.py",
+            "scripts/validate-skill.py -> skills/nitpicker/scripts/context_pack.py",
         }
         for edge in expected:
             assert edge in out
@@ -73,8 +74,101 @@ class TestThisRepo:
         # from the graph silently, and only the total notices.
         assert out.count("[string-path load]") == len(expected)
 
+    def test_the_provider_dispatch_is_reported_as_dynamic_edges(self, capsys):
+        """audit-0dac429b: pr_common's `import_module` of each provider was
+        missing from the printed graph. Every value of `_PROVIDER_MODULES` is
+        an edge now."""
+        rd.main([str(_REPO)])
+        out = capsys.readouterr().out
+        for provider in ("pr_github", "pr_gitlab", "pr_bitbucket"):
+            edge = (
+                "skills/nitpicker/scripts/pr_common.py -> "
+                f"skills/nitpicker/scripts/{provider}.py  [dynamic import]"
+            )
+            assert edge in out
+
     def test_every_module_load_resolves(self):
         assert rd.build(_REPO).errors == []
+
+
+# ── dynamic imports are edges too (audit-0dac429b) ─────────────────────────────
+
+
+class TestDynamicImports:
+    @pytest.mark.parametrize(
+        "body",
+        [
+            'import importlib\nimportlib.import_module("_hooklib")\n',
+            'from importlib import import_module\nimport_module("_hooklib")\n',
+            '__import__("_hooklib")\n',
+            'import importlib\n_M = "_hooklib"\nimportlib.import_module(_M)\n',
+            'import importlib\n_T = {"a": "_hooklib"}\n\n\ndef f(k):\n'
+            "    return importlib.import_module(_T[k])\n",
+        ],
+    )
+    def test_an_outward_dynamic_import_is_a_violation(self, tmp_path, body, capsys):
+        """The agent repro: `import _hooklib` failed --check while the same edge
+        as `importlib.import_module("_hooklib")` passed it."""
+        _tree(
+            tmp_path,
+            {"scripts/zz_probe.py": body, "scripts/hooks/_hooklib.py": "x = 1\n"},
+        )
+        g = rd.build(tmp_path)
+        assert g.errors == []
+        bad = rd.violations(g)
+        assert len(bad) == 1 and "must not depend on hooks" in bad[0], bad
+        assert rd.main([str(tmp_path), "--check"]) == 1
+        assert "[dynamic import]" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "import importlib\n\n\ndef f(name):\n    return importlib.import_module(name)\n",
+            "import importlib\nimportlib.import_module()\n",
+            'import importlib\nimportlib.import_module(".sibling", "pkg")\n',
+            'import importlib\n_T = {"a": "x", "b": make()}\nimportlib.import_module(_T["a"])\n',
+            "import importlib\n_T = [1]\nimportlib.import_module(_T[0])\n",
+            'import importlib\nimportlib.import_module("a" + "b")\n',
+        ],
+    )
+    def test_an_unresolvable_dynamic_import_is_an_error(self, tmp_path, body):
+        """Non-literal is not the same as harmless: report it, as a non-literal
+        string-path load is reported."""
+        _tree(tmp_path, {"scripts/probe.py": body})
+        errors = rd.build(tmp_path).errors
+        assert len(errors) == 1 and "dynamic import is not statically resolvable" in errors[0]
+
+    def test_a_dynamic_import_of_the_stdlib_or_itself_is_not_an_edge(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "scripts/probe.py": (
+                    'import importlib\nimportlib.import_module("json")\n'
+                    'importlib.import_module("probe")\n'
+                    'importlib.import_module("os.path")\n'
+                ),
+            },
+        )
+        g = rd.build(tmp_path)
+        assert g.errors == [] and g.edges == []
+
+    def test_a_dotted_dynamic_import_resolves_by_path(self, tmp_path):
+        _tree(
+            tmp_path,
+            {
+                "skills/x/scripts/inner.py": (
+                    'import importlib\nimportlib.import_module("scripts.helper")\n'
+                ),
+                "scripts/helper.py": "x = 1\n",
+            },
+        )
+        bad = rd.violations(rd.build(tmp_path))
+        assert len(bad) == 1 and "must not depend on internal" in bad[0]
+
+    def test_an_unrelated_call_is_not_read_as_an_import(self, tmp_path):
+        _tree(tmp_path, {"scripts/probe.py": "import os\nos.getcwd()\nprint('x')\n"})
+        g = rd.build(tmp_path)
+        assert g.errors == [] and g.edges == []
 
 
 # ── violations are caught, whichever shape they arrive in ─────────────────────
@@ -527,10 +621,10 @@ def test_module_is_importable_without_side_effects(capsys):
     """Loading the tool must not run it — the `__main__` guard is what keeps an
     import from walking the tree and printing a graph."""
     spec = importlib.util.spec_from_file_location("probe_ring_deps", _TOOL)
-    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    sys.modules[spec.name] = module  # type: ignore[union-attr]
+    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    sys.modules[spec.name] = module  # pyright: ignore[reportOptionalMemberAccess]
     try:
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
     finally:
-        del sys.modules[spec.name]  # type: ignore[union-attr]
+        del sys.modules[spec.name]  # pyright: ignore[reportOptionalMemberAccess]
     assert capsys.readouterr().out == ""

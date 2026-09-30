@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """List and read the plugin's bundled skills and the nitpicker commands.
 
 Ships inside the nitpicker skill: stdlib-only, Python 3.11+, no uv required.

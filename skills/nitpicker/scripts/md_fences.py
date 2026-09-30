@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The markdown code-fence rule, defined once for every bundled tool.
 
 Four shipped tools walk markdown and must agree on where a fenced block starts

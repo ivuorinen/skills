@@ -53,6 +53,38 @@ Never mix the runners (`.claude/rules/use-uv-runner.md`):
   `uv run --quiet <script>`; new files start with `#!/usr/bin/env -S uv run
   --quiet` and carry a `# /// script` inline metadata block.
 
+## Testing
+
+```bash
+make test    # the whole pytest suite under tests/
+```
+
+`pyproject.toml` runs pytest with coverage on by default (`addopts`) and sets
+`fail_under = 100`, so a run over part of the suite reports its tests passing
+and then exits 1 on the coverage total. Pass `--no-cov` for a scoped run:
+
+```bash
+uv run --extra dev pytest tests/test_md_fences.py -q --no-cov
+```
+
+Run `make test` without `--no-cov` before pushing; CI holds the 100% gate.
+
+## Code style
+
+```bash
+make lint      # ruff check over scripts/, tests/ and skills/
+make format    # ruff format over the same trees
+```
+
+The pre-commit hooks run `ruff-check` and `ruff-format` on every commit, so a
+formatting change the hook makes leaves the commit to be retried with the
+rewritten file staged.
+
+## License
+
+The repository is MIT-licensed (`LICENSE`). A contribution is accepted under
+that license. Third-party material and its terms are recorded in `NOTICE`.
+
 ## Commit messages
 
 Conventional Commits; release-please derives the version bump:
@@ -83,6 +115,11 @@ Title the PR with the highest-impact type among its commits
 title` check (`.github/workflows/pr-title.yml`) fails a title that is not a
 conventional commit; it cannot tell whether the type matches the commits, so
 that part is on you. Retitle the PR rather than rewording commits.
+
+If auto-merge is already enabled, the merge uses the commit title captured when
+it was enabled, not the current PR title. Disable and re-enable auto-merge after
+retitling, or the old type lands on `main`. The `Lint PR title` check fails
+while the captured title and the PR title disagree.
 
 ## Adding a command
 

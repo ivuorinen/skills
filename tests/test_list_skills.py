@@ -8,8 +8,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "list-skills.py"
 _spec = importlib.util.spec_from_file_location("list_skills", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 collect_commands = _mod.collect_commands
 print_section = _mod.print_section
 
@@ -74,7 +74,7 @@ def test_main_lists_public_private_and_command_sections(tmp_path, monkeypatch, c
     _skill(tmp_path, "skills", "plain", "No commands here.")
     monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
 
-    assert _mod.main() == 0
+    assert _mod.main([]) == 0
     out = capsys.readouterr().out
     assert "Public  (skills/)" in out
     assert "Commands (/nitpicker <command>)" in out
@@ -85,8 +85,28 @@ def test_main_lists_public_private_and_command_sections(tmp_path, monkeypatch, c
     assert "Dev only." in out
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_help_prints_the_interface_not_the_listing(flag, capsys):
+    """audit-d73756b3: `--help` printed the whole listing at exit 0, so the tool
+    had no discoverable interface."""
+    with pytest.raises(SystemExit) as exc:
+        _mod.main([flag])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "usage: list-skills" in out
+    assert "Public  (skills/)" not in out
+
+
+def test_an_unknown_argument_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        _mod.main(["--bogus"])
+    assert exc.value.code == 2
+    assert "unrecognized arguments: --bogus" in capsys.readouterr().err
+
+
 def test_module_runs_as_a_script(tmp_path, monkeypatch, capsys):
     """Covers the `if __name__ == '__main__'` body — the only wiring to main()."""
+    monkeypatch.setattr("sys.argv", ["list-skills.py"])
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0

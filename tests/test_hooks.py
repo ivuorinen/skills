@@ -36,8 +36,8 @@ HOOK_NAMES = [
 def _load(name: str):
     """Import a hook module by its hyphenated filename."""
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), HOOKS_DIR / f"{name}.py")
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
     return mod
 
 
@@ -158,10 +158,12 @@ def _copy_shipped_scripts(tmp_path: Path) -> Path:
     travel or none works. Shared by the two fixtures that need it: copied
     separately, the next sibling added would break one of them and not the
     other — which is exactly what happened when findings_export arrived.
+    context_pack travels too: validate-skill.py path-loads its token estimate
+    (audit-c798015a), so a copy without it tracebacks before validating.
     """
     shipped = tmp_path / "skills" / "nitpicker" / "scripts"
     shipped.mkdir(parents=True, exist_ok=True)
-    for name in ("findings.py", "md_fences.py", "findings_export.py"):
+    for name in ("findings.py", "md_fences.py", "findings_export.py", "context_pack.py"):
         shutil.copy(SCRIPTS_DIR.parent / "skills" / "nitpicker" / "scripts" / name, shipped / name)
     return shipped
 
@@ -606,7 +608,7 @@ def test_deny_agents_content_search_remains_a_known_gap():
     A command that finds the file by CONTENT carries neither the path nor the
     filename, and its only shared token ('review') cannot be matched without
     blocking routine work. CODEOWNERS plus branch protection is the binding
-    control; CLAUDE.md's PreToolUse section says so. If this ever starts
+    control; `.claude/rules/hook-inventory.md` says so. If this ever starts
     returning True the docs claim must be revisited too.
     """
     mod = _load("deny-agents-path-hook")
@@ -915,19 +917,23 @@ _REQUIRED_CHECKS = frozenset(
         # was, so the asymmetry lived in the verb, not in the policy.
         "cp scripts/hooks/_hooklib.py /tmp/x",
         "cp scripts/hooks/ruff-hook.py /tmp/scratch/",
-        "mv scripts/hooks/a.py /tmp/b.py",
         "cp -r scripts/hooks /tmp/backup",
+        "cp -r scripts /tmp/backup",
     ],
 )
-def test_copying_out_of_the_protected_tree_is_a_read_not_a_write(command, monkeypatch):
+def test_copying_out_of_the_protected_tree_is_a_read_not_a_write(command, monkeypatch, capsys):
     """Over-blocking, so it failed safe — and it is still worth fixing.
 
     A denial an agent cannot act on is the shape that gets a guard routed around
     rather than respected: told that reading is allowed while being refused a
-    read, there is no correct next command.
+    read, there is no correct next command. Returning without a SystemExit is
+    also what a guard that parsed nothing does, so the predicate is asserted
+    directly (tests-4f55c390).
     """
     mod = _load("deny-agents-path-hook")
-    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._writes_protected(command) is False
 
 
 @pytest.mark.parametrize(
@@ -1798,9 +1804,11 @@ def test_version_sync_surfaces_checker_output_when_it_fails_without_problems(
     assert "checker blew up" in capsys.readouterr().err
 
 
-def test_stop_reminder_silent_when_git_fails(monkeypatch, capsys):
+def test_stop_reminder_reports_the_skip_when_git_fails(monkeypatch, capsys):
     """A git call that fails (detached worktree, broken index) must not be read as
-    'nothing pending' *and* must not crash the stop."""
+    'nothing pending' *and* must not crash the stop. The test used to assert
+    silence, which is exactly the 'nothing pending' reading (audit-38c90f58):
+    the skip now exits 1 through `report_skip`, naming git's exit and message."""
     mod = _load("stop-reminder")
 
     class _R:
@@ -1808,20 +1816,12 @@ def test_stop_reminder_silent_when_git_fails(monkeypatch, capsys):
 
         returncode = 128
         stdout = ""
+        stderr = "fatal: not a git repository\n"
 
     monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: _R())
-    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
-    mod.main()
-    assert _stop_output(capsys) == ("", "")
-
-
-def test_deny_agents_unparseable_event_is_a_silent_noop(monkeypatch, capsys):
-    """PreToolUse payload that is not a JSON object: the guard returns rather than
-    blocking every Bash call or crashing the session."""
-    mod = _load("deny-agents-path-hook")
-    _run(mod, "not json at all", monkeypatch)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    err = _reports_skip(mod, "{}", monkeypatch, capsys)
+    assert "stop-reminder" in err
+    assert "git exited 128: fatal: not a git repository" in err
 
 
 @pytest.mark.parametrize(
@@ -2158,16 +2158,18 @@ def test_governed_covers_the_enforcement_surface(monkeypatch, tmp_path):
 
 def test_revalidate_skips_a_gate_whose_binary_is_absent(monkeypatch, tmp_path, capsys):
     """The existence check covered the gate script but never the interpreter, so
-    an absent `uv` raised an uncaught FileNotFoundError instead of a skip line."""
+    an absent `uv` raised an uncaught FileNotFoundError instead of a skip line.
+    The skip then exits 1 through `report_skip`: printed at exit 0, PostToolUse
+    never showed it (agent-loopholes-6ca5b557)."""
     mod, calls = _revalidate(
         monkeypatch,
         tmp_path,
         status=_Result(stdout=" M skills/nitpicker/SKILL.md\n"),
         missing_bins={"uv"},
     )
-    mod.main()
+    err = _reports_skip(mod, "", monkeypatch, capsys)
     assert [c for c in _gate_calls(calls) if c[0] == "uv"] == []
-    assert "gate skipped, uv not on PATH" in capsys.readouterr().err
+    assert "uv not on PATH" in err and "make check" in err
 
 
 def test_revalidate_records_a_timed_out_gate_as_a_failure(monkeypatch, tmp_path, capsys):
@@ -2691,15 +2693,37 @@ def test_revalidate_asks_git_for_ignored_paths_too(monkeypatch, tmp_path):
 def test_revalidate_reports_a_missing_gate_script_instead_of_skipping_silently(
     monkeypatch, tmp_path, capsys
 ):
-    """A silently skipped gate is indistinguishable from a passing one."""
+    """A silently skipped gate is indistinguishable from a passing one — and a
+    skip printed at exit 0 is silent, since PostToolUse shows stderr only on a
+    non-zero exit (agent-loopholes-6ca5b557)."""
     mod, calls = _revalidate(
         monkeypatch, tmp_path, status=_Result(stdout=" M skills/x/SKILL.md\n"), gates_on_disk=False
     )
-    mod.main()
+    err = _reports_skip(mod, "", monkeypatch, capsys)
     assert _gate_calls(calls) == []
-    err = capsys.readouterr().err
-    assert "gate skipped" in err
     assert "scripts/validate-skill.py not found" in err
+
+
+def test_revalidate_names_a_skipped_gate_alongside_a_failing_one(monkeypatch, tmp_path, capsys):
+    """When another gate fails, the block (exit 2) also names the gate that did
+    not run, so the agent is not told the rest of the tree was judged."""
+
+    def _gate(cmd):
+        """Fail every gate that runs."""
+        return _Result(returncode=1, stdout="GATE SAID NO")
+
+    mod, _calls = _revalidate(
+        monkeypatch,
+        tmp_path,
+        status=_Result(stdout=" M skills/x/SKILL.md\n"),
+        gate=_gate,
+        missing_bins={"python3"},
+    )
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "GATE SAID NO" in err and "gate skipped, python3 not on PATH" in err
 
 
 def test_revalidate_exits_2_with_the_failing_gate_output(monkeypatch, tmp_path, capsys):
@@ -2797,19 +2821,72 @@ def _bash(command: str) -> str:
     return json.dumps({"tool_input": {"command": command}})
 
 
-NEW_GUARDS = ["deny-unsafe-git-hook", "guard-ctx-ok-hook", "ask-destructive-restore-hook"]
+def _assert_git_allowed(mod, command: str, monkeypatch, capsys) -> None:
+    """Run the git guard on `command` and prove it judged the command and passed it.
+
+    `_run` returning is not enough: it also returns when `main()` evaluated
+    nothing at all, so an allow-test that asserted only "no SystemExit" stayed
+    green through a regression that stopped the guard parsing these shapes
+    (tests-4f55c390). The guard's own predicates must each answer None, and it
+    must have printed nothing.
+    """
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert all(mod._denial(s, a) is None for s, a in mod.git_calls(command))
+    assert all(mod._global_denial(t, e) is None for e, t in mod.shell_stages_with_env(command))
 
 
-@pytest.mark.parametrize("name", NEW_GUARDS)
+PRETOOLUSE_GUARDS = [
+    "deny-unsafe-git-hook",
+    "guard-ctx-ok-hook",
+    "ask-destructive-restore-hook",
+    "deny-agents-path-hook",
+    "deny-stale-mcp-write-hook",
+    "deny-unguarded-cd-hook",
+]
+
+
+@pytest.mark.parametrize("name", PRETOOLUSE_GUARDS)
 @pytest.mark.parametrize(
-    "payload", ["", "null", "[]", "not json"], ids=["empty", "null", "list", "garbage"]
+    "payload",
+    ["", "null", "[]", "not json", '{"tool_input": {"command": "git commit --no-verify'],
+    ids=["empty", "null", "list", "garbage", "truncated"],
 )
-def test_new_guards_are_silent_on_an_unparseable_event(name, payload, monkeypatch, capsys):
-    """load_event() returns None for all of these; every guard must no-op rather
-    than crash the tool call or block it."""
-    _run(_load(name), payload, monkeypatch)
+def test_pretooluse_guards_fail_closed_on_an_unreadable_event(name, payload, monkeypatch, capsys):
+    """A guard that cannot read the call must not allow it (errors-4a2d2f34).
+
+    These events used to reach `load_event`, come back None, and end the guard
+    with exit 0 — an allow — so a truncated `git commit --no-verify` event passed
+    every guard. Each now raises into its fail-closed arm: exit 2 with a DENIED
+    line, or, for the restore guard, an `ask`. Driven through `__main__` because
+    that arm is the one under test.
+    """
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(HOOKS_DIR / f"{name}.py"), run_name="__main__")
     out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
+    if name == "ask-destructive-restore-hook":
+        assert exc.value.code == 0
+        decision = json.loads(out.out)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "ask"
+        assert "failed internally" in decision["permissionDecisionReason"]
+    else:
+        assert exc.value.code == 2
+        assert "DENIED" in out.err and "failed internally" in out.err
+
+
+@pytest.mark.parametrize("payload", ["", "null", "[]", "{", "1"])
+def test_load_event_strict_raises_where_load_event_returns_none(payload, monkeypatch):
+    """The two loaders differ exactly on the events a guard cannot judge: the
+    lenient one returns None for PostToolUse/Stop hooks, the strict one raises."""
+    lib = _hooklib()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    assert lib.load_event() is None
+    monkeypatch.setattr(sys, "stdin", io.StringIO(payload))
+    with pytest.raises(ValueError, match=r"hook event|unreadable"):
+        lib.load_event_strict()
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_input": {}}'))
+    assert lib.load_event_strict() == {"tool_input": {}}
 
 
 @pytest.mark.parametrize(
@@ -2944,10 +3021,9 @@ def test_git_guard_denies_every_known_bypass(command, fragment, monkeypatch, cap
         "git -c alias.z=push commit -m x",
     ],
 )
-def test_git_guard_still_allows_legitimate_commands(command, monkeypatch):
+def test_git_guard_still_allows_legitimate_commands(command, monkeypatch, capsys):
     """Over-blocking is a real cost: a denied legitimate command stops the run."""
-    mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+    _assert_git_allowed(_load("deny-unsafe-git-hook"), command, monkeypatch, capsys)
 
 
 # Every bypass class the four open agent-loopholes findings named, plus the one
@@ -3168,14 +3244,13 @@ def test_git_guard_denies_the_reopened_bypass_classes(command, fragment, monkeyp
         "make check 2>&1 | tail -20",
     ],
 )
-def test_git_guard_does_not_overblock_the_new_shapes(command, monkeypatch):
+def test_git_guard_does_not_overblock_the_new_shapes(command, monkeypatch, capsys):
     """The widened grammar must not start denying ordinary work.
 
     Over-blocking is the failure mode a broadened guard invites, and it is the
     one that gets a guard routed around rather than fixed.
     """
-    mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+    _assert_git_allowed(_load("deny-unsafe-git-hook"), command, monkeypatch, capsys)
 
 
 @pytest.mark.parametrize(
@@ -3272,29 +3347,30 @@ def test_an_alias_body_that_breaks_no_mandate_is_allowed(raw, monkeypatch):
     assert mod._alias_denial(raw, [], 0) is None
 
 
-def test_git_guard_ignores_a_non_git_stage(monkeypatch):
+def test_git_guard_ignores_a_non_git_stage(monkeypatch, capsys):
     """`_global_denial` short-circuits on anything that is not git."""
     mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash("echo -c core.hooksPath=/dev/null"), monkeypatch)
+    _assert_git_allowed(mod, "echo -c core.hooksPath=/dev/null", monkeypatch, capsys)
 
 
-def test_git_guard_handles_a_bare_git_invocation(monkeypatch):
+def test_git_guard_handles_a_bare_git_invocation(monkeypatch, capsys):
     """`git -c x.y=z` with no subcommand at all must not raise."""
     mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash("git -c core.pager=less"), monkeypatch)
+    _assert_git_allowed(mod, "git -c core.pager=less", monkeypatch, capsys)
+    assert mod.git_calls("git -c core.pager=less") == []
 
 
-def test_git_guard_ignores_a_valueless_c_and_a_malformed_assignment(monkeypatch):
+def test_git_guard_ignores_a_valueless_c_and_a_malformed_assignment(monkeypatch, capsys):
     """`-c` without `key=value`, and a trailing `-c` with nothing after it."""
     mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash("git -c notanassignment commit -m x"), monkeypatch)
-    _run(mod, _bash("git commit -m x -c"), monkeypatch)
+    _assert_git_allowed(mod, "git -c notanassignment commit -m x", monkeypatch, capsys)
+    _assert_git_allowed(mod, "git commit -m x -c", monkeypatch, capsys)
 
 
-def test_git_guard_ignores_an_empty_alias_body(monkeypatch):
+def test_git_guard_ignores_an_empty_alias_body(monkeypatch, capsys):
     """An alias defined to the empty string resolves to no command to judge."""
     mod = _load("deny-unsafe-git-hook")
-    _run(mod, _bash("git -c alias.z= z origin main"), monkeypatch)
+    _assert_git_allowed(mod, "git -c alias.z= z origin main", monkeypatch, capsys)
 
 
 def test_git_guard_denies_a_bypass_in_a_later_stage(monkeypatch, capsys):
@@ -4068,12 +4144,12 @@ def test_a_mid_word_hash_or_an_escape_does_not_hide_the_command(hook, command, m
         'git commit -m "say \\"no\\""',
     ],
 )
-def test_a_real_comment_still_hides_nothing_it_should_not(command, monkeypatch):
+def test_a_real_comment_still_hides_nothing_it_should_not(command, monkeypatch, capsys):
     """Controls: a word-initial `#` is still a comment and quoted text is still
     content, so ordinary commits and a feature push stay allowed."""
     mod = _load("deny-unsafe-git-hook")
     monkeypatch.setattr(mod, "_current_branch", lambda: "feature")
-    _run(mod, _bash(command), monkeypatch)
+    _assert_git_allowed(mod, command, monkeypatch, capsys)
 
 
 def test_shell_stages_decodes_what_bash_decodes():
@@ -4783,9 +4859,10 @@ def test_stale_write_guard_denies_when_git_cannot_prove_clean(
     assert "findings.py index" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("payload", ["", _mcp_event("mcp__nitpicker__np_list_findings")])
+@pytest.mark.parametrize("payload", ["{}", _mcp_event("mcp__nitpicker__np_list_findings")])
 def test_stale_write_guard_ignores_what_it_does_not_guard(payload, monkeypatch, tmp_path, capsys):
-    """Controls: an unparseable event and a read tool pass untouched."""
+    """Controls: an event naming no tool and a read tool pass untouched. An
+    unreadable event denies instead (errors-4a2d2f34)."""
     dirty = _Result(stdout=" M skills/nitpicker/scripts/findings.py\n")
     mod, calls = _stale_guard(monkeypatch, tmp_path, dirty)
     _run(mod, payload, monkeypatch)
@@ -4861,13 +4938,14 @@ def test_unguarded_cd_guard_denies_a_mutation_after_a_cd_that_can_fail(
         _ctx(language="python", code="import os; os.chdir('x'); os.remove('y')"),
         _ctx("ctx_batch_execute", commands=[{"command": "cd /tmp/x"}, {"command": "rm f"}]),
         _bash("cd /tmp/x; rm f"),
-        "",
     ],
 )
 def test_unguarded_cd_guard_allows_a_guarded_or_harmless_script(payload, monkeypatch, capsys):
     """Controls: a handled failure, errexit, reads, a cd confined to a subshell
     or a batch command of its own, text that only mentions `cd`, non-shell code,
-    and Bash (whose working directory is the project) all pass."""
+    and Bash (whose working directory is the project) all pass. An unreadable
+    event is no longer among them: it denies (errors-4a2d2f34), see
+    test_pretooluse_guards_fail_closed_on_an_unreadable_event."""
     _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
     assert capsys.readouterr().err == ""
 
@@ -5374,3 +5452,671 @@ def test_closure_todo_write_skips_entries_that_are_not_tasks(tmp_path, monkeypat
     code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
     assert code == "remind"
     assert "cr: 1 of 1 steps still open (task ids 2)" in text
+
+
+def _audit_then_deep_run():
+    """An audit seeds two steps and closes one, then deep-runs a specialist."""
+    return (
+        _Transcript()
+        .read("audit")
+        .create("1")
+        .create("2")
+        .update("2", "completed")
+        .read("security")
+        .create("3")
+    )
+
+
+def test_closure_todo_write_keeps_an_earlier_runs_open_steps(tmp_path, monkeypatch, capsys):
+    """audit-8bb7d98f: a replacement made in the deep-run cleared the audit's open
+    step too, and deleting its status read it as closed — the audit dropped out
+    of the reminder with step 1 never done."""
+    t = _todos(_audit_then_deep_run(), {"4": "pending"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 1)" in text
+    assert "security: 1 of 1 steps still open (task ids 4)" in text
+
+
+def test_closure_a_readback_after_a_wipe_keeps_the_step_open(tmp_path, monkeypatch, capsys):
+    """The server no longer lists a wiped id, which a readback otherwise takes as
+    deleted; a wiped step stays open through it."""
+    t = _todos(_audit_then_deep_run(), {"4": "completed"}).listing({"4": "completed"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 1)" in text
+    assert "security" not in text
+
+
+def test_closure_a_restart_does_not_reopen_a_closed_run(tmp_path, monkeypatch, capsys):
+    """audit-ccbbc6bf: a restarted server hands out id 1 again, and the new run's
+    open id 1 read as the finished run's id 1 — the closed run was reported open."""
+    t = _Transcript().read("audit").create("1").update("1", "completed")
+    t.read("security").create("1")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "security: 1 of 1 steps still open (task ids 1)" in text
+    assert "audit" not in text
+
+
+def test_closure_a_restart_does_not_close_an_earlier_runs_step(tmp_path, monkeypatch, capsys):
+    """audit-ccbbc6bf, other direction: closing the reused id 2 after a restart
+    closed the earlier run's never-finished step 2."""
+    t = _Transcript().read("audit").create("1").create("2").update("1", "completed")
+    t.read("security").create("1").create("2").update("1", "completed")
+    t.update("2", "completed")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "audit: 1 of 2 steps still open (task ids 2)" in text
+    assert "security" not in text
+
+
+def test_closure_a_non_numeric_id_opens_no_epoch(tmp_path, monkeypatch, capsys):
+    """An id with no order cannot signal a restart; it is tracked as issued."""
+    t = _Transcript().read("cr").create("t-1").create("t-2").update("t-1", "completed")
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 2 steps still open (task ids t-2)" in text
+
+
+# ── agent-loopholes-015b8134: a `sh -c` string is a command, not an operand ──
+
+
+def _nested_shell_c(command: str, depth: int) -> str:
+    """`command` wrapped in `depth` layers of `bash -c`, each layer shell-quoted."""
+    for _ in range(depth):
+        command = "bash -c " + shlex.quote(command)
+    return command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c 'git commit --no-verify -m x'",
+        'sh -c "git push origin main"',
+        "bash -lc 'git commit --no-verify -m x'",
+        "bash -c -x 'git commit --no-verify -m x'",
+        "bash -o errexit -c 'git commit --no-verify -m x'",
+        "env FOO=1 bash -c 'git commit --no-verify -m x'",
+        "sudo sh -c 'git commit --no-verify -m x'",
+        "busybox sh -c 'git commit --no-verify -m x'",
+        "fish --command 'git commit --no-verify -m x'",
+        "fish --command='git commit --no-verify -m x'",
+        "zsh -c 'echo hi && git commit --no-verify -m x'",
+        "SKIP=ruff bash -c 'git commit -m x'",
+        _nested_shell_c("git commit --no-verify -m x", 2),
+        # Past _MAX_SHELL_DEPTH the payload is split coarsely, never left folded.
+        _nested_shell_c("git commit --no-verify -m x", 7),
+        # A shell reading stdin runs data the outer line carries.
+        "echo 'git commit --no-verify -m x' | bash",
+        "printf 'git push origin main' | sh -s",
+    ],
+)
+def test_git_guard_judges_what_a_shell_c_string_runs(command, monkeypatch, capsys):
+    """`bash -c '<string>'` delivered the git call as one quoted token, so the
+    guard judged `bash` and allowed `--no-verify`, a protected-branch push and a
+    hook skip behind it (agent-loopholes-015b8134)."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c 'git status && git log -1'",
+        "bash -c 'git commit -m ordinary'",
+        "bash scripts/release.sh",
+        "sh -c 'echo hi'",
+        "curl -LsSf https://example.com/install.sh | sh",
+        "bash -c",
+    ],
+)
+def test_git_guard_allows_an_ordinary_shell_c(command, monkeypatch, capsys):
+    """Controls: an unwrapped string is judged like a top-level command, no more
+    harshly — a harmless one, a script file and a pipe naming no git write pass."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c 'rm scripts/hooks/ruff-hook.py'",
+        'sh -c "sed -i s/a/b/ scripts/hooks/_hooklib.py"',
+        "env bash -c 'mv /tmp/x .claude/settings.json'",
+        "bash -c \"bash -c 'rm scripts/hooks/ruff-hook.py'\"",
+        "echo 'rm scripts/hooks/ruff-hook.py' | bash",
+    ],
+)
+def test_agents_guard_judges_what_a_shell_c_string_writes(command, monkeypatch, capsys):
+    """The protected-write half saw `bash` and a quoted operand, and one wrapper
+    word deleted a guard (agent-loopholes-015b8134)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "enforcement surface" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["bash -c 'cat scripts/hooks/ruff-hook.py'", "sh -c 'rm /tmp/x/build.log'"],
+)
+def test_agents_guard_allows_a_shell_c_read(command, monkeypatch, capsys):
+    """Controls: reading the enforcement surface through `-c` stays a read."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._writes_protected(command) is False
+
+
+def test_restore_guard_asks_for_a_restore_inside_a_shell_c(monkeypatch, tmp_path, capsys):
+    """A restore of dirty work behind `bash -c` asks like the bare one."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash("bash -c 'git checkout -- README.md'"), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+def test_unguarded_cd_guard_sees_a_write_inside_a_shell_c(monkeypatch, capsys):
+    """A write run through `sh -c` after an unguarded cd still lands wherever the
+    shell started."""
+    payload = _ctx(language="shell", code="cd /tmp/x\nbash -c 'rm -rf build'")
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["ls", "-c", "x"], None),
+        (["busybox", "ls"], None),
+        (["busybox"], None),
+        (["bash", "-c"], None),
+        (["bash", "--rcfile", "rc", "-c", "git push"], ("c", "git push")),
+        (["bash", "+O", "extglob", "-c", "x"], ("c", "x")),
+        (["bash", "--norc"], ("stdin", None)),
+        (["bash", "-"], ("stdin", None)),
+        (["bash", "-s", "arg"], ("stdin", None)),
+        (["bash", "-x", "run.sh"], ("file", "run.sh")),
+        (["bash", "--", "run.sh"], ("file", "run.sh")),
+    ],
+)
+def test_shell_invocation_reads_each_shell_grammar(tokens, expected):
+    """Where each shell spelling takes its commands from: a `-c` string, stdin or
+    a script file. Only the first two are text a guard can judge."""
+    assert _hooklib()._shell_invocation(tokens) == expected
+
+
+# ── agent-loopholes-6442185e: a relative write resolves from where the shell stands ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd .claude && echo '{}' > settings.local.json",
+        "cd scripts && sed -i 's/a/b/' hooks/_hooklib.py",
+        "git -C scripts checkout HEAD~3 -- hooks",
+        "git --no-pager -C scripts checkout -- hooks",
+        "git -C scripts -C hooks checkout HEAD~3 -- ruff-hook.py",
+        "git --work-tree=scripts restore hooks/ruff-hook.py",
+        "cd scripts && cd hooks && rm x.py",
+        "pushd .claude; touch settings.json",
+        "cd -P scripts && rm hooks/ruff-hook.py",
+        "cd .?laude && tee settings.json < /tmp/x",
+    ],
+)
+def test_guard_resolves_a_relative_write_from_every_cd_and_git_base(command):
+    """Only globs were resolved from a `cd` target; every other relative operand
+    was compared with the repo root alone, so one `cd` into a parent of a
+    protected path made it writable (agent-loopholes-6442185e)."""
+    assert _guard_blocks(command)
+
+
+def test_guard_resolves_a_write_from_a_context_mode_cwd(monkeypatch, capsys):
+    """A context-mode `cwd` is rendered as a leading `cd`, and now counts as one."""
+    mod = _load("deny-agents-path-hook")
+    payload = _ctx(
+        language="shell", code="echo x > settings.local.json", cwd=str(mod._REPO_ROOT / ".claude")
+    )
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, payload, monkeypatch)
+    assert exc.value.code == 2
+    assert "enforcement surface" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd skills && sed -i s/a/b/ nitpicker/SKILL.md",
+        "git -C skills checkout -- nitpicker/SKILL.md",
+        "cd .claude && cat settings.local.json > /tmp/x",
+        "cd /tmp && rm -rf hooks",
+    ],
+)
+def test_guard_allows_a_relative_write_outside_the_surface(command, monkeypatch, capsys):
+    """Controls: the extra bases add places a path is checked from, and a write
+    that lands outside every protected root from each of them still passes."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._writes_protected(command) is False
+
+
+# ── agent-loopholes-0426afd8: moving or deleting an ancestor writes what is under it ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mv scripts /tmp/s && mv /tmp/s scripts",
+        "mv scripts /tmp/s && sed -i 's/sys.exit(2)/sys.exit(0)/' "
+        "/tmp/s/hooks/deny-unsafe-git-hook.py && mv /tmp/s scripts",
+        "rm -rf .claude",
+        "rm -rf ./scripts/",
+        "git rm -r scripts",
+        "cp -r /tmp/evil scripts",
+        "chmod -R 000 .claude/skills",
+        "cd .claude && rm -rf skills",
+        # `mv` removes its source: moving a hook out deletes it.
+        "mv scripts/hooks/a.py /tmp/b.py",
+    ],
+)
+def test_guard_blocks_a_write_to_an_ancestor_of_the_surface(command):
+    """`_under_protected` matched a path at or below a protected root only, so an
+    operation on `scripts` or `.claude` — which acts on everything beneath — was
+    allowed, and one call could move the tree out, edit it and move it back
+    (agent-loopholes-0426afd8)."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp /tmp/x .",
+        "rm -rf scripts/tmp-output",
+        "cd scripts && rm tmp.log",
+        "git -C scripts checkout -- validate-skill.py",
+        "ln -s scripts/hooks/_hooklib.py /tmp/lib.py",
+        "mv .claude/worktrees/agent-1/a /tmp/a",
+    ],
+)
+def test_guard_allows_a_write_beside_the_surface(command, monkeypatch, capsys):
+    """Controls: a sibling of a protected root, a git `-C` value and the repo root
+    as a copy destination are not ancestors, and a link target is only read."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._writes_protected(command) is False
+
+
+# ── agent-hooks-bbb2edb0: the agents tree is matched per word, not across a command ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -n '1p' .claude/skills/graphify/SKILL.md; "
+        "grep -n x skills/nitpicker/commands/agent-rules.md",
+        "cat .claude/rules/a.md tests/agent_test.py",
+        "grep -rn agent .claude/skills/graphify/SKILL.md",
+        "ls **/*.py",
+        "A=x$A; echo $A",
+    ],
+)
+def test_agents_guard_allows_reads_that_only_share_a_command(command, monkeypatch, capsys):
+    """Two reads, neither in the agents tree, were denied together because the
+    textual pass paired a `.claude` in one word with an `agent` in another
+    (agent-hooks-bbb2edb0), and a `**/` glob's parent probe matched every
+    directory, the agents one included."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._references_agents(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "export A=agents; cat .claude/${A}/x.md",
+        "D=.claude; A=$D/agents; cat $A/x.md",
+        "cat $(echo .claude)/agents/x.md",
+        "D=$(pwd)/.claude; cat $D/agents/x.md",
+        "cat `echo .claude`/agents/x.md",
+        "cat $HOME/x/.claude/agents/x.md",
+        "cat .claude/**",
+    ],
+)
+def test_agents_guard_still_resolves_variables_and_substitutions(command):
+    """Controls: per-word matching expands the command's own assignments, and a
+    substitution it cannot resolve falls back to the whole-text match, so every
+    variable-built spelling stays denied."""
+    assert _load("deny-agents-path-hook")._references_agents(command)
+
+
+# ── docs-8bf4642c: the agents guard describes the deny list that actually ships ──
+
+
+def test_agents_guard_docstring_matches_the_settings_deny_list():
+    """The guard's docstring said `.claude/agents/**` denies Read, after 561e285
+    removed the Read rule so agent definitions can be audited in-session
+    (docs-8bf4642c). Pin the claim to the file it describes: a deny list with no
+    Read rule must not be described as denying Read, and every tool it names
+    must be one the docstring names."""
+    settings = json.loads((SCRIPTS_DIR.parent / ".claude" / "settings.json").read_text())
+    tools = {rule.split("(", 1)[0] for rule in settings["permissions"]["deny"]}
+    doc = _load("deny-agents-path-hook").__doc__ or ""
+    assert all(f"`{tool}`" in doc for tool in tools)
+    if "Read" not in tools:
+        assert "denies Read" not in doc and "NotebookEdit" not in doc
+
+
+# ── agent-loopholes-6ae4667d: every restore, and a git call that relocates itself ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -- README.md && git restore skills/nitpicker/SKILL.md",
+        "git restore README.md; git checkout -- skills/nitpicker/SKILL.md",
+        "git -C skills checkout -- nitpicker/SKILL.md",
+        "git --work-tree=skills checkout -- nitpicker/SKILL.md",
+        "git --work-tree skills restore nitpicker/SKILL.md",
+        "git --git-dir=.git restore nitpicker/SKILL.md",
+        "GIT_WORK_TREE=skills git checkout -- nitpicker/SKILL.md",
+    ],
+)
+def test_restore_guard_asks_for_a_later_or_relocated_restore(
+    command, monkeypatch, tmp_path, capsys
+):
+    """Only the first restore was compared with the dirty set, and a `-C` or
+    `--work-tree` operand was compared as if relative to the root, so both
+    discarded a dirty file without a prompt (agent-loopholes-6ae4667d)."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["skills/nitpicker/SKILL.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
+    assert "skills/nitpicker/SKILL.md" in out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -- README.md && git restore docs/other.md",
+        "git -c core.autocrlf=false checkout -- README.md",
+        "git --no-pager restore README.md",
+    ],
+)
+def test_restore_guard_stays_quiet_when_no_restore_reaches_the_dirty_file(
+    command, monkeypatch, tmp_path, capsys
+):
+    """Controls: several clean restores stay silent, and a global option that
+    does not relocate git keeps the path filter."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["skills/nitpicker/SKILL.md"])
+    _run(mod, _bash(command), monkeypatch)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+    assert mod._targets(command)
+    assert mod._changes_directory(command) is False
+
+
+# ── agent-loopholes-ca66c44d: an export earlier in the command reaches the commit ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "export SKIP=ruff; git commit -m x",
+        "export SKIP=ruff && git commit -m x",
+        "SKIP=ruff; export SKIP; git commit -m x",
+        "declare -x PRE_COMMIT_ALLOW_NO_CONFIG=1\ngit commit -m x",
+        "typeset -x SKIP=ruff; git commit -m x",
+        "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "
+        "GIT_CONFIG_VALUE_0=/dev/null; git commit -m x",
+    ],
+)
+def test_git_guard_folds_exports_into_later_stages(command, monkeypatch, capsys):
+    """The skip and hooksPath checks saw only the git stage's own prefix, so the
+    same assignment exported one stage earlier passed (agent-loopholes-ca66c44d)."""
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit -m x; export SKIP=ruff",
+        "export FOO=1; git commit -m x",
+        "declare SKIP=ruff; git commit -m x",
+        "declare -r SKIP=ruff; git commit -m x",
+        "export SKIP=ruff; git status",
+    ],
+)
+def test_git_guard_ignores_exports_that_reach_no_commit(command, monkeypatch, capsys):
+    """Controls: an export after the commit, an unrelated variable, a declare
+    without `-x`, and a skip variable with no commit to skip all pass."""
+    mod = _load("deny-unsafe-git-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-d707fb69: errexit can be cleared; find and rsync write ──
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set -e\nset +e\ncd /nope\nrm -rf build",
+        "set -o errexit\nset +o errexit\ncd /nope\nrm -rf build",
+        "set -eu\nset +eu\ncd /nope\ntouch f",
+        "set -e +e\ncd /nope\nrm f",
+        "cd /nope\nfind . -name '*.pyc' -delete",
+        "cd /nope\nfind . -type f -exec rm {} +",
+        "cd /nope\nfind . -execdir chmod 000 {} ;",
+        "pushd /nope\nrsync -a --delete /tmp/x/ ./",
+    ],
+)
+def test_unguarded_cd_guard_sees_cleared_errexit_and_find_or_rsync_writes(
+    code, monkeypatch, capsys
+):
+    """errexit was a latch `set +e` never cleared, and `find -delete` and `rsync
+    --delete` were not writes, so each of these ran wherever the failed cd left
+    the shell (agent-loopholes-d707fb69)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set +e\nset -e\ncd /nope\nrm f",
+        "set -o pipefail -o errexit\ncd /nope\nrm f",
+        "set -x\ncd /nope\nls",
+        "cd /nope\nfind . -name '*.pyc'",
+        "cd /tmp/x || exit 1\nrsync -a src/ dst/",
+    ],
+)
+def test_unguarded_cd_guard_allows_errexit_restored_or_a_read_only_find(code, monkeypatch, capsys):
+    """Controls: errexit turned back on, a `find` that only prints, and a guarded
+    rsync all pass."""
+    _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── skill-safety-eabeab65: a graph answer never lands in a double-quoted shell arg ──
+
+
+def test_vendored_graphify_save_result_never_double_quotes_free_text():
+    """Each save-result step put the model's answer in `--answer "ANSWER"`, where
+    a backtick span or `$(...)` in the answer — or in the repository text it was
+    drawn from — executes. The answer goes through a quoted heredoc into
+    `--answer-file`, and every other placeholder is single-quoted."""
+    text = (GRAPHIFY_DIR / "references" / "query.md").read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines() if "save-result --question" in line]
+    assert len(lines) == 3  # query, path, explain
+    for line in lines:
+        assert '"' not in line.split("save-result", 1)[1].replace('"$answer_file"', "")
+        assert "--answer-file" in line and "--answer " not in line
+    assert text.count("cat > \"$answer_file\" <<'GRAPHIFY_ANSWER'") == 3
+    notice = (SCRIPTS_DIR.parent / "NOTICE").read_text(encoding="utf-8")
+    assert "skill-safety-eabeab65" in next(
+        s for s in notice.split("\n## ") if s.startswith("graphify")
+    )
+
+
+# ── skill-safety-39614de9: the corpus goes to Gemini only on the owner's yes ──
+
+
+def test_vendored_graphify_uploads_to_gemini_only_on_confirmation():
+    """Setting GEMINI_API_KEY or GOOGLE_API_KEY — a generic name many Google SDKs
+    export — sent every doc, paper and image in the corpus to Google with no
+    prompt. Only GEMINI_API_KEY may select Gemini, and only after the owner
+    confirms the upload."""
+    skill = (GRAPHIFY_DIR / "SKILL.md").read_text(encoding="utf-8")
+    section = skill[skill.index("**Before semantic extraction:**") :]
+    section = section[: section.index("> **No other API keys are read.**")]
+    assert "confirm the upload" in section and "explicit yes" in section
+    selecting = [
+        line for line in skill.splitlines() if "GOOGLE_API_KEY" in line and "never used" not in line
+    ]
+    assert selecting == []
+    notice = (SCRIPTS_DIR.parent / "NOTICE").read_text(encoding="utf-8")
+    assert "skill-safety-39614de9" in next(
+        s for s in notice.split("\n## ") if s.startswith("graphify")
+    )
+
+
+# ── agent-loopholes-d61a805c: a write through the command's own variable ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "F=scripts/hooks/x.py; echo x > $F",
+        "F=scripts/hooks/x.py; sed -i s/a/b/ $F",
+        "F=.claude/settings.local.json; echo '{}' > \"$F\"",
+        "export F=.claude/settings.json; tee $F < /tmp/x",
+        "D=scripts; F=$D/hooks/ruff-hook.py; rm ${F}",
+        "F=/tmp/x; F=scripts/hooks/x.py; rm $F",
+        "for f in scripts/hooks/ruff-hook.py; do :; done; rm $f",
+        "for f in ; do :; done; rm $f",
+        "read f; rm $f",
+        "f=$(echo scripts/hooks/x.py); rm $f",
+        "f=`echo scripts/hooks/x.py`; rm $f",
+        "t=$(mktemp -p scripts/hooks); rm $t",
+        "echo x > $(echo scripts/hooks/x.py)",
+        "echo x > `echo f`",
+        "rm scripts/$X",
+        "rm $X/hooks/ruff-hook.py",
+        "cp /tmp/x $HOME/.claude/settings.json",
+        "A=x$A; rm $A",
+    ],
+)
+def test_guard_expands_variables_in_a_write_target(command):
+    """The write half compared `$F` literally, so a protected path assigned to a
+    variable was written through it (agent-loopholes-d61a805c). A target the
+    command computes, and an inherited variable whose surrounding text could
+    still land on the surface, are denied too."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $HOME",
+        "F=/tmp/x; echo x > $F",
+        'echo x > "$TMPDIR/y"',
+        't=$(mktemp -d); rm -rf "$t"',
+        'sed -i "s/$a/$b/" notes.txt',
+        "echo x > /tmp/out.$$",
+        "cp build.log $OUT_DIR/",
+    ],
+)
+def test_guard_allows_a_variable_write_that_cannot_reach_the_surface(command, monkeypatch, capsys):
+    """Controls: a bound path outside the surface, an inherited variable with a
+    harmless remainder, `$$`, and mktemp cleanup stay allowed — denying every
+    unresolved `$` would make routine temp-file writes impossible."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+    assert mod._writes_protected(command) is False
+
+
+def test_expansions_give_up_past_the_candidate_bound():
+    """Seven two-valued variables in one target are 128 spellings, past the
+    bound, so the target is not enumerated and the guard denies."""
+    mod = _load("deny-agents-path-hook")
+    names = "ABCDEFG"
+    binds = "; ".join(f"{n}=a; {n}=b" for n in names)
+    target = "/".join(f"${n}" for n in names)
+    assert mod._expansions(target, mod._bindings(f"{binds}; rm {target}")) is None
+    assert _guard_blocks(f"{binds}; rm {target}")
+
+
+# ── reserved words: a command behind `then`, `do`, `{` or `!` is still judged ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then git commit --no-verify -m x; fi",
+        "for i in 1; do git push origin main; done",
+        "{ git commit --no-verify -m x; }",
+        "! git commit --no-verify -m x",
+        "until git commit --no-verify -m x; do :; done",
+        "if false; then :; elif true; then SKIP=ruff git commit -m x; fi",
+    ],
+)
+def test_git_guard_judges_a_command_behind_a_reserved_word(command, monkeypatch, capsys):
+    """Every guard read `tokens[0]`, which was `then`, `do`, `{` or `!`, so a
+    denied git call wrapped in any compound command passed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then rm scripts/hooks/ruff-hook.py; fi",
+        "for f in scripts/hooks/ruff-hook.py; do rm $f; done",
+        "while true; do echo x > .claude/settings.local.json; done",
+    ],
+)
+def test_agents_guard_judges_a_write_behind_a_reserved_word(command):
+    """The protected-write half skipped a stage whose verb was a reserved word,
+    so a loop body or `then` branch wrote the surface unjudged; with it closed,
+    a `for` loop variable is bound to each listed word (agent-loopholes-d61a805c)."""
+    assert _guard_blocks(command)
+
+
+def test_unguarded_cd_guard_sees_a_write_in_a_loop_body(monkeypatch, capsys):
+    """`do rm -rf "$f"` after a failed cd deleted wherever the shell started."""
+    payload = _ctx(language="shell", code='cd /nope\nfor f in *; do rm -rf "$f"; done')
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_strip_reserved_keeps_an_operand_spelled_like_a_keyword():
+    """Only the leading words go; `echo then` still has its operand."""
+    lib = _hooklib()
+    assert lib.strip_reserved(["then", "!", "git", "push"]) == ["git", "push"]
+    assert lib.strip_reserved(["echo", "then"]) == ["echo", "then"]
+    assert lib.strip_reserved(["do"]) == []

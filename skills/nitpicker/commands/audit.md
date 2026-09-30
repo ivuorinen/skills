@@ -42,7 +42,9 @@ Analyze all of:
      first and deep-run its command file (`np_read_command` with
      `command: <command>`, else read `<command>.md`) — its findings land under
      its own auditor key. A focus deepens one lens and never narrows the
-     checklist; every other coverage task still runs.
+     checklist; every other coverage task still runs. A focus on `complexity`
+     orders AUD:S26 first but still applies it inline, as `_audit-coverage.md`
+     requires.
    - A **scope** bounds what the run covers, along one of two axes. Name which:
      - **Input** — the files each lens runs against (`changed-files`, "only the
        MCP tools", "just `scripts/`"). Every lens still applies, to a smaller

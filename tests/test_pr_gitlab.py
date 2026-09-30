@@ -238,6 +238,27 @@ class TestSplitDiscussions:
             }
         ]
 
+    def test_resolved_general_thread_is_not_a_summary_comment(self):
+        """audit-97ad14c6: an MR-level "Start a thread" discussion is resolvable,
+        and once resolved it is handled feedback, not a live comment."""
+        discussions = [
+            {"id": "d1", "notes": [_note(body="please rename X", resolvable=True, resolved=True)]}
+        ]
+        assert gl._split_discussions(_TARGET, 7, discussions) == ([], [])
+
+    def test_unresolved_general_thread_stays_a_summary_comment(self):
+        discussions = [
+            {
+                "id": "d1",
+                "notes": [
+                    _note(1, body="please rename X", resolvable=True, resolved=True),
+                    _note(2, body="still open", resolvable=True, resolved=False),
+                ],
+            }
+        ]
+        _threads, summary = gl._split_discussions(_TARGET, 7, discussions)
+        assert [s["body"] for s in summary] == ["please rename X", "still open"]
+
     def test_system_notes_are_dropped(self):
         # "added 3 commits" is an activity record, never review feedback.
         discussions = [{"id": "d1", "notes": [_note(body="added 3 commits", system=True)]}]
@@ -349,52 +370,96 @@ class TestChecks:
         assert gl._checks(_TARGET, 7, rest) == []
 
 
+def _reviewer(username, state):
+    """One entry of `GET .../merge_requests/:iid/reviewers`, in GitLab's documented
+    shape: the user nested under `user`, whose own `state` is the *account* state,
+    and the review verdict at the top level."""
+    return {"user": {"username": username, "state": "active"}, "state": state}
+
+
+def _no_reviewers(_path):
+    return []
+
+
 class TestReviews:
     def test_approvals_become_approved_verdicts(self):
         approvals = {"approved_by": [{"user": {"username": "alice"}}]}
-        reviews = gl._reviews({}, _TARGET, 7, lambda _p: approvals)
+        reviews = gl._reviews(_TARGET, 7, _no_reviewers, lambda _p: approvals)
         assert reviews == [c.review(author="alice", state="approved")]
         # GitLab records no commit per approval: the key is present and empty.
         assert reviews[0]["commit_id"] == ""
 
-    def test_requested_changes_read_from_the_mrs_reviewers(self):
-        mr = {"reviewers": [{"username": "bob", "state": "requested_changes"}]}
-        reviews = gl._reviews(mr, _TARGET, 7, lambda _p: {})
+    def test_requested_changes_read_from_the_reviewers_endpoint(self):
+        seen = []
+
+        def reviewers(path):
+            seen.append(path)
+            return [_reviewer("bob", "requested_changes")]
+
+        reviews = gl._reviews(_TARGET, 7, reviewers, lambda _p: {})
         assert reviews == [c.review(author="bob", state="changes_requested")]
+        assert seen == ["projects/grp%2Fproj/merge_requests/7/reviewers"]
+
+    def test_an_account_state_on_the_mr_response_is_not_a_verdict(self):
+        """audit-9dcff266: the single-MR response lists reviewers as plain users,
+        whose `state` is `active`. The verdict comes only from /reviewers, so an
+        MR-shaped reviewer list — which `_reviews` no longer reads — yields none."""
+        mr_shaped = [{"id": 2, "username": "bob", "state": "active"}]
+        assert gl._reviews(_TARGET, 7, lambda _p: mr_shaped, lambda _p: {}) == []
 
     def test_approval_supersedes_an_earlier_change_request(self):
-        mr = {"reviewers": [{"username": "bob", "state": "requested_changes"}]}
         approvals = {"approved_by": [{"user": {"username": "bob"}}]}
-        reviews = gl._reviews(mr, _TARGET, 7, lambda _p: approvals)
+        reviews = gl._reviews(
+            _TARGET, 7, lambda _p: [_reviewer("bob", "requested_changes")], lambda _p: approvals
+        )
         assert reviews == [c.review(author="bob", state="approved")]
 
     def test_other_reviewer_states_carry_no_verdict(self):
-        mr = {"reviewers": [{"username": "bob", "state": "unreviewed"}, "junk"]}
-        assert gl._reviews(mr, _TARGET, 7, lambda _p: {}) == []
+        entries = [_reviewer("bob", "unreviewed"), _reviewer("eve", "reviewed"), "junk"]
+        assert gl._reviews(_TARGET, 7, lambda _p: entries, lambda _p: {}) == []
 
     def test_missing_usernames_become_unknown(self):
         approvals = {"approved_by": [{}, None]}
-        assert [r["author"] for r in gl._reviews({}, _TARGET, 7, lambda _p: approvals)] == [
-            "unknown"
-        ]
+        reviews = gl._reviews(_TARGET, 7, _no_reviewers, lambda _p: approvals)
+        assert [r["author"] for r in reviews] == ["unknown"]
+
+    def test_a_requesting_reviewer_without_a_user_becomes_unknown(self):
+        entries = [{"state": "requested_changes"}]
+        reviews = gl._reviews(_TARGET, 7, lambda _p: entries, lambda _p: {})
+        assert reviews == [c.review(author="unknown", state="changes_requested")]
 
     def test_approvals_failure_degrades_without_losing_the_reviewers(self, capsys):
-        mr = {"reviewers": [{"username": "bob", "state": "requested_changes"}]}
-
         def boom(_path):
             raise RuntimeError("approvals down")
 
-        assert gl._reviews(mr, _TARGET, 7, boom)[0]["state"] == "changes_requested"
+        reviews = gl._reviews(_TARGET, 7, lambda _p: [_reviewer("bob", "requested_changes")], boom)
+        assert reviews[0]["state"] == "changes_requested"
         assert "approvals" in capsys.readouterr().err
 
+    def test_reviewers_failure_degrades_without_losing_the_approvals(self, capsys):
+        """The /reviewers call is best-effort on its own: a failure is recorded in
+        `degraded` and the approvals still come back."""
+
+        def boom(_path):
+            raise RuntimeError("reviewers down")
+
+        approvals = {"approved_by": [{"user": {"username": "alice"}}]}
+        reviews = gl._reviews(_TARGET, 7, boom, lambda _p: approvals)
+        assert reviews == [c.review(author="alice", state="approved")]
+        assert c._take_degraded() == ["reviewers: RuntimeError: reviewers down"]
+        assert "reviewers" in capsys.readouterr().err
+
     def test_null_approvals_body_is_tolerated(self):
-        assert gl._reviews({}, _TARGET, 7, lambda _p: None) == []
+        assert gl._reviews(_TARGET, 7, _no_reviewers, lambda _p: None) == []
 
 
 class TestMergeable:
-    @pytest.mark.parametrize("detailed", ["checking", "unchecked", ""])
+    @pytest.mark.parametrize(
+        "detailed", ["checking", "unchecked", "preparing", "approvals_syncing", ""]
+    )
     def test_undecided_is_null_not_false(self, detailed):
         # Collapsing "not decided yet" to False reports a fine MR as blocked.
+        # `preparing` and `approvals_syncing` are transient too (audit-c8c04558).
         assert gl._mergeable(detailed) is None
 
     def test_mergeable(self):
@@ -459,6 +524,24 @@ class TestFetchStatus:
     def test_missing_mr_raises(self):
         with pytest.raises(c.TransportError, match="not found"):
             self._run({"message": "404 Not found"})
+
+    def test_reviews_read_the_reviewers_endpoint_not_the_mr_response(self):
+        """audit-9dcff266 end to end: the MR response's `reviewers` carries account
+        state only, and a change request reaches `reviews` through /reviewers."""
+        mr = {**self._MR, "reviewers": [{"id": 2, "username": "bob", "state": "active"}]}
+
+        def rest_list(path):
+            if path.endswith("/reviewers"):
+                return [_reviewer("carol", "requested_changes")]
+            return []
+
+        with (
+            patch.object(gl, "_transport", return_value=(rest_list, lambda _p: mr, "token-rest")),
+            patch.object(gl, "_checks", return_value=[]),
+        ):
+            out = gl.fetch_status(_TARGET, 7)
+        assert out["reviews"] == [c.review(author="carol", state="changes_requested")]
+        assert out["degraded"] == []
 
 
 def test_provider_is_reachable_through_the_shared_dispatcher():

@@ -12,9 +12,11 @@ nothing checked it (agent-hooks-da747c0c).
 
 A `cd` (or `pushd`) counts as guarded when `|| …` handles its failure, when it
 heads an `&&` chain that reaches the write, or when `set -e`/`set -o errexit`
-ran before it. A `cd` inside a `( … )` or `$( … )` subshell is forgotten when
-the subshell closes. Each batch command is judged on its own, as each runs in
-its own shell. Bash is out of scope: its working directory is the project.
+ran before it and no `set +e`/`set +o errexit` has cleared it since. `find`
+with `-delete` or `-exec` and `rsync` count as writes. A `cd` inside a
+`( … )` or `$( … )` subshell is forgotten when the subshell closes. Each
+batch command is judged on its own, as each runs in its own shell. Bash is out
+of scope: its working directory is the project.
 
 Ceiling: `cd x || true` counts as guarded, a write performed by a script or an
 interpreter the stage merely invokes is not recognised, and backticks do not
@@ -33,8 +35,9 @@ from _hooklib import (
     _tool_input,
     _unmask,
     _wrapper_variants,
-    load_event,
+    load_event_strict,
     skip_git_global_opts,
+    strip_reserved,
 )
 
 # _hooklib's stage separators, captured, so the separator after each stage is known.
@@ -57,8 +60,15 @@ _WRITE_VERBS = frozenset(
         "patch",
         "mkdir",
         "install",
+        # rsync writes its destination, and `--delete` removes from it
+        # (agent-loopholes-d707fb69).
+        "rsync",
     }
 )
+# `find` reads, unless an action deletes or runs a command per match: `find .
+# -delete` after a failed cd was a recursive delete the guard never saw
+# (agent-loopholes-d707fb69).
+_FIND_ACTIONS = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir"})
 _IN_PLACE = frozenset({"sed", "perl", "ruby"})
 _IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 # git subcommands that only read; every other one is treated as a write.
@@ -66,7 +76,7 @@ _GIT_READS = frozenset(
     {"status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "grep"}
 )
 _REDIRECT = re.compile(r">{1,2}\s*([^\s&][^\s;|&()<>]*)")
-_ERREXIT = re.compile(r"-[a-zA-Z]*e[a-zA-Z]*")
+_ERREXIT = re.compile(r"[-+][a-zA-Z]*e[a-zA-Z]*")
 
 
 def _verb_writes(tokens: list[str]) -> bool:
@@ -77,6 +87,8 @@ def _verb_writes(tokens: list[str]) -> bool:
         return index < len(tokens) and tokens[index] not in _GIT_READS
     if verb in _IN_PLACE:
         return any(_IN_PLACE_RE.match(arg) for arg in tokens[1:])
+    if verb == "find":
+        return any(arg in _FIND_ACTIONS for arg in tokens[1:])
     return verb in _WRITE_VERBS
 
 
@@ -92,11 +104,24 @@ def _redirects(segment: str) -> bool:
     return any(match.group(1) != "/dev/null" for match in _REDIRECT.finditer(segment))
 
 
-def _sets_errexit(tokens: list[str]) -> bool:
-    """True for `set -e` in any spelling: `-e`, `-euo`, or `-o errexit`."""
-    return tokens[0] == "set" and (
-        "errexit" in tokens or any(_ERREXIT.fullmatch(arg) for arg in tokens[1:])
-    )
+def _errexit_after(tokens: list[str], errexit: bool) -> bool:
+    """Whether errexit is on after this stage, given whether it was before.
+
+    `set -e`, `-euo` and `-o errexit` turn it on; `set +e`, `+eu` and
+    `+o errexit` turn it off again. It used to be a latch that only a set could
+    move, so `set -e; set +e; cd /nope; rm -rf build` counted the cd as guarded
+    by an errexit the script had already cleared (agent-loopholes-d707fb69).
+    The last spelling on the line wins, as it does in the shell.
+    """
+    if tokens[0] != "set":
+        return errexit
+    args = tokens[1:]
+    for index, arg in enumerate(args):
+        if arg in ("-o", "+o") and args[index + 1 : index + 2] == ["errexit"]:
+            errexit = arg == "-o"
+        elif _ERREXIT.fullmatch(arg):
+            errexit = arg[0] == "-"
+    return errexit
 
 
 def _unguarded_write(script: str) -> tuple[str, str] | None:
@@ -108,12 +133,15 @@ def _unguarded_write(script: str) -> tuple[str, str] | None:
     errexit = False
     stack: list[tuple[str | None, str | None]] = []
     for index in range(0, len(parts), 2):
-        tokens = [_unmask(token, spans) for token in parts[index].split()]
+        # Reserved words first: `cd /nope; for f in *; do rm -rf "$f"; done`
+        # put the delete behind `do`, a verb no write set names, and `then cd
+        # /nope` hid the cd itself (see `_hooklib.strip_reserved`).
+        tokens = strip_reserved([_unmask(token, spans) for token in parts[index].split()])
         sep = parts[index + 1] if index + 1 < len(parts) else ""
         if tokens:
             if exposed and (_writes(tokens) or _redirects(parts[index])):
                 return exposed, " ".join(tokens)
-            errexit = errexit or _sets_errexit(tokens)
+            errexit = _errexit_after(tokens, errexit)
             if PurePosixPath(tokens[0]).name in _CHDIR and not errexit and sep != "||":
                 chained, exposed = (
                     (" ".join(tokens), exposed) if sep == "&&" else (None, " ".join(tokens))
@@ -144,9 +172,7 @@ def _scripts(data: dict) -> list[str]:
 
 def main() -> None:
     """Deny the call when any script it runs writes after a cd that can fail."""
-    data = load_event()
-    if data is None:
-        return
+    data = load_event_strict()
     for script in _scripts(data):
         found = _unguarded_write(script)
         if found is not None:

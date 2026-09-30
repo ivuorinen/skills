@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Render the findings store into formats other systems already ingest.
 
 Ships inside the nitpicker skill: stdlib-only, Python 3.11+, no uv required.

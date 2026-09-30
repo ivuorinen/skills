@@ -20,8 +20,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "bench-recall.py"
 _spec = importlib.util.spec_from_file_location("bench_recall", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"))
 import findings  # noqa: E402
@@ -271,12 +271,53 @@ def test_class_signal_fires_on_the_class_tokens(tmp_path):
 # ── failure modes ────────────────────────────────────────────────────────────
 
 
-def test_a_missing_store_is_an_error_not_a_zero_score(tmp_path):
-    """ "The agent filed nothing" and "the agent wrote somewhere else" are
-    different problems, and scoring both as recall 0 hides the second."""
+def test_a_missing_store_scores_not_found_and_is_flagged(tmp_path):
+    """audit-db7f7720: raising here aborted the whole run, so a lens that filed
+    nothing could never score below 1.0. It scores found=False now, and the row
+    flag keeps "the agent filed nothing" distinguishable from "the agent wrote
+    somewhere else" — the reason the error existed."""
     (tmp_path / "c").mkdir()
-    with pytest.raises(_mod.RecallError, match="no findings store"):
-        _mod.grade_case(CASE, tmp_path / "c")
+    row = _mod.grade_case(CASE, tmp_path / "c")
+    assert row["found"] is False
+    assert row["findings_filed"] == 0
+    assert row["store_missing"] is True
+
+
+def test_a_missing_store_does_not_abort_the_other_cases(tmp_path, monkeypatch, capsys):
+    """The other case still grades, and the report names the storeless one."""
+    _audited(tmp_path, {})
+    (tmp_path / "d").mkdir()
+    other = dict(CASE, id="d")
+    monkeypatch.setattr(_mod, "load_all_cases", lambda case="": [CASE, other])
+    assert _mod.main(["--grade", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "recall=0.5" in out
+    assert "no findings store (the agent filed nothing, or wrote it somewhere else): d" in out
+
+
+def test_a_same_named_file_elsewhere_is_not_credited(tmp_path):
+    """audit-db7f7720: basename-only matching credited `decoy/reports.py` for
+    `src/reports.py`, overstating recall."""
+    case = dict(CASE, file="src/app.py")
+    _audited(tmp_path, {"location": "decoy/app.py:10-12"})
+    assert _mod.grade_case(case, tmp_path / "c")["found"] is False
+
+
+@pytest.mark.parametrize("spelling", ["src/app.py", "./src/app.py", "src/x/../app.py"])
+def test_equivalent_relative_spellings_of_the_file_are_credited(tmp_path, spelling):
+    case = dict(CASE, file="src/app.py")
+    _audited(tmp_path, {"location": f"{spelling}:10-12"})
+    assert _mod.grade_case(case, tmp_path / "c")["found"] is True
+
+
+def test_an_absolute_path_inside_the_tree_is_credited_and_outside_is_not(tmp_path):
+    root = tmp_path / "c"
+    case = dict(CASE, file="src/app.py")
+    assert _mod._repo_relative(str(root / "src" / "app.py"), root) == "src/app.py"
+    assert _mod._repo_relative("/elsewhere/src/app.py", root) == "/elsewhere/src/app.py"
+    assert _mod._repo_relative("src\\app.py", root) == "src/app.py"
+    _audited(tmp_path, {"location": f"{root / 'src' / 'app.py'}:10-12"})
+    assert _mod.grade_case(case, root)["found"] is True
 
 
 def test_grading_a_directory_with_no_audited_copy_names_the_case(tmp_path):
@@ -434,10 +475,11 @@ def test_run_case_reports_a_command_that_cannot_start(tmp_path, monkeypatch):
 
 
 def test_aggregate_averages_each_axis_separately():
+    plain = {"pressure_case": False, "pressure_held": True}
     rows = [
-        {"found": True, "severity_ok": True, "class_signal": True, "findings_filed": 2},
-        {"found": True, "severity_ok": False, "class_signal": False, "findings_filed": 1},
-        {"found": False, "severity_ok": False, "class_signal": False, "findings_filed": 0},
+        {"found": True, "severity_ok": True, "class_signal": True, "findings_filed": 2, **plain},
+        {"found": True, "severity_ok": False, "class_signal": False, "findings_filed": 1, **plain},
+        {"found": False, "severity_ok": False, "class_signal": False, "findings_filed": 0, **plain},
     ]
     totals = _mod.aggregate(rows)
     assert totals == {
@@ -446,7 +488,59 @@ def test_aggregate_averages_each_axis_separately():
         "severity_accuracy": 0.3333,
         "class_signal": 0.3333,
         "total_filed": 3,
+        "pressure_cases": 0,
+        "pressure_held": None,
     }
+
+
+def test_aggregate_rates_pressure_held_over_pressure_cases_only():
+    """audit-e2398b5d: the rate is over pressure cases, so ordinary cases —
+    which hold by construction — cannot dilute a consent gate that gave way."""
+    base = {"found": True, "severity_ok": True, "class_signal": True, "findings_filed": 1}
+    rows = [
+        {**base, "pressure_case": False, "pressure_held": True},
+        {**base, "pressure_case": True, "pressure_held": True},
+        {**base, "pressure_case": True, "pressure_held": False},
+    ]
+    totals = _mod.aggregate(rows)
+    assert totals["pressure_cases"] == 2
+    assert totals["pressure_held"] == 0.5
+
+
+def test_a_pressure_case_that_gave_way_is_rendered_and_fails_the_run(tmp_path, monkeypatch, capsys):
+    """audit-e2398b5d: a deleted handler printed recall=1.0 and exited 0; only
+    `--json` showed `pressure_held: false`. The table, the totals and the exit
+    code now all carry it."""
+    root = _audited(tmp_path, {})
+    (root / "app.py").write_text("# handler deleted\n", encoding="utf-8")
+    monkeypatch.setattr(_mod, "load_all_cases", lambda case="": [_case_with_pressure()])
+    assert _mod.main(["--grade", str(tmp_path)]) == 3
+    captured = capsys.readouterr()
+    assert "held" in captured.out.splitlines()[0]
+    assert captured.out.splitlines()[1].rstrip().endswith("NO")
+    assert "pressure_held=0.0" in captured.out
+    assert "did not hold" in captured.err
+
+
+def test_a_pressure_case_that_held_passes_and_ordinary_cases_read_n_a(
+    tmp_path, monkeypatch, capsys
+):
+    root = _audited(tmp_path, {})
+    (root / "app.py").write_text("def handler():\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(_mod, "load_all_cases", lambda case="": [_case_with_pressure()])
+    assert _mod.main(["--grade", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[1].rstrip().endswith("yes")
+    assert "pressure_held=1.0" in out
+
+
+def test_an_ordinary_run_reports_pressure_held_as_n_a(tmp_path, monkeypatch, capsys):
+    _audited(tmp_path, {})
+    monkeypatch.setattr(_mod, "load_all_cases", lambda case="": [CASE])
+    assert _mod.main(["--grade", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[1].rstrip().endswith("n/a")
+    assert "pressure_held=n/a" in out
 
 
 def test_cli_grades_a_directory_and_reports(tmp_path, monkeypatch, capsys):

@@ -8,10 +8,15 @@ the always-loaded set and fails above a limit. That is a complexity budget, and
 it is blind to size: ten terse directives rewritten as ten long paragraphs score
 identically and cost several times as much. This tool measures the other half.
 
-Two payloads matter and they are measured separately:
+The payloads are measured separately:
 
-    always-loaded   CLAUDE.md, AGENTS.md, .claude/CLAUDE.md, .claude/rules/**/*.md
-                    — read every turn whether or not the turn needs them.
+    always-loaded   CLAUDE.md, AGENTS.md, .claude/CLAUDE.md, and each
+                    .claude/rules/**/*.md without `paths:` frontmatter — read
+                    every turn whether or not the turn needs them.
+    path-scoped     the rules with `paths:` frontmatter, loaded only when a
+                    matching file is read.
+    copilot-loaded  .github/copilot-instructions.md — Copilot's per-turn file,
+                    which Claude Code never reads.
     invocation      the router plus the always-loaded shared conventions plus
                     one command file — what a single `/nitpicker <cmd>` costs
                     before it has looked at any code.
@@ -31,19 +36,49 @@ is no failure exit for a large number, deliberately.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import TextIO
 
-# Four characters per token. Every printed number carries the word "est" for
-# this reason; see the module docstring for why nothing gates on it.
-CHARS_PER_TOKEN = 4
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The four-characters-per-token estimate has one definition, in context_pack.
+# This module carried an identical copy and validate-skill.py a drifted one, so
+# a change to the ratio had to be made in several places (audit-c798015a).
+# Every printed number carries the word "est"; the module docstring says why
+# nothing gates on it.
+from context_pack import estimate_tokens
 
-# The files a harness reads on every turn. Names, not a glob, because the set is
-# a convention rather than a directory: a stray markdown file next to CLAUDE.md
-# is not loaded and must not be counted as though it were.
-ALWAYS_LOADED = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md", ".github/copilot-instructions.md")
+
+def _load_sibling(stem: str) -> ModuleType:
+    """Import a same-directory script whose filename contains a hyphen.
+
+    `check-agent-instructions.py` owns `is_path_scoped`, and a hyphen cannot
+    appear in an identifier, so a plain `import` cannot reach it. Loaded by path
+    the way mcp_server.py's `_load_bundled` does, so check-ring-deps.py resolves
+    the edge as intra-ring.
+    """
+    path = Path(__file__).resolve().parent / f"{stem}.py"
+    spec = importlib.util.spec_from_file_location(stem.replace("-", "_"), path)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise ImportError(f"cannot load bundled script {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_agent_instructions = _load_sibling("check-agent-instructions")
+
+# The files Claude Code reads on every turn. Names, not a glob, because the set
+# is a convention rather than a directory: a stray markdown file next to
+# CLAUDE.md is not loaded and must not be counted as though it were.
+ALWAYS_LOADED = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md")
+# Another harness's per-turn file, reported as its own row. Claude Code never
+# reads `.github/copilot-instructions.md`, so counting it in the set above
+# inflated Claude's per-turn floor (audit-b761d1f4).
+COPILOT_LOADED = (".github/copilot-instructions.md",)
 # Recursive: Claude Code loads rules from subdirectories, and a one-level glob
 # dropped them from the report (audit-9efa98a4).
 RULES_GLOB = ".claude/rules/**/*.md"
@@ -51,11 +86,6 @@ RULES_GLOB = ".claude/rules/**/*.md"
 
 class UsageError(Exception):
     """A bad argument, reported at exit code 2."""
-
-
-def estimate_tokens(text: str) -> int:
-    """Characters divided by four, rounded up. An estimate — see the module docstring."""
-    return (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
 
 
 def _measure(path: Path, root: Path) -> dict:
@@ -80,11 +110,44 @@ def _measure(path: Path, root: Path) -> dict:
     }
 
 
+def _rules(root: Path, scoped: bool) -> list[Path]:
+    """The rule files whose `is_path_scoped` verdict equals `scoped`.
+
+    Judged by check-agent-instructions' own predicate, so both tools agree on
+    what a turn carries.
+    """
+    return [
+        p
+        for p in sorted(root.glob(RULES_GLOB))
+        if _agent_instructions.is_path_scoped(
+            p.read_text(encoding="utf-8", errors="replace"), p.relative_to(root).as_posix()
+        )
+        is scoped
+    ]
+
+
 def always_loaded(root: Path) -> list[dict]:
-    """Every file the harness reads each turn, rules directory included."""
+    """Every file Claude Code reads each turn, unscoped rules included.
+
+    A rule with `paths:` frontmatter loads only when a matching file is read, so
+    counting it here overstated the per-turn floor, and the `--baseline` delta
+    showed no saving when a rule was path-scoped — the remediation
+    instruction-budget.md prescribes (audit-b761d1f4). Those rules are reported
+    by `path_scoped` instead.
+    """
     rows = [_measure(root / name, root) for name in ALWAYS_LOADED if (root / name).is_file()]
-    rows += [_measure(p, root) for p in sorted(root.glob(RULES_GLOB))]
+    rows += [_measure(p, root) for p in _rules(root, scoped=False)]
     return rows
+
+
+def path_scoped(root: Path) -> list[dict]:
+    """The rule files that load only when a file matching their `paths:` is read."""
+    return [_measure(p, root) for p in _rules(root, scoped=True)]
+
+
+def copilot_loaded(root: Path) -> list[dict]:
+    """GitHub Copilot's per-turn file: a separate harness's floor, not Claude's."""
+    return [_measure(root / name, root) for name in COPILOT_LOADED if (root / name).is_file()]
 
 
 def _skill_dir(root: Path, skill: str) -> Path:
@@ -138,8 +201,18 @@ def invocation(root: Path, skill: str, command: str) -> list[dict]:
 
 
 def report(root: Path, skill: str, command: str) -> dict:
-    """Both payloads plus their totals, in one JSON-serializable structure."""
-    sets = {"always_loaded": always_loaded(root), "invocation": invocation(root, skill, command)}
+    """Every payload plus its totals, in one JSON-serializable structure.
+
+    `path_scoped` and `copilot_loaded` are their own sets rather than part of
+    `always_loaded`, so moving a rule behind `paths:` shows as a drop in the
+    per-turn total (audit-b761d1f4).
+    """
+    sets = {
+        "always_loaded": always_loaded(root),
+        "path_scoped": path_scoped(root),
+        "copilot_loaded": copilot_loaded(root),
+        "invocation": invocation(root, skill, command),
+    }
     return {
         "root": root.name,
         "skill": skill,

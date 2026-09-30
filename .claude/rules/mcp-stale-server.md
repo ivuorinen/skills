@@ -7,9 +7,10 @@ paths:
 
 The MCP server imports every shipped module it depends on once at startup and
 holds them for the life of the process. `_LOADED` in `mcp_server.py` is the
-authoritative list; it includes the hyphen-named `process-sarif.py` and
-`check-rules-anatomy.py`, which reach it through `_load_bundled` rather than a
-plain import and are easy to overlook. **Editing any module on that list does
+authoritative list: every shipped module found in `sys.modules`, a lazily
+imported one recorded on first sight, plus the hyphen-named `process-sarif.py`
+and `check-rules-anatomy.py`, which reach it through `_load_bundled` rather than
+a plain import and are easy to overlook. **Editing any module on that list does
 not change what the running server executes.** Worse, two servers are
 registered: `.mcp.json` starts one from the working tree, and
 `.claude-plugin/plugin.json` starts one from `${CLAUDE_PLUGIN_ROOT}` — the

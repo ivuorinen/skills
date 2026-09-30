@@ -119,7 +119,7 @@ command:
 ## Out of scope — route, don't file
 
 - Unused dependencies → `/nitpicker deps`
-- Dead branches _inside_ wired code, logic bugs → `/nitpicker review`
+- Dead branches _inside_ wired code → `/nitpicker dead-code`; logic bugs → `/nitpicker review`
 - Speculative abstraction that was never needed → `/nitpicker complexity`
 - Swallowed errors making wired code look dark → `/nitpicker errors`
 - Emissions/instrumentation coverage → `/nitpicker observability`

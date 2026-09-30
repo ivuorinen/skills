@@ -4,6 +4,7 @@
 # ///
 """List all skills (and their commands, if any) with names and descriptions."""
 
+import argparse
 import sys
 import textwrap
 from pathlib import Path
@@ -53,7 +54,21 @@ def collect_commands(skill_dir: Path) -> list[tuple[str, str]]:
     return results
 
 
-def main() -> int:
+def _parser() -> argparse.ArgumentParser:
+    """The CLI. It had none, so `--help` printed the listing at exit 0 and an
+    unknown flag was ignored; argparse answers `--help` and rejects the rest at
+    exit 2 (audit-d73756b3)."""
+    return argparse.ArgumentParser(
+        prog="list-skills",
+        description="List every skill (skills/ and .claude/skills/) and the public "
+        "skills' commands, with names and descriptions. Takes no arguments.",
+        epilog="Exit codes: 0 listed, 2 usage error.",
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the inventory `make list` shows, after parsing argv (none accepted)."""
+    _parser().parse_args(argv)
     public = collect_skills(REPO_ROOT / "skills")
     private = collect_skills(REPO_ROOT / ".claude" / "skills")
 

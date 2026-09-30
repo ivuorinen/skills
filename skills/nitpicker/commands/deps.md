@@ -9,7 +9,7 @@ Hostile audit of every dependency the project already declares or silently relie
 - A dependency tree that has grown for years without an audit
 - When asked to "audit dependencies", "find unused dependencies", "prune deps", or "check dependency health"
 
-Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`. The **supply-chain execution surface** — install-time code execution, namespace confusion, typosquats, and lockfile integrity — is audited *here* (the supply-chain classes below), not routed away: it is a structural property of the dependency set, not a per-version advisory. One exception: where the installed unit is agent configuration — a skill, plugin, or subagent added by `npx skills add` or a marketplace — its lifecycle script travels with the rest of that unit to `/nitpicker skill-safety`, which reads the instruction prose the script ships alongside. Whether a proposed NEW dependency is justified routes to `/nitpicker complexity` — its ladder governs the decision before the add; this command audits what is already installed. General code defects are `/nitpicker audit`.
+Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`; license compatibility of a dependency routes to `/nitpicker license`. The **supply-chain execution surface** — install-time code execution, namespace confusion, typosquats, and lockfile integrity — is audited *here* (the supply-chain classes below), not routed away: it is a structural property of the dependency set, not a per-version advisory. One exception: where the installed unit is agent configuration — a skill, plugin, or subagent added by `npx skills add` or a marketplace — its lifecycle script travels with the rest of that unit to `/nitpicker skill-safety`, which reads the instruction prose the script ships alongside. Whether a proposed NEW dependency is justified routes to `/nitpicker complexity` — its ladder governs the decision before the add; this command audits what is already installed. General code defects are `/nitpicker audit`.
 
 ## Defect classes
 
@@ -20,7 +20,6 @@ Out of scope: known CVEs and vulnerable versions route to `/nitpicker security`.
 | duplicate-dependency | Two or more declared packages covering the same capability (two HTTP clients, two date libraries, lodash + underscore) |
 | heavyweight-dependency | A declared package whose only usage is one function replaceable by ten or fewer lines of stdlib/local code |
 | unmaintained-upstream | Upstream archived or formally deprecated, proven by fetched metadata (registry deprecation field, archived flag) — never inferred from release age |
-| license-conflict | Dependency license incompatible with the project's declared license |
 | manifest-lockfile-drift | Lockfile missing, stale, or disagreeing with the manifest (entry or version-range mismatch) |
 | misclassified-dependency | Runtime dependency declared dev-only, or dev/build tool declared as production |
 | install-script | A dependency whose install runs a lifecycle script (`preinstall`/`install`/`postinstall`, `build.rs`, gem `extconf`, composer `scripts`) — arbitrary code executes on every install, CI run, and contributor machine |
@@ -60,27 +59,27 @@ Probe every tool with `which` before use; run only what is installed; never inst
 | depcheck | JS unused/phantom candidates |
 | deptry | Python unused/phantom/misclassified candidates |
 | npm/pnpm/yarn ls, pip list / uv pip list, cargo tree, go mod why, composer show, bundle list | Installed-vs-locked comparison; parse the full output, never sample it |
-| npm view / pip index / registry metadata (read-only) | Deprecation/archived status and license fields; whether an internal name is publicly claimed (dependency-confusion) |
+| npm view / pip index / registry metadata (read-only) | Deprecation/archived status; whether an internal name is publicly claimed (dependency-confusion) |
 | npm downloads API (`GET https://api.npmjs.org/downloads/point/last-month/<pkg>`), PyPI stats (`pypistats` / `pypistats.org` API) | Download-count popularity for the typosquat-risk twin comparison — the concrete source `npm view`/`pip index` metadata lack; compare the declared name's count against the popular near-name's |
 | lockfile fields, read directly (`hasInstallScript`, `integrity`, `resolved`) | install-script, integrity-gap, and dependency-confusion witnesses — parse the lockfile, no scanner needed |
 | `.npmrc` / registry & scope config, `npm config get` | Whether a scope/registry pin protects an internal name (dependency-confusion negative leg) |
 
-A tool's candidate list is input, not a finding — verify every candidate against the import-form coverage table before filing; the tools miss config-plugin references and name mappings. Where maintenance or license metadata is unreachable (tool absent, no network), record the dependency as unexamined in the run summary — never guess either way.
+A tool's candidate list is input, not a finding — verify every candidate against the import-form coverage table before filing; the tools miss config-plugin references and name mappings. Where maintenance metadata is unreachable (tool absent, no network), record the dependency as unexamined in the run summary — never guess either way.
 
 ## Process
 
-1. **Inventory:** find every manifest + lockfile pair (package.json, pyproject.toml, requirements*.txt, Cargo.toml, go.mod, composer.json, Gemfile + their lockfiles) and the project's declared license. A generated-but-uncommitted lockfile is manifest-lockfile-drift (severity per the guide: application vs. published library).
+1. **Inventory:** find every manifest + lockfile pair (package.json, pyproject.toml, requirements*.txt, Cargo.toml, go.mod, composer.json, Gemfile + their lockfiles). A generated-but-uncommitted lockfile is manifest-lockfile-drift (severity per the guide: application vs. published library).
 2. **Probe tools** per the tooling table; record available/not-available in the run summary.
 3. **Build three sets per ecosystem:** Declared (manifest, per section), Locked (lockfile), Referenced (full usage scan per import-form coverage).
 4. **Cross-reference the sets;** file findings per defect class via the store protocol in `_conventions.md`, under the `deps` auditor key. Each finding's Evidence carries the three legs (manifest file:line and section, lockfile entry or "missing", referencing file:line or the exhaustive negative) plus ecosystem and `name@version`. Examine every declared dependency against every class; anything not fully examined is recorded as unexamined and forces run verdict INCOMPLETE.
-5. **Check maintenance status and license** for every declared dependency via available metadata. In the same pass, **scan the supply-chain surface**: read each lockfile entry's `hasInstallScript` / `install`-script field (install-script), missing `integrity` or non-registry `resolved` source (integrity-gap), and public-registry resolution of any **first-party or internal-intended** name — one the project owns, builds, or privately maintains, never an ordinary third-party package — against the scope/registry config (dependency-confusion); and screen every declared name for a small-edit-distance near-miss to a materially more popular package (typosquat-risk). File each under the `deps` auditor key with its class-specific evidence; a name whose public-registry or popularity check is unreachable is unexamined for that class and forces INCOMPLETE.
-6. **Summarize and fix.** The summary states the run verdict (COMPLETE | INCOMPLETE with the unexamined list), ecosystems, project license, and set sizes. Fix application and the commit gate follow `_conventions.md`, with these overrides: the (s)afe option regenerates drifted lockfiles only, no manifest edits; removals, replacements, and consolidations are NEVER batch-applied — each is presented with its evidence and approved per dependency. Never batch-remove.
+5. **Check maintenance status** for every declared dependency via available metadata. In the same pass, **scan the supply-chain surface**: read each lockfile entry's `hasInstallScript` / `install`-script field (install-script), missing `integrity` or non-registry `resolved` source (integrity-gap), and public-registry resolution of any **first-party or internal-intended** name — one the project owns, builds, or privately maintains, never an ordinary third-party package — against the scope/registry config (dependency-confusion); and screen every declared name for a small-edit-distance near-miss to a materially more popular package (typosquat-risk). File each under the `deps` auditor key with its class-specific evidence; a name whose public-registry or popularity check is unreachable is unexamined for that class and forces INCOMPLETE.
+6. **Summarize and fix.** The summary states the run verdict (COMPLETE | INCOMPLETE with the unexamined list), ecosystems, and set sizes. Fix application and the commit gate follow `_conventions.md`, with these overrides: the (s)afe option regenerates drifted lockfiles only, no manifest edits; removals, replacements, and consolidations are NEVER batch-applied — each is presented with its evidence and approved per dependency. Never batch-remove.
 
 ## Severity guide
 
 | Severity | Condition |
 | --- | --- |
-| Critical | license-conflict with the project's declared license; phantom-dependency on a production code path — one transitive-graph change breaks the build; dependency-confusion (a first-party/internal-intended name — one the project owns or builds — resolving from a public registry with no scope pin, a silent malicious substitution); a typosquat-risk confirmed to be the known-malicious twin |
+| Critical | phantom-dependency on a production code path — one transitive-graph change breaks the build; dependency-confusion (a first-party/internal-intended name — one the project owns or builds — resolving from a public registry with no scope pin, a silent malicious substitution); a typosquat-risk confirmed to be the known-malicious twin |
 | High | manifest-lockfile-drift (manifest/lockfile disagreement, or missing lockfile in an application); runtime dependency declared dev-only (absent from production installs); unused production dependency; install-script on a floating/unpinned dependency (the script can change under you); integrity-gap on a production dependency; typosquat-risk near-miss to a popular package (unconfirmed) |
 | Medium | duplicate-dependency; unmaintained-upstream proven by metadata; dev/build tool declared as production; phantom-dependency on a dev/test-only path; install-script on a fully pinned, integrity-verified, reputable dependency (a native build) |
 | Low | unused dev dependency; heavyweight-dependency |
@@ -115,9 +114,9 @@ These are the rationalizations this command exists to defeat. Each one is forbid
 
 **"The lockfile is machine-generated, skip it."** The lockfile is one of the three evidence legs and the sole witness for manifest-lockfile-drift and phantom resolution. Read it every run.
 
-**"Checking every dep's maintenance status is too slow, I'll spot-check."** Every declared dependency gets the maintenance and license check. A dependency skipped for time is an unexamined item and forces verdict INCOMPLETE — never a silent pass.
+**"Checking every dep's maintenance status is too slow, I'll spot-check."** Every declared dependency gets the maintenance check. A dependency skipped for time is an unexamined item and forces verdict INCOMPLETE — never a silent pass.
 
-**"License fields are boilerplate, skip them."** A copyleft dependency inside a permissively-licensed project is a Critical finding. Read the license field of every declared dependency and the project's own declared license.
+**"This copyleft dependency conflicts with our license — I'll file it here."** License compatibility belongs to `/nitpicker license`, which grades it by distribution model. One line routing it there, then back.
 
 **"It's a devDependency so it doesn't matter."** Dev dependencies run in CI and on every contributor machine, and misclassification in either direction is its own defect class. Dev status lowers severity; it never grants exemption from examination.
 

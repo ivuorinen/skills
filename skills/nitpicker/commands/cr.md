@@ -91,7 +91,7 @@ Alongside them, `platform`, `host`, `repo`, `pr_number` and `transport` identify
 
 Two fields carry platform differences as *values*, never as missing keys, so no step below has to branch on the platform:
 
-- `is_resolved` is `true`/`false` when the platform reported resolution, and `null` when the transport in use could not. `null` is not "unresolved": it obliges you to check whether the flagged code still exists, exactly as Step 3 does. Only GitHub's REST fallback produces it — GitHub via GraphQL, GitLab, and Bitbucket all report resolution directly.
+- `is_resolved` is `true`/`false` when the platform reported resolution, and `null` when the transport in use could not. `null` is not "unresolved": it obliges you to check whether the flagged code still exists, exactly as Step 3 does. GitHub's REST fallback produces it, and so do a GitLab discussion with no resolvable note and a Bitbucket comment whose payload carries no resolution key.
 - `diff_hunk` is empty on GitLab and Bitbucket, which anchor a comment to a line rather than a hunk. `line` carries the anchor there, so a thread always has `path` plus either a hunk or a line.
 
 **Evaluate all three sections in Step 3, not just `threads`.** Notices in `review_bodies`/`summary_comments` are the ones historically missed. They carry no `path`, `diff_hunk`, or `thread_id`, so the thread lifecycle does not apply to them directly — use this one instead:

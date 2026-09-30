@@ -149,10 +149,16 @@ _BACKTICKED_MD = re.compile(r"`([^`\n/]+\.md)`")
 
 
 def check_rules_index(repo_root: Path, errors: list[str]) -> None:
-    """Every .claude/rules/*.md is listed in CLAUDE.md's `## Conventions`, and vice versa."""
+    """Every .claude/rules/*.md is listed in CLAUDE.md's `## Conventions`, and vice versa.
+
+    A missing rules directory is not a reason to skip the CLAUDE.md-to-disk
+    direction: it returned early here, so deleting the whole tree passed the gate
+    while CLAUDE.md still indexed every rule (audit-aa157132). Each listed rule is
+    then reported missing, the same error a single deleted rule gets.
+    """
     claude_md = repo_root / "CLAUDE.md"
     rules_dir = repo_root / ".claude" / "rules"
-    if not claude_md.exists() or not rules_dir.exists():
+    if not claude_md.exists():
         return
     try:
         text = claude_md.read_text(encoding="utf-8")
@@ -164,6 +170,13 @@ def check_rules_index(repo_root: Path, errors: list[str]) -> None:
         errors.append(f"  ERROR  CLAUDE.md: no '{_CONVENTIONS_HEADING}' section to index the rules")
         return
     listed = set(_BACKTICKED_MD.findall(m.group(1)))
+    if not rules_dir.exists():
+        for name in sorted(listed):
+            errors.append(
+                f"  ERROR  CLAUDE.md: '{_CONVENTIONS_HEADING}' lists {name}, "
+                "but .claude/rules/ does not exist"
+            )
+        return
     # _iter_rules records unreadable directories in `errors` and skips them, so
     # omitting the argument yields a silently partial scan — and a rule hidden
     # under an unreadable subtree would then pass as "not on disk".
@@ -224,6 +237,11 @@ def _discover_targets(repo_root: Path) -> list[Path]:
 
 
 def main() -> None:
+    """Validate the named rule files, or the whole tree plus the repo-wide checks.
+
+    Every outcome prints: an error list with exit 1, or an OK line. A missing
+    rules directory used to exit here with no output at all (audit-aa157132).
+    """
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -238,11 +256,12 @@ def main() -> None:
     if args:
         targets = [Path(a) for a in args]
     else:
+        # No early exit when the rules directory is missing: it left the run
+        # silent, printing neither the index errors nor an OK line
+        # (audit-aa157132). Discovery of an absent tree yields no targets.
         check_repo_rules(repo_root, errors)
         rules_dir = repo_root / ".claude" / "rules"
-        if not rules_dir.exists():
-            sys.exit(1 if errors else 0)
-        targets = _discover_targets(repo_root)
+        targets = _discover_targets(repo_root) if rules_dir.exists() else []
 
     for t in targets:
         validate(t, errors, warnings, repo_root)

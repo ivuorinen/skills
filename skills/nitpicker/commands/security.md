@@ -135,8 +135,8 @@ Normalize tool-specific severities to the standard five levels:
 | critical / CRITICAL | Critical |
 | high / HIGH / error | High |
 | medium / MEDIUM / warning / WARN | Medium |
-| low / LOW / note / INFO | Low |
-| informational / advisory / hint | Advisory |
+| low / LOW / note / INFO / informational | Low |
+| advisory / hint | Advisory |
 
 - gitleaks: all secrets are **Critical** unless the matched rule is tagged `allowlist`.
 - semgrep/opengrep: use `.extra.severity`; `ERROR` → High, `WARNING` → Medium, `INFO` → Low.
@@ -159,5 +159,5 @@ Normalize tool-specific severities to the standard five levels:
 - **Including the actual secret value in a finding.** Redact. Always.
 - **Treating a non-zero exit code as a fatal error.** Most security tools exit non-zero when they find issues — expected behavior, not a crash.
 - **Deduplicating by title instead of ID.** Match on CVE ID or rule ID; description strings differ across tools.
-- **Re-validating findings from tools that did not run this pass.** Absence of a report from a tool that never ran proves nothing — leave those findings open.
+- **Resolving a finding because its tool did not report it this pass.** A tool that never ran proves nothing; re-validate by reading the source (step 7), and leave the finding open, recorded unverified, when the source cannot settle it.
 - **Silently skipping a tool that crashed or emitted bad JSON.** Record it under "Errored" with the message.

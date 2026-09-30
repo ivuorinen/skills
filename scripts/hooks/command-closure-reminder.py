@@ -42,7 +42,11 @@ from _hooklib import load_event, report_skip, stop_feedback
 # one. The two hold separate task lists whose ids collide, so state is keyed
 # by server as well as id.
 _TOOL = re.compile(r"^mcp__(?P<server>[A-Za-z0-9_-]*nitpicker)__(?P<tool>np_[a-z_]+)$")
-_OPEN = frozenset({"pending", "in_progress"})
+# `wiped`: an np_todo_write cleared the step before it closed. Not a server
+# status — this hook's own mark, so a replacement cannot erase the evidence that
+# a run left work open (audit-8bb7d98f).
+_WIPED = "wiped"
+_OPEN = frozenset({"pending", "in_progress", _WIPED})
 _CLOSE_STEPS = (
     "Close each step with np_task_update and read the list back with np_task_list "
     "before reporting (_conventions.md § Execution). If the run is waiting on the "
@@ -76,14 +80,44 @@ def _field(result: Any, key: str) -> Any:
 class _Session:
     """Command runs and task statuses, rebuilt from the transcript in order.
 
-    A run is `{server, command, tasks}`; `status` maps (server, task id) to the
-    task's last known status. One handler per nitpicker tool that moves either.
+    A run is `{server, command, tasks}`; `status` maps a task key — (server,
+    epoch, task id) — to the task's last known status, and a run's `tasks` hold
+    those keys. One handler per nitpicker tool that moves either.
+
+    The epoch exists because task ids are a per-process counter: a server that
+    restarts mid-session hands out 1, 2, … again while the transcript still holds
+    the runs from before. Keyed by (server, id) alone, the two lifetimes' ids
+    collided — a closed run read as open again, and a later run closing a reused
+    id closed an earlier run's never-finished step (audit-ccbbc6bf).
     """
 
     def __init__(self) -> None:
         """Start with no runs and no tasks."""
         self.runs: list[dict] = []
-        self.status: dict[tuple[str, str], str] = {}
+        self.status: dict[tuple[str, int, str], str] = {}
+        self.epoch: dict[str, int] = {}
+        self.top: dict[str, int] = {}
+
+    def _key(self, server: str, task_id: Any) -> tuple[str, int, str]:
+        """The key for an id in the server's current lifetime."""
+        return (server, self.epoch.get(server, 0), str(task_id))
+
+    def _fresh_key(self, server: str, task_id: Any) -> tuple[str, int, str]:
+        """The key for an id the server just issued, starting a new epoch on a restart.
+
+        Ids are issued in increasing order and never reused within one server
+        process, so a new id at or below the highest seen means the process
+        restarted. A non-numeric id carries no order and opens no epoch.
+        """
+        tid = str(task_id)
+        if tid.isdigit():
+            n = int(tid)
+            if n <= self.top.get(server, 0):
+                self.epoch[server] = self.epoch.get(server, 0) + 1
+                self.top[server] = n
+            else:
+                self.top[server] = n
+        return self._key(server, tid)
 
     def _latest(self, server: str) -> dict | None:
         """The most recent run loaded through `server`, if any."""
@@ -91,9 +125,7 @@ class _Session:
 
     def _closed(self, run: dict) -> bool:
         """True when the run seeded steps and none of them is still open."""
-        return bool(run["tasks"]) and all(
-            self.status.get((run["server"], t)) not in _OPEN for t in run["tasks"]
-        )
+        return bool(run["tasks"]) and all(self.status.get(k) not in _OPEN for k in run["tasks"])
 
     def read_command(self, server: str, args: dict, _result: Any) -> None:
         """A command load opens a run."""
@@ -111,14 +143,15 @@ class _Session:
         task = _field(result, "task")
         if not isinstance(task, dict) or "id" not in task:
             return
+        key = self._fresh_key(server, task["id"])
         run = self._latest(server)
         if run is not None and not self._closed(run):
-            run["tasks"].append(str(task["id"]))
-        self.status[(server, str(task["id"]))] = "pending"
+            run["tasks"].append(key)
+        self.status[key] = "pending"
 
     def task_update(self, server: str, args: dict, _result: Any) -> None:
         """An update moves one task's status; `deleted` removes it."""
-        key = (server, str(args.get("task_id", "")))
+        key = self._key(server, args.get("task_id", ""))
         new = args.get("status")
         if new == "deleted":
             self.status.pop(key, None)
@@ -126,7 +159,14 @@ class _Session:
             self.status[key] = new
 
     def task_list(self, server: str, _args: dict, result: Any) -> None:
-        """The server's whole list is authoritative: an id it no longer carries was deleted."""
+        """The server's whole list is authoritative: an id it no longer carries was deleted.
+
+        Except a wiped step: the server stopped carrying it because a replacement
+        cleared it, not because it closed, so a later readback must not turn it
+        back into a closed one (audit-8bb7d98f). A listing speaks for the server's
+        current lifetime only; a task from before a restart is left as it was
+        (audit-ccbbc6bf).
+        """
         tasks = _field(result, "tasks")
         if not isinstance(tasks, list):
             return
@@ -135,10 +175,11 @@ class _Session:
             for t in tasks
             if isinstance(t, dict) and "id" in t
         }
-        for key in [k for k in self.status if k[0] == server]:
-            if key[1] in listed:
-                self.status[key] = listed[key[1]]
-            else:
+        current = self.epoch.get(server, 0)
+        for key in [k for k in self.status if k[0] == server and k[1] == current]:
+            if key[2] in listed:
+                self.status[key] = listed[key[2]]
+            elif self.status[key] != _WIPED:
                 del self.status[key]
 
     def todo_write(self, server: str, _args: dict, result: Any) -> None:
@@ -148,6 +189,12 @@ class _Session:
         against the old one: read as a list readback, the cleared ids vanish, the
         run reads as closed, and the pending replacements belong to nothing. A run
         that had already closed takes none of them, as with `task_create`.
+
+        The clear reaches every run on the server, not only the one taking the new
+        ids. Deleting an earlier run's open steps outright read them as closed, so
+        an `audit` that deep-ran a specialist and replaced the list there passed
+        the check with its own steps never closed (audit-8bb7d98f). Those steps are
+        marked wiped instead, and stay open.
         """
         tasks = _field(result, "tasks")
         if not isinstance(tasks, list):
@@ -155,15 +202,21 @@ class _Session:
         run = self._latest(server)
         if run is not None and self._closed(run):
             run = None  # judged before the clear below, which would close any run
+        others = {
+            t for r in self.runs if r is not run and r["server"] == server for t in r["tasks"]
+        }
         for key in [k for k in self.status if k[0] == server]:
-            del self.status[key]
-        ids = []
+            if key in others and self.status[key] in _OPEN:
+                self.status[key] = _WIPED
+            else:
+                del self.status[key]
+        keys = []
         for t in tasks:
             if isinstance(t, dict) and "id" in t:
-                ids.append(str(t["id"]))
-                self.status[(server, ids[-1])] = str(t.get("status", ""))
+                keys.append(self._fresh_key(server, t["id"]))
+                self.status[keys[-1]] = str(t.get("status", ""))
         if run is not None:
-            run["tasks"] = ids
+            run["tasks"] = keys
 
     def reminders(self) -> list[str]:
         """One line per run with open steps, or loaded with none seeded."""
@@ -179,7 +232,7 @@ class _Session:
                 ):
                     out.append(f"  {run['command']}: loaded, but no process step was seeded")
                 continue
-            still_open = [t for t in run["tasks"] if self.status.get((run["server"], t)) in _OPEN]
+            still_open = [k[2] for k in run["tasks"] if self.status.get(k) in _OPEN]
             if still_open:
                 out.append(
                     f"  {run['command']}: {len(still_open)} of {len(run['tasks'])} steps still "

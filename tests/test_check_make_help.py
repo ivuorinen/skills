@@ -9,8 +9,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "check-make-help.py"
 _spec = importlib.util.spec_from_file_location("check_make_help", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 _HELP_BLOCK = 'help:\n\t@echo "Available targets:"\n\t@echo "  build        — do it"\n\n'
 
@@ -174,3 +174,57 @@ class TestMultiNameRules:
     def test_a_multi_name_variable_assignment_is_not_a_target(self, tmp_path):
         targets, _, _ = _mod.read_makefile(_makefile(tmp_path, "a b := x\n" + _HELP_BLOCK))
         assert targets == {"help"}
+
+
+class TestHelpBlockAndContinuations:
+    """audit-283cc399: the help body ran to the next blank line, and .PHONY was
+    read one physical line at a time."""
+
+    def test_a_target_directly_after_help_is_not_a_help_entry(self, tmp_path):
+        """The repro: `deploy` right after `help` with no blank line read as
+        documented, so the gate said OK while `make help` omitted it."""
+        body = (
+            ".PHONY: help build deploy\n"
+            'help:\n\t@echo "  build        — do it"\n'
+            'deploy:\n\t@echo "  deploy       — ship"\n'
+            "build:\n\techo\n"
+        )
+        targets, listed, phony = _mod.read_makefile(_makefile(tmp_path, body))
+        assert listed == {"build"}
+        problems = _mod.drift(targets, listed, phony)
+        assert any("'deploy' is not listed" in p for p in problems), problems
+
+    def test_a_continued_recipe_line_stays_in_the_help_block(self, tmp_path):
+        body = (
+            ".PHONY: help build lint\n"
+            'help:\n\t@echo "  build        — do it"; \\\n'
+            '@echo "  lint         — check"\n'
+            "build:\n\techo\nlint:\n\techo\n"
+        )
+        targets, listed, phony = _mod.read_makefile(_makefile(tmp_path, body))
+        assert listed == {"build", "lint"}
+        assert _mod.drift(targets, listed, phony) == []
+
+    def test_help_as_the_last_line_has_an_empty_recipe(self, tmp_path):
+        _, listed, _ = _mod.read_makefile(_makefile(tmp_path, "build:\n\techo\nhelp:"))
+        assert listed == set()
+
+    def test_a_continued_phony_keeps_every_name(self, tmp_path):
+        """The repro: `.PHONY: help build \\` then `deploy` raised a false MISMATCH."""
+        body = (
+            ".PHONY: help build \\\n  deploy\n\n"
+            'help:\n\t@echo "  build        — do it"\n\t@echo "  deploy       — ship"\n\n'
+            "build:\n\techo\n\ndeploy:\n\techo\n"
+        )
+        targets, listed, phony = _mod.read_makefile(_makefile(tmp_path, body))
+        assert phony == {"help", "build", "deploy"}
+        assert _mod.drift(targets, listed, phony) == []
+
+    @pytest.mark.parametrize("flag", ["--bogus", "-x"])
+    def test_an_unknown_flag_is_a_usage_error(self, flag, capsys, monkeypatch):
+        """audit-d73756b3: `--bogus` was read as a Makefile path and exited 1."""
+        monkeypatch.setattr(sys, "argv", ["x", flag])
+        with pytest.raises(SystemExit) as exc:
+            _mod.main()
+        assert exc.value.code == 2
+        assert "Usage:" in capsys.readouterr().err

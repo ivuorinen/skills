@@ -7,8 +7,10 @@
 Two checks:
 
 1. Shipped skill tools (`skills/*/scripts/*.py`) import only the standard library.
-2. The script-runner contract: shipped tools begin with `#!/usr/bin/env python3`
-   and carry no `# /// script` block; internal tooling (`scripts/**/*.py`)
+2. The script-runner contract: shipped entry points — a module with a top-level
+   `if __name__ == "__main__":` guard — begin with `#!/usr/bin/env python3`;
+   shipped library modules (no guard) carry **no** shebang; neither carries a
+   `# /// script` block. Internal tooling (`scripts/**/*.py`)
    that is a runnable script (has a shebang or a `# /// script` block) begins
    with `#!/usr/bin/env -S uv run --quiet`. Shebang-less library modules (e.g.
    `common.py`, `_hooklib.py`) are exempt. This is the only implementation of
@@ -258,8 +260,40 @@ def _has_pep723(text: str) -> bool:
     return any(line.strip() == "# /// script" for line in text.splitlines())
 
 
+def _is_entry_point(text: str) -> bool:
+    """True when a shipped module runs as a command: a top-level `__main__` guard.
+
+    audit-0fde2571: the shebang was required of every shipped module, so the
+    libraries (`pr_common`, `md_fences`, …) carried it and the exec bit that
+    pre-commit pairs with it, and run directly they printed nothing and exited 0
+    — an empty success from something that looks like a tool. The guard is the
+    signal the `--help` sweep in `tests/test_pr_common.py` already uses to tell a
+    CLI from a library, so the shebang follows it: an entry point must carry one,
+    a library must not. Unparseable source counts as an entry point, keeping the
+    stricter requirement; `find_violations` reports the parse error itself.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return True
+    for node in tree.body:
+        if not (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)):
+            continue
+        operands = [node.test.left, *node.test.comparators]
+        if any(isinstance(o, ast.Name) and o.id == "__name__" for o in operands) and any(
+            isinstance(o, ast.Constant) and o.value == "__main__" for o in operands
+        ):
+            return True
+    return False
+
+
 def find_runner_violations(repo_root: Path, collected: Collected | None = None) -> list[str]:
-    """One message per shebang/metadata breach of the two-tier runner contract."""
+    """One message per shebang/metadata breach of the two-tier runner contract.
+
+    A shipped entry point must start with the python3 shebang; a shipped library
+    must start with none, so it is not presented as a runnable tool
+    (audit-0fde2571, see `_is_entry_point`).
+    """
     scripts, sources, _ = collected or collect(repo_root)
     problems: list[str] = []
     for script in scripts:
@@ -270,9 +304,16 @@ def find_runner_violations(repo_root: Path, collected: Collected | None = None) 
             continue
         lines = text.splitlines()
         first = lines[0] if lines else ""
-        if first != SHIPPED_SHEBANG:
+        if _is_entry_point(text):
+            if first != SHIPPED_SHEBANG:
+                problems.append(
+                    f"  {rel}: shipped tool must start with '{SHIPPED_SHEBANG}' (got {first!r})"
+                )
+        elif first.startswith("#!"):
             problems.append(
-                f"  {rel}: shipped tool must start with '{SHIPPED_SHEBANG}' (got {first!r})"
+                f'  {rel}: shipped library (no `if __name__ == "__main__"` guard) must carry '
+                f"no shebang (got {first!r}) — drop it and the executable bit, or add the "
+                "guard and a --help if it is meant to run as a tool"
             )
         if _has_pep723(text):
             problems.append(

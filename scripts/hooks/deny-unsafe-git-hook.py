@@ -38,7 +38,7 @@ from _hooklib import (
     event_command,
     foreign_code,
     git_calls,
-    load_event,
+    load_event_strict,
     repo_root,
     shell_stages_with_env,
     skip_git_global_opts,
@@ -361,8 +361,9 @@ def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
     `SKIP=<hook ids>` and the `PRE_COMMIT_*` variables are read by pre-commit
     itself, and `pre-commit uninstall` deletes the hook scripts; none of them
     touches a git option, so the git-option checks never saw them
-    (agent-loopholes-f376faa5). Ceiling: a variable exported by an earlier call
-    carries no token in this one.
+    (agent-loopholes-f376faa5). `env` includes what earlier stages of the same
+    command exported (see `_exports`). Ceiling: a variable exported by an
+    earlier *call* carries no token in this one.
     """
     name = Path(tokens[0]).name
     if name == "pre-commit" and "uninstall" in tokens[1:]:
@@ -423,9 +424,9 @@ def _denial(subcommand: str, args: list[str]) -> str | None:
 _GIT_WORD = re.compile(r"\bgit\b")
 _GIT_WRITE_WORD = re.compile(r"\b(?:commit|push|add|config|alias|hookspath|no-verify)\b", re.I)
 _FOREIGN_DENIAL = (
-    "  DENIED  non-shell code runs git with a write this guard judges.\n"
-    "          Code in another language cannot be tokenized, so the guard cannot\n"
-    "          check it. Run the git command through a shell call instead."
+    "  DENIED  code the guard cannot tokenize runs git with a write it judges.\n"
+    "          Code in another language, or text piped into a shell, cannot be\n"
+    "          checked. Run the git command as a plain shell command instead."
 )
 
 
@@ -515,6 +516,38 @@ def _global_denial(
     return _alias_denial(aliases.get(subcommand, ""), args, depth)
 
 
+# A `NAME=value` anywhere in the command, for resolving a later `export NAME`.
+_ASSIGNMENT = re.compile(r"(?:^|[\s;&|(])([A-Za-z_]\w*)=([^\s;&|()<>]*)")
+_EXPORTERS = frozenset({"export", "declare", "typeset"})
+
+
+def _exports(tokens: list[str], assigned: dict[str, str]) -> dict[str, str]:
+    """What this stage exports to the stages after it: `export`, `declare -x`.
+
+    The skip and hooksPath checks read only the environment prefix of the git
+    stage itself, so `export SKIP=ruff; git commit -m x` and an exported
+    `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath …` passed where the same
+    assignments written in front of `git` were denied (agent-loopholes-ca66c44d).
+    `main` folds what each stage exports into the environment of every later
+    one. `export NAME` without a value takes the value `NAME=` was given
+    elsewhere in the command, or an empty one — its presence is what `SKIP` and
+    `PRE_COMMIT_*` are judged on.
+    """
+    verb = Path(tokens[0]).name
+    if verb not in _EXPORTERS:
+        return {}
+    options = [t for t in tokens[1:] if t.startswith("-")]
+    if verb != "export" and not any("x" in option for option in options):
+        return {}
+    out: dict[str, str] = {}
+    for token in tokens[1:]:
+        if token.startswith("-"):
+            continue
+        name, eq, value = token.partition("=")
+        out[name] = value if eq else assigned.get(name, "")
+    return out
+
+
 def main() -> None:
     """Block the git writes the rules declare unenforced.
 
@@ -525,9 +558,7 @@ def main() -> None:
     git call behind a wrapper — see `_hooklib.shell_stages_with_env`. Exit 2 is
     a PreToolUse deny.
     """
-    data = load_event()
-    if data is None:
-        return  # not a parseable event — nothing to judge
+    data = load_event_strict()
 
     code = foreign_code(data)
     if _GIT_WORD.search(code) and _GIT_WRITE_WORD.search(code):
@@ -537,10 +568,13 @@ def main() -> None:
     if not command:
         return
 
+    assigned = {name: value.strip("'\"") for name, value in _ASSIGNMENT.findall(command)}
+    exported: dict[str, str] = {}
     for env, tokens in shell_stages_with_env(command):
-        reason = _global_denial(tokens, env)
+        reason = _global_denial(tokens, exported | env)
         if reason is not None:
             _deny(reason)
+        exported |= _exports(tokens, assigned)
 
     for subcommand, args in git_calls(command):
         reason = _denial(subcommand, args)

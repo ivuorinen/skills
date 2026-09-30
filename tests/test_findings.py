@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -17,8 +18,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 _spec = importlib.util.spec_from_file_location("findings", _TOOL)
-findings = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(findings)  # type: ignore[union-attr]
+findings = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
 
 BODY = """## Problem
 Token compared with `==`.
@@ -1779,6 +1780,12 @@ class TestRedactVendorCoverage:
         ("gitlab incoming mail token", "glimt-" + "A" * 20),
         ("gitlab agent token", "glagent-" + "A" * 20),
         ("aws key id", "AKIA" + "B" * 16),
+        # security-61c840da: each of these passed through redact() unchanged.
+        ("aws sts key id", "ASIA" + "B" * 16),
+        ("stripe live secret", "sk_" + "live_" + "a" * 24),
+        ("stripe test secret", "sk_" + "test_" + "a" * 24),
+        ("stripe restricted", "rk_" + "live_" + "a" * 24),
+        ("hugging face", "hf_" + "a" * 34),
         ("google api key", "AIza" + "A" * 35),
         ("npm token", "npm_" + "A" * 36),
         ("slack", "xoxb-1234567890-abcdefghij"),
@@ -1876,6 +1883,44 @@ class TestRedactPrivateKeys:
         out = findings.redact(self._pem("OPENSSH", self._BODY, closed=False))
         assert "BEGIN OPENSSH" not in out
         assert self._BODY not in out
+
+    def _pgp(self, closed: bool = True) -> str:
+        # Assembled from parts so pre-commit's detect-private-key, which matches
+        # the whole header phrase, does not read the fixture as a committed key.
+        kind = "PGP " + "PRIVATE KEY BLOCK"
+        head = f"{self._D}BEGIN {kind}{self._D}"
+        text = f"{head}\nVersion: GnuPG v2\n\n{self._BODY}\n=abcd"
+        return f"{text}\n{self._D}END {kind}{self._D}" if closed else text
+
+    def test_armoured_pgp_key_block_is_removed(self):
+        """security-61c840da: `PRIVATE KEY-----` never matched `KEY BLOCK-----`."""
+        out = findings.redact(f"leaked:\n{self._pgp()}\nafter")
+        assert self._BODY not in out
+        assert "BEGIN PGP" not in out and "END PGP" not in out
+        assert out == "leaked:\n[REDACTED PRIVATE KEY]\nafter"
+
+    def test_truncated_pgp_key_takes_its_armour_headers_and_body(self):
+        # The blank line after the armour headers ended the base64 run, which
+        # left the whole key body behind a header that read as redacted.
+        out = findings.redact(self._pgp(closed=False) + "\nfound at src/app.py:42")
+        assert self._BODY not in out and "=abcd" not in out
+        assert out == "[REDACTED PRIVATE KEY]\nfound at src/app.py:42"
+
+    def test_repeated_unclosed_headers_redact_in_linear_time(self):
+        """security-6bfd9bed: each END-less header scanned to the end of the text."""
+        header = self._pem("RSA", closed=False).split("\n", 1)[0] + " x\n"
+        start = time.monotonic()
+        findings.redact(header * 10000)
+        assert time.monotonic() - start < 1.0
+
+    def test_a_closed_block_does_not_span_a_second_header(self):
+        # The tempered body stops at the next BEGIN, so an unclosed header is
+        # handled on its own and the closed block after it is still removed whole.
+        text = f"{self._pem('RSA', closed=False)}see src/a.py:1\n{self._pem('EC', self._BODY)}"
+        out = findings.redact(text)
+        assert self._BODY not in out
+        assert out.count("[REDACTED PRIVATE KEY]") == 2
+        assert "see src/a.py:1" in out
 
     def test_pem_is_unreachable_from_the_word_boundary_pattern(self):
         """Why _PEM_RE exists at all: `_SECRET_RE` opens with `\\b`, which cannot
@@ -3404,3 +3449,240 @@ def test_migrate_v1_a_group_heading_ends_what_a_prose_heading_left_pending(tmp_p
     assert n == 2
     second = (root / "security" / "open" / "SEC-002.md").read_text(encoding="utf-8")
     assert "severity: medium" in second
+
+
+def _v1_fixed(title: str) -> str:
+    return f"""# Findings
+Generated: 2026-04-24
+
+## Fixed
+
+### Pass 1 — 2026-07-06
+
+#### [N-001] {title}
+Fixed: 2026-07-06
+Notes: done.
+"""
+
+
+def test_migrate_v1_refuses_a_resolved_legacy_id_already_recorded_differently(tmp_path):
+    """migrations-84744122: a different finding sharing a resolved legacy id was
+    skipped as an idempotent re-run, and the CLI reported success."""
+    root = tmp_path / "findings"
+    first = tmp_path / "security-findings.md"
+    first.write_text(_v1_fixed("security title"), encoding="utf-8")
+    second = tmp_path / "tests-findings.md"
+    second.write_text(_v1_fixed("tests title"), encoding="utf-8")
+    assert findings.migrate_v1(first, root) == 1
+    before = findings.ledger_path(root).read_text(encoding="utf-8")
+    with pytest.raises(findings.FindingError, match="already resolved with different content"):
+        findings.migrate_v1(second, root)
+    assert findings.ledger_path(root).read_text(encoding="utf-8") == before
+
+
+def test_migrate_v1_refuses_a_resolved_legacy_id_recorded_under_another_auditor(tmp_path):
+    # Same comparable content is still a different finding when the auditor differs.
+    root = tmp_path / "findings"
+    src = tmp_path / "security-findings.md"
+    src.write_text(_v1_fixed("same title"), encoding="utf-8")
+    assert findings.migrate_v1(src, root) == 1
+    lp = findings.ledger_path(root)
+    rec = json.loads(lp.read_text(encoding="utf-8"))
+    rec["auditor"] = "tests"
+    lp.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    with pytest.raises(findings.FindingError, match="already resolved with different content"):
+        findings.migrate_v1(src, root)
+
+
+def test_cli_migrate_exits_one_on_a_resolved_legacy_id_collision(tmp_path, capsys):
+    root = tmp_path / "findings"
+    a = tmp_path / "security-findings.md"
+    a.write_text(_v1_fixed("security title"), encoding="utf-8")
+    b = tmp_path / "tests-findings.md"
+    b.write_text(_v1_fixed("tests title"), encoding="utf-8")
+    assert findings.main(["migrate", "--root", str(root), str(a)]) == 0
+    assert findings.main(["migrate", "--root", str(root), str(b)]) == 1
+    assert "duplicate id N-001" in capsys.readouterr().err
+
+
+class TestAnchorsRejectATrailingNewline:
+    """audit-4a51ffd0: `$` matched before a final newline, so `re.match` accepted
+    `security\\n` as an auditor key and `x-deadbeef\\n` as an id."""
+
+    def test_auditor_with_a_trailing_newline_is_refused(self):
+        with pytest.raises(findings.FindingError, match="invalid auditor"):
+            findings._check_auditor("security\n")
+
+    @pytest.mark.parametrize("fid", ["x-deadbeef\n", "N-001\n"])
+    def test_id_with_a_trailing_newline_is_refused(self, fid):
+        with pytest.raises(findings.FindingError, match="malformed finding id"):
+            findings._check_id(fid)
+
+    def test_date_with_a_trailing_newline_is_refused(self):
+        with pytest.raises(findings.FindingError, match="invalid --date"):
+            findings._check_date("2026-07-08\n")
+
+    def test_new_finding_creates_no_newline_bearing_store_directory(self, tmp_path):
+        with pytest.raises(findings.FindingError, match="invalid auditor"):
+            _new(tmp_path, auditor="security\n")
+        assert not (tmp_path / "security\n").exists()
+
+
+class TestBlankTitleAndArea:
+    """audit-d9cb8593: a blank title or area was written, and `validate` then
+    failed the store."""
+
+    @pytest.mark.parametrize("field", ["title", "area"])
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_new_finding_refuses_a_blank_field(self, tmp_path, field, value):
+        with pytest.raises(findings.FindingError, match=f"{field} must not be blank"):
+            _new(tmp_path, **{field: value})
+        assert not list(tmp_path.rglob("*.md"))
+
+    @pytest.mark.parametrize(
+        "extra, message",
+        [
+            (["--area", "", "t"], "area must not be blank"),
+            (["--area", "src/a.py", "   "], "title must not be blank"),
+            (["--auditor", "Bad", "--area", "src/a.py", "t"], "invalid auditor"),
+            (["--auditor", "security\n", "--area", "src/a.py", "t"], "invalid auditor"),
+        ],
+    )
+    def test_cli_new_exits_two_on_a_bad_argument(self, tmp_path, capsys, extra, message):
+        """audit-3652ec5c: a wrong invocation exits 2, not the runtime-error 1."""
+        base = ["new", "--root", str(tmp_path), "--severity", "low", "--category", "docs"]
+        if "--auditor" not in extra:
+            base += ["--auditor", "security"]
+        assert findings.main(base + extra) == 2
+        assert message in capsys.readouterr().err
+        assert not list(tmp_path.rglob("*.md"))
+
+
+def test_cli_resolve_exits_two_on_a_malformed_date(tmp_path, capsys):
+    """audit-3652ec5c: `--date 2026/01/01` exited 1, reading as a store failure."""
+    path = _new(tmp_path)
+    argv = ["resolve", "--root", str(tmp_path), path.stem, "--status", "fixed", "--notes", "n"]
+    assert findings.main([*argv, "--date", "2026/01/01"]) == 2
+    assert "invalid --date" in capsys.readouterr().err
+    assert path.exists()
+    assert findings.main([*argv, "--date", "2026-07-09"]) == 0
+    assert findings.resolved_records(tmp_path)[path.stem]["resolved"] == "2026-07-09"
+
+
+def test_resolve_finding_still_refuses_a_malformed_date_for_api_callers(tmp_path):
+    path = _new(tmp_path)
+    with pytest.raises(findings.FindingError, match="invalid --date"):
+        findings.resolve_finding(tmp_path, path.stem, "fixed", "n", date="2026/01/01")
+
+
+def test_cli_new_force_help_names_the_ledger_record_it_removes(capsys):
+    """docs-318027e3: the help described the one ledger-removing route as an overwrite."""
+    with pytest.raises(SystemExit):
+        findings.main(["new", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "re-open a resolved one (removes its resolved.jsonl record)" in out
+
+
+def test_redact_is_linear_on_a_long_run_without_an_at_sign():
+    """security-6bfd9bed: `\\b` restarted the email scan at every boundary inside
+    `a.a.a.…`; 16 KB took 1.4 s. 200 KB now has to finish well inside a second."""
+    start = time.monotonic()
+    assert findings.redact("a." * 100000) == "a." * 100000
+    assert time.monotonic() - start < 1.0
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("mail foo.bar@example.com.", "mail <email>."),
+        ("checkout@v4.1.1", "checkout@v4.1.1"),
+        ("a.b@example.org,c@example.net", "<email>,<email>"),
+    ],
+)
+def test_email_redaction_matches_the_same_addresses(text, expected):
+    assert findings.redact(text) == expected
+
+
+class TestStoreLockDeadline:
+    """reliability-244ecb0f: a blocking flock waited forever on a stuck holder."""
+
+    def _hold(self, tmp_path):
+        fcntl = pytest.importorskip("fcntl")
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        holder = (tmp_path / ".lock").open("w")
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        return holder
+
+    def test_a_held_lock_raises_after_the_deadline_naming_the_lock(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(findings, "_LOCK_TIMEOUT", 0.2)
+        holder = self._hold(tmp_path)
+        try:
+            start = time.monotonic()
+            with (
+                pytest.raises(findings.FindingError, match=r"locked by another process.*fuser"),
+                findings.store_lock(tmp_path),
+            ):
+                pass  # pragma: no cover — the lock is never granted
+            assert time.monotonic() - start < 5
+        finally:
+            holder.close()
+
+    def test_a_lock_released_before_the_deadline_is_acquired(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(findings, "_LOCK_TIMEOUT", 10.0)
+        holder = self._hold(tmp_path)
+        release = threading.Timer(0.2, holder.close)
+        release.start()
+        entered = []
+        try:
+            with findings.store_lock(tmp_path):
+                entered.append(True)
+        finally:
+            release.join()
+        assert entered == [True]
+
+    def test_cli_new_reports_a_held_lock_and_exits_one(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setattr(findings, "_LOCK_TIMEOUT", 0.1)
+        holder = self._hold(tmp_path)
+        try:
+            argv = ["new", "--root", str(tmp_path), "--auditor", "security"]
+            argv += ["--severity", "low", "--category", "docs", "--area", "a", "t"]
+            assert findings.main(argv) == 1
+        finally:
+            holder.close()
+        assert "locked by another process" in capsys.readouterr().err
+
+
+class TestDryRunPrintsOutsideTheLock:
+    """reliability-244ecb0f: a dry run printed while holding the store lock, so a
+    reader that stopped draining the pipe held every writer out."""
+
+    def _probe(self, root, monkeypatch):
+        fcntl = pytest.importorskip("fcntl")
+        free: list[bool] = []
+
+        def fake_print(*args, **kwargs):
+            with (root / ".lock").open("rb") as other:
+                try:
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    free.append(False)
+                else:
+                    fcntl.flock(other, fcntl.LOCK_UN)
+                    free.append(True)
+
+        monkeypatch.setattr(findings, "print", fake_print, raising=False)
+        return free
+
+    def test_migrate_resolved_plan(self, tmp_path, monkeypatch):
+        _legacy_resolved(tmp_path, "audit", "N-001")
+        free = self._probe(tmp_path, monkeypatch)
+        assert findings.migrate_resolved(tmp_path, dry_run=True) == (1, 1)
+        assert free == [True, True]
+
+    def test_migrate_v1_plan(self, tmp_path, monkeypatch):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(V1_DOC, encoding="utf-8")
+        root = tmp_path / "findings"
+        free = self._probe(root, monkeypatch)
+        assert findings.migrate_v1(src, root, dry_run=True) == 3
+        assert free == [True, True, True]

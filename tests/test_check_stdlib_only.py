@@ -9,8 +9,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "check-stdlib-only.py"
 _spec = importlib.util.spec_from_file_location("check_stdlib_only", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 find_violations = _mod.find_violations
 find_runner_violations = _mod.find_runner_violations
@@ -123,15 +123,69 @@ def test_actual_shipped_tools_are_stdlib_only() -> None:
     assert find_violations(REPO_ROOT) == []
 
 
+_GUARD = 'if __name__ == "__main__":\n    raise SystemExit(0)\n'
+
+
 def test_runner_shipped_correct_shebang_ok(tmp_path: Path) -> None:
-    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n")
+    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n" + _GUARD)
     assert find_runner_violations(tmp_path) == []
 
 
 def test_runner_shipped_uv_shebang_flagged(tmp_path: Path) -> None:
     # A shipped tool carrying the internal uv shebang breaks under plain python3.
-    _tool(tmp_path, "bad.py", "#!/usr/bin/env -S uv run --quiet\nimport json\n")
+    _tool(tmp_path, "bad.py", "#!/usr/bin/env -S uv run --quiet\nimport json\n" + _GUARD)
     assert any("bad.py" in p and "python3" in p for p in find_runner_violations(tmp_path))
+
+
+def test_runner_shipped_entry_point_without_shebang_flagged(tmp_path: Path) -> None:
+    # The guard makes it a tool, and a tool runs as `./tool.py` only with one.
+    _tool(tmp_path, "tool.py", "import json\n" + _GUARD)
+    assert any("tool.py" in p and "python3" in p for p in find_runner_violations(tmp_path))
+
+
+# audit-0fde2571: a shipped library carried the tool shebang and exec bit, and
+# run directly printed nothing and exited 0. The shebang now follows the guard.
+
+
+def test_runner_shipped_library_without_shebang_ok(tmp_path: Path) -> None:
+    _tool(tmp_path, "lib.py", '"""A library."""\nimport json\n')
+    assert find_runner_violations(tmp_path) == []
+
+
+def test_runner_shipped_library_with_shebang_flagged(tmp_path: Path) -> None:
+    _tool(tmp_path, "lib.py", '#!/usr/bin/env python3\n"""A library."""\nimport json\n')
+    problems = find_runner_violations(tmp_path)
+    assert len(problems) == 1
+    assert "lib.py" in problems[0] and "shipped library" in problems[0]
+
+
+@pytest.mark.parametrize(
+    "guard",
+    ["if '__main__' == __name__:\n    pass\n", 'if __name__ == "__main__":\n    pass\n'],
+    ids=["reversed", "plain"],
+)
+def test_entry_point_detects_either_operand_order(guard: str) -> None:
+    assert _mod._is_entry_point(guard)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Mentioned in prose, not a guard: pr_cli's docstring says "no `__main__` guard".
+        '"""if __name__ == "__main__": in a docstring."""\n',
+        # Nested, not top-level: never runs when the file is executed.
+        'def f():\n    if __name__ == "__main__":\n        pass\n',
+        # A top-level `if` that is not the guard.
+        "if x == 1:\n    pass\nif flag:\n    pass\n",
+    ],
+    ids=["docstring", "nested", "other-if"],
+)
+def test_entry_point_ignores_what_is_not_a_guard(text: str) -> None:
+    assert not _mod._is_entry_point(text)
+
+
+def test_unparseable_source_keeps_the_stricter_entry_point_rule() -> None:
+    assert _mod._is_entry_point("def (:\n")
 
 
 def test_runner_shipped_pep723_block_flagged(tmp_path: Path) -> None:
@@ -222,7 +276,7 @@ def test_main_checks_internal_scripts_when_no_shipped_tools(
 def test_main_reports_ok_and_exits_zero_on_a_clean_tree(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n")
+    _tool(tmp_path, "ok.py", "#!/usr/bin/env python3\nimport json\n" + _GUARD)
     monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
     assert _mod.main() == 0
     assert "stdlib-only, runner contract intact" in capsys.readouterr().out
@@ -232,7 +286,7 @@ def test_main_exits_non_zero_and_names_the_non_stdlib_import(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     # The exit code is the only thing pre-commit and the CI Validate job observe.
-    _tool(tmp_path, "bad.py", "#!/usr/bin/env python3\nimport requests\n")
+    _tool(tmp_path, "bad.py", "#!/usr/bin/env python3\nimport requests\n" + _GUARD)
     monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
     assert _mod.main() == 1
     out = capsys.readouterr().out

@@ -165,15 +165,22 @@ print(output)
 
 Replace `QUESTION` with the **expanded** query string, `MODE` with `bfs` or `dfs`, and `BUDGET` with the token budget (default `2000`, or whatever `--budget N` specifies). Then answer based on the subgraph output above, using only what the graph contains.
 
-After writing the answer, save it back into the graph so it improves future queries. Include the expanded tokens inside the `--answer` text (e.g. `"Expanded from original query via vocab: [tokens]. Then traversed..."`) so the next `--update` extracts the expansion history as a graph node:
+After writing the answer, save it back into the graph so it improves future queries. Include the expanded tokens inside the answer text (e.g. `"Expanded from original query via vocab: [tokens]. Then traversed..."`) so the next `--update` extracts the expansion history as a graph node:
 
 ```bash
-$(cat graphify-out/.graphify_python) -m graphify save-result --question "ORIGINAL_QUESTION" --answer "ANSWER" --type query --nodes NODE1 NODE2
+answer_file=$(mktemp)
+cat > "$answer_file" <<'GRAPHIFY_ANSWER'
+ANSWER
+GRAPHIFY_ANSWER
+$(cat graphify-out/.graphify_python) -m graphify save-result --question 'ORIGINAL_QUESTION' --answer-file "$answer_file" --type query --nodes 'NODE1' 'NODE2'
+rm -f "$answer_file"
 ```
+
+**Quoting (local modification, skill-safety-eabeab65).** The answer goes into a file through a quoted heredoc (`<<'GRAPHIFY_ANSWER'`), whose body the shell never expands; if the answer holds a line reading exactly `GRAPHIFY_ANSWER`, pick another delimiter. Every other placeholder goes inside single quotes, with each `'` in the substituted text written as `'\''`. Never substitute an answer, a question, a correction or a node label into double quotes or leave it unquoted: backticks and `$(...)` inside them execute, and all of this text can come from repository content.
 
 Replace `ORIGINAL_QUESTION` with the user's verbatim question, `ANSWER` with your full answer text (containing the expanded-token trace), `NODE1 NODE2` with the list of node labels you cited. This closes the feedback loop: the next `--update` will extract this Q&A as a node in the graph.
 
-**Work memory (self-improving loop).** Add an `--outcome` so future sessions learn from this one — append `--outcome useful|dead_end|corrected` to the `save-result` command (and `--correction "the right answer"` when correcting):
+**Work memory (self-improving loop).** Add an `--outcome` so future sessions learn from this one — append `--outcome useful|dead_end|corrected` to the `save-result` command (and `--correction 'the right answer'`, single-quoted as above, when correcting):
 
 - `useful` — the cited nodes answered the question well (they become *preferred sources*).
 - `dead_end` — the question/path led nowhere; don't re-derive it next time.
@@ -246,8 +253,15 @@ Replace `NODE_A` and `NODE_B` with the actual concept names from the user. Then 
 After writing the explanation, save it back:
 
 ```bash
-$(cat graphify-out/.graphify_python) -m graphify save-result --question "Path from NODE_A to NODE_B" --answer "ANSWER" --type path_query --nodes NODE_A NODE_B
+answer_file=$(mktemp)
+cat > "$answer_file" <<'GRAPHIFY_ANSWER'
+ANSWER
+GRAPHIFY_ANSWER
+$(cat graphify-out/.graphify_python) -m graphify save-result --question 'Path from NODE_A to NODE_B' --answer-file "$answer_file" --type path_query --nodes 'NODE_A' 'NODE_B'
+rm -f "$answer_file"
 ```
+
+Quote every placeholder as the `/graphify query` save step describes.
 
 ---
 
@@ -307,5 +321,12 @@ Replace `NODE_NAME` with the concept the user asked about. Then write a 3-5 sent
 After writing the explanation, save it back:
 
 ```bash
-$(cat graphify-out/.graphify_python) -m graphify save-result --question "Explain NODE_NAME" --answer "ANSWER" --type explain --nodes NODE_NAME
+answer_file=$(mktemp)
+cat > "$answer_file" <<'GRAPHIFY_ANSWER'
+ANSWER
+GRAPHIFY_ANSWER
+$(cat graphify-out/.graphify_python) -m graphify save-result --question 'Explain NODE_NAME' --answer-file "$answer_file" --type explain --nodes 'NODE_NAME'
+rm -f "$answer_file"
 ```
+
+Quote every placeholder as the `/graphify query` save step describes.

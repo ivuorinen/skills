@@ -55,7 +55,7 @@ Every fix adds or corrects emissions only. Business logic — control flow, retu
 
 - Correct the level of an existing log statement
 - Add entity IDs, operation names, or the propagated correlation ID to an existing log statement
-- Add a log or metric emission to a dark path or silent job using the inventoried stack
+- Add a log emission to a dark path or silent job using the inventoried stack (a new metric is approval-gated below)
 - Propagate an existing correlation ID across a boundary the code already crosses (header, message attribute)
 - Redact or drop a PII field from an existing log statement, keeping a non-PII identifier
 - Bound a metric label (enumerate, bucket, or hash) or drop the unbounded label

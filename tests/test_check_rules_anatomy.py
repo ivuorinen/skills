@@ -11,8 +11,8 @@ import pytest
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
 _spec = importlib.util.spec_from_file_location("check_rules_anatomy", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
-_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
+_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
 
 _parse_frontmatter = _mod._parse_frontmatter
 _check_file = _mod._check_file
@@ -703,6 +703,45 @@ class TestAdditionalCoverage:
         _mod._tracked.cache_clear()
         dead = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "dead_anchor"]
         assert len(dead) == 1 and "snake_case-ghost" in dead[0], dead
+
+    def test_a_repeated_heading_takes_githubs_numeric_suffix(self, tmp_path):
+        """audit-1558e13f: a link to the second `## Enforcement` read as dead.
+
+        GitHub slugs the second and later identical headings `-1`, `-2`, …; a
+        suffix past the last repeat still lands nowhere.
+        """
+        f = tmp_path / "repeat.md"
+        f.write_text(
+            "# R\n\n## Enforcement\n\n## Enforcement\n\n## Enforcement\n\n"
+            "See [first](#enforcement), [second](#enforcement-1) and [third](#enforcement-2).\n"
+            "Not [fourth](#enforcement-3).\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        dead = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "dead_anchor"]
+        assert len(dead) == 1 and "#enforcement-3" in dead[0], dead
+
+    def test_a_moved_directory_qualified_path_is_stale(self, tmp_path):
+        """audit-379e888a: the basename fallback passed a path whose file had moved.
+
+        `scripts/validate.py` citing a file now at `tools/validate.py` is the
+        move stale_path exists to catch; a bare `validate.py` still resolves by
+        basename, and `commands/conv.md` by its trailing path components, as a
+        path written relative to its skill directory does.
+        """
+        (tmp_path / "tools").mkdir()
+        (tmp_path / "tools" / "validate.py").write_text("x\n", encoding="utf-8")
+        (tmp_path / "skills" / "s" / "commands").mkdir(parents=True)
+        (tmp_path / "skills" / "s" / "commands" / "conv.md").write_text("x\n", encoding="utf-8")
+        f = tmp_path / "moved.md"
+        f.write_text(
+            "# M\n\nRun `scripts/validate.py` before committing.\nRun `validate.py` too.\n"
+            "Read `commands/conv.md` first.\n",
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        stale = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "stale_path"]
+        assert len(stale) == 1 and "scripts/validate.py" in stale[0], stale
 
     def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
         """The negative half: these checks must stay quiet on a healthy file.

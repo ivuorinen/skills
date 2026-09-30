@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Bitbucket Cloud provider: PR comments and status, in the shared envelope.
 
 Library, not a CLI — `fetch-pr-comments.py` and `fetch-pr-status.py` dispatch

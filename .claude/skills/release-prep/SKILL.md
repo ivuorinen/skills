@@ -69,6 +69,8 @@ fixes. If it fails: stop and report.
 The repository merges by squash only, with the PR title as the squash commit
 title (`gh api repos/{owner}/{repo}` → `squash_merge_commit_title: PR_TITLE`),
 so release-please reads the **PR title**, not the branch's commit subjects.
+Auto-merge is the exception: it squashes with the commit headline captured when
+auto-merge was enabled, and a later retitle does not update it.
 The types, from highest impact to lowest:
 
 - `feat!:` or a `BREAKING CHANGE:` footer — major bump
@@ -79,13 +81,20 @@ The types, from highest impact to lowest:
 ```bash
 git log main..HEAD --format='%s%n%b'
 gh pr view --json title --jq .title
+gh pr view --json number,autoMergeRequest --jq '[.number, .autoMergeRequest.commitHeadline]'
 ```
 
 Find the highest-impact type among the branch's commits (subjects and
 `BREAKING CHANGE:` footers). The PR title must be a conventional commit carrying
 that type. A title with a lower type, or no conventional type: stop; instruct
 the user to retitle the PR (`gh pr edit --title "<type>: <summary>"`). With no
-PR open yet, report the type the title must carry. Do **not** require a manual
+PR open yet, report the type the title must carry.
+
+When `autoMergeRequest` is non-null, its `commitHeadline` is the subject that
+lands on `main`. It must equal the PR title, or the title followed by
+` (#<number>)`. Any other headline: stop and report it as blocking; instruct the
+user to disable and re-enable auto-merge (`gh pr merge --disable-auto`, then
+`gh pr merge --auto --squash`) so it captures the current title. Do **not** require a manual
 `CHANGELOG.md` entry — release-please manages the changelog.
 
 ## Step 5 — Confirm CI Is Green

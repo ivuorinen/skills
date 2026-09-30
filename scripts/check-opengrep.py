@@ -105,7 +105,11 @@ RULE_TIMEOUT = 30
 # `nosem` is opengrep's other accepted spelling of the same marker.
 _MARKER = re.compile(r"#\s*nosem(?:grep)?\b")
 
-_SKIP_DIRS = {".venv", "graphify-out", "_extra", ".git", "__pycache__"}
+# Every entry names a directory that exists or is gitignored, the rule
+# pyproject's [tool.bandit] states for its exclusions. `_extra` never existed,
+# so the day someone created it its markers would have skipped the stale check
+# in silence (audit-2a51dbf3); tests/test_bandit_config.py pins this.
+_SKIP_DIRS = {".venv", "graphify-out", ".git", "__pycache__"}
 
 USAGE = f"""usage: check-opengrep.py [--help]
 

@@ -51,7 +51,7 @@ Every fix changes the error path only. The happy path's inputs, outputs, and sid
 - Narrow an overbroad catch to the exception types the guarded operation raises
 - Add cause chaining and context to an existing rethrow (`raise X from e`, `new Error(msg, { cause: e })`)
 - Propagate a discarded error signal: check the return code, await the call, attach a rejection path that rethrows
-- Add a bound and an exhaustion signal to a retry loop
+- Add a bound and an exhaustion signal to a retry loop — only when exhaustion already has a controlled disposition (a synchronous caller receives the error, or a dead-letter/durable-parking path exists); otherwise the cap is approval-gated per `reliability.md` Fix strategy
 - Add an operator-reaching failure signal (log, metric, error field) to a masking fallback, keeping the fallback
 - Move a no-one-reaches log to a level and destination operators observe
 

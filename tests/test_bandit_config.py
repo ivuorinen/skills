@@ -14,6 +14,7 @@ bandit was invoked with — see `test_every_pyproject_exclusion_is_honoured_by_t
 """
 
 import configparser
+import importlib.util
 import tomllib
 from pathlib import Path
 
@@ -115,11 +116,57 @@ def test_each_excluded_dir_is_listed_in_both_forms():
         assert f"*/{name}/*" in patterns, f"{name} missing its glob form (needed when target is .)"
 
 
+_BANDIT_DEFAULTS = frozenset({".git", "__pycache__", ".tox", ".eggs"})
+
+
 def test_bandit_defaults_are_not_lost():
     """Setting `exclude` replaces bandit's built-in list rather than adding to it."""
     patterns = _ini()["exclude"]
-    for expected in (".git", "__pycache__", ".tox", ".eggs"):
+    for expected in sorted(_BANDIT_DEFAULTS):
         assert expected in patterns, f"bandit's default exclusion {expected} was dropped"
+
+
+def test_the_ini_excludes_nothing_pyproject_does_not():
+    """The reverse direction (audit-2a51dbf3).
+
+    Every test above checks that pyproject's exclusions reach the INI. None
+    checked the INI for extras, so `_extra` — removed from pyproject by
+    config-350ac7f7 because it never existed — survived here, silently waiting
+    to hide whatever Python someone later put in `_extra/`.
+    """
+    bare = {
+        p.strip()
+        for p in _ini()["exclude"].split(",")
+        if p.strip() and not p.strip().startswith("*/")
+    }
+    assert bare - _BANDIT_DEFAULTS == set(_pyproject_bandit()["exclude_dirs"])
+
+
+def _gitignored_names() -> set[str]:
+    """Plain directory names `.gitignore` ignores, anchored or not."""
+    names = set()
+    for line in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines():
+        entry = line.strip().strip("/")
+        if entry and not entry.startswith("#") and "/" not in entry and "*" not in entry:
+            names.add(entry)
+    return names
+
+
+def test_every_opengrep_skip_dir_exists_or_is_gitignored():
+    """check-opengrep's stale-marker walker obeys the same rule as the bandit
+    exclusions: a skipped directory that exists nowhere is a silent exclusion
+    waiting for its first file (audit-2a51dbf3)."""
+    spec = importlib.util.spec_from_file_location(
+        "check_opengrep_for_bandit", REPO_ROOT / "scripts" / "check-opengrep.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    ignored = _gitignored_names()
+    for name in sorted(module._SKIP_DIRS):
+        assert (REPO_ROOT / name).exists() or name in ignored, (
+            f"_SKIP_DIRS names {name!r}, which neither exists nor is gitignored"
+        )
 
 
 # Importing bandit's CLI pulls in stevedore, which warns about a no-op argument

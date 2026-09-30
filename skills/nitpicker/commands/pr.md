@@ -18,7 +18,7 @@ For a review that files findings to the store, use `/nitpicker review`. For impl
    - Staged only: `git diff --cached`
    - Specific files: paths passed as arguments
    - PR number: preflight `command -v gh` first (per `_conventions.md` → Execution). If present, fetch the diff via `gh pr diff <number>`; if `gh` is absent, report "gh not available — supply the diff directly or install gh" and stop rather than emitting an empty review.
-2. **Run through the review checklist** (same categories as `/nitpicker review`) against the changed lines only. Do not flag issues in unchanged context lines.
+2. **Run through the review checklist** (the categories listed below) against the changed lines only. Do not flag issues in unchanged context lines.
 3. **For each finding**, record: severity (Critical / High / Medium / Low / Advisory), file and line number, what is wrong (one sentence, no hedging), a concrete trigger that reproduces the problem, and a suggested fix (code snippet when possible).
 4. **Emit the review** to stdout in the output format below. Nothing else — no preamble, no summary prose.
 
@@ -33,6 +33,8 @@ Apply to changed lines only. Skip categories with no relevant constructs in the 
 - **State & concurrency** — races, TOCTOU, stale closures, missing synchronisation
 - **Data integrity** — unvalidated input, partial writes, constraint violations
 - **Resource management** — leaks, unbounded growth, missing timeouts
+- **Time and dates** — naive/aware mixing, UTC-vs-local, DST, epoch units, wall clock used for durations
+- **Money and precision** — float currency, rounding mode, unit/currency mismatch, integer-division truncation
 - **Conventions** — violates patterns established in surrounding unchanged code
 
 ## Output format

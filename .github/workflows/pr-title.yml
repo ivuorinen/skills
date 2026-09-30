@@ -7,9 +7,14 @@ name: PR Title
 # conditionally-skipped run under a required check name — GitHub reports a
 # skipped job as success to required-status-check evaluation, so a title edit
 # would otherwise satisfy branch protection for a failing commit.
+#
+# Under auto-merge the squash subject is `auto_merge.commit_title`, captured when
+# auto-merge was enabled; a later retitle does not change it (#138 merged as
+# `fix` after being retitled `chore`). The auto-merge events re-run this job so
+# the captured title is checked against the PR title it has to match.
 on:
   pull_request:
-    types: [opened, edited, reopened, synchronize]
+    types: [opened, edited, reopened, synchronize, auto_merge_enabled, auto_merge_disabled]
 
 permissions: {}
 
@@ -27,3 +32,17 @@ jobs:
       - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Auto-merge commit title matches the PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTO_TITLE: ${{ github.event.pull_request.auto_merge.commit_title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "$AUTO_TITLE" ] || [ "$AUTO_TITLE" = "$TITLE" ] \
+            || [ "$AUTO_TITLE" = "$TITLE (#$NUMBER)" ]; then
+            exit 0
+          fi
+          # The titles are not echoed: they are PR-author input, and a log line
+          # is where a workflow command would be read from.
+          echo "::error::the auto-merge commit title differs from the PR title. Disable and re-enable auto-merge so it captures the current title."
+          exit 1

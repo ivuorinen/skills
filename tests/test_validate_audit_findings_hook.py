@@ -12,8 +12,8 @@ HOOK_PATH = Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit
 FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 
 spec = importlib.util.spec_from_file_location("audit_hook", HOOK_PATH)
-hook = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-spec.loader.exec_module(hook)  # type: ignore[union-attr]
+hook = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+spec.loader.exec_module(hook)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def _store_file(repo: Path, rel: str, text: str = "x") -> Path:
@@ -155,8 +155,8 @@ def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys)
     summarises.
     """
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
-    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
+    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(
@@ -183,8 +183,8 @@ def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
     # which leak the checkout directory and fail make check / CI index-check.
     """Absolute paths leak the checkout directory and fail make check's index-check."""
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
-    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
+    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(
@@ -212,8 +212,8 @@ def test_main_handles_resolved_ledger_edit(monkeypatch, tmp_path, capsys):
     # has no per-line file, so there is nothing to per-file validate).
     """The ledger has no per-line file, so it is store-validated rather than per-file validated."""
     fspec = importlib.util.spec_from_file_location("findings", FINDINGS_PATH)
-    findings = importlib.util.module_from_spec(fspec)  # type: ignore[arg-type]
-    fspec.loader.exec_module(findings)  # type: ignore[union-attr]
+    findings = importlib.util.module_from_spec(fspec)  # pyright: ignore[reportArgumentType]
+    fspec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
 
     root = tmp_path / "docs" / "audit" / "findings"
     path = findings.new_finding(
