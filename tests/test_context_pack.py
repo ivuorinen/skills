@@ -231,7 +231,7 @@ def test_git_runs_with_the_audited_trees_command_hooks_disabled(tmp_path, monkey
 
     def capture(argv, **kwargs):
         seen["argv"], seen["env"] = argv, kwargs["env"]
-        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(cp.subprocess, "run", capture)
     cp._git(tmp_path, "status")
@@ -260,6 +260,45 @@ def test_walk_skips_a_directory_it_cannot_read(tmp_path, monkeypatch):
     (tmp_path / "locked").mkdir()
     monkeypatch.setattr(Path, "iterdir", flaky)
     assert {p.name for p in cp._walk(tmp_path)} == {"a.py"}
+    unlistable: list[Path] = []
+    assert {p.name for p in cp._walk(tmp_path, unlistable)} == {"a.py"}
+    assert unlistable == [tmp_path / "locked"]
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root lists a mode-000 directory"
+)
+@pytest.mark.parametrize("mode", ["inventory", "symbols", "evidence"])
+def test_an_unlistable_directory_is_reported_not_silently_dropped(tmp_path, mode):
+    """errors-77dd5132: the non-git walk dropped a mode-000 subtree without a record.
+
+    `omitted` and the notes both came back as if `secretdir` did not exist, so a
+    lens outside git reported an unread subtree as covered and clean. Every mode
+    rewrites `omitted`, so each is checked, and a nested directory proves the
+    record is not limited to the root's direct children.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("def method():\n    pass\n", encoding="utf-8")
+    locked = [tmp_path / "secretdir", tmp_path / "src" / "deep"]
+    for directory in locked:
+        directory.mkdir()
+        (directory / "b.py").write_text("def method():\n    pass\n", encoding="utf-8")
+        directory.chmod(0)
+    try:
+        pack = cp.build(root=tmp_path, goal="method", mode=mode)
+    finally:
+        for directory in locked:
+            directory.chmod(0o755)
+    assert pack["omitted"]["dirs_unlistable"] == 2
+    [note] = [n for n in pack["notes"] if n.startswith("dirs_unlistable")]
+    assert "secretdir" in note and "src/deep" in note
+
+
+def test_a_walk_that_lists_everything_adds_no_unlistable_record(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    pack = cp.build(root=tmp_path, goal="", mode="inventory")
+    assert "dirs_unlistable" not in pack["omitted"]
+    assert not [n for n in pack["notes"] if n.startswith("dirs_unlistable")]
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX-only special file")
@@ -335,6 +374,57 @@ def test_regex_outline_ends_a_symbol_at_the_next_declaration():
     outline = cp.symbols_of(Path("m.js"), JS)
     alpha = next(item for item in outline if item[0] == "alpha")
     assert alpha[1] == 1 and alpha[2] == 4
+
+
+# audit-3837502b: a form feed on line 4 and a U+2028 inside a string on line 7.
+# `str.splitlines()` breaks on both; git, editors, `wc -l` and `ast` do not.
+SPLITTER_JS = (
+    "function alpha() {\n"
+    "  return 1;\n"
+    "}\n"
+    "\x0c\n"
+    "\n"
+    "function beta() {\n"
+    "  return 'a\u2028b\x1ec\x85d';\n"
+    "}\n"
+    "function gamma() {\n"
+    "  return needle;\n"
+    "}\n"
+)
+
+
+def test_line_numbers_count_only_newlines_not_every_unicode_line_break(tmp_path):
+    """audit-3837502b: every coordinate after a form feed or U+2028 drifted.
+
+    `_regex_symbols` and `_file_candidates` numbered lines with
+    `str.splitlines()`, so both the outline and the evidence range cited lines
+    the caller then re-read as the wrong code — and a range could end past EOF.
+    """
+    total = SPLITTER_JS.count("\n")  # what `wc -l` and an editor report
+    assert cp.symbols_of(Path("u.js"), SPLITTER_JS) == [
+        ("alpha", 1, 5),
+        ("beta", 6, 8),
+        ("gamma", 9, total),
+    ]
+    window = "".join(f"filler {n}\x0c\n" for n in range(1, 20)) + "needle\n" + "tail\n" * 10
+    root = _repo(tmp_path, {"u.js": SPLITTER_JS, "w.txt": window})
+    pack = cp.build(root=root, goal="needle", mode="evidence")
+    ranges = {c["path"]: (c["start"], c["end"], c["symbol"]) for c in pack["candidates"]}
+    assert ranges == {"u.js": (9, 11, "gamma"), "w.txt": (12, 28, "")}
+
+
+@pytest.mark.parametrize("breaker", ["\x0c", "\r", "\x1c", "\N{LINE SEPARATOR}"])
+def test_diff_never_reads_a_hunk_header_out_of_a_content_line(tmp_path, breaker):
+    """audit-3837502b, the same split in `_diff`: a line break inside a changed line.
+
+    `raw.splitlines()` cut `+x = 1  # \\x0c@@ -1 +40,3 @@` in two, and the second
+    half matched `_HUNK` as a real header — a phantom candidate at line 40. A
+    lone `\\r` did the same through `text=True`'s newline translation.
+    """
+    root = _repo(tmp_path, {"a.py": "x = 0\n"})
+    (root / "a.py").write_bytes(f"x = 1  # {breaker}@@ -1 +40,3 @@\n".encode())
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert [(c["start"], c["end"]) for c in pack["candidates"]] == [(1, 1)]
 
 
 def test_enclosing_prefers_the_innermost_declaration():
@@ -534,6 +624,59 @@ def test_diff_reaches_a_change_to_a_non_ascii_file_name(tmp_path):
     pack = cp.build(root=root, goal="", mode="diff")
     assert {c["path"] for c in pack["candidates"]} == {"näme.py"}
     assert {c["symbol"] for c in pack["candidates"]} == {"method"}
+
+
+# The one name no UTF-8 decode accepts: Latin-1 `é`. A filesystem that stores
+# names as UTF-16 or normalises them (APFS, NTFS) refuses it, which is a skip
+# rather than a pass.
+LATIN1_NAME = b"n\xe9.py"
+
+
+def _latin1_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A repository holding one committed file whose name is not valid UTF-8."""
+    root = _repo(tmp_path, {"plain.py": PY}, commit=False)
+    try:
+        # A surrogate-escaped str path re-encodes to the original bytes.
+        (root / os.fsdecode(LATIN1_NAME)).write_bytes(PY.encode("utf-8"))
+    except (OSError, UnicodeError):
+        pytest.skip("this filesystem refuses a non-UTF-8 file name")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=root, check=True)
+    return root, os.fsdecode(LATIN1_NAME)
+
+
+@pytest.mark.parametrize("mode", ["inventory", "symbols", "evidence"])
+def test_every_listing_mode_survives_a_non_utf8_file_name(tmp_path, mode):
+    """audit-204c7123: `core.quotePath=false` makes git print the name's raw bytes.
+
+    `_git` decoded stdout strictly, so one Latin-1 name raised UnicodeDecodeError
+    out of `ls-files` and took every mode down with it. The name must also
+    round-trip back to the file on disk — a decode that replaced the byte would
+    list a path nothing can open.
+    """
+    root, name = _latin1_repo(tmp_path)
+    pack = cp.build(root=root, goal="method", mode=mode)
+    rows = pack["files"] if mode != "evidence" else pack["candidates"]
+    assert name in {row["path"] for row in rows}
+    if mode == "inventory":
+        [row] = [r for r in pack["files"] if r["path"] == name]
+        assert row["lines"] == PY.count("\n")
+    json.dumps(pack)  # the MCP envelope must still serialise it
+
+
+def test_diff_survives_a_non_utf8_file_name_and_non_utf8_content(tmp_path):
+    """audit-204c7123: both halves of the diff output reached a strict decode.
+
+    The changed file's own bytes arrive in the hunk body, so Latin-1 content
+    crashed `--mode diff` even under an ASCII name.
+    """
+    root, name = _latin1_repo(tmp_path)
+    changed = PY.replace("return 1", "return 'caf\xe9'").encode("latin-1")
+    (root / name).write_bytes(changed)
+    (root / "plain.py").write_bytes(changed)
+    pack = cp.build(root=root, goal="", mode="diff")
+    assert {c["path"] for c in pack["candidates"]} == {name, "plain.py"}
+    assert cp.main(["--root", str(root), "--mode", "diff"]) == 0
 
 
 def test_diff_reaches_a_staged_deletion(tmp_path):
@@ -961,12 +1104,53 @@ def test_merging_two_ranges_estimates_the_merged_span_itself(tmp_path):
     right = cp.Candidate(
         path="a.py", start=10, end=50, score=1.0, reason=("y",), tokens=span(10, 50)
     )
-    merged = cp._merge([left, right], lines)
+    merged = cp._merge([left, right], cp._offsets(lines))
     assert len(merged) == 1
     assert (merged[0].start, merged[0].end) == (1, 50)
     assert merged[0].tokens == span(1, 50)
     assert merged[0].tokens > right.tokens
     assert merged[0].tokens < left.tokens + right.tokens
+
+
+def test_span_estimate_equals_the_joined_ranges_own_estimate():
+    """perf-52fa0982: the O(1) prefix-sum estimate must give today's exact numbers.
+
+    The ranges include the edges a slice clips silently — an end past EOF, a
+    start past EOF, a one-line range, empty lines — because the old
+    `estimate_tokens("\\n".join(lines[start - 1 : end]))` defined the value and
+    a drift of one token changes what `_pack_to_budget` admits.
+    """
+    lines = ["", "a", "bb", "", "cccc ccc", "d" * 13, "", "", "e" * 4, "f"]
+    offsets = cp._offsets(lines)
+    for start in range(1, len(lines) + 3):
+        for end in range(start - 1, len(lines) + 3):
+            expected = cp.estimate_tokens("\n".join(lines[start - 1 : end]))
+            assert cp._span_tokens(offsets, start, end) == expected, (start, end)
+    assert cp._offsets([]) == [0]
+    assert cp._span_tokens([0], 1, 5) == 0
+
+
+def test_evidence_over_forty_thousand_matched_lines_is_linear(tmp_path):
+    """perf-52fa0982: `_merge` re-joined the whole merged range on every merge.
+
+    Every line matches, so every window overlaps the one before and the merged
+    range grows to the whole file: the join made that O(lines²) — minutes at
+    this size — where the prefix sum keeps it linear. The bound is loose on
+    purpose; the quadratic path misses it by orders of magnitude.
+    """
+    import time
+
+    body = "needle = 1\n" * 40_000
+    root = tmp_path / "big"
+    root.mkdir()
+    (root / "lock.txt").write_text(body, encoding="utf-8")
+    began = time.perf_counter()
+    pack = cp.build(root=root, goal="needle", mode="evidence", budget_tokens=10**9)
+    elapsed = time.perf_counter() - began
+    [hit] = pack["candidates"]
+    assert (hit["start"], hit["end"]) == (1, 40_000)
+    assert hit["tokens"] == cp.estimate_tokens(body.rstrip("\n"))
+    assert elapsed < 5.0, f"evidence took {elapsed:.2f}s over 40k matched lines"
 
 
 def test_a_symbol_matching_on_every_line_is_estimated_once_and_packed(tmp_path):

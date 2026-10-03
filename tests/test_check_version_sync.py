@@ -1,23 +1,17 @@
 """Tests for scripts/check-version-sync.py — main() cross-manifest version check."""
 
-import importlib.util
 import runpy
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
 
 def _load_mod():
     """Load check-version-sync.py; code lives under __main__, so import has no side effects."""
-    spec = importlib.util.spec_from_file_location(
-        "check_version_sync_module",
-        SCRIPTS_DIR / "check-version-sync.py",
-    )
-    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
-    return mod
+    return load_path("check_version_sync_module", SCRIPTS_DIR / "check-version-sync.py")
 
 
 def _make_repo(

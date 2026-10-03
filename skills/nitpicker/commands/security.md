@@ -149,7 +149,7 @@ Normalize tool-specific severities to the standard five levels:
 | Dependency vulnerability with known fix version | Yes, after asking | Run package manager upgrade command |
 | Secret in working tree (not committed) | Yes, after asking | Remove from file, add to `.gitignore` |
 | Secret in git history | No — requires `git filter-repo` or BFG | Document the exact command; warn that it is destructive and requires force-push |
-| IaC misconfiguration | Sometimes — checkov `--fix` flag | Ask before applying |
+| IaC misconfiguration | No — checkov has no autofix flag | Provide the exact remediation in the finding; route deeper IaC fixes to `/nitpicker iac` |
 | SAST / gosec finding | No — requires code change | Provide the exact fix in the finding |
 
 ## Common mistakes

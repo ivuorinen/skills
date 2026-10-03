@@ -1,6 +1,6 @@
 # Architecture Profile
 
-Generated: 2026-09-10
+Generated: 2026-09-29
 
 This repository has **two distinct architectures over the same tree**, and they
 must be read separately or neither makes sense:
@@ -146,7 +146,9 @@ import graph `make ring-deps` prints:
   `context_pack` and `scripts/bench-recall.py` imports `findings`;
   `scripts/common.py` reaches `findings.py` and `md_fences.py` by path,
   `scripts/validate-rules.py` reaches `check-rules-anatomy.py` and
-  `scripts/validate-skill.py` reaches `context_pack.py`. Within the middle ring,
+  `scripts/validate-skill.py` reaches `context_pack.py`; the hook
+  `validate-audit-findings-hook.py` loads `findings.py` by path through
+  `SourceFileLoader`. Within the middle ring,
   `scripts/bench-recall.py` loads `scripts/bench-retrieval.py` by path.
   `make ring-deps` prints the current edge list; read it there rather than
   trusting this copy.
@@ -158,7 +160,9 @@ import graph `make ring-deps` prints:
   `check-stdlib-only.py`).
 - The **direction** is enforced separately by `scripts/check-ring-deps.py`
   (`make ring-deps`, in `make check`), which builds the graph from `import`
-  statements *and* from `spec_from_file_location` loads, and exits non-zero on
+  statements (relative ones included) *and* from path loads —
+  `spec_from_file_location`, `SourceFileLoader`, `runpy.run_path`, the set
+  `_PATH_LOADERS` names — and exits non-zero on
   an outward edge or on a module load it cannot resolve. It exists because
   `check-stdlib-only` reads imports only, and the edges most likely to cross a
   ring here are the ones no import statement expresses.
@@ -238,8 +242,10 @@ Evidence: a full directory scan for the catalogue's structural signals
 and `docs/audit/findings/review/` (a findings-store auditor bucket). Class-name
 scan finds no `*Entity`, `*ValueObject`, `*Aggregate`, `*Repository`,
 `*DomainService`, `*Port`, `*Adapter`, `*Handler`, `*ViewModel` or `*Presenter`
-suffix anywhere — the only non-test classes in the tree are `UsageError`,
-`TransportError`, `_TokenSafeRedirectHandler`, `_Result` and `_R`.
+suffix in an architectural role: the one `*Handler`, `_TokenSafeRedirectHandler`
+in `pr_common.py`, is named for the `urllib` redirect handler it subclasses. The
+set of non-test classes changes with the tree, so it is not copied here; list
+it with `git grep -n '^class ' -- '*.py' ':!tests'`.
 
 ## Detected Combination
 
@@ -321,9 +327,10 @@ These are what `/nitpicker arch` should validate against.
 
 **Visibility rule:**
 
- 1. Every module load resolves statically. A `spec_from_file_location` whose
-    target cannot be determined — a computed path outside the module's own
-    directory, a name assigned twice in one scope — fails `make ring-deps`
+ 1. Every module load resolves statically. A path load (any loader in
+    `_PATH_LOADERS`) or a relative import whose target cannot be determined —
+    a computed path outside the module's own directory, a name assigned twice
+    in one scope, a non-literal segment after the anchor — fails `make ring-deps`
     rather than being passed over, because an unresolved load is a hidden edge
     and a hidden edge is how a ring violation gets in.
 
@@ -344,15 +351,18 @@ core at its own adapter made every one of those callers pay for the renderer".
 The original scan walked function bodies and conflated a deferred import with a
 module-level one. `make ring-deps` now distinguishes them.
 
-**Hooks do not load their validators by path.** The first pass listed
-`scripts/hooks/*` among the string-path importers. They use `subprocess`
-(the `subprocess.run` calls in `main` of `validate-audit-findings-hook.py`). A
-process boundary is not an import edge, is legitimately absent from a
-dependency graph, and cannot carry a ring violation. The real string-path
-importers are the modules `make ring-deps` marks `[string-path load]`:
-`scripts/common.py`, `scripts/validate-rules.py`, `scripts/validate-skill.py`
-and `scripts/bench-recall.py`, plus `mcp_server.py` and
-`check-context-tokens.py`, which load only from their own directory.
+**One hook loads a shipped module by path; the rest shell out.**
+`validate-audit-findings-hook.py` loads `skills/nitpicker/scripts/findings.py`
+through `importlib.machinery.SourceFileLoader` (`_load_findings`), so it can
+read `findings.DEFAULT_ROOT` rather than copy it. That edge points inward
+(hooks → shipped) and is legal, but `make ring-deps` did not see it until
+SourceFileLoader joined the loaders it resolves (arch-548ae822). The hooks'
+validator runs still go through `subprocess` — the `subprocess.run` calls in
+that hook's `main`, among others — and a process boundary is not an import
+edge, is legitimately absent from a dependency graph, and cannot carry a ring
+violation. The authoritative list of string-path importers is what
+`make ring-deps` marks `[string-path load]` and
+`[string-path load, own directory]`; read it there rather than from a copy.
 
 ### Fixed
 
@@ -364,17 +374,15 @@ a private regex. `pr_common` is imported by all three providers and by
 library, not a CLI" is now true.
 
 **Cross-ring edges are no longer invisible.** `scripts/check-ring-deps.py`
-resolves `spec_from_file_location` loads into the graph and prints them beside
+resolves path loads into the graph and prints them beside
 ordinary imports, marked. It resolves through a variable binding (every real
 case here assigns the path first) and scopes that resolution per function
 (`mcp_server` binds `path` in two different functions; a module-flat scan
-resolves neither). A load it cannot resolve is an error, not silence. These
-string-path edges it recovers are pinned by `tests/test_check_ring_deps.py`, so
-the tool cannot quietly stop resolving them:
-`scripts/common.py → skills/nitpicker/scripts/findings.py`,
-`scripts/common.py → skills/nitpicker/scripts/md_fences.py`,
-`scripts/validate-rules.py → skills/nitpicker/scripts/check-rules-anatomy.py`
-and `scripts/bench-recall.py → scripts/bench-retrieval.py`.
+resolves neither). A load it cannot resolve is an error, not silence. The
+string-path edges it recovers are pinned, and counted, by
+`test_the_cross_ring_string_path_edges_are_reported` in
+`tests/test_check_ring_deps.py`, so the tool cannot quietly stop resolving
+them; read the current set there.
 `scripts/validate-skill.py → skills/nitpicker/scripts/context_pack.py` is
 resolved too, but no test pins it.
 

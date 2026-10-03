@@ -67,6 +67,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
@@ -590,12 +591,48 @@ _CLOSING_TAG = "</untrusted-data>"
 # markdown payloads are not JSON-escaped, so a newline reaches the reader as one
 # (prompt-safety-a96485e2). `\b` keeps `</untrusted-database>` untouched.
 #
-# The tail is `[^<>]*`, not `[^>]*`: the wider class ran across the next
-# `</untrusted-data`, so a payload of many unterminated tags was scanned to its
-# end once per occurrence — quadratic, 13 s for 512 KB, on a single-threaded
-# server any PR commenter can feed (prompt-safety-5813e704). Stopping at `<`
-# bounds each attempt at the next tag and still matches every spelling above.
-_CLOSING_TAG_RE = re.compile(r"<\s*/\s*untrusted[-_\s]*data\b[^<>]*>", re.IGNORECASE)
+# Only the opener is matched — no tail, no `>`. A tail of `[^>]*` ran across the
+# next `</untrusted-data`, so many unterminated tags were scanned to the end once
+# per occurrence: quadratic, 13 s for 512 KB, on a single-threaded server any PR
+# commenter can feed (prompt-safety-5813e704). Narrowing it to `[^<>]*` fixed the
+# time and missed a closer carrying `<` before its `>`, `</untrusted-data x="<">`
+# (audit-ac35d45b). Defanging the opener whatever follows it covers every tail
+# and is linear: the escaped `<\/` no longer reads as a closing tag, and the tail
+# is left as it was.
+#
+# The pattern runs on the reader's view of the payload, not its raw text
+# (prompt-safety-187ffe50): a model reads fullwidth brackets (U+FF1C, U+FF0F),
+# a soft hyphen or zero-width space inside the name, or U+2010 for the hyphen
+# as the same closer, and the ASCII-only match returned all of them unchanged.
+# Ceiling: the fold covers NFKC compatibility forms, format (Cf) characters and
+# the U+2010 to U+2015 and U+2212 dashes; a confusable NFKC leaves distinct (a
+# Cyrillic letter, a combining mark) is still not matched.
+_CLOSING_TAG_RE = re.compile(r"<\s*/\s*untrusted[-_\s]*data\b", re.IGNORECASE)
+_DASH_LOOKALIKES = dict.fromkeys((*range(0x2010, 0x2016), 0x2212), "-")
+_DEFANGED_OPENER = "<\\/untrusted-data"
+
+
+def _reader_fold(payload: str) -> tuple[str, list[int]]:
+    """Fold `payload` to what a lenient reader sees, with each folded character's
+    index in the original.
+
+    Per character, so the fold stays linear and every folded character maps back
+    to exactly one original one: NFKC (fullwidth brackets and letters become
+    ASCII), format characters dropped (U+200B, U+00AD, U+2060, U+FEFF, ...) and the dash
+    look-alikes read as `-`. Matching runs on the fold; escaping runs on the
+    original span, so text around a match comes back byte-for-byte.
+    """
+    folded: list[str] = []
+    origin: list[int] = []
+    for i, char in enumerate(payload):
+        if char < "\x80":
+            folded.append(char)
+            origin.append(i)
+        elif unicodedata.category(char) != "Cf":
+            for part in unicodedata.normalize("NFKC", char).translate(_DASH_LOOKALIKES):
+                folded.append(part)
+                origin.append(i)
+    return "".join(folded), origin
 
 
 def _neutralize(payload: str) -> str:
@@ -608,8 +645,25 @@ def _neutralize(payload: str) -> str:
     trusted server output, immediately before the trailer that claims to describe
     it. `cr.md` states the same rule for its per-comment envelope; this is that
     rule applied at the tool boundary.
+
+    An ASCII payload has no look-alike to fold, so it takes the direct match;
+    either path rewrites an ASCII closer identically.
     """
-    return _CLOSING_TAG_RE.sub("<\\\\/untrusted-data>", payload)
+    if payload.isascii():
+        return _CLOSING_TAG_RE.sub(_DEFANGED_OPENER.replace("\\", "\\\\"), payload)
+    folded, origin = _reader_fold(payload)
+    out: list[str] = []
+    last = 0
+    for match in _CLOSING_TAG_RE.finditer(folded):
+        # Clamped, not branched: a match could only start before `last` if one
+        # original character's NFKC expansion both ended one closer and began the
+        # next, which no character does — the clamp keeps the slice ordered anyway.
+        start = max(origin[match.start()], last)
+        end = origin[match.end() - 1] + 1
+        out += (payload[last:start], _DEFANGED_OPENER)
+        last = end
+    out.append(payload[last:])
+    return "".join(out)
 
 
 def _envelope(source: str, payload: str, trailer: str) -> str:

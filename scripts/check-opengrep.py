@@ -102,8 +102,14 @@ TIMEOUT = 600
 # too-low one is a gate nobody trusts.
 RULE_TIMEOUT = 30
 
-# `nosem` is opengrep's other accepted spelling of the same marker.
-_MARKER = re.compile(r"#\s*nosem(?:grep)?\b")
+# `nosem` is opengrep's other accepted spelling of the same marker. Matched
+# case-insensitively because opengrep honours `# NOSEMGREP` too: a
+# case-sensitive pattern left an uppercase marker unjudged, so one that
+# outlived its call was never reported stale (audit-15247a0d). The `#` must open
+# the comment or follow whitespace, as a second marker after a `noqa` does: a
+# marker quoted inside prose suppresses nothing, and once the match was
+# case-insensitive this file's own explanation read as a stale marker.
+_MARKER = re.compile(r"(?<!\S)#\s*nosem(?:grep)?\b", re.IGNORECASE)
 
 # Every entry names a directory that exists or is gitignored, the rule
 # pyproject's [tool.bandit] states for its exclusions. `_extra` never existed,

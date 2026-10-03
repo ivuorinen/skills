@@ -9,7 +9,8 @@ Usage: ./scripts/bump-version.py [major|minor|patch]
 `--help`/`-h` prints this text before the argument is read as a part
 (audit-24b0f17a).
 
-Exit codes: 0 success, 2 usage error.
+Exit codes: 0 success, 1 a manifest cannot be bumped (no [project] version, or a
+version not in MAJOR.MINOR.PATCH form), 2 usage error.
 """
 
 import json
@@ -171,10 +172,15 @@ def main() -> int:
     if not locked:
         print("  0. Run `uv lock` — uv.lock still names the old version, and")
         print("     `make lock-check` fails until it does not")
-    print(f"  1. Add an entry to CHANGELOG.md for v{new_version}")
-    print(f"  2. git add -A && git commit -m 'chore: release v{new_version}'")
-    print(f"  3. git tag v{new_version}")
-    print("  4. git push && git push --tags")
+    # Staged by path, never `git add -A`: the repo's git guard denies it, and it
+    # would sweep unrelated work into a release commit. No CHANGELOG entry and
+    # no tag: release-please writes both, and a hand-made pair collides with
+    # its own (audit-5dcff502).
+    manifests = " ".join([*(rel_path for rel_path, _ in pending), "uv.lock"])
+    print(f"  1. git add {manifests}")
+    print("  2. git commit with the conventional type the change warrants")
+    print("     (feat:, fix:, or feat!: for a breaking change)")
+    print("  3. Push and open a PR; release-please writes CHANGELOG.md and the tag on merge")
     return 0
 
 

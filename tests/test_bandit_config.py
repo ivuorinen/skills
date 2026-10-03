@@ -14,11 +14,11 @@ bandit was invoked with — see `test_every_pyproject_exclusion_is_honoured_by_t
 """
 
 import configparser
-import importlib.util
 import tomllib
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 REPO_ROOT = Path(__file__).parent.parent
 BANDIT_INI = REPO_ROOT / ".bandit"
@@ -156,12 +156,7 @@ def test_every_opengrep_skip_dir_exists_or_is_gitignored():
     """check-opengrep's stale-marker walker obeys the same rule as the bandit
     exclusions: a skipped directory that exists nowhere is a silent exclusion
     waiting for its first file (audit-2a51dbf3)."""
-    spec = importlib.util.spec_from_file_location(
-        "check_opengrep_for_bandit", REPO_ROOT / "scripts" / "check-opengrep.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_path("check_opengrep_for_bandit", REPO_ROOT / "scripts" / "check-opengrep.py")
     ignored = _gitignored_names()
     for name in sorted(module._SKIP_DIRS):
         assert (REPO_ROOT / name).exists() or name in ignored, (

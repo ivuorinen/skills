@@ -10,11 +10,11 @@ which is a visible, reviewable line in a diff rather than a silent omission.
 The registry is not a substitute for running the test. It records that one ran.
 """
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _REPO = Path(__file__).parent.parent
 _COMMANDS = _REPO / "skills" / "nitpicker" / "commands"
@@ -63,9 +63,7 @@ def test_the_registry_is_well_formed():
     shape, so the hook and pre-commit that run it hold the same bar this suite
     does (agent-loopholes-17e0386b). Checked here too, so a shape error also
     fails the unit run beside the coverage checks above."""
-    spec = importlib.util.spec_from_file_location("validate_evals", _VALIDATOR)
-    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
+    module = load_path("validate_evals", _VALIDATOR)
     errors: list[str] = []
     module.validate_pressure_records(_REGISTRY, "nitpicker", errors)
     assert errors == []

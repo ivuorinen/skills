@@ -7,6 +7,13 @@ SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# Test helpers (`from _loader import load_path`) are imported by bare name. The
+# tests execution environment in pyproject.toml is rooted here, so pyright
+# resolves them from this directory; this makes the runtime agree.
+TESTS_DIR = Path(__file__).parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
 
 @pytest.fixture(autouse=True)
 def _clean_degraded_record():

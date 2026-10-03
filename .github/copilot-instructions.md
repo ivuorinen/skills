@@ -106,8 +106,13 @@ Every finding carries `## Problem`, `## Evidence`, `## Impact`, `## Fix`. `migra
 
 | Class                | Location                               | Runner                                                                                                                   |
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Shipped skill tools  | `skills/*/scripts/*.py`                | plain `python3`, stdlib-only, `#!/usr/bin/env python3` — consumers cannot be assumed to have uv or any installed package |
+| Shipped skill tools  | `skills/*/scripts/*.py`                | plain `python3`, stdlib-only, shebang by role (below) — consumers cannot be assumed to have uv or any installed package  |
 | Internal dev tooling | `scripts/`, `scripts/hooks/`, `tests/` | `uv run --quiet <script>`, shebang `#!/usr/bin/env -S uv run --quiet` + `# /// script` block                             |
+
+A shipped entry point (a module with a top-level `__main__` guard) carries `#!/usr/bin/env python3`
+and the exec bit; a shipped library module carries neither. `scripts/check-stdlib-only.py`
+(pre-commit + CI) fails a third-party import in a shipped tool and a shebang that does not match
+the module's role.
 
 Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0, handled before
 any positional argument resolves as a path. Structured data goes to stdout, diagnostics to

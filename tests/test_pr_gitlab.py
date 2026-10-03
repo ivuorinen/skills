@@ -363,6 +363,42 @@ class TestChecks:
         check = gl._checks(_TARGET, 7, rest)[0]
         assert (check["status"], check["conclusion"]) == expected
 
+    @pytest.mark.parametrize(
+        "status, allow_failure, expected",
+        [
+            # An allowed failure is a warning: GitLab passes the pipeline, so it
+            # is GitHub's continue-on-error, not a failed check (audit-53d39fa7).
+            ("failed", True, ("completed", "neutral")),
+            ("failed", False, ("completed", "failure")),
+            # A blocking manual job holds the pipeline until someone runs it, so
+            # it is pending, not settled CI.
+            ("manual", False, ("queued", "")),
+            ("manual", True, ("completed", "neutral")),
+            ("success", True, ("completed", "success")),
+        ],
+    )
+    def test_allow_failure_decides_failed_and_manual_jobs(self, status, allow_failure, expected):
+        def rest(path):
+            job = {"name": "j", "status": status, "allow_failure": allow_failure}
+            return [{"id": 1}] if path.endswith("/pipelines") else [job]
+
+        check = gl._checks(_TARGET, 7, rest)[0]
+        assert (check["status"], check["conclusion"]) == expected
+
+    def test_allowed_failure_and_blocking_gate_summarise_as_neutral_and_pending(self):
+        """The finding's repro, read through the summary `cr` actually consumes."""
+        jobs = [
+            {"name": "lint", "status": "failed", "allow_failure": True},
+            {"name": "test", "status": "success", "allow_failure": False},
+            {"name": "deploy-gate", "status": "manual", "allow_failure": False},
+        ]
+
+        def rest(path):
+            return [{"id": 1}] if path.endswith("/pipelines") else jobs
+
+        summary = gl.pr_common.summarize_checks(gl._checks(_TARGET, 7, rest))
+        assert summary == {"total": 3, "success": 1, "failure": 0, "neutral": 1, "pending": 1}
+
     def test_non_dict_jobs_are_skipped(self):
         def rest(path):
             return [{"id": 1}] if path.endswith("/pipelines") else ["junk"]

@@ -7,25 +7,17 @@ disagreement was invisible because each had its own tests passing against its
 own reading.
 """
 
-import importlib.util
 import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import md_fences  # noqa: E402
-
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(mod)  # pyright: ignore[reportOptionalMemberAccess]
-    return mod
-
 
 # A block whose content contains a fence line carrying an info string. Only the
 # bare run closes, so `OUTSIDE` is the one line outside the block.
@@ -73,9 +65,9 @@ class TestConsumersAgree:
     @staticmethod
     def mods():
         return {
-            "findings": _load("f_", _SCRIPTS / "findings.py"),
-            "skill_catalog": _load("sc_", _SCRIPTS / "skill_catalog.py"),
-            "check_agent_instructions": _load("cai_", _SCRIPTS / "check-agent-instructions.py"),
+            "findings": load_path("f_", _SCRIPTS / "findings.py"),
+            "skill_catalog": load_path("sc_", _SCRIPTS / "skill_catalog.py"),
+            "check_agent_instructions": load_path("cai_", _SCRIPTS / "check-agent-instructions.py"),
         }
 
     def test_skill_catalog_keeps_an_info_string_fence_inside_the_block(self, mods):
