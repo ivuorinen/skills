@@ -1078,10 +1078,15 @@ def _read_aliases(cwd: str) -> dict[str, str] | None:
 
     Exit 1 with nothing on stderr is `--get-regexp` matching no key — a config
     with no alias, not a failure.
+
+    Read with `-z`: each entry is `name\\nbody\\0`. The plain form prints a body
+    with its newlines raw, so splitting it per line truncated a multi-line alias
+    (`!true` then a second command) to its first line and read the rest as a
+    bogus alias — git ran both commands while every guard judged only the first.
     """
     try:
         result = subprocess.run(
-            ["git", "config", "--get-regexp", r"^alias\."],
+            ["git", "config", "-z", "--get-regexp", r"^alias\."],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -1094,9 +1099,10 @@ def _read_aliases(cwd: str) -> dict[str, str] | None:
     if result.returncode != 0:
         return None
     aliases: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        name, _, body = line.partition(" ")
-        aliases[name.removeprefix("alias.")] = body
+    for entry in result.stdout.split("\0"):
+        if entry:
+            name, _, body = entry.partition("\n")
+            aliases[name.removeprefix("alias.")] = body
     return aliases
 
 
