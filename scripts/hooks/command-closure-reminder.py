@@ -42,7 +42,8 @@ from _hooklib import load_event, report_skip, stop_feedback
 # one. The two hold separate task lists whose ids collide, so state is keyed
 # by server as well as id.
 _TOOL = re.compile(r"^mcp__(?P<server>[A-Za-z0-9_-]*nitpicker)__(?P<tool>np_[a-z_]+)$")
-# `wiped`: an np_todo_write cleared the step before it closed. Not a server
+# `wiped`: an np_todo_write cleared the step, or an np_task_update deleted it,
+# before it closed. Not a server
 # status — this hook's own mark, so a replacement cannot erase the evidence that
 # a run left work open (audit-8bb7d98f).
 _WIPED = "wiped"
@@ -150,11 +151,20 @@ class _Session:
         self.status[key] = "pending"
 
     def task_update(self, server: str, args: dict, _result: Any) -> None:
-        """An update moves one task's status; `deleted` removes it."""
+        """An update moves one task's status; `deleted` removes it.
+
+        Removing a step that was still open does not close it: the key is marked
+        wiped, as a replacement's clear does. Popping it read the missing status
+        as not open, so one call skipped the step and erased the evidence that
+        it was skipped (agent-loopholes-ddcb0d52).
+        """
         key = self._key(server, args.get("task_id", ""))
         new = args.get("status")
         if new == "deleted":
-            self.status.pop(key, None)
+            if self.status.get(key) in _OPEN:
+                self.status[key] = _WIPED
+            else:
+                self.status.pop(key, None)
         elif isinstance(new, str):
             self.status[key] = new
 

@@ -178,6 +178,59 @@ def test_shell_guard_matchers_do_not_widen_past_shell_tools(event, script):
         assert not any(re.fullmatch(m, tool) for m in _matchers_for(event, script)), tool
 
 
+INTEGRITY = "enforcement-surface-integrity.py"
+
+
+@pytest.mark.parametrize("tool", [*SHELL_TOOLS, "Write", "Edit"])
+def test_surface_integrity_check_follows_every_tool_that_can_write(tool):
+    """The detective control for the enforcement surface (agent-hooks-c8ad2907)
+    runs after every call that can change a file: each shell tool, and the file
+    tools the deny list already binds."""
+    matchers = _matchers_for("PostToolUse", INTEGRITY)
+    assert any(re.fullmatch(m, tool) for m in matchers), f"{INTEGRITY} never sees {tool}"
+
+
+def test_surface_integrity_baseline_is_taken_at_session_start():
+    """Without a SessionStart baseline, a change made before the first tool call
+    would become the baseline."""
+    assert INTEGRITY in _commands("SessionStart")
+
+
+def _integrity_commands() -> list[str]:
+    """Every registered command that runs the integrity check."""
+    return [
+        cmd
+        for entries in _settings()["hooks"].values()
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if INTEGRITY in (cmd := h.get("command", ""))
+    ]
+
+
+@pytest.mark.parametrize("command", _integrity_commands())
+@pytest.mark.parametrize(("hook_exit", "expected"), [(None, 2), (1, 2), (0, 0), (2, 2)])
+def test_surface_integrity_check_that_cannot_run_says_so(command, hook_exit, expected, tmp_path):
+    """Exit 2 is the only PostToolUse exit whose stderr reaches the agent, so a
+    check that cannot start — `uv` missing (None), or dying with exit 1 —
+    reports as 2 rather than passing in silence."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if hook_exit is not None:
+        fake_uv = bin_dir / "uv"
+        fake_uv.write_text(f"#!/bin/sh\nexit {hook_exit}\n", encoding="utf-8")
+        fake_uv.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/sh", "-c", command],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={"PATH": str(bin_dir), "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
+    )
+    assert result.returncode == expected, result.stderr
+    assert hook_exit in (0, 2) or result.stderr
+
+
 def test_stop_reminder_registered():
     assert "stop-reminder.py" in _commands("Stop")
 
@@ -366,3 +419,37 @@ def test_a_guard_that_fails_to_run_blocks_the_call(name, command, hook_exit, exp
         env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
     )
     assert result.returncode == expected, f"{name}: {result.stderr}"
+
+
+def _guard_deadline_seconds() -> float:
+    """`_hooklib.GUARD_DEADLINE_SECONDS`, read without importing the hooks package."""
+    text = (HOOKS_DIR / "_hooklib.py").read_text(encoding="utf-8")
+    match = re.search(r"^GUARD_DEADLINE_SECONDS = (\d+(?:\.\d+)?)$", text, re.M)
+    assert match, "_hooklib.py no longer defines GUARD_DEADLINE_SECONDS"
+    return float(match.group(1))
+
+
+def test_every_pretooluse_hook_sets_an_explicit_timeout():
+    """agent-loopholes-793d7db7: Claude Code cancels a hook at its timeout and a
+    timed-out command hook does not block the call. Every PreToolUse hook names
+    its timeout, so the bound is a reviewed value rather than the default."""
+    for entry in _settings()["hooks"]["PreToolUse"]:
+        for hook in entry.get("hooks", []):
+            timeout = hook.get("timeout")
+            assert isinstance(timeout, int) and timeout > 0, hook.get("command", "")[:80]
+
+
+@pytest.mark.parametrize(("name", "command"), _repo_guard_commands())
+def test_every_repo_guard_denies_before_its_hook_timeout(name, command):
+    """The guard's own deadline exits 2 before Claude Code's timeout can cancel it
+    into an allow, with margin left for `uv` to start the interpreter."""
+    timeout = next(
+        h["timeout"]
+        for entry in _settings()["hooks"]["PreToolUse"]
+        for h in entry.get("hooks", [])
+        if h.get("command") == command
+    )
+    assert _guard_deadline_seconds() * 1.5 <= timeout, name
+    source = (HOOKS_DIR / name).read_text(encoding="utf-8")
+    main_block = source.split('if __name__ == "__main__":', 1)[-1]
+    assert "with guard_deadline(" in main_block, f"{name} runs without a deadline"

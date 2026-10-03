@@ -95,6 +95,34 @@
             "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-bash-revalidate.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|mcp__(plugin_context-mode_)?context-mode__ctx_(execute|execute_file|batch_execute)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, no baseline taken' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -121,7 +149,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing \u2014 deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'deny-agents guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing \u2014 deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'deny-agents guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       },
@@ -130,7 +159,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard search"
+            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard search",
+            "timeout": 60
           }
         ]
       },
@@ -139,7 +169,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard read"
+            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard read",
+            "timeout": 60
           }
         ]
       },
@@ -148,7 +179,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'git --no-verify / push-to-protected-branch guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unsafe-git-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'git guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'git --no-verify / push-to-protected-branch guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unsafe-git-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'git guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       },
@@ -157,7 +189,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate the # ctx-ok escape hatch: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-ctx-ok-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'ctx-ok guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate the # ctx-ok escape hatch: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-ctx-ok-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'ctx-ok guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       },
@@ -166,7 +199,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'confirm before discarding uncommitted work: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ask-destructive-restore-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'restore guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'confirm before discarding uncommitted work: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ask-destructive-restore-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'restore guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       },
@@ -175,7 +209,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'stale MCP write guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-stale-mcp-write-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'stale MCP write guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'stale MCP write guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-stale-mcp-write-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'stale MCP write guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       },
@@ -184,7 +219,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'unguarded-cd guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unguarded-cd-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'unguarded-cd guard failed to run; denying' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'unguarded-cd guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unguarded-cd-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'unguarded-cd guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "timeout": 60
           }
         ]
       }

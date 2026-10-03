@@ -10,12 +10,15 @@ import fnmatch
 import importlib.util
 import io
 import json
+import os
+import pwd
 import re
 import runpy
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -45,6 +48,20 @@ def _run(mod, stdin_text: str, monkeypatch):
     """Drive a hook's main() with `stdin_text` as its event payload."""
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin_text))
     mod.main()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_alias_cache(monkeypatch):
+    """Give each test an empty `_hooklib._ALIASES`.
+
+    The hooks import `_hooklib` by name, so one module object — and its
+    per-process alias cache — outlives a test. A test that fakes
+    `subprocess.run` would otherwise leave its fake's answer cached for the
+    next one.
+    """
+    lib = sys.modules.get("_hooklib")
+    if lib is not None:
+        monkeypatch.setattr(lib, "_ALIASES", {}, raising=False)
 
 
 # ── shared contract across the four stdin-driven PostToolUse hooks ─────────────
@@ -3509,6 +3526,74 @@ def test_git_guard_judges_a_bare_push_on_head(branch, denied, monkeypatch, capsy
         assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin 'refs/heads/*:refs/heads/*'",  # a glob matches main
+        "git push origin '+refs/heads/*:refs/heads/*'",
+        "git push origin 'feature/*:ma*'",
+        "git push origin :",  # the matching refspec: every branch both sides have
+        "git push origin +:",
+        "git push origin feature/x :",
+    ],
+)
+def test_git_guard_denies_a_refspec_that_matches_rather_than_names(command, monkeypatch, capsys):
+    """agent-loopholes-3f71784c: the refspec compare was literal, so a glob or the
+    bare `:` pushed main without naming it."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "protected branch" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c remote.origin.push=HEAD:refs/heads/main push origin",
+        "git -c Remote.Origin.Push=+refs/heads/*:refs/heads/* push",
+        "git -c push.default=matching push origin",
+        "git -c branch.wip.merge=refs/heads/main -c push.default=upstream push",
+        "V=matching git --config-env=push.default=V push origin",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=matching git push",
+        "git config remote.origin.push HEAD:refs/heads/main",
+        "git config --add remote.origin.push refs/heads/*:refs/heads/*",
+        "git config push.default matching",
+        "git config set push.default matching",
+        "git config --global push.default current",
+        "git config branch.wip.merge refs/heads/main",
+    ],
+)
+def test_git_guard_denies_config_that_routes_a_push(command, monkeypatch, capsys):
+    """agent-loopholes-3f71784c: push targets set in config reach main from a push
+    whose own text names no protected branch, in the same call through `-c` or in
+    a later one through a config write."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "push" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --get push.default",
+        "git config --unset remote.origin.push",
+        "git push origin feature/x:feature/x",
+        "git -c user.name=x push origin feature/x",
+    ],
+)
+def test_git_guard_allows_reading_push_config_and_plain_feature_pushes(
+    command, monkeypatch, capsys
+):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "wip")
+    _assert_git_allowed(mod, command, monkeypatch, capsys)
+
+
 def test_git_guard_denies_when_the_branch_cannot_be_resolved(monkeypatch, capsys):
     """Fail closed: an unresolvable HEAD cannot prove the push is safe."""
     mod = _load("deny-unsafe-git-hook")
@@ -3831,6 +3916,33 @@ def test_restore_guard_asks_when_the_target_is_dirty(command, monkeypatch, tmp_p
     assert out["permissionDecision"] == "ask"
     assert out["hookEventName"] == "PreToolUse"
     assert "UNCOMMITTED" in out["permissionDecisionReason"]
+    assert "README.md" in out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git restore --pathspec-from-file=/tmp/list",
+        "git restore --pathspec-from-file /tmp/list",
+        "git ls-files -m | git restore --pathspec-from-file=-",
+        "git restore --staged --worktree --pathspec-from-file=list --pathspec-file-nul",
+        "git restore --pathspec-fr=/tmp/list",  # git accepts a unique abbreviation
+        "git checkout --pathspec-from-file=/tmp/list",
+        "git checkout --pathspec-from-file /tmp/list",
+        "git checkout HEAD --pathspec-from-file=/tmp/list",
+        "git checkout --pathspec-from-file=/tmp/list --",
+    ],
+)
+def test_restore_guard_asks_when_pathspecs_come_from_a_file(command, monkeypatch, tmp_path, capsys):
+    """agent-loopholes-a79daccb: the pathspecs are in a file the guard never reads,
+    so no operand matched a dirty entry and the discard ran without the prompt.
+    Any such restore covers every dirty path."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
     assert "README.md" in out["permissionDecisionReason"]
 
 
@@ -4548,6 +4660,77 @@ def test_git_guard_allows_config_reads_and_unrelated_settings(command, monkeypat
     monkeypatch.setattr(mod, "_persistent_aliases", dict)
     _run(mod, _bash(command), monkeypatch)
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_PARAMETERS=\"'core.hookspath'='/dev/null'\" git commit -m x",
+        "export GIT_CONFIG_PARAMETERS=x; git commit -m x",
+        "git -c include.path=/tmp/hp.cfg commit -m x",
+        "git -c includeIf.gitdir:/.path=/tmp/hp.cfg commit -m x",
+        "git --config-env=include.path=F commit -m x",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=/tmp/h git commit",
+        "git config include.path /tmp/hp.cfg",
+        "git config --add includeIf.onbranch:main.path /tmp/hp.cfg",
+        "HOME=/tmp/x git commit -m x",
+        "XDG_CONFIG_HOME=/tmp/x git commit -m x",
+        "export HOME=/tmp/x && git commit -m x",
+        "env HOME=/tmp/x git commit -m x",
+    ],
+)
+def test_git_guard_denies_hook_disabling_channels_by_mechanism(command, monkeypatch, capsys):
+    """agent-loopholes-3736b057: the config checks knew core.hooksPath by name, so
+    the channels that reach it without naming it passed — GIT_CONFIG_PARAMETERS
+    (what `-c` itself travels in), an include file that sets it, and a HOME or
+    XDG_CONFIG_HOME that repoints the global config git reads it from."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "HOME=/tmp/x make check",  # no commit stage
+        "git config --get include.path",
+        "git config --unset include.path",
+        "HOME=/tmp/x git status",
+    ],
+)
+def test_git_guard_allows_include_reads_and_home_off_a_commit(command, monkeypatch, capsys):
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_persistent_aliases", dict)
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm .git/hooks/pre-commit .git/hooks/commit-msg",
+        "rm -rf .git/hooks",
+        "echo 'exit 0' > .git/hooks/pre-commit",
+        "cp /dev/null .git/hooks/commit-msg",
+        "mv .git/hooks /tmp/h",
+        "cd .git/hooks && rm pre-commit",
+    ],
+)
+def test_agents_guard_denies_writes_to_the_installed_git_hooks(command):
+    """agent-loopholes-3736b057: `pre-commit uninstall` is denied, yet deleting the
+    scripts it installed was not — the git dir's hooks are part of the gate."""
+    assert _guard_blocks(command)
+
+
+def test_integrity_surface_is_the_protected_write_list():
+    """The after-the-fact check says it snapshots `PROTECTED_WRITE`; a root added
+    to one list and not the other is guarded before the fact only."""
+    guard = _load("deny-agents-path-hook")
+    integrity = _load("enforcement-surface-integrity")
+    assert tuple(integrity.SURFACE) == tuple(guard.PROTECTED_WRITE)
 
 
 def _alias_repo(monkeypatch, tmp_path: Path, **aliases: str):
@@ -5296,16 +5479,32 @@ def test_closure_reads_status_from_the_list_readback(tmp_path, monkeypatch, caps
     assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
 
 
-def test_closure_a_deleted_task_is_not_open(tmp_path, monkeypatch, capsys):
+def test_closure_a_deleted_closed_task_stays_closed(tmp_path, monkeypatch, capsys):
     t = (
         _Transcript()
         .read("cr")
         .create("1")
         .create("2")
         .update("1", "completed")
+        .update("2", "completed")
         .update("2", "deleted")
     )
     assert _closure_err(tmp_path, monkeypatch, capsys, t) == (None, "")
+
+
+@pytest.mark.parametrize("prior", ["pending", "in_progress"])
+def test_closure_deleting_an_open_step_does_not_close_it(tmp_path, monkeypatch, capsys, prior):
+    """agent-loopholes-ddcb0d52: `deleted` popped the status, and a missing
+    status read as not open, so deleting a step skipped it and erased the
+    evidence at once. An open step deleted is marked wiped, as a replacement
+    does, and stays open through a later readback that no longer lists it."""
+    t = _Transcript().read("cr").create("1").create("2").update("1", "completed")
+    if prior == "in_progress":
+        t.update("2", "in_progress")
+    t.update("2", "deleted").listing({"1": "completed"})
+    code, text = _closure_err(tmp_path, monkeypatch, capsys, t)
+    assert code == "remind"
+    assert "cr: 1 of 2 steps still open (task ids 2)" in text
 
 
 def test_closure_does_not_loop_on_its_own_continuation(tmp_path, monkeypatch, capsys):
@@ -6120,3 +6319,1448 @@ def test_strip_reserved_keeps_an_operand_spelled_like_a_keyword():
     assert lib.strip_reserved(["then", "!", "git", "push"]) == ["git", "push"]
     assert lib.strip_reserved(["echo", "then"]) == ["echo", "then"]
     assert lib.strip_reserved(["do"]) == []
+
+
+# ── agent-loopholes-ff4a37fd: every redirection operator that writes a file ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo x >| scripts/hooks/ruff-hook.py",
+        "echo x >|scripts/hooks/ruff-hook.py",
+        "echo x 1>| scripts/hooks/ruff-hook.py",
+        "echo x >& scripts/hooks/ruff-hook.py",
+        "echo x &> scripts/hooks/ruff-hook.py",
+        "echo x &>> scripts/hooks/ruff-hook.py",
+        "echo x 2> scripts/hooks/ruff-hook.py",
+        "exec 3<> scripts/hooks/ruff-hook.py",
+        "echo '{}' >| .claude/settings.local.json",
+        "echo 0.0 >& .claude/skills/graphify/.graphify_version",
+    ],
+)
+def test_agents_guard_judges_every_redirection_operator(command):
+    """`>{1,2}` was the only operator the guard knew, and the stage split cut
+    `>|` as a pipe, so a clobber or a `>&` redirect rewrote a hook or set
+    `disableAllHooks` in settings.local.json (agent-loopholes-ff4a37fd)."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "make check 2>&1 | tail -5",
+        "echo x >&2",
+        "ls 2>&- 1>&-",
+        "echo x >| /tmp/out.txt",
+        "echo x &> /dev/null",
+        "cat scripts/hooks/ruff-hook.py >| /tmp/copy.py",
+    ],
+)
+def test_agents_guard_allows_redirections_that_write_no_surface(command):
+    """Controls: a descriptor duplication names no file, and a redirect that
+    writes elsewhere — even of a protected file's contents — stays allowed."""
+    assert not _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    ("text", "targets"),
+    [
+        ("echo x >| f", ["f"]),
+        ("a 2>&1 >&g <>h", ["g", "h"]),
+        ("a >&- b &>> c", ["c"]),
+        ("a >> d > e", ["d", "e"]),
+    ],
+)
+def test_redirect_targets_names_each_written_file(text, targets):
+    """The shared model: files only, never a duplicated or closed descriptor."""
+    assert _hooklib().redirect_targets(text) == targets
+
+
+def test_clobber_redirect_is_not_a_pipe():
+    """`>|` stays inside its stage; a real pipe still splits."""
+    lib = _hooklib()
+    assert lib.shell_stages("echo x >| f") == [["echo", "x", ">|", "f"]]
+    assert lib.shell_stages("echo x | tee f") == [["echo", "x"], ["tee", "f"]]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "cd /nope\necho x >| out.txt",
+        "cd /nope\necho x >& out.txt",
+        "cd /nope\necho x &> out.txt",
+        "cd /nope\nexec 3<> out.txt",
+    ],
+)
+def test_unguarded_cd_guard_sees_every_redirection_operator(code, monkeypatch, capsys):
+    """The cd guard's private copy of both patterns had the same blind spot: a
+    clobber after a failed cd wrote wherever the shell started."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["cd /nope || exit 1\necho x >| out.txt", "cd /nope\nls 2>&1 >&2", "cd /nope\nls &>/dev/null"],
+)
+def test_unguarded_cd_guard_allows_a_guarded_or_descriptor_redirect(code, monkeypatch, capsys):
+    """Controls: a guarded cd, and redirects that write no file."""
+    _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-0f3351b2: a `~` path is expanded before it is judged ──
+
+
+def _home_above_repo(monkeypatch) -> str:
+    """Point HOME at the checkout's parent; return the checkout as a `~/` path."""
+    root = _load("deny-agents-path-hook")._REPO_ROOT.resolve()
+    monkeypatch.setenv("HOME", str(root.parent))
+    return f"~/{root.name}"
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "rm {r}/scripts/hooks/ruff-hook.py",
+        "echo '{{}}' > {r}/.claude/settings.local.json",
+        "cd {r}/scripts/hooks && rm ruff-hook.py",
+        "cd {r}/.claude && touch settings.json",
+        "git -C {r}/scripts checkout HEAD~3 -- hooks",
+        "rm ~+/scripts/hooks/ruff-hook.py",
+        "cd ~+/scripts/hooks && rm ruff-hook.py",
+        "rm ~-/ruff-hook.py",
+        "cd ~no-such-user-0f3351b2 && rm ruff-hook.py",
+        "git -C ~no-such-user-0f3351b2 checkout -- ruff-hook.py",
+        "echo x > ~no-such-user-0f3351b2/x.py",
+    ],
+)
+def test_agents_guard_expands_a_tilde_path(template, monkeypatch):
+    """`~/…` read as a relative path under the repo root and never matched, so
+    the most ordinary absolute spelling wrote a hook as an operand, a `cd` base
+    and a `git -C` target alike (agent-loopholes-0f3351b2). `~+` is the shell's
+    own directory; a prefix the guard cannot resolve is judged as protected."""
+    assert _guard_blocks(template.format(r=_home_above_repo(monkeypatch)))
+
+
+def test_agents_guard_expands_a_named_users_tilde():
+    """`~user/…` resolves through that user's home, not the caller's. The
+    current user is the one every machine has; `..` segments reach the checkout
+    from that home wherever the two sit."""
+    mod = _load("deny-agents-path-hook")
+    user = pwd.getpwuid(os.getuid())
+    rel = os.path.relpath(mod._REPO_ROOT.resolve(), user.pw_dir)
+    assert mod._writes_protected(f"rm ~{user.pw_name}/{rel}/scripts/hooks/ruff-hook.py")
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "rm ~/notes.txt",
+        "cd ~/tmp && rm x",
+        "cat {r}/scripts/hooks/ruff-hook.py > /tmp/copy.py",
+        "git -C {r} status",
+        "cp {r}/scripts/hooks/ruff-hook.py ~/backup.py",
+    ],
+)
+def test_agents_guard_allows_a_tilde_path_off_the_surface(template, monkeypatch):
+    """Controls: a home path outside the checkout, and a read of the surface."""
+    assert not _guard_blocks(template.format(r=_home_above_repo(monkeypatch)))
+
+
+@pytest.mark.parametrize(
+    ("target", "asks"),
+    [
+        ("~/{name}/README.md", True),
+        ("~no-such-user-0f3351b2/README.md", True),
+        ("~/elsewhere/README.md", False),
+    ],
+)
+def test_restore_guard_expands_a_tilde_target(target, asks, monkeypatch, tmp_path, capsys):
+    """A restore spelled through `~` compared as a relative path, matched no
+    dirty entry, and discarded the file without asking."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    monkeypatch.setenv("HOME", str(tmp_path.parent))
+    command = f"git restore {target.format(name=tmp_path.name)}"
+    if asks:
+        with pytest.raises(SystemExit):
+            _run(mod, _bash(command), monkeypatch)
+        assert _ask_payload(capsys)["permissionDecision"] == "ask"
+    else:
+        _run(mod, _bash(command), monkeypatch)
+        assert capsys.readouterr().out == ""
+
+
+# ── agent-loopholes-5cdfb163: a cd target resolved the way the shell resolves it ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd -- scripts/hooks && rm ruff-hook.py",
+        "cd -P -- scripts/hooks && rm ruff-hook.py",
+        "pushd -- .claude; touch settings.json",
+        "CDPATH=scripts cd hooks && rm ruff-hook.py",
+        "export CDPATH=/nope:scripts; cd hooks && rm ruff-hook.py",
+        "CDPATH=.claude/skills cd graphify && rm .graphify_version",
+        "CDPATH=$X cd hooks && rm ruff-hook.py",
+        "CDPATH=~no-such-user-5cdfb163 cd hooks && rm ruff-hook.py",
+        "D=scripts/hooks; cd $D && rm ruff-hook.py",
+        'D=scripts; cd "${D}/hooks" && rm ruff-hook.py',
+        # self-referential: the expansion never settles, so the landing is unknown
+        "D=x$D; cd $D && rm ruff-hook.py",
+        "cd $HOME/checkout/scripts/hooks && rm ruff-hook.py",
+        "cd $(git rev-parse --show-toplevel)/scripts/hooks && rm ruff-hook.py",
+        "D=scripts; git -C $D checkout -- hooks",
+        "git -C $HOME/checkout/scripts checkout -- hooks",
+        "git --work-tree=$X/scripts restore hooks/ruff-hook.py",
+    ],
+)
+def test_agents_guard_resolves_a_cd_target_like_the_shell(command, monkeypatch):
+    """`cd --` took `--` as the directory, CDPATH was never modelled, and a
+    variable target was compared as the literal `$D`, so each landed in a
+    protected directory unseen (agent-loopholes-5cdfb163). A landing the guard
+    cannot know is judged as standing on the surface."""
+    monkeypatch.delenv("CDPATH", raising=False)
+    assert _guard_blocks(command)
+
+
+def test_agents_guard_reads_cdpath_from_the_environment(monkeypatch):
+    """A CDPATH inherited by the hook moves a relative `cd` just the same."""
+    monkeypatch.setenv("CDPATH", "scripts")
+    assert _guard_blocks("cd hooks && rm ruff-hook.py")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd -- /tmp/x && rm y",
+        "CDPATH=/tmp cd build && rm -rf out",
+        "D=/tmp/x; cd $D && rm y",
+        'cd "$TMPDIR" && rm y',
+        'tmp=$(mktemp -d); cd "$tmp" && rm -rf y',
+        "cd\nrm build.log",
+        "D=/tmp/w; git -C $D checkout -- hooks",
+        "cd -- scripts/hooks && cat ruff-hook.py > /tmp/copy.py",
+    ],
+)
+def test_agents_guard_allows_a_cd_that_lands_off_the_surface(command, monkeypatch):
+    """Controls: a resolvable landing elsewhere, an inherited variable whose
+    text cannot reach the surface, and a read after a `cd --` stay allowed."""
+    monkeypatch.delenv("CDPATH", raising=False)
+    assert not _guard_blocks(command)
+
+
+# ── agent-loopholes-6bb5ff99: one write model, shared by both write guards ──
+
+_SHARED_WRITES = [
+    "unlink scripts/hooks/ruff-hook.py",
+    "rsync /tmp/evil.py scripts/hooks/ruff-hook.py",
+    "rsync --remove-source-files scripts/hooks/ruff-hook.py /tmp/",
+    "scp /tmp/evil.py scripts/hooks/ruff-hook.py",
+    "find scripts/hooks -name ruff-hook.py -delete",
+    "find . -name ruff-hook.py -delete",
+    "find . -name '*.py' -exec rm {} +",
+    "find -name settings.json -execdir shred {} +",
+    "find scripts -fprint scripts/hooks/ruff-hook.py",
+    "tar -xf /tmp/evil.tar -C scripts/hooks",
+    "tar -xf /tmp/evil.tar",
+    "tar xf /tmp/evil.tar",
+    "tar --extract --file=/tmp/evil.tar --directory=.claude",
+    "tar -xPf /tmp/evil.tar -C /tmp/x",
+    "tar -cf scripts/hooks/ruff-hook.py /tmp/evil",
+    "tar cvf scripts/hooks/ruff-hook.py /tmp/evil",
+    "bsdtar -x -f /tmp/evil.tar",
+    "unzip /tmp/evil.zip",
+    "unzip -o /tmp/evil.zip -d scripts",
+    "cpio -idm",
+    "find /tmp/x | cpio -pd scripts/hooks",
+    "awk -i inplace '{print}' scripts/hooks/ruff-hook.py",
+    "awk -iinplace 1 scripts/hooks/ruff-hook.py",
+    "gawk --include=inplace 1 scripts/hooks/ruff-hook.py",
+    "gawk --include /usr/share/awk/inplace.awk 1 .claude/settings.json",
+    "git checkout-index -f scripts/hooks/ruff-hook.py",
+    "git checkout-index -a -f",
+    "git checkout-index --prefix=scripts/hooks/ README.md",
+    "git read-tree -u -m HEAD~3",
+    "gzip scripts/hooks/ruff-hook.py",
+    "xz -k .claude/settings.json",
+    "chattr +i .claude/settings.local.json",
+    "curl -o scripts/hooks/ruff-hook.py https://example.com/x",
+    "curl -so.claude/settings.local.json https://example.com/x",
+    "cd scripts/hooks && curl -O https://example.com/ruff-hook.py",
+    "cd scripts/hooks && wget https://example.com/ruff-hook.py?x=1",
+    "wget -P scripts/hooks https://example.com/ruff-hook.py",
+    "wget --output-document=.claude/settings.local.json https://example.com/x",
+    "sort -o scripts/hooks/ruff-hook.py /tmp/x",
+    "mkdir scripts/hooks/new",
+    # a find whose tests are not a plain conjunction of name tests is not read
+    "find . -name '*.pyc' -o -name ruff-hook.py -delete",
+    "find . -type f -delete",
+]
+
+
+def test_a_tree_that_cannot_be_resolved_reaches_the_surface(monkeypatch):
+    """A destination whose resolution fails (a symlink loop) is judged as
+    reaching the surface, never cleared."""
+    mod = _load("deny-agents-path-hook")
+
+    def _loop(self, *_a, **_k):
+        """Stand in for a resolve that hits a symlink loop."""
+        raise RuntimeError("symlink loop")
+
+    monkeypatch.setattr(mod.Path, "resolve", _loop)
+    assert mod._holds_checkout(Path("/tmp/x"))
+
+
+@pytest.mark.parametrize("command", _SHARED_WRITES)
+def test_agents_guard_judges_every_modelled_write(command):
+    """Each passed before: the guard knew a fixed verb list, and `find`,
+    archive extraction, `awk -i inplace`, downloaders and `git checkout-index`
+    were not on it (agent-loopholes-6bb5ff99). An extraction or a deleting
+    `find` from the checkout root reaches the surface below it."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.pyc' -delete",
+        "find . -iname '*.PYC' -name '*.pyc' -exec rm {} +",
+        "find . -type f -exec grep -l x {} +",
+        "find scripts/hooks -name '*.py'",
+        "tar -xf /tmp/x.tar -C /tmp/out",
+        "tar -tf /tmp/x.tar",
+        "tar -cf /tmp/x.tar scripts/hooks",
+        "unzip -l /tmp/x.zip",
+        "unzip /tmp/x.zip -d /tmp/out",
+        "cpio -o",
+        "rsync -a scripts/hooks/ /tmp/backup/",
+        "curl -o /tmp/x https://example.com/ruff-hook.py",
+        "curl https://example.com/ruff-hook.py",
+        "wget -O /tmp/x https://example.com/x",
+        "sort scripts/hooks/ruff-hook.py",
+        "awk '{print}' scripts/hooks/ruff-hook.py",
+        "awk -i other.awk 1 scripts/hooks/ruff-hook.py",
+        "gzip -c scripts/hooks/ruff-hook.py",
+        "xz --list .claude/settings.json",
+        "git update-index --refresh",
+        "git checkout-index -f README.md",
+        # a handled verb with no operands at all must parse, not crash
+        "git log --oneline | sort",
+        "echo x | awk",
+        "tar",
+        "curl",
+    ],
+)
+def test_agents_guard_allows_writes_the_model_places_elsewhere(command):
+    """Controls: a find whose name tests match nothing on the surface, reads,
+    listings, and writes that land outside the checkout stay allowed."""
+    assert not _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        "unlink f",
+        "tar -xf a.tar",
+        "unzip a.zip",
+        "awk -i inplace 1 f",
+        "curl -o f https://example.com/x",
+        "wget https://example.com/x",
+        "scp a b",
+        "gzip f",
+        "cpio -i",
+        "find . -exec python3 fix.py {} +",
+        "git checkout-index -a",
+    ],
+)
+def test_unguarded_cd_guard_shares_the_write_model(write, monkeypatch, capsys):
+    """The cd guard asks the same model, so each write above counts after a
+    failed cd, where its private list did not know them."""
+    payload = _ctx(language="shell", code=f"cd /nope\n{write}")
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "tar -tf a.tar",
+        "find . -exec grep x {} +",
+        "curl https://example.com",
+        "sort f",
+        "gzip -t f",
+    ],
+)
+def test_unguarded_cd_guard_allows_what_the_model_calls_a_read(read, monkeypatch, capsys):
+    """Controls: the shared model's reads stay reads for the cd guard."""
+    _run(
+        _load("deny-unguarded-cd-hook"),
+        _ctx(language="shell", code=f"cd /nope\n{read}"),
+        monkeypatch,
+    )
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["cp", "-t", "d", "a", "b"], (["-t", "d", "a", "b"], [])),
+        (["cp", "a"], (["a"], [])),
+        (["wget", "-P", "d"], (["."], [])),
+        (["cpio", "-p"], ([], ["."])),
+        (["tar", "-c", "--file", "out.tar", "in"], (["out.tar"], [])),
+        (["tar", "--append", "-f", "out.tar", "in"], (["out.tar"], [])),
+        (["find", "-fls", "out"], (["out"], [])),
+        (["cpio", "--extract", "--directory=d"], ([], ["d"])),
+        (["ls"], None),
+    ],
+)
+def test_write_targets_edge_spellings(tokens, expected):
+    """The model's less common spellings: `-t` puts the destination first, a
+    lone operand is its own destination, and each extractor's defaults."""
+    assert _hooklib().write_targets(tokens) == expected
+
+
+# ── agent-loopholes-88dddd67: patch is judged like git apply, not by its operands ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "patch -p1 < /tmp/evil.diff",
+        "patch -p1 -i /tmp/evil.diff",
+        "patch --input=/tmp/evil.diff --strip=1",
+        "cat /tmp/evil.diff | patch -p1",
+        "patch -d scripts -p1 -i /tmp/evil.diff",
+        "patch --directory=.claude -p0 -i /tmp/evil.diff",
+        "patch -o scripts/hooks/ruff-hook.py /tmp/orig.py /tmp/evil.diff",
+        "patch scripts/hooks/ruff-hook.py /tmp/evil.diff",
+        "cd /tmp/x && patch -p1 -i /tmp/evil.diff",
+    ],
+)
+def test_agents_guard_judges_patch_like_git_apply(command):
+    """`git apply` of a diff was denied because the diff chooses what it
+    writes, while `patch -p1 < evil.diff` of the same diff was judged by its
+    operands and passed (agent-loopholes-88dddd67). Its directory is now a
+    tree: the checkout root, or anything above or on the surface, counts."""
+    assert _guard_blocks(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "patch -d /tmp/x -p1 -i /tmp/evil.diff",
+        "patch --dry-run -p1 -i /tmp/evil.diff",
+        "patch -o /tmp/out.py README.md /tmp/fix.diff",
+    ],
+)
+def test_agents_guard_allows_a_patch_scoped_off_the_surface(command):
+    """Controls: a patch run in a directory outside the checkout, a dry run,
+    and one whose output goes to a named file elsewhere."""
+    assert not _guard_blocks(command)
+
+
+def test_unguarded_cd_guard_counts_patch_as_a_write_and_a_dry_run_as_not(monkeypatch, capsys):
+    """The shared model: `patch` writes after a failed cd; `--dry-run` does not."""
+    guard = _load("deny-unguarded-cd-hook")
+    with pytest.raises(SystemExit):
+        _run(guard, _ctx(language="shell", code="cd /nope\npatch -p1 -i x.diff"), monkeypatch)
+    capsys.readouterr()
+    _run(guard, _ctx(language="shell", code="cd /nope\npatch --dry-run -p1 -i x.diff"), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-911e2929: every guard judges what a git alias runs ──
+
+
+def _with_persistent_aliases(monkeypatch, mod, **aliases: str):
+    """Seed the shared alias lookup, as if git config held `aliases`."""
+    lib = sys.modules["_hooklib"]
+    monkeypatch.setattr(lib, "_ALIASES", {str(lib.repo_root()): aliases}, raising=False)
+    return mod
+
+
+@pytest.mark.parametrize(
+    ("aliases", "command"),
+    [
+        ({"nah": "!git reset --hard && git clean -df"}, "git nah"),
+        ({"wipe": "checkout --"}, "git wipe scripts/hooks/ruff-hook.py"),
+        ({"x": "!rm"}, "git x scripts/hooks/ruff-hook.py"),
+        ({}, "git -c alias.z='reset --hard' z"),
+        ({}, "git -c alias.w='checkout -- scripts/hooks' w"),
+        ({}, "BODY='reset --hard' git --config-env=alias.z=BODY z"),
+        ({}, "BODY='reset --hard' git --config-env alias.z=BODY z"),
+        ({}, "git -c alias.a=b -c alias.b='reset --hard' a"),
+        ({}, "git -c alias.z='!sed -i s/a/b/ scripts/hooks/ruff-hook.py' z"),
+    ],
+)
+def test_agents_guard_judges_what_a_git_alias_runs(aliases, command, monkeypatch):
+    """Alias expansion lived in the git guard alone, so `git nah` and
+    `git -c alias.z='reset --hard' z` were judged by the alias name and
+    rewrote the worktree (agent-loopholes-911e2929)."""
+    mod = _with_persistent_aliases(monkeypatch, _load("deny-agents-path-hook"), **aliases)
+    assert mod._writes_protected(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git -c alias.st=status st", "git nah", "git -c user.name=x -c k st", "git -c alias.z=z z"],
+)
+def test_agents_guard_allows_an_alias_that_writes_nothing(command, monkeypatch):
+    """Controls: a harmless alias, an unknown name, a config pair that defines
+    no alias, and a self-referential alias the expansion stops on."""
+    mod = _with_persistent_aliases(monkeypatch, _load("deny-agents-path-hook"))
+    assert not mod._writes_protected(command)
+
+
+@pytest.mark.parametrize(
+    ("aliases", "command"),
+    [
+        ({}, "git -c alias.rs=restore rs README.md"),
+        ({"rs": "restore"}, "git rs README.md"),
+        ({"undo": "!git checkout -- README.md"}, "git undo"),
+    ],
+)
+def test_restore_guard_asks_through_a_git_alias(aliases, command, monkeypatch, tmp_path, capsys):
+    """A one-word alias for `restore` discarded dirty work with no prompt."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    _with_persistent_aliases(monkeypatch, mod, **aliases)
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+def test_alias_expansion_is_bounded_and_survives_a_malformed_body(monkeypatch):
+    """A body that re-invokes itself stops at the depth cap and is split
+    coarsely; a body shlex cannot split is split on whitespace."""
+    lib = _hooklib()
+    monkeypatch.setattr(lib, "git_aliases", lambda root=None: {})
+    assert ["git", "z"] in lib.shell_stages("git -c 'alias.z=!git z' z")
+    assert ["z"] in lib.shell_stages("git -c alias.z=z z")
+    broken = lib.shell_stages('git -c "alias.q=reset --hard \'x" q')
+    assert any(stage[-3:] == ["reset", "--hard", "'x"] for stage in broken)
+
+
+def test_git_aliases_is_read_once_per_checkout(monkeypatch, tmp_path):
+    """The lookup is cached per root, and a failing git reads as no aliases."""
+    lib = _hooklib()
+    calls: list[str] = []
+
+    def _fake(argv, cwd, **_k):
+        """Answer `git config --get-regexp` with one alias, counting the calls."""
+        calls.append(cwd)
+        return _Result(stdout="alias.st status\n")
+
+    monkeypatch.setattr(lib.subprocess, "run", _fake)
+    assert lib.git_aliases(tmp_path) == {"st": "status"}
+    assert lib.git_aliases(tmp_path) == {"st": "status"}
+    assert calls == [str(tmp_path)]
+    monkeypatch.setattr(lib.subprocess, "run", lambda *_a, **_k: _Result(returncode=1))
+    assert lib.git_aliases(tmp_path / "other") == {}
+
+
+# ── agent-loopholes-df530242: eval, source, coproc and here-strings are unwrapped ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "coproc git push origin main",
+        "coproc P { git push origin main; }",
+        "eval 'git commit --no-verify -m x'",
+        "eval git push origin main",
+        "builtin eval 'git push origin main'",
+        "trap 'git push origin main' EXIT",
+        "trap -- 'git commit --no-verify -m x' EXIT",
+        "C='git push origin main'; eval $C",
+        "bash -c \"$(printf 'git push origin main')\"",
+        "bash <<< 'git push origin main'",
+        "bash <<<'git commit --no-verify -m x'",
+        "sh -s <<< 'git push origin main'",
+        "bash 2>/dev/null <<< 'git push origin main'",
+        "source <(echo git push origin main)",
+        ". <(echo git push origin main)",
+        ". /dev/stdin <<< 'git push origin main'",
+        "source /dev/stdin <<< 'git commit --no-verify -m x'",
+        "bash -s < <(echo git push origin main)",
+    ],
+)
+def test_git_guard_unwraps_eval_source_coproc_and_here_strings(command, monkeypatch, capsys):
+    """Each exited 0: `coproc` was no reserved word, `eval` and `trap` were
+    judged by their name, a here-string made `<<<` the shell's "script file",
+    and `source`/`.` were no shell at all (agent-loopholes-df530242). A string
+    built by expansion, or stdin fed from elsewhere, gets the name-based
+    refusal of code in another language."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval echo hi",
+        "trap 'rm -f /tmp/x' EXIT",
+        "trap - EXIT",
+        "source ./env.sh",
+        ". .venv/bin/activate",
+        "bash <<< 'echo hi'",
+        "coproc sleep 1",
+        "bash run.sh <<< 'git push origin main'",
+    ],
+)
+def test_git_guard_allows_an_ordinary_eval_source_or_here_string(command, monkeypatch, capsys):
+    """Controls: an unwrapped string is judged like a top-level one, no more
+    harshly, and a here-string into a script file is that script's data."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _run(mod, _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval rm scripts/hooks/ruff-hook.py",
+        "bash <<< 'rm scripts/hooks/ruff-hook.py'",
+        "coproc rm scripts/hooks/ruff-hook.py",
+        "trap 'rm scripts/hooks/ruff-hook.py' EXIT",
+        "source <(echo rm scripts/hooks/ruff-hook.py)",
+        'F=scripts/hooks/ruff-hook.py; eval "rm $F"',
+    ],
+)
+def test_agents_guard_unwraps_eval_source_coproc_and_here_strings(command, monkeypatch, capsys):
+    """A one-word prefix deleted a hook past the protected-write guard."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "enforcement surface" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command", ["eval cat scripts/hooks/ruff-hook.py", "bash <<< 'cat .claude/settings.json'"]
+)
+def test_agents_guard_allows_a_read_behind_eval_or_a_here_string(command, monkeypatch, capsys):
+    """Controls: a read stays a read once unwrapped."""
+    _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "coproc git restore README.md",
+        "eval git restore README.md",
+        "bash <<< 'git checkout -- README.md'",
+    ],
+)
+def test_restore_guard_asks_behind_eval_coproc_or_a_here_string(
+    command, monkeypatch, tmp_path, capsys
+):
+    """A restore of dirty work behind a prefix asks like the bare one."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    assert _ask_payload(capsys)["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize("write", ["eval rm -rf build", "bash <<< 'rm -rf build'"])
+def test_unguarded_cd_guard_unwraps_eval_and_here_strings(write, monkeypatch):
+    """The cd guard reads the shared stages, so the write behind the prefix counts."""
+    payload = _ctx(language="shell", code=f"cd /nope\n{write}")
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), payload, monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["bash", "<<<", "x"], ("c", "x")),
+        (["bash", "<<<x"], ("c", "x")),
+        (["bash", "<<", "EOF"], ("stdin", None)),
+        (["bash", "<"], ("stdin", None)),
+        (["bash", "<", "f.sh"], ("stdin", None)),
+        (["bash", ">"], ("stdin", None)),
+        (["bash", "2>/dev/null", "run.sh"], ("file", "run.sh")),
+        (["bash", ">", "out", "run.sh"], ("file", "run.sh")),
+        (["bash", "-c", "<<<x"], ("c", "<<<x")),
+        (["source", "x.sh"], ("file", "x.sh")),
+        ([".", "/dev/stdin", "<<<", "y"], ("c", "y")),
+        (["source", "/dev/fd/63"], ("stdin", None)),
+    ],
+)
+def test_shell_invocation_reads_redirections_and_source(tokens, expected):
+    """Redirections are read, not taken for the script operand; `source` and
+    `.` are shells whose input is a file, stdin, or a here-string."""
+    assert _hooklib()._shell_invocation(tokens) == expected
+
+
+def test_trap_without_an_action_carries_no_command():
+    """`trap 'x'` alone names no signal, and `trap` with none prints the list."""
+    lib = _hooklib()
+    assert lib._command_string(["trap", "x"]) is None
+    assert lib._command_string(["trap"]) is None
+    assert lib.strip_reserved(["coproc", "P", "{", "git", "push"]) == ["git", "push"]
+
+
+# ── agent-hooks-c8ad2907: a changed enforcement surface is detected after the fact ──
+
+
+def _surface(monkeypatch, tmp_path):
+    """The integrity hook over a fake checkout, with its baseline kept in tmp_path."""
+    mod = _load("enforcement-surface-integrity")
+    root = tmp_path / "repo"
+    (root / "scripts" / "hooks" / "__pycache__").mkdir(parents=True)
+    (root / "scripts" / "hooks" / "guard.py").write_text("v1\n", encoding="utf-8")
+    (root / "scripts" / "hooks" / "__pycache__" / "guard.pyc").write_bytes(b"\0")
+    (root / ".claude").mkdir()
+    (root / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "REPO_ROOT", root)
+    monkeypatch.setattr(mod, "STATE_DIR", tmp_path / "state")
+    return mod, root
+
+
+def _event(name: str, **fields) -> str:
+    """A hook event for one session."""
+    return json.dumps({"hook_event_name": name, "session_id": "s1", **fields})
+
+
+def _post_tool(mod, monkeypatch, capsys) -> str:
+    """Run the PostToolUse arm; return its report, or "" when it stayed quiet."""
+    try:
+        _run(mod, _event("PostToolUse", tool_name="Bash"), monkeypatch)
+    except SystemExit as exc:
+        assert exc.code == 2
+        return capsys.readouterr().err
+    assert capsys.readouterr().err == ""
+    return ""
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (lambda r: (r / "scripts/hooks/guard.py").write_text("v2\n"), "guard.py (changed)"),
+        (lambda r: (r / "scripts/hooks/guard.py").unlink(), "guard.py (removed)"),
+        (lambda r: (r / "scripts/hooks/new.py").write_text("x"), "new.py (added)"),
+        (
+            lambda r: (r / ".claude/settings.local.json").write_text('{"disableAllHooks": true}'),
+            ".claude/settings.local.json (added)",
+        ),
+        (lambda r: (r / ".claude/settings.json").write_text("[]"), "settings.json (changed)"),
+    ],
+)
+def test_surface_integrity_reports_any_change_whatever_its_spelling(
+    mutate, expected, monkeypatch, tmp_path, capsys
+):
+    """Every protected-write bypass so far rewrote the surface with no signal
+    (agent-hooks-c8ad2907). The hook compares hashes, not command text, so a
+    change is reported however the write was spelled — here, by no command
+    at all."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+    mutate(root)
+    report = _post_tool(mod, monkeypatch, capsys)
+    assert "enforcement surface changed:" in report and expected in report
+    assert expected in _post_tool(mod, monkeypatch, capsys)  # keeps reporting
+
+
+def test_surface_integrity_ignores_bytecode_caches(monkeypatch, tmp_path, capsys):
+    """Control: Python rewrites `__pycache__` on every import; that is no change."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    (root / "scripts/hooks/__pycache__/guard.pyc").write_bytes(b"changed")
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+
+
+def test_surface_integrity_keeps_the_baseline_through_resume_and_compact(
+    monkeypatch, tmp_path, capsys
+):
+    """A compaction or resume must not launder a change into the baseline; a
+    fresh start or `/clear` takes a new one."""
+    mod, root = _surface(monkeypatch, tmp_path)
+    _run(mod, _event("SessionStart", source="startup"), monkeypatch)
+    (root / "scripts/hooks/guard.py").write_text("v2\n")
+    for source in ("compact", "resume"):
+        _run(mod, _event("SessionStart", source=source), monkeypatch)
+        assert "guard.py (changed)" in _post_tool(mod, monkeypatch, capsys)
+    _run(mod, _event("SessionStart", source="clear"), monkeypatch)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+
+
+def test_surface_integrity_takes_a_baseline_when_it_has_none(monkeypatch, tmp_path, capsys):
+    """Added mid-session, or resumed with no saved state: take one, report nothing."""
+    mod, _root = _surface(monkeypatch, tmp_path)
+    assert _post_tool(mod, monkeypatch, capsys) == ""
+    _run(mod, json.dumps({"hook_event_name": "SessionStart", "source": "resume"}), monkeypatch)
+    assert mod._state_file({}).exists()
+
+
+def test_surface_integrity_rebuilds_an_unreadable_baseline(monkeypatch, tmp_path, capsys):
+    """A baseline that is not a JSON object is replaced, not trusted."""
+    mod, _root = _surface(monkeypatch, tmp_path)
+    state = mod._state_file({"session_id": "s1"})
+    state.parent.mkdir(parents=True)
+    for junk in ("[]", "{not json"):
+        state.write_text(junk, encoding="utf-8")
+        assert _post_tool(mod, monkeypatch, capsys) == ""
+        assert isinstance(json.loads(state.read_text(encoding="utf-8")), dict)
+
+
+def test_surface_integrity_marks_a_file_it_cannot_read(tmp_path):
+    """A digest that cannot be computed is a value of its own, never an error."""
+    mod = _load("enforcement-surface-integrity")
+    assert mod._digest(tmp_path / "missing").startswith("unreadable")
+
+
+def test_surface_integrity_runs_as_a_script_and_reports_internal_failure(
+    monkeypatch, tmp_path, capsys
+):
+    """The `__main__` wiring passes a report through, and a crash reports too:
+    a detective control that dies quietly detects nothing."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    script = str(HOOKS_DIR / "enforcement-surface-integrity.py")
+    state_dir = tmp_path / "nitpicker-enforcement-surface"
+    probe = runpy.run_path(script, run_name="probe")
+    state = probe["_state_file"]({"session_id": "s1"})
+    state_dir.mkdir()
+    state.write_text('{"scripts/hooks/_hooklib.py": "stale"}', encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_event("PostToolUse")))
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(script, run_name="__main__")
+    assert exc.value.code == 2
+    assert "_hooklib.py (changed)" in capsys.readouterr().err
+
+    monkeypatch.setattr(sys, "stdin", _Exploding())
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(script, run_name="__main__")
+    assert exc.value.code == 2
+    assert "failed internally" in capsys.readouterr().err
+
+
+# ── perf-2d1e28b2: quote masking is linear in the payload ─────────────────────
+
+# The masking rule as it stood before perf-2d1e28b2, kept here as the reference
+# the linear scan must agree with: a quote that never closes is a literal
+# character, and scanning resumes right after it.
+_REFERENCE_QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
+
+
+def _reference_mask(command: str) -> tuple[str, list[str]]:
+    spans: list[str] = []
+
+    def take(match):
+        spans.append(match.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    return _REFERENCE_QUOTED.sub(take, command), spans
+
+
+def _masking_inputs() -> list[str]:
+    """Hand-picked shapes plus a seeded fuzz over the quoting alphabet."""
+    import random
+
+    fixed = [
+        "",
+        "echo \"a 'b' c",  # unterminated double quote, single pair after it
+        'echo \'a "b" c',  # unterminated single quote, double pair after it
+        'echo "a" \'b',
+        'echo "a\\" b',  # the only double quote closing is escaped
+        'echo "abc\\',  # trailing backslash inside an unterminated quote
+        'git push origin main # "' + '\\"' * 20,
+        "a 'b' \"c\" 'd",
+        "\"'\"'\"'",
+    ]
+    rng = random.Random(0x2D1E28B2)
+    fuzz = [
+        "".join(rng.choice("ab '\"\\\n#;") for _ in range(rng.randint(0, 40))) for _ in range(3000)
+    ]
+    return fixed + fuzz
+
+
+def test_quote_masking_matches_the_reference_rule():
+    """The linear scan is a performance change only: every input masks exactly
+    as the old rule masked it."""
+    lib = _hooklib()
+    for command in _masking_inputs():
+        assert lib._mask_quoted(command) == _reference_mask(command), repr(command)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        'echo "' + '\\"' * 65536,  # 128 KB: one open quote, every later one escaped
+        "echo '" + '"' * 131072,  # an open single quote, then only doubles
+        '"' + "'" * 131072,  # an open double quote, then only singles
+        'git push origin main # "' + '\\"' * 65536,  # the comment-hidden padding
+    ],
+    ids=["escaped-doubles", "open-single", "open-double", "comment-padding"],
+)
+def test_quote_masking_is_linear_on_unterminated_quotes(payload):
+    """perf-2d1e28b2: every start of an unterminated quote rescanned to the end
+    of input, so n escaped quotes after one open quote cost O(n^2) — 11 s at
+    32 KB, past a hook timeout well short of this size. A timed-out hook does
+    not block, so this was a fail-open."""
+    import time
+
+    lib = _hooklib()
+    start = time.perf_counter()
+    lib.shell_stages(payload)
+    assert time.perf_counter() - start < 2.0
+
+
+# ── perf-eca62177: the agents guard does not canonicalize every wrapper suffix ─
+
+
+def test_agents_guard_is_not_quadratic_in_a_wrapper_led_stage():
+    """perf-eca62177: a wrapper-led stage yields one suffix per word, and every
+    token of every suffix was canonicalized before any was filtered — about W^2/2
+    calls, 18 s at 4000 words. Stages are now filtered on the verb first."""
+    import time
+
+    mod = _load("deny-agents-path-hook")
+    command = "env echo " + " ".join(f"w{i}" for i in range(8000))
+    start = time.perf_counter()
+    assert not mod._writes_protected(command)
+    assert time.perf_counter() - start < 5.0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env rm -f scripts/hooks/ruff-hook.py",
+        "env -i FOO=1 nice -n 5 rm scripts//hooks/./ruff-hook.py",
+        "env '/bin//rm' scripts/hooks/ruff-hook.py",
+        "sudo sed -i s/a/b/ 'scripts/hooks/ruff-hook.py'",
+    ],
+)
+def test_agents_guard_still_denies_wrapped_protected_writes(command):
+    """The verb-first filter keeps every wrapped write it caught before."""
+    assert _guard_blocks(command)
+
+
+# ── agent-loopholes-793d7db7: a guard that runs out of time denies ────────────
+
+
+def _deadline_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+    """Run `body` under `guard_deadline("probe guard", 0.3)` in a fresh interpreter."""
+    script = tmp_path / "probe.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.path.insert(0, {str(HOOKS_DIR)!r})\n"
+        "from _hooklib import guard_deadline\n"
+        'with guard_deadline("probe guard", 0.3):\n'
+        f"    {body}\n"
+        'print("finished")\n',
+        encoding="utf-8",
+    )
+    return subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+
+
+def test_guard_deadline_denies_a_guard_that_runs_past_it(tmp_path):
+    """A timed-out command hook does not block, so a guard slowed past its hook
+    timeout used to fail open. Its own deadline fires first and exits 2 — even
+    inside one long regex match, where only the interpreter's signal check runs."""
+    result = _deadline_script(tmp_path, 'import re; re.match(r"(a+)+$", "a" * 60 + "b")')
+    assert result.returncode == 2
+    assert "probe guard" in result.stderr and "deadline" in result.stderr
+    assert "finished" not in result.stdout
+
+
+def test_guard_deadline_is_disarmed_when_the_guard_finishes(tmp_path):
+    """A guard that finishes in time is not killed later, and leaves no timer."""
+    result = _deadline_script(tmp_path, "pass\n    time.sleep(0)\ntime.sleep(0.6)")
+    assert (result.returncode, result.stdout.strip()) == (0, "finished")
+
+
+def test_guard_deadline_handler_reports_and_exits_2(monkeypatch, capsys):
+    """The handler itself, in-process: it names the guard and exits 2."""
+    import time
+
+    lib = _hooklib()
+
+    def fake_exit(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(lib.os, "_exit", fake_exit)
+    with pytest.raises(SystemExit) as exc, lib.guard_deadline("probe guard", 0.05):
+        time.sleep(5)
+    assert exc.value.code == 2
+    assert "probe guard ran past its 0.05s deadline" in capsys.readouterr().err
+
+
+def test_guard_deadline_restores_the_previous_alarm_handler():
+    import signal
+
+    lib = _hooklib()
+    before = signal.getsignal(signal.SIGALRM)
+    with lib.guard_deadline("probe guard", 30):
+        assert signal.getsignal(signal.SIGALRM) is not before
+    assert signal.getsignal(signal.SIGALRM) is before
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_guard_deadline_falls_back_to_a_timer_without_setitimer(monkeypatch):
+    """Where the platform has no interval timer, a daemon thread keeps the bound."""
+    import signal
+    import threading
+
+    lib = _hooklib()
+    started: list = []
+
+    class _Timer:
+        def __init__(self, seconds, fn):
+            self.seconds, self.fn, self.daemon = seconds, fn, False
+            started.append(self)
+
+        def start(self):
+            self.running = True
+
+        def cancel(self):
+            self.running = False
+
+    monkeypatch.delattr(signal, "setitimer")
+    monkeypatch.setattr(threading, "Timer", _Timer)
+    with lib.guard_deadline("probe guard", 7):
+        assert started[0].running and started[0].daemon and started[0].seconds == 7
+    assert not started[0].running
+
+
+# ── agent-loopholes-407fc703: a glob directly under the repo root crashed on 3.12 ──
+
+
+def _glob_like_python_3_12(monkeypatch):
+    """Make `Path.glob(".")` raise IndexError, as CPython 3.12 does, whatever
+    interpreter runs the suite. 3.14 raises ValueError there, which the guard
+    already caught, so a suite run only under 3.14 never saw the crash that the
+    hook — run by uv under the project's 3.12 venv — hit on every such call."""
+    original = Path.glob
+
+    def glob(self, pattern, *args, **kwargs):
+        if str(pattern) in ("", "."):
+            raise IndexError("tuple index out of range")
+        return original(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", glob)
+
+
+def test_deny_agents_shell_glob_swallows_the_python_3_12_index_error(monkeypatch):
+    mod = _load("deny-agents-path-hook")
+    _glob_like_python_3_12(monkeypatch)
+    assert mod._shell_glob(mod._REPO_ROOT, ".") == []
+
+
+def test_deny_agents_never_globs_the_repo_root_itself(monkeypatch):
+    """The `.` check ran before an absolute token was rebased, so the parent of
+    `<repo>/*.patch` rebased to `.` and reached Path.glob (agent-loopholes-407fc703)."""
+    mod = _load("deny-agents-path-hook")
+    seen: list[str] = []
+    real = mod._shell_glob
+    monkeypatch.setattr(
+        mod, "_shell_glob", lambda base, pattern: seen.append(pattern) or real(base, pattern)
+    )
+    assert mod._references_agents(f"cd /tmp/x && ls {mod._REPO_ROOT}/*.patch") is False
+    assert "*.patch" in seen
+    assert "." not in seen and "" not in seen
+
+
+def test_deny_agents_allows_a_glob_directly_under_the_repo_root(monkeypatch, capsys):
+    """An ordinary absolute glob at the repo root was denied as an internal failure."""
+    mod = _load("deny-agents-path-hook")
+    _glob_like_python_3_12(monkeypatch)
+    command = f"cd /tmp/x && ls {mod._REPO_ROOT}/*.patch"
+    _run(mod, json.dumps({"tool_input": {"command": command}}), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-45d0747b: errexit does not reach a cd bash exempts from it ──
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set -e\ncd /nope && echo in\nrm -rf build",
+        "set -e\ncd /nope && true\ntouch f",
+        "set -o errexit\nif cd /nope; then :; fi\nrm -rf build",
+        "set -e\nif false; then :; elif cd /nope; then :; fi\nrm f",
+        "set -e\nwhile cd /nope; do break; done\nrm f",
+        "set -e\nuntil cd /nope; do break; done\nrm f",
+        "set -e\nif true; cd /nope; then :; fi\nrm f",
+        "set -e\n! cd /nope\nrm f",
+    ],
+)
+def test_unguarded_cd_guard_ignores_errexit_where_bash_suspends_it(code, monkeypatch, capsys):
+    """Bash ignores errexit for a command followed by `&&`/`||`, for an
+    if/elif/while/until condition and for a negated one, so each of these cds
+    fails and the write runs in the start directory. `set -e` counted as
+    guarding them all (agent-loopholes-45d0747b)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert exc.value.code == 2
+    assert "|| exit 1" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "set -e\ncd /nope\nrm -rf build",
+        "set -e\nif true; then cd /nope; fi\nrm f",
+        "set -e\nwhile read -r l; do cd /nope; done\nrm f",
+        "set -e\ntrue && cd /nope\nrm f",
+    ],
+)
+def test_unguarded_cd_guard_keeps_errexit_where_bash_applies_it(code, monkeypatch, capsys):
+    """Controls: a cd in a body, or as the last command of a list, still exits
+    the script under errexit when it fails."""
+    _run(_load("deny-unguarded-cd-hook"), _ctx(language="shell", code=code), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-499ec51d: pathspecs read from a file are never seen ──
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git add --pathspec-from-file=/tmp/all",
+        "git add --pathspec-from-file /tmp/all",
+        "git ls-files -mo | git add --pathspec-from-file=-",
+        "git ls-files -z -mo | git add --pathspec-file-nul --pathspec-from-file=-",
+        "git add --pathspec-fr=/tmp/all",
+        "git -C . add --pathspec-from-fil /tmp/all",
+    ],
+)
+def test_git_guard_denies_add_with_pathspecs_from_a_file(command, monkeypatch, capsys):
+    """Only positional pathspecs were judged, so a file listing every path staged
+    the whole tree past a guard documented as catching every spelling
+    (agent-loopholes-499ec51d). git accepts any unambiguous abbreviation."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "--pathspec-from-file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["git add scripts/x.py", "git add -u", "git restore --pathspec-f=x", "git add --patch f"],
+)
+def test_git_guard_allows_add_with_named_pathspecs(command, monkeypatch, capsys):
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-4e3689a1: every commit-making subcommand honours no-verify ──
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git merge --no-verify feature", "skips the pre-commit"),
+        ("git pull --no-verify origin feature", "skips the pre-commit"),
+        ("git rebase --no-verify main", "skips the pre-commit"),
+        ("git cherry-pick --no-verify abc123", "skips the pre-commit"),
+        ("git am --no-verify 0001.patch", "skips the pre-commit"),
+        ("git am -n 0001.patch", "skips the pre-commit"),
+        ("git am -3n 0001.patch", "skips the pre-commit"),
+        ("git am --no-veri 0001.patch", "skips the pre-commit"),
+        ("git commit-tree HEAD^{tree} -p HEAD -m x", "commit-tree"),
+        ("echo x | git commit-tree 4b825dc", "commit-tree"),
+    ],
+)
+def test_git_guard_denies_no_verify_on_every_commit_making_subcommand(
+    command, expected, monkeypatch, capsys
+):
+    """`_carries_no_verify` was applied to `commit` alone, so a merge, am, rebase,
+    cherry-pick or pull could skip the commit-msg hooks, and `commit-tree`
+    writes a commit that runs no hook at all (agent-loopholes-4e3689a1)."""
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert expected in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git am 0001.patch 0002.patch",
+        "git am -3 0001.patch",
+        "git merge -n feature",
+        "git merge --no-ff feature",
+        "git pull -n origin feature",
+        "git rebase -n main",
+        "git cherry-pick -n abc123",
+        "git merge --verify feature",
+    ],
+)
+def test_git_guard_allows_what_is_not_no_verify(command, monkeypatch, capsys):
+    """Controls: plain `git am` (how the owner applies patch series), and `-n`
+    where it means --no-stat (merge, pull, rebase) or --no-commit (cherry-pick)."""
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── agent-loopholes-92626f23: an unreadable git config fails closed on aliases ──
+
+
+def _alias_lookup_fails(monkeypatch, failure: str) -> None:
+    """Make `git config --get-regexp ^alias.` fail as `failure`; other calls run."""
+    real = subprocess.run
+
+    def fake(argv, *args, **kwargs):
+        if argv[:2] == ["git", "config"] and "--get-regexp" in argv:
+            if failure == "oserror":
+                raise OSError("git is missing")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(argv, 10)
+            if failure == "no-match":
+                return _Result(returncode=1)
+            return _Result(returncode=128, stderr="fatal: bad config line 1")
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+@pytest.mark.parametrize("failure", ["oserror", "timeout", "bad-config"])
+@pytest.mark.parametrize(
+    "command", ["git ci -m x", "git -c user.name=x ci -m x", "env git ci -m x"]
+)
+def test_git_guard_denies_an_alias_it_cannot_read(failure, command, monkeypatch, capsys):
+    """An unreadable config read as no aliases, so a stored `ci = commit
+    --no-verify` ran as the unjudged name `ci` while an unreadable HEAD failed
+    closed (agent-loopholes-92626f23)."""
+    _alias_lookup_fails(monkeypatch, failure)
+    with pytest.raises(SystemExit) as exc:
+        _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "could not be read" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("failure", "command"),
+    [
+        ("timeout", "git status"),
+        ("timeout", "git commit -m x"),
+        ("oserror", "git log --oneline -1"),
+        ("bad-config", "git -c alias.ci=commit ci -m x"),
+        ("no-match", "git ci -m x"),
+    ],
+)
+def test_git_guard_allows_builtins_when_aliases_are_unreadable(
+    failure, command, monkeypatch, capsys
+):
+    """Controls: an alias never shadows a git command, so those still pass; an
+    alias the command defines itself is judged by its body; and exit 1 with no
+    error is `--get-regexp` finding no alias, not a failure."""
+    _alias_lookup_fails(monkeypatch, failure)
+    _run(_load("deny-unsafe-git-hook"), _bash(command), monkeypatch)
+    assert capsys.readouterr().err == ""
+
+
+# ── perf-a458886e: the stop reminder dedupes changed paths in linear time ──
+
+
+class _CountingPath(str):
+    """A path that counts the equality comparisons made against it."""
+
+    compared = 0
+
+    def __eq__(self, other):
+        type(self).compared += 1
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
+
+
+def test_stop_reminder_dedupes_without_list_membership(monkeypatch, capsys):
+    """`p not in paths` compared each path against every one kept so far, so a
+    mass change cost seconds per turn end (perf-a458886e). Dedupe by hash: the
+    comparisons stay near zero, first-seen order holds, and a path dirty in two
+    scopes is listed once."""
+    mod = _load("stop-reminder")
+    staged = [f"skills/x/commands/c{i}.md" for i in range(1000)]
+    unstaged = [f"skills/x/commands/w{i}.md" for i in range(1000)]
+    worktree = [staged[5], *unstaged, staged[0]]
+
+    def _run_git(argv, *a, **k):
+        paths = staged if "--cached" in argv else worktree if "diff" in argv else []
+
+        class _Out:
+            def split(self, _sep):
+                return [_CountingPath(p) for p in [*paths, ""]]
+
+        class _Result:
+            returncode = 0
+            stdout = _Out()
+            stderr = ""
+
+        return _Result()
+
+    monkeypatch.setattr(mod.subprocess, "run", _run_git)
+    monkeypatch.setattr(_CountingPath, "compared", 0)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    mod.main()
+    assert _CountingPath.compared < len(staged) + len(worktree)
+    listed = [line.strip() for line in _stop_output(capsys)[0].splitlines() if "skills/" in line]
+    assert listed == [*staged, *unstaged]
+
+
+# ── CodeRabbit PR #151 review: the command a `find -exec` runs is a stage ─────
+#
+# Start points in the allow cases are `/opt/x`, not `/tmp`: a clone checked out
+# under /tmp makes `/tmp` an ancestor of the checkout, and a writing find whose
+# start point is above the checkout rightly reaches the surface.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /tmp -maxdepth 0 -exec rm -rf scripts/hooks ';'",
+        "find . -name nomatch -exec rm -rf scripts/hooks +",
+        "find /tmp -maxdepth 0 -execdir cp /tmp/evil.py scripts/hooks/ruff-hook.py \\;",
+        "find /tmp -maxdepth 0 -ok mv /tmp/x .claude/settings.json ';'",
+        "find /tmp -maxdepth 0 -exec sh -c 'rm -rf scripts/hooks' ';'",
+        "find /tmp -maxdepth 0 -exec git checkout HEAD~3 -- scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -okdir rm scripts/hooks/ruff-hook.py \\;",
+        "find /opt/x -maxdepth 0 -exec env rm -rf scripts/hooks ';'",
+        "find /opt/x -maxdepth 0 -exec find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';' ';'",
+        "find /opt/x -maxdepth 0 -exec echo ok ';' -exec rm -rf scripts/hooks ';'",
+        "cd scripts && find /opt/x -maxdepth 0 -exec rm -rf hooks ';'",
+        "find scripts/hooks -name ruff-hook.py -exec git checkout HEAD~3 -- {} ';'",
+        # a name test that misses the surface bounds `{}`, not a path built from it
+        "find . -name nomatch -exec rm -rf {}/.. ';'",
+        "find . -name nomatch -exec sh -c 'rm -rf -- \"$0\"' {} ';'",
+    ],
+)
+def test_agents_guard_judges_the_command_find_exec_runs(command, monkeypatch):
+    """CodeRabbit PR #151 review: the body of `-exec`/`-execdir`/`-ok`/`-okdir`
+    reached the guard only as operands of `find`, judged by the start points and
+    cleared by a name test, so `find /tmp -maxdepth 0 -exec rm -rf scripts/hooks
+    ';'` deleted the hooks. Each body is now a stage, and a body that reaches
+    past `{}` keeps its find's start points from being cleared."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf scripts/hooks",
+    ],
+)
+def test_agents_guard_find_exec_control_still_denies(command, monkeypatch):
+    """The plain write the find repros wrap is denied as it was."""
+    mod = _load("deny-agents-path-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find scripts/hooks -name '*.py' -exec cat {} ';'",
+        "find . -name '*.pyc' -delete",
+        "find /opt/x -name '*.log' -exec rm {} +",
+        "find /opt/x -name x -exec cp {} /opt/y ';'",
+        "find scripts/hooks -exec grep -l TODO {} +",
+    ],
+)
+def test_agents_guard_allows_find_exec_that_misses_the_surface(command, monkeypatch):
+    """A reader body, a cache clean, and a writer whose `{}` stands for paths
+    outside the checkout keep their verdict."""
+    mod = _load("deny-agents-path-hook")
+    _run(mod, _bash(command), monkeypatch)  # no SystemExit
+    assert not mod._writes_protected(command)
+
+
+def test_find_exec_bodies_end_at_each_terminator():
+    """`;` in any spelling ends a body, `+` only straight after `{}`, and an
+    unterminated body runs to the end of the stage."""
+    lib = _hooklib()
+    tokens = [
+        *("find", ".", "-exec", "rm", "+", "x", ";"),
+        *("-execdir", "cp", "{}", "+", "-ok", "mv", "a"),
+    ]
+    assert lib.find_exec_bodies(tokens) == [["rm", "+", "x"], ["cp", "{}"], ["mv", "a"]]
+    assert lib.find_exec_bodies(["find", ".", "-exec", "rm", "a", "\\"]) == [["rm", "a"]]
+    assert lib.find_exec_bodies(["find", ".", "-exec", ";", "-print"]) == []  # empty body
+    assert lib.find_exec_bodies(["xargs", "-exec", "rm"]) == []
+
+
+@pytest.mark.parametrize(
+    ("command", "past"),
+    [
+        ("find . -name x -exec rm {} +", False),
+        ("find . -name x -exec env rm -f {} ';'", False),
+        ("find . -name x -exec cat {}/.. ';'", False),  # a reader writes nothing
+        ("find . -name x -exec rm {}/.. ';'", True),
+        ("find . -name x -exec sh -c 'rm $0' {} ';'", True),
+        ("find . -name x -exec env bash -c 'rm $0' {} ';'", True),
+        ("find . -name x -exec find {} -delete ';'", True),
+        ("find . -name x -delete", False),
+    ],
+)
+def test_find_writes_past_matches(command, past):
+    """Only a writing body that builds on `{}`, runs a command string or nests a
+    find escapes what the name tests bound."""
+    lib = _hooklib()
+    assert lib.find_writes_past_matches(lib.shell_stages(command)[0]) is past
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /tmp -maxdepth 0 -exec git push origin main ';'",
+        "find /opt/x -maxdepth 0 -exec git commit --no-verify -m x \\;",
+        "find /opt/x -maxdepth 0 -exec sh -c 'git push origin main' ';'",
+    ],
+)
+def test_git_guard_judges_the_git_call_find_exec_runs(command, monkeypatch):
+    """CodeRabbit PR #151 review: `git` behind `find -exec` was an operand of
+    `find`, so no rule of the git guard reached it."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+
+
+def test_git_guard_allows_a_read_find_exec_runs(monkeypatch, capsys):
+    """A read git call behind `find -exec` is judged and passed."""
+    mod = _load("deny-unsafe-git-hook")
+    monkeypatch.setattr(mod, "_current_branch", lambda: "feature/x")
+    _assert_git_allowed(mod, "find . -name '*.py' -exec git log -1 -- {} ';'", monkeypatch, capsys)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find /opt/x -maxdepth 0 -exec git checkout -- README.md ';'",
+        "find . -name README.md -exec git restore {} ';'",
+    ],
+)
+def test_restore_guard_asks_for_a_restore_find_exec_runs(command, monkeypatch, tmp_path, capsys):
+    """CodeRabbit PR #151 review: a restore behind `find -exec` discarded a
+    dirty file without the prompt; `{}` stands for the start point `.`."""
+    mod = _restore_mod(monkeypatch, tmp_path, ["README.md"])
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 0
+    out = _ask_payload(capsys)
+    assert out["permissionDecision"] == "ask"
+    assert "README.md" in out["permissionDecisionReason"]

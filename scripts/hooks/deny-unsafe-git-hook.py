@@ -7,13 +7,15 @@
 1. `git commit --no-verify` / `-n` skips the pre-commit validators that guard
    skill files, the version manifests, and the findings store
    (.claude/rules/commit-gate-integrity.md, which states no in-session hook
-   enforces it).
+   enforces it). The same holds for `--no-verify` on merge, pull, rebase,
+   cherry-pick and am, and for `git commit-tree`, which runs no hook at all.
 2. `git push` onto a protected branch
    (skills/nitpicker/commands/cr.md Step 6: never push directly to main/master).
 3. `git add -A` / `--all` / `.` — staging the whole tree is a recurring source
    of commits carrying files the change never touched: scratch output, local
-   config, editor artifacts. Explicit pathspecs and `git add -u` (tracked files
-   only) stay allowed.
+   config, editor artifacts. So is `--pathspec-from-file`, whose list the
+   guard cannot see. Explicit pathspecs and `git add -u` (tracked files only)
+   stay allowed.
 4. Switching the hooks off outside a single git option: a `git config` write to
    core.hooksPath or an alias, an alias already in git config whose body breaks
    a mandate, `SKIP=`/`PRE_COMMIT_*` on a commit, and `pre-commit uninstall`.
@@ -35,9 +37,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     _VALUE_OPTS,
+    GIT_COMMANDS,
     event_command,
     foreign_code,
+    git_aliases,
+    git_aliases_unreadable,
     git_calls,
+    guard_deadline,
     load_event_strict,
     repo_root,
     shell_stages_with_env,
@@ -46,7 +52,6 @@ from _hooklib import (
 
 REPO_ROOT = repo_root()
 PROTECTED = frozenset({"main", "master"})
-_NO_VERIFY = frozenset({"--no-verify", "-n"})
 # git accepts any UNAMBIGUOUS abbreviation of a long option, so `--no-veri` runs
 # `--no-verify` and a membership test against the full spelling matches neither.
 # Generated from `--no-v` rather than from a shorter stem: `--no-verbose` also
@@ -125,14 +130,38 @@ def _stages_whole_tree(arg: str) -> bool:
     return (REPO_ROOT / arg).resolve() == REPO_ROOT.resolve()
 
 
+# `--pathspec-from-file` and every abbreviation git accepts for it. Shorter
+# than `--pathspec-fr` is ambiguous with `--pathspec-file-nul`, which git
+# rejects on its own.
+_PATHSPEC_FROM_FILE = frozenset(
+    "--pathspec-from-file"[:n] for n in range(len("--pathspec-fr"), len("--pathspec-from-file") + 1)
+)
+
+
+def _reads_pathspecs_from_file(args: list[str]) -> bool:
+    """True when `git add` takes its pathspecs from a file or stdin.
+
+    The file's contents are not in the command, so nothing here can tell a
+    list of two paths from every path in the tree: `git ls-files -mo | git add
+    --pathspec-from-file=-` staged the whole tree while only positional
+    pathspecs were judged (agent-loopholes-499ec51d).
+    """
+    return any(a.partition("=")[0] in _PATHSPEC_FROM_FILE for a in args)
+
+
 # Push modes that name no refspec and update protected branches regardless of HEAD.
 _ALL_REFS = frozenset({"--all", "--mirror"})
 
 _COMMIT_DENIAL = (
-    "  DENIED  git commit --no-verify skips the pre-commit validators that guard\n"
+    "  DENIED  git {sub} --no-verify skips the pre-commit validators that guard\n"
     "          skill files, version manifests, and the findings store.\n"
     "          See .claude/rules/commit-gate-integrity.md — commit without the\n"
     "          flag, or fix what pre-commit reports."
+)
+_COMMIT_TREE_DENIAL = (
+    "  DENIED  git commit-tree writes a commit object without running any hook,\n"
+    "          so the commit-msg and pre-commit checks never see it.\n"
+    "          Use git commit — see .claude/rules/commit-gate-integrity.md."
 )
 _PUSH_DENIAL = (
     "  DENIED  push targets a protected branch (HEAD is '{branch}').\n"
@@ -143,6 +172,11 @@ _ADD_DENIAL = (
     "          never touched — scratch output, local config, editor artifacts.\n"
     "          Stage what you actually changed: git add <path> [<path> ...]\n"
     "          `git add -u` restages tracked files only, if that is what you meant."
+)
+_ADD_FROM_FILE_DENIAL = (
+    "  DENIED  `git add --pathspec-from-file` reads its paths from a file the guard\n"
+    "          cannot see, so it can stage the whole tree unjudged.\n"
+    "          Name the paths on the command line: git add <path> [<path> ...]"
 )
 
 
@@ -183,12 +217,19 @@ def _push_targets_protected(args: list[str]) -> bool:
     through the second colon form. `--all`/`--mirror` push every matching ref, so
     they are protected whatever HEAD is. A bare `HEAD` refspec resolves through
     the current branch, as does a push with no refspec at all.
+
+    A refspec that matches rather than names counts as protected: a glob
+    (`refs/heads/*:refs/heads/*`) and the bare `:` (every branch both sides
+    have) each reach main while the literal compare found nothing
+    (agent-loopholes-3f71784c).
     """
     if any(a in _ALL_REFS for a in args):
         return True
     operands = [a for a in args if not a.startswith("-")]
     if len(operands) < 2:
         return _head_is_protected()
+    if any("*" in ref or ref.lstrip("+") == ":" for ref in operands[1:]):
+        return True
     targets = [_ref_target(ref) for ref in operands[1:]]
     if any(t in PROTECTED for t in targets):
         return True
@@ -204,12 +245,57 @@ _COMMIT_VALUE_SHORTS = frozenset("CcFmtSu")
 # are case-insensitive, so comparison is case-folded.
 _HOOKS_DISABLING = ("core.hookspath",)
 
+
+def _disables_hooks(key: str) -> bool:
+    """True for a (case-folded) config key that can switch the hooks off.
+
+    core.hooksPath by name, and the include keys by mechanism: `include.path`
+    and `includeIf.<cond>.path` pull in a file that can set core.hooksPath, so
+    `git -c include.path=/tmp/hp.cfg commit` disabled the gate while the guard
+    looked for core.hooksPath alone (agent-loopholes-3736b057).
+    """
+    return (
+        key in _HOOKS_DISABLING
+        or key == "include.path"
+        or (key.startswith("includeif.") and key.endswith(".path"))
+    )
+
+
+def _routes_a_push(key: str) -> bool:
+    """True for a (case-folded) config key that decides where a push lands.
+
+    `remote.<r>.push` supplies refspecs, `push.default` picks the matching or
+    upstream rule, and `branch.<b>.merge` names the upstream that rule follows.
+    Set through `-c` or written by `git config`, each sends a push whose text
+    names no protected branch to main (agent-loopholes-3f71784c).
+    """
+    return (
+        key == "push.default"
+        or (key.startswith("remote.") and key.endswith(".push"))
+        or (key.startswith("branch.") and key.endswith(".merge"))
+    )
+
+
+_PUSH_CONFIG_DENIAL = (
+    "  DENIED  config key {key} decides where a push lands, so a push naming no\n"
+    "          protected branch can still reach one. Push an explicit feature\n"
+    "          refspec instead — see cr.md Step 6."
+)
+
 # The environment reaches the same setting `-c` does. `GIT_CONFIG_COUNT` plus
 # `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` assigns any config key, and
 # `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` repoint config wholesale at a file the
 # caller wrote. Both disable the pre-commit gate exactly as
 # `git -c core.hooksPath=/dev/null` does, which this guard blocks.
-_HOOKS_DISABLING_FILES = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+# `GIT_CONFIG_PARAMETERS` is the variable `-c` itself travels in to child git
+# processes; set directly it carries any key past the `-c` parse
+# (agent-loopholes-3736b057).
+_HOOKS_DISABLING_FILES = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_PARAMETERS")
+# Where git finds the global config file: a commit run under a HOME or
+# XDG_CONFIG_HOME the caller chose reads a core.hooksPath the caller wrote
+# (agent-loopholes-3736b057). Judged on a commit stage only — everything else
+# may legitimately run under another home.
+_CONFIG_HOME_VARS = ("HOME", "XDG_CONFIG_HOME")
 _ENV_DENIAL = (
     "  DENIED  {var} disables the repository's hooks through the environment.\n"
     "          Same effect as `git -c core.hooksPath=…`, which this guard blocks.\n"
@@ -227,11 +313,13 @@ def _env_denial(env: dict[str, str]) -> str | None:
     from the guard while git still reads it.
     """
     for name, value in env.items():
-        if name.startswith("GIT_CONFIG_KEY_") and value.strip().lower() in _HOOKS_DISABLING:
+        if name.startswith("GIT_CONFIG_KEY_") and _disables_hooks(value.strip().lower()):
             return _HOOKSPATH_DENIAL.format(
                 key=value.strip().lower(),
                 value=env.get(name.replace("_KEY_", "_VALUE_"), ""),
             )
+        if name.startswith("GIT_CONFIG_KEY_") and _routes_a_push(value.strip().lower()):
+            return _PUSH_CONFIG_DENIAL.format(key=value.strip().lower())
         if name in _HOOKS_DISABLING_FILES:
             return _ENV_DENIAL.format(var=name)
     return None
@@ -283,7 +371,7 @@ def _global_config(tokens: list[str], env: dict[str, str] | None = None) -> list
     return pairs
 
 
-def _carries_no_verify(args: list[str]) -> bool:
+def _carries_no_verify(args: list[str], value_shorts: frozenset[str] | None = None) -> bool:
     """True when any argument carries `-n`, stacked, standalone, or abbreviated.
 
     `-nm "msg"` is `--no-verify` plus `-m`, and a membership test against
@@ -291,17 +379,41 @@ def _carries_no_verify(args: list[str]) -> bool:
     which git accepts as an abbreviation of the same option — the cluster scan
     below is entered only when `arg[1] != "-"`, so nothing here saw a long
     option that was not spelled in full.
+
+    `value_shorts` are the subcommand's short options that take the rest of a
+    cluster as their value; `None` means `-n` is not `--no-verify` for this
+    subcommand, so only the long form counts.
     """
     for arg in args:
-        if arg in _NO_VERIFY or arg in _NO_VERIFY_PREFIXES:
+        if arg in _NO_VERIFY_PREFIXES:
+            return True
+        if value_shorts is None:
+            continue
+        if arg == "-n":
             return True
         if len(arg) > 1 and arg[0] == "-" and arg[1] != "-":
             for char in arg[1:]:
                 if char == "n":
                     return True
-                if char in _COMMIT_VALUE_SHORTS:
+                if char in value_shorts:
                     break
     return False
+
+
+# Every subcommand that makes a commit and takes `--no-verify` to skip its
+# hooks, mapped to the short options that consume a cluster's remainder — or
+# to None where `-n` means something else: `--no-stat` on merge, pull and
+# rebase, `--no-commit` on cherry-pick. Judging `commit` alone let `git merge
+# --no-verify` land a commit the commit-msg hooks never saw
+# (agent-loopholes-4e3689a1).
+_NO_VERIFY_SUBCOMMANDS: dict[str, frozenset[str] | None] = {
+    "commit": _COMMIT_VALUE_SHORTS,
+    "am": frozenset("CpS"),
+    "merge": None,
+    "pull": None,
+    "rebase": None,
+    "cherry-pick": None,
+}
 
 
 _CONFIG_WRITE_DENIAL = (
@@ -350,8 +462,10 @@ def _config_write_denial(args: list[str]) -> str | None:
     if any(a in _CONFIG_NON_WRITES for a in args):
         return None
     for key in (a.lower() for a in args if not a.startswith("-")):
-        if key in _HOOKS_DISABLING or key.startswith("alias."):
+        if _disables_hooks(key) or key.startswith("alias."):
             return _CONFIG_WRITE_DENIAL.format(key=key)
+        if _routes_a_push(key):
+            return _PUSH_CONFIG_DENIAL.format(key=key)
     return None
 
 
@@ -372,43 +486,56 @@ def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
     if name != "git" or index >= len(tokens) or tokens[index] != "commit":
         return None
     skipped = [var for var in env if var == "SKIP" or var.startswith("PRE_COMMIT_")]
-    return _SKIP_DENIAL.format(var=skipped[0]) if skipped else None
+    if skipped:
+        return _SKIP_DENIAL.format(var=skipped[0])
+    homes = [var for var in _CONFIG_HOME_VARS if var in env]
+    return _ENV_DENIAL.format(var=homes[0]) if homes else None
 
 
-@functools.cache
 def _persistent_aliases() -> dict[str, str]:
     """Every alias git config already holds, name to body; empty if git cannot say.
 
     Aliases were resolved only from `-c alias.…` in the same command, so an alias
     defined by an earlier call or outside the session — `alias.ci = commit
     --no-verify`, then `git ci -m x` — ran its body unjudged
-    (agent-loopholes-f376faa5). Cached: this hook runs on every shell call.
-    Ceiling: `git -C <other repo>` reads that repo's aliases, not these.
+    (agent-loopholes-f376faa5). The lookup is `_hooklib.git_aliases`, shared
+    with every guard that expands an alias (agent-loopholes-911e2929); this
+    guard keeps its own judgement of the body so a denial can name the alias.
     """
-    try:
-        result = subprocess.run(
-            ["git", "config", "--get-regexp", r"^alias\."],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    aliases: dict[str, str] = {}
-    for line in result.stdout.splitlines() if result.returncode == 0 else []:
-        name, _, body = line.partition(" ")
-        aliases[name.removeprefix("alias.")] = body
-    return aliases
+    return git_aliases(REPO_ROOT)
+
+
+def _aliases_unreadable() -> bool:
+    """True when git could not list the aliases, so a stored one cannot be judged.
+
+    `_persistent_aliases` then reads as empty, which let `alias.ci = commit
+    --no-verify` run as `git ci` unjudged whenever the lookup timed out
+    (agent-loopholes-92626f23). Fails closed, like `_head_is_protected`.
+    """
+    return git_aliases_unreadable(REPO_ROOT)
+
+
+_ALIAS_UNREADABLE_DENIAL = (
+    "  DENIED  `git {sub}` is not a git command, so it may be an alias — and git\n"
+    "          config could not be read to see what that alias runs.\n"
+    "          Fix the config (git config --get-regexp '^alias\\.') or run the\n"
+    "          git command the alias stands for."
+)
 
 
 def _denial(subcommand: str, args: list[str]) -> str | None:
     """The message to block this git call with, or None to allow it."""
-    if subcommand == "commit" and _carries_no_verify(args):
-        return _COMMIT_DENIAL
+    if subcommand in _NO_VERIFY_SUBCOMMANDS and _carries_no_verify(
+        args, _NO_VERIFY_SUBCOMMANDS[subcommand]
+    ):
+        return _COMMIT_DENIAL.format(sub=subcommand)
+    if subcommand == "commit-tree":
+        return _COMMIT_TREE_DENIAL
     if subcommand == "config" and (reason := _config_write_denial(args)):
         return reason
     if subcommand == "add":
+        if _reads_pathspecs_from_file(args):
+            return _ADD_FROM_FILE_DENIAL
         staged_all = [a for a in args if _stages_whole_tree(a)]
         if staged_all:
             return _ADD_DENIAL.format(arg=staged_all[0])
@@ -496,8 +623,10 @@ def _global_denial(
         return None
     config = _global_config(tokens, env)
     for key, value in config:
-        if key in _HOOKS_DISABLING:
+        if _disables_hooks(key):
             return _HOOKSPATH_DENIAL.format(key=key, value=value)
+        if _routes_a_push(key):
+            return _PUSH_CONFIG_DENIAL.format(key=key)
 
     index = skip_git_global_opts(tokens, 1)
     if index >= len(tokens):
@@ -513,6 +642,8 @@ def _global_denial(
     aliases = _persistent_aliases() | {
         k.split(".", 1)[1]: v for k, v in config if k.startswith("alias.") and "." in k
     }
+    if subcommand not in aliases and subcommand not in GIT_COMMANDS and _aliases_unreadable():
+        return _ALIAS_UNREADABLE_DENIAL.format(sub=subcommand)
     return _alias_denial(aliases.get(subcommand, ""), args, depth)
 
 
@@ -583,10 +714,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — an internal error must not allow the call
-        print(f"  DENIED  git guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("git guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — an internal error must not allow the call
+            print(f"  DENIED  git guard failed internally: {exc}", file=sys.stderr, flush=True)
+            sys.exit(2)

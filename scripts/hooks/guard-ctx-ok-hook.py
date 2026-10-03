@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
+    guard_deadline,
     load_event_strict,
     shell_stages,
     skip_git_global_opts,
@@ -240,10 +241,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed
-        print(f"  DENIED  ctx-ok guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("ctx-ok guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed
+            print(f"  DENIED  ctx-ok guard failed internally: {exc}", file=sys.stderr, flush=True)
+            sys.exit(2)

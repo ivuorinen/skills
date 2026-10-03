@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     event_command,
     git_calls,
+    guard_deadline,
     load_event_strict,
     repo_root,
     shell_stages_with_env,
@@ -78,13 +79,42 @@ def _targets(command: str) -> list[str] | None:
     found = False
     targets: list[str] = []
     for subcommand, args in git_calls(command):
-        if subcommand == "restore":
+        if subcommand in ("restore", "checkout") and _reads_pathspecs_from_a_file(args):
+            found = True
+            targets.append(_WHOLE_TREE)
+        elif subcommand == "restore":
             found = True
             targets += [a for a in args if not a.startswith("-")]
         elif subcommand == "checkout" and (paths := _checkout_targets(args)) is not None:
             found = True
             targets += paths
     return targets if found else None
+
+
+# Pathspec magic that covers every entry (see `_covers`).
+_WHOLE_TREE = ":/"
+_PATHSPEC_FROM_FILE = "--pathspec-from-file"
+# The shortest prefix git accepts for it: `--pathspec-f` is ambiguous with
+# `--pathspec-file-nul`.
+_PATHSPEC_FROM_FILE_MIN = len("--pathspec-fr")
+
+
+def _reads_pathspecs_from_a_file(args: list[str]) -> bool:
+    """True when a restore or checkout takes its pathspecs from a file or stdin.
+
+    The pathspecs then live somewhere the guard does not read, so no operand
+    could match a dirty entry and the discard ran without the prompt
+    (agent-loopholes-a79daccb). Such a call is judged to cover every dirty path.
+    git accepts any unambiguous abbreviation of a long option, so a prefix
+    counts as well as the full name.
+    """
+    for arg in args:
+        if arg == "--":
+            return False
+        name = arg.partition("=")[0]
+        if len(name) >= _PATHSPEC_FROM_FILE_MIN and _PATHSPEC_FROM_FILE.startswith(name):
+            return True
+    return False
 
 
 # Options that make `git checkout` create a branch, which never restores a path.
@@ -145,8 +175,25 @@ def _covers(target: str, entry: str) -> bool:
     match, so they cover every entry: `_covers(":/", "src/a.py")` was False, and a
     whole-tree restore over dirty files passed silently (agent-loopholes-152e6d90).
     Over-asking on a narrow glob is the cheap direction for an `ask` hook.
+
+    A `~` path is expanded the way bash does before git sees it; left as it
+    was, `git restore ~/…/README.md` compared as a relative path and discarded
+    the dirty file silently (agent-loopholes-0f3351b2). One that cannot be
+    expanded covers everything, as a glob does.
+
+    `{}` is the operand a `find -exec` body receives for each path found, which
+    the guard cannot enumerate, so it covers everything too: `find . -name
+    README.md -exec git restore {} ';'` discarded the file with no prompt
+    (CodeRabbit PR #151 review).
     """
     t = target.strip("\"'").rstrip("/")
+    if "{}" in t:
+        return True
+    if t.startswith("~"):
+        try:
+            t = str(Path(t).expanduser())
+        except RuntimeError:  # no such user: the target could be anywhere
+            return True
     if t.startswith(":") or any(char in t for char in "*?["):
         return True
     if t.startswith("/"):
@@ -268,9 +315,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — ask rather than silently allow
-        _decide("ask", f"restore guard failed internally ({exc}); confirm manually")
+    # Past the deadline this denies (exit 2) rather than asks: the ask needs the
+    # JSON channel, and a handler that interrupts a half-written decision
+    # cannot trust it. The call can be retried; a timed-out allow cannot.
+    with guard_deadline("restore guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — ask rather than silently allow
+            _decide("ask", f"restore guard failed internally ({exc}); confirm manually")

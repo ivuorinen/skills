@@ -15,13 +15,14 @@ re-raised so a deliberate exit keeps its code:
 
 ```python
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed
-        print(f"  DENIED  <guard> failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("<guard>"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed
+            print(f"  DENIED  <guard> failed internally: {exc}", file=sys.stderr, flush=True)
+            sys.exit(2)
 ```
 
 Every repo guard carries this form, `deny-agents-path-hook.py` included. A guard
@@ -38,10 +39,37 @@ The same holds one layer out. Each repo guard's `.claude/settings.json` command
 exits 2 when `uv` is missing, and maps any exit of the guard other than 0 or 2
 to 2, so a guard that cannot start, or dies before its own wrapper runs, denies.
 
+## A timeout is an allow
+
+Claude Code cancels a hook that runs past its `timeout` (600 seconds when the
+entry names none), and a timed-out command hook does not block: the call
+continues through the normal permission flow. The shell wrapper above never
+sees an exit code to map. So a guard that input can slow down — a quadratic
+parse of a padded command — fails open at its timeout
+(agent-loopholes-793d7db7).
+
+Two bounds close that, and the order between them is the rule:
+
+- `_hooklib.guard_deadline` wraps each guard's `__main__` and exits 2 once the
+  guard has run `GUARD_DEADLINE_SECONDS`. It uses SIGALRM, whose handler the
+  regex engine runs mid-match, and exits with `os._exit` so no handler inside
+  the guard can catch it. On expiry the restore guard denies too: an ask needs
+  a complete JSON answer the interrupted run may not have.
+- Every PreToolUse entry in `.claude/settings.json` names its `timeout`, at
+  least half again above the deadline, so the guard's own deny always lands
+  first, with room left for `uv` to start the interpreter.
+
+The graphify guards `exec` an external binary, so they get the explicit
+`timeout` but no internal deadline; past it they allow, like any hook.
+
 ## Enforcement
 
-Author discipline. `tests/test_hooks.py` drives the exception arm of the guards
-it has a test for, through a stdin stand-in whose `read()` raises, and
+Partly gated. `tests/test_settings.py` fails when a PreToolUse entry has no
+`timeout`, when a repo guard's timeout is under one and a half times
+`GUARD_DEADLINE_SECONDS`, or when a repo guard's `__main__` does not run under
+`guard_deadline`. The rest is author discipline: `tests/test_hooks.py` drives
+the exception arm of the guards it has a test for, through a stdin stand-in
+whose `read()` raises, and
 `test_pretooluse_guards_fail_closed_on_an_unreadable_event` feeds each guard in
 `PRETOOLUSE_GUARDS` an unreadable event; nothing requires a new guard to carry
-the wrapper, the strict loader, or a place in that list.
+the exception wrapper, the strict loader, or a place in that list.

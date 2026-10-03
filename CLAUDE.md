@@ -309,7 +309,9 @@ findings store, so a clean tree costs one `git status`. A gate it cannot run
 (agent-loopholes-6ca5b557).
 
 The PreToolUse guards, which can *block* a tool call, the graphify guards' binary
-pin, and the Stop hooks are described in `.claude/rules/hook-inventory.md`, which
+pin, the enforcement-surface integrity check (`enforcement-surface-integrity.py`,
+SessionStart plus PostToolUse on the shell and Write/Edit tools) and the Stop
+hooks are described in `.claude/rules/hook-inventory.md`, which
 loads with `.claude/settings.json` and `scripts/hooks/`. `tests/test_settings.py`
 fails when a configured PreToolUse hook is unnamed there.
 

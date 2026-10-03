@@ -5,13 +5,72 @@ shebang and no `# /// script` block. Pure stdlib. Mirrors the sibling-import
 precedent in scripts/validate-skill.py (`sys.path.insert(0, __file__ dir)`).
 """
 
+import contextlib
+import itertools
 import json
 import os
 import re
 import shlex
+import signal
+import subprocess
 import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
+
+# How long a PreToolUse guard may run before it denies. Claude Code cancels a
+# hook at its `timeout`, and a timed-out command hook does not block the call —
+# the call proceeds through the normal permission flow — so a guard slowed past
+# its timeout failed open (agent-loopholes-793d7db7). Each guard's `__main__`
+# runs under `guard_deadline`, which exits 2 at this bound; every PreToolUse
+# entry in .claude/settings.json sets a `timeout` at least half again above it,
+# leaving room for `uv` to start the interpreter. tests/test_settings.py pins
+# both.
+GUARD_DEADLINE_SECONDS = 30
+
+
+@contextlib.contextmanager
+def guard_deadline(hook: str, seconds: float = GUARD_DEADLINE_SECONDS) -> Iterator[None]:
+    """Deny from inside the guard once it has run for `seconds`.
+
+    SIGALRM rather than a thread: a long regex match holds the interpreter,
+    so a timer thread would not run until it returned, while the regex engine
+    checks for signals as it goes and the handler runs mid-match. The handler
+    exits with `os._exit`, since a `SystemExit` raised there could be caught
+    by the guard's own handlers. A platform without `setitimer` gets a daemon
+    timer thread instead, which still bounds everything but a single long C
+    call. The alarm is disarmed and the previous handler restored on the way
+    out, so an in-process caller (the tests) is left as it was.
+    """
+
+    def expire(*_args: object) -> None:
+        print(
+            f"  DENIED  {hook} ran past its {seconds:g}s deadline. Denying rather than\n"
+            "          letting the hook timeout allow the call — see\n"
+            "          .claude/rules/hooks-fail-closed.md.",
+            file=sys.stderr,
+            flush=True,
+        )
+        os._exit(2)
+
+    if hasattr(signal, "setitimer"):
+        previous = signal.signal(signal.SIGALRM, expire)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+    else:
+        timer = threading.Timer(seconds, expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            yield
+        finally:
+            timer.cancel()
+
 
 # `&&` and a backgrounding `&` separate stages; the `&` of a redirection does not.
 # A bare `[|;&\n]` class split `make check 2>&1` into a second stage `1`, whose
@@ -28,7 +87,39 @@ from typing import NoReturn
 # `\$\(` precedes the character class so the `$` is consumed with its paren
 # rather than left behind as a one-token stage. The closing `)` splits too —
 # what follows it is back in the outer command.
-_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>)")
+#
+# A `|` straight after `>` is the clobber redirection `>|`, not a pipe. Cutting
+# there left `echo x >` as one stage and the target as the verb of the next, so
+# no guard saw what `echo x >| scripts/hooks/ruff-hook.py` wrote
+# (agent-loopholes-ff4a37fd).
+_STAGE_SPLIT = re.compile(r"\|\||&&|\$\(|(?<!>)\||[;\n`()]|(?<![<>])&(?!>)")
+
+# Every redirection operator that opens a file for writing, and its target:
+# `>`, `>>`, `>|` (clobber past noclobber), `>&`/`&>`/`&>>` (stdout and stderr),
+# `<>` (read-write, writable through the descriptor) and any of them behind a
+# descriptor number (`2>`, `1>|`). The first version matched `>{1,2}` alone, so
+# `>|` and `>&` each wrote the enforcement surface past both write guards
+# (agent-loopholes-ff4a37fd). A `&` or digit prefix needs no alternative of its
+# own: the operator after it is matched anyway.
+_REDIRECT = re.compile(r"(>>|>\||>&|<>|>)\s*([^\s;&|<>()]+)")
+# `>&1`, `2>&-`: after `>&`, a descriptor number or `-` duplicates or closes a
+# descriptor and names no file. After any other operator it is a file name.
+_FD_TARGET = re.compile(r"\d+-?|-")
+
+
+def redirect_targets(text: str) -> list[str]:
+    """Every file a redirection in `text` writes, in order.
+
+    Shared by the protected-write guard and the unguarded-cd guard, whose
+    private copies had drifted to the same blind spot. Ceiling: a target the
+    shell builds at runtime is returned as spelled, for the caller to judge.
+    """
+    return [
+        target
+        for op, target in _REDIRECT.findall(text)
+        if not (op == ">&" and _FD_TARGET.fullmatch(target))
+    ]
+
 
 # Command wrappers: the token that runs is the one AFTER these, so a guard
 # reading `tokens[0]` sees the wrapper and skips the stage. `env git commit
@@ -62,8 +153,10 @@ _SHELL_VALUE_OPTS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"
 # Reserved words that may open a stage before the command it runs. A guard
 # reading `tokens[0]` saw `then` in `if true; then git commit --no-verify; fi`
 # and judged nothing — every shell guard passed a command behind `if`, `then`,
-# `do`, `{` or `!`. `strip_reserved` drops them.
-_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{"})
+# `do`, `{` or `!`. `strip_reserved` drops them. `coproc` runs the command after
+# it in the background, and was missing: `coproc git push origin main` passed
+# every guard (agent-loopholes-df530242).
+_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{", "coproc"})
 # How many nested `sh -c` payloads are unwrapped precisely; past it, the payload
 # is split coarsely (see `_coarse_stages`), never left folded.
 _MAX_SHELL_DEPTH = 4
@@ -83,14 +176,22 @@ _MAX_SHELL_DEPTH = 4
 # `'a'#b`, which bash also reads as one word. Still a character class, no retry.
 _COMMENT = re.compile(r"(?<![^\s;&|()])#[^\n]*")
 # Single-quoted spans are literal; double-quoted spans honour backslash escapes.
-# Possessive quantifiers (`*+`, Python 3.11+). The two inner alternatives are
-# already disjoint, so a *terminated* quote never backtracks — but an
-# unterminated one makes the engine unwind the whole span one character at a
-# time, once per starting position. A hook payload is attacker-influenced, and
-# an unterminated quote is exactly what a hostile one would carry. Possessive
-# matching forbids that unwind; the match simply fails, which is the correct
-# answer for an unterminated span.
-_QUOTED = re.compile(r"'[^']*+'|\"(?:\\.|[^\"\\])*+\"")
+# Possessive quantifiers (`*+`, Python 3.11+) stop the engine unwinding a span
+# one character at a time, but they did not make masking linear: a quote that
+# never closes still failed only after scanning to the end of input, and the
+# scan restarted from every later quote character, so `"` followed by n `\"`
+# cost O(n^2) — 11 s at 32 KB on a hook payload (perf-2d1e28b2).
+#
+# So a span may also end at end of input (`\Z`, after an optional lone
+# backslash), which consumes an unterminated one in a single pass; the group
+# records whether the closing quote was found. `_mask_quoted` then treats an
+# unterminated quote as a literal character, as the old rule did, and scans the
+# rest for the OTHER kind only: no later quote of the same kind can close either
+# (after an open `"` every later `"` is escaped; after an open `'` there is no
+# other `'`), so skipping them changes no answer.
+_QUOTED = re.compile(r"'[^']*+(?:(')|\Z)|\"(?:\\.|[^\"\\])*+(?:(\")|\\?\Z)")
+_SINGLE_QUOTED = re.compile(r"'[^']*+(?:(')|\Z)")
+_DOUBLE_QUOTED = re.compile(r"\"(?:\\.|[^\"\\])*+(?:(\")|\\?\Z)")
 _MASK = re.compile("\x00(\\d+)\x00")
 # The escapes bash removes before a command sees its argv. A guard comparing
 # tokens that still carry them read `\-\-no-verify` and `$'--no-verify'` as
@@ -306,6 +407,9 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
     beginning `b"`, and `grep '# ctx-ok'` looked like a trailing comment.
     Masking is enough to fix both without a full shell parser — notably it leaves
     newlines, redirections and subshells splitting exactly as they did.
+
+    Linear in the command: an unterminated quote is consumed once and its tail
+    rescanned once for the other kind of quote (see `_QUOTED`).
     """
     spans: list[str] = []
 
@@ -316,9 +420,19 @@ def _mask_quoted(command: str) -> tuple[str, list[str]]:
         restores the exact original text rather than a re-quoted approximation.
         The NUL delimiters keep it from colliding with anything a real shell
         command can contain.
+
+        A span that reached end of input unclosed is not a span: its opening
+        quote stays a literal character, and the rest is masked for the other
+        kind of quote only — or left as it is when that kind is spent too.
         """
-        spans.append(match.group(0))
-        return f"\x00{len(spans) - 1}\x00"
+        text = match.group(0)
+        if any(group is not None for group in match.groups()):
+            spans.append(text)
+            return f"\x00{len(spans) - 1}\x00"
+        if match.re is not _QUOTED:
+            return text  # both kinds are unterminated from here on
+        other = _DOUBLE_QUOTED if text[0] == "'" else _SINGLE_QUOTED
+        return text[0] + other.sub(take, text[1:])
 
     return _QUOTED.sub(take, command), spans
 
@@ -436,27 +550,41 @@ def strip_reserved(tokens: list[str]) -> list[str]:
     where no guard looked for it. The same held for `do` in a loop body, `{`
     in a group, `!` in a negation, and `while`/`until` conditions. Only the
     leading words are dropped: an operand spelled `then` is still an operand.
+
+    `coproc NAME { …; }` names the coprocess before its group, so the name is
+    dropped with it.
     """
     i = 0
     while i < len(tokens) and tokens[i] in _RESERVED:
-        i += 1
+        named = tokens[i] == "coproc" and tokens[i + 2 : i + 3] == ["{"]
+        i += 2 if named else 1
     return tokens[i:]
 
 
-def _assignments(tokens: list[str]) -> dict[str, str]:
-    """Every `NAME=value` operand in `tokens`, in order.
+def _suffix_variants(expanded: list[str]) -> list[tuple[dict[str, str], list[str]]]:
+    """Each suffix of a wrapper-led stage that starts at a plain word, with the
+    assignments of the prefix it skipped.
 
-    Shared by the stage prefix and the wrapper prefix, which differ only in
-    where the assignments sit: a stage's lead it, while `env`'s follow the
-    wrapper name and may be interleaved with its own options
-    (`env -u FOO A=1 git …`). Matching the shape rather than a position covers
-    both without modelling either grammar.
+    An assignment is any `NAME=value` operand, wherever it sits: `env`'s follow
+    the wrapper name and may be interleaved with its own options
+    (`env -u FOO A=1 git …`), so matching the shape rather than a position
+    covers them without modelling the grammar.
+
+    The prefix's assignments are accumulated as the scan moves right rather
+    than re-read for every suffix: re-reading `expanded[:i]` per word walked
+    the prefix once per suffix, O(W^2) Python steps for a W-word stage
+    (perf-eca62177). A new map is made only when an assignment adds to it, so
+    suffixes between two assignments share one; no caller mutates it.
     """
-    out: dict[str, str] = {}
-    for token in tokens:
-        if "=" in token and not token.startswith("-"):
-            name, _, value = token.partition("=")
-            out[name] = value
+    out: list[tuple[dict[str, str], list[str]]] = []
+    env: dict[str, str] = {}
+    for i in range(1, len(expanded)):
+        prev, word = expanded[i - 1], expanded[i]
+        if "=" in prev and not prev.startswith("-"):
+            name, _, value = prev.partition("=")
+            env = {**env, name: value}
+        if not word.startswith("-") and "=" not in word:
+            out.append((env, expanded[i:]))
     return out
 
 
@@ -497,35 +625,164 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
 
     A variant that is itself a shell given `-c` adds the stages of its command
     string, so `bash -c '…'` and `env sudo sh -c '…'` are judged by what they
-    run (agent-loopholes-015b8134); see `_shell_c_stages`.
+    run (agent-loopholes-015b8134); see `_shell_c_stages`. A variant that is a
+    `find` adds the command each `-exec`-family action runs; see
+    `_find_exec_stages`.
     """
     variants = [({}, tokens)]
     if Path(tokens[0]).name in _WRAPPERS:
         # The scan runs over the `-S`-expanded form so a payload-carried call is
         # reachable, while the original stage is kept unexpanded: it is what the
         # ctx-ok guard and the unrecognised-verb path must still judge.
-        expanded = _split_string_payload(tokens)
-        variants += [
-            (_assignments(expanded[:i]), expanded[i:])
-            for i in range(1, len(expanded))
-            if not expanded[i].startswith("-") and "=" not in expanded[i]
+        variants += _suffix_variants(_split_string_payload(tokens))
+    return (
+        variants
+        + [
+            (env | inner_env, inner)
+            for env, variant in variants
+            for inner_env, inner in _shell_c_stages(variant, depth)
         ]
-    return variants + [
-        (env | inner_env, inner)
-        for env, variant in variants
-        for inner_env, inner in _shell_c_stages(variant, depth)
-    ]
+        + [
+            (env | inner_env, inner)
+            for env, variant in variants
+            for inner_env, inner in _find_exec_stages(variant, depth)
+        ]
+    )
+
+
+def find_exec_bodies(tokens: list[str]) -> list[list[str]]:
+    """The command each `-exec`/`-execdir`/`-ok`/`-okdir` of a `find` stage runs.
+
+    Empty unless `tokens` is a `find`. A body runs from the word after its
+    action to its terminator: `;` (spelled `';'` or `\\;` on the command line),
+    or `+` straight after `{}` — GNU find reads any other `+` as an argument. A
+    body left unterminated runs to the end of the stage: an unquoted `;` has
+    already split the stage there, and the canonical form the protected-write
+    guard parses unquotes `';'` into exactly that. A leftover `\\` from an
+    escaped `;` the stage split cut is a terminator too, not an operand.
+    """
+    if Path(tokens[0]).name != "find":
+        return []
+    bodies: list[list[str]] = []
+    i = 1
+    while i < len(tokens):
+        if tokens[i] not in _FIND_EXEC:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(tokens) and not _ends_exec_body(tokens, j):
+            j += 1
+        if j > i + 1:
+            bodies.append(tokens[i + 1 : j])
+        i = j + 1
+    return bodies
+
+
+def _ends_exec_body(tokens: list[str], j: int) -> bool:
+    """True if `tokens[j]` terminates the `-exec` body it sits in."""
+    word = tokens[j]
+    return word in (";", "\\;", "\\", "") or (word == "+" and tokens[j - 1] == "{}")
+
+
+def find_start_points(args: list[str]) -> list[str]:
+    """A `find`'s start points: the operands before its first expression word."""
+    starts: list[str] = []
+    for arg in args:
+        if arg.startswith(("-", "(", "!")):
+            break
+        starts.append(arg)
+    return starts
+
+
+def _find_exec_stages(tokens: list[str], depth: int) -> list[tuple[dict[str, str], list[str]]]:
+    """The stages the `-exec`-family actions of a `find` stage run, parsed as stages.
+
+    The body of `find … -exec rm -rf scripts/hooks ';'` is a command that runs,
+    yet it reached every guard as operands of a `find` stage: the
+    protected-write guard judged only `find`'s start points and cleared them by
+    name test, the git guard saw no `git` verb in `-exec git push origin main`,
+    and the restore guard no `git checkout` (CodeRabbit PR #151 review). Each
+    body is now a stage of its own, so it goes through the same write model,
+    wrappers, `sh -c` unwrapping, alias expansion and nested `find` as a
+    top-level command, bounded by `_MAX_SHELL_DEPTH`.
+
+    `{}` stays in the body as spelled: it is an operand standing for the paths
+    found, and those are judged where the matches are known — as the `find`
+    stage's own trees (`_find_targets`), bounded by its name tests, and by the
+    restore guard as covering every dirty path. Replacing it with a start
+    point would throw the name tests away and deny `find . -name '*.pyc' -exec
+    rm {} +`, which reaches nothing on the surface.
+
+    Ceiling: `-execdir` and `-okdir` run the body from each match's directory,
+    so a relative operand resolves there; it is judged from the command's own
+    `cd` bases like any stage. A body that derives a path from `{}` inside a
+    shell string (`sh -c 'rm -r "$1"/..' _ {}`) is judged by what it spells,
+    and its `find` stage's start points are then never cleared by a name test
+    (see `find_writes_past_matches`).
+    """
+    stages: list[tuple[dict[str, str], list[str]]] = []
+    for body in find_exec_bodies(tokens):
+        if depth >= _MAX_SHELL_DEPTH:
+            stages += _coarse_stages(" ".join(body))
+        else:
+            stages += _wrapper_variants(body, depth + 1)
+    return stages
+
+
+def find_writes_past_matches(tokens: list[str]) -> bool:
+    """True if a `find` stage has a writing `-exec` body not bounded by its matches.
+
+    A name test bounds the paths `{}` stands for, so a caller may clear a
+    `find` whose name tests miss what it protects — but only while each writing
+    body touches `{}` as found. A body that builds a path from it (`{}/..`),
+    runs a command string (`sh -c`, `eval`) or a nested `find` reaches past the
+    matches, and was cleared by a name test that says nothing about where it
+    writes (CodeRabbit PR #151 review). Operands the body names outright are
+    not this function's concern: the body is a stage of its own.
+    """
+    return any(
+        Path(body[0]).name not in _READERS and not _bounded_by_matches(body)
+        for body in find_exec_bodies(tokens)
+    )
+
+
+def _bounded_by_matches(body: list[str]) -> bool:
+    """True if every command `body` runs uses `{}` only as a whole operand."""
+    if any("{}" in word and word != "{}" for word in body):
+        return False
+    for _env, variant in _wrapper_variants(body, _MAX_SHELL_DEPTH):
+        if (
+            Path(variant[0]).name == "find"
+            or _shell_verb_end(variant) is not None
+            or _command_string(variant) is not None
+        ):
+            return False
+    return True
 
 
 def _shell_verb_end(tokens: list[str]) -> int | None:
     """Index just past the shell's own name, or None when the stage is no shell.
 
-    `busybox sh` names the shell one word late, so it ends at 2.
+    `busybox sh` names the shell one word late, so it ends at 2. `source` and
+    `.` run a file's commands in the current shell, so they are shells whose
+    only input is that file (agent-loopholes-df530242).
     """
+    if tokens[0] in _SOURCERS:
+        return 1
     name = Path(tokens[0]).name
     if name == "busybox":
         return 2 if len(tokens) > 1 and Path(tokens[1]).name in _SHELLS else None
     return 1 if name in _SHELLS else None
+
+
+# `source FILE` / `. FILE`.
+_SOURCERS = frozenset({"source", "."})
+# A redirection word in a shell stage, input or output, with any attached target.
+_IN_REDIRECT = re.compile(r"\d*(<<<|<<-|<<|<>|<&|<)(.*)", re.DOTALL)
+_OUT_REDIRECT = re.compile(r"\d*(?:&>>|&>|>>|>\||>&|>)(.*)", re.DOTALL)
+# Files that are a descriptor rather than a script: stdin itself, and the
+# `/dev/fd/N` a process substitution `<(…)` expands to.
+_STDIN_FILES = ("/dev/stdin", "/dev/fd/", "/proc/self/fd/", "-")
 
 
 def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
@@ -538,15 +795,25 @@ def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
     spells it `--command`. With no `-c` and no operand, or with `-s`, the shell
     reads its commands from stdin — the `… | bash` shape. An operand without
     `-c` is a script file, whose contents no text guard can see.
+
+    Redirections are read rather than taken for the operand
+    (agent-loopholes-df530242): `bash <<< 'git push'` was a "script file" named
+    `<<<`. A here-string into a shell that reads stdin is its command string,
+    judged like `-c`; any other input redirection — a file, a heredoc, a
+    process substitution `<(…)` — makes it read stdin. Only before `-c` is seen,
+    so a command string that begins with `<` is never mistaken for one.
     """
     i = _shell_verb_end(tokens)
     if i is None:
         return None
-    command_flag = stdin_flag = False
+    flags = {"c": False, "s": False}
+    here: list[str | None] = []
     while i < len(tokens):
-        # `word`, not `token`: bandit reads `token == "--"` as a hardcoded
-        # password comparison (B105).
-        word = tokens[i]
+        step = 0 if flags["c"] else _redirection_step(tokens, i, here)
+        if step:
+            i += step
+            continue
+        word = tokens[i]  # `word`, not `token`: bandit reads `token == "--"` as B105
         if word.startswith("--command="):
             return ("c", word.split("=", 1)[1])
         if word in _SHELL_VALUE_OPTS or word == "--":
@@ -555,16 +822,51 @@ def _shell_invocation(tokens: list[str]) -> tuple[str, str | None] | None:
                 break
         elif len(word) > 1 and word[0] in "-+":
             short = word[0] == "-" and not word.startswith("--")
-            command_flag |= word == "--command" or (short and "c" in word[1:])
-            stdin_flag |= short and "s" in word[1:]
+            flags["c"] |= word == "--command" or (short and "c" in word[1:])
+            flags["s"] |= short and "s" in word[1:]
         else:
             break
         i += 1
-    if command_flag:
+    return _invocation_result(tokens, i, flags, here)
+
+
+def _redirection_step(tokens: list[str], i: int, here: list[str | None]) -> int:
+    """Words the redirection at `tokens[i]` spans (0 if none); records stdin's source.
+
+    `here` gets the here-string's text for `<<<`, or None for any other input
+    redirection. A bare operator takes the next word as its target, when there
+    is one: the stage split leaves `<(…)` as a lone `<`.
+    """
+    word = tokens[i]
+    match = _IN_REDIRECT.fullmatch(word)
+    if match is None:
+        out = _OUT_REDIRECT.fullmatch(word)
+        return 0 if out is None else (1 if out.group(1) or i + 1 >= len(tokens) else 2)
+    op, attached = match.groups()
+    target = attached or (tokens[i + 1] if i + 1 < len(tokens) else "")
+    here.append(target if op == "<<<" else None)
+    return 1 if attached or i + 1 >= len(tokens) else 2
+
+
+def _invocation_result(
+    tokens: list[str], i: int, flags: dict[str, bool], here: list[str | None]
+) -> tuple[str, str | None] | None:
+    """The verdict `_shell_invocation` reached, once its scan has stopped at `i`."""
+    if flags["c"]:
         return ("c", tokens[i]) if i < len(tokens) else None
-    if stdin_flag or i >= len(tokens) or tokens[i] == "-":
-        return ("stdin", None)
-    return ("file", tokens[i])
+    operand = tokens[i] if i < len(tokens) else None
+    if operand is not None and not flags["s"] and not operand.startswith(_STDIN_FILES):
+        return ("file", operand)
+    strings = [h for h in here + _later_here_strings(tokens, i + 1) if h is not None]
+    return ("c", strings[-1]) if strings else ("stdin", None)
+
+
+def _later_here_strings(tokens: list[str], i: int) -> list[str | None]:
+    """Input redirections after a stdin-file operand: `source /dev/stdin <<< 'cmd'`."""
+    here: list[str | None] = []
+    while i < len(tokens):
+        i += _redirection_step(tokens, i, here) or 1
+    return here
 
 
 def _coarse_stages(payload: str) -> list[tuple[dict[str, str], list[str]]]:
@@ -594,26 +896,62 @@ def _shell_c_stages(tokens: list[str], depth: int) -> list[tuple[dict[str, str],
     `shell_stages_with_env` gives the inner command the same treatment as a
     top-level one — quoting, wrappers, and a further `-c` — bounded by
     `_MAX_SHELL_DEPTH`.
+
+    `eval`, `trap` and a here-string into a shell carry a command string the
+    same way (see `_command_string`), and are opened the same way.
     """
-    invocation = _shell_invocation(tokens)
-    if invocation is None or invocation[0] != "c" or not invocation[1]:
+    payload = _command_string(tokens)
+    if not payload:
         return []
     if depth >= _MAX_SHELL_DEPTH:
-        return _coarse_stages(invocation[1])
-    return shell_stages_with_env(invocation[1], _depth=depth + 1)
+        return _coarse_stages(payload)
+    return shell_stages_with_env(payload, _depth=depth + 1)
+
+
+def _command_string(tokens: list[str]) -> str | None:
+    """The command text a stage runs from a string, or None.
+
+    A shell's `-c` string or here-string (`_shell_invocation`); `eval`'s
+    operands joined, as eval joins them; and the action of `trap 'cmd' SIG`.
+    `eval 'git commit --no-verify -m x'` and `eval rm scripts/hooks/x` passed
+    every guard, which judged the word `eval` (agent-loopholes-df530242).
+    """
+    invocation = _shell_invocation(tokens)
+    if invocation is not None:
+        return invocation[1] if invocation[0] == "c" else None
+    name, args = Path(tokens[0]).name, tokens[1:]
+    if name == "eval":
+        return " ".join(args)
+    if name == "trap":
+        actions = args[1:] if args[:1] == ["--"] else args
+        if len(actions) >= 2 and not actions[0].startswith("-"):
+            return actions[0]
+    return None
+
+
+# A command string whose text the shell expands before running it.
+_DYNAMIC = re.compile(r"[$`]")
 
 
 def feeds_a_shell(command: str) -> bool:
-    """True if any stage is a shell that reads its commands from stdin.
+    """True if a stage runs commands no stage of this text carries.
 
-    `echo 'git push origin main' | bash` runs a command that is data on the
-    outer command line, so no stage carries it (agent-loopholes-015b8134).
-    Callers treat such a command the way they treat code in another language.
+    A shell reading stdin — `echo 'git push origin main' | bash`, `. /dev/stdin`,
+    `source <(…)`, `bash < file` — runs a command that is data on the outer
+    command line (agent-loopholes-015b8134, agent-loopholes-df530242). So does
+    a command string built by expansion: `eval "$CMD"`, `bash -c "$(cat x)"`
+    run whatever the variable holds. Callers treat such a command the way they
+    treat code in another language, refusing it where it names what they
+    protect. Ceiling: a script file operand (`bash run.sh`) is not read.
     """
-    return any(
-        (invocation := _shell_invocation(tokens)) is not None and invocation[0] == "stdin"
-        for tokens in shell_stages(command)
-    )
+    for tokens in shell_stages(command):
+        invocation = _shell_invocation(tokens)
+        if invocation is not None and invocation[0] == "stdin":
+            return True
+        payload = _command_string(tokens)
+        if payload and _DYNAMIC.search(payload):
+            return True
+    return False
 
 
 def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str, str], list[str]]]:
@@ -632,6 +970,9 @@ def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str,
 
     `_depth` counts the `sh -c` payloads already opened to reach `command`; it
     is internal, and bounds the recursion through `_shell_c_stages`.
+
+    A git stage that invokes an alias is followed by the stages its body runs
+    (see `_alias_stages`), so every guard judges the expansion, not the name.
     """
     masked, spans = _mask_quoted(command)
     # Comments first, then continuations: `foo # bar \` is comment to end of line,
@@ -646,14 +987,174 @@ def shell_stages_with_env(command: str, _depth: int = 0) -> list[tuple[dict[str,
             name, _, value = tokens[i].partition("=")
             env[name] = value
             i += 1
-        if i < len(tokens):
-            # The wrapper's assignments are layered over the stage's, not merged
-            # blindly: `A=1 env A=2 git …` is what real `env` does, and the
-            # closer one is what reaches git.
-            stages.extend(
-                (env | extra, variant) for extra, variant in _wrapper_variants(tokens[i:], _depth)
-            )
+        # The wrapper's assignments are layered over the stage's, not merged
+        # blindly: `A=1 env A=2 git …` is what real `env` does, and the closer
+        # one is what reaches git.
+        for extra, variant in _wrapper_variants(tokens[i:], _depth) if i < len(tokens) else []:
+            stages.append((env | extra, variant))
+            stages.extend(_alias_stages(env | extra, variant, _depth))
     return stages
+
+
+# Aliases git config holds, per checkout, read once per process: every guard
+# parses the same command several times. None records a lookup that failed.
+_ALIASES: dict[str, dict[str, str] | None] = {}
+
+# Every command git ships (`git --list-cmds=main`). git runs its own command
+# before it looks for an alias, so none of these names can be one. When the
+# alias lookup fails, a subcommand outside this set might be an alias nobody
+# could read; see `git_aliases_unreadable`. A name missing here only denies
+# more, and only in that failure case.
+GIT_COMMANDS = frozenset(
+    {
+        *("add", "am", "annotate", "apply", "archive", "bisect", "blame", "branch"),
+        *("bugreport", "bundle", "cat-file", "check-attr", "check-ignore", "check-mailmap"),
+        *("check-ref-format", "checkout", "checkout--worker", "checkout-index", "cherry"),
+        *("cherry-pick", "clean", "clone", "column", "commit", "commit-graph", "commit-tree"),
+        *("config", "count-objects", "credential", "credential-cache"),
+        *("credential-cache--daemon", "credential-store", "daemon", "describe", "diagnose"),
+        *("diff", "diff-files", "diff-index", "diff-tree", "difftool", "difftool--helper"),
+        *("fast-export", "fast-import", "fetch", "fetch-pack", "filter-branch"),
+        *("fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch", "fsck"),
+        *("fsck-objects", "fsmonitor--daemon", "gc", "get-tar-commit-id", "grep"),
+        *("hash-object", "help", "hook", "http-backend", "http-fetch", "http-push"),
+        *("imap-send", "index-pack", "init", "init-db", "instaweb", "interpret-trailers"),
+        *("log", "ls-files", "ls-remote", "ls-tree", "mailinfo", "mailsplit", "maintenance"),
+        *("merge", "merge-base", "merge-file", "merge-index", "merge-octopus"),
+        *("merge-one-file", "merge-ours", "merge-recursive", "merge-recursive-ours"),
+        *("merge-recursive-theirs", "merge-resolve", "merge-subtree", "merge-tree"),
+        *("mergetool", "mktag", "mktree", "multi-pack-index", "mv", "name-rev", "notes"),
+        *("pack-objects", "pack-redundant", "pack-refs", "patch-id", "pickaxe", "prune"),
+        *("prune-packed", "pull", "push", "quiltimport", "range-diff", "read-tree", "rebase"),
+        *("receive-pack", "reflog", "remote", "remote-ext", "remote-fd", "remote-ftp"),
+        *("remote-ftps", "remote-http", "remote-https", "repack", "replace", "request-pull"),
+        *("rerere", "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "send-pack"),
+        *("sh-i18n--envsubst", "shell", "shortlog", "show", "show-branch", "show-index"),
+        *("show-ref", "sparse-checkout", "stage", "stash", "status", "stripspace", "submodule"),
+        *("submodule--helper", "subtree", "switch", "symbolic-ref", "tag", "unpack-file"),
+        *("unpack-objects", "update-index", "update-ref", "update-server-info"),
+        *("upload-archive", "upload-archive--writer", "upload-pack", "var", "verify-commit"),
+        *("verify-pack", "verify-tag", "version", "web--browse", "whatchanged"),
+        *("worktree", "write-tree"),
+    }
+)
+
+
+def git_aliases(root: Path | None = None) -> dict[str, str]:
+    """Every alias git config holds for `root` (default: `repo_root()`), name to body.
+
+    Empty when git cannot answer; `git_aliases_unreadable` tells that case
+    apart from a config holding no alias. It lived privately in the git guard,
+    so the protected-write and restore guards judged `git nah` by its name while
+    its body ran `reset --hard` (agent-loopholes-911e2929). Ceiling: `git -C
+    <other repo>` reads that repository's aliases, not these.
+    """
+    return _cached_aliases(root) or {}
+
+
+def git_aliases_unreadable(root: Path | None = None) -> bool:
+    """True when git could not say which aliases `root` holds.
+
+    Reading that as "no aliases" failed open: a stored `ci = commit
+    --no-verify` then ran as the unjudged name `ci` whenever the lookup timed
+    out or the config did not parse (agent-loopholes-92626f23). The git guard
+    denies a non-`GIT_COMMANDS` subcommand in that case, as it denies a push
+    when HEAD cannot be read; it runs on every call the other alias-expanding
+    guards see, so one fail-closed check covers them.
+    """
+    return _cached_aliases(root) is None
+
+
+def _cached_aliases(root: Path | None) -> dict[str, str] | None:
+    """The per-checkout alias lookup, read once."""
+    key = str(root or repo_root())
+    if key not in _ALIASES:
+        _ALIASES[key] = _read_aliases(key)
+    return _ALIASES[key]
+
+
+def _read_aliases(cwd: str) -> dict[str, str] | None:
+    """Ask git for `alias.*`; None when git is missing, fails or times out.
+
+    Exit 1 with nothing on stderr is `--get-regexp` matching no key — a config
+    with no alias, not a failure.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get-regexp", r"^alias\."],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 1 and not result.stderr.strip():
+        return {}
+    if result.returncode != 0:
+        return None
+    aliases: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        name, _, body = line.partition(" ")
+        aliases[name.removeprefix("alias.")] = body
+    return aliases
+
+
+def _inline_aliases(options: list[str], env: dict[str, str]) -> dict[str, str]:
+    """Aliases a git call defines for itself: `-c alias.X=body`, `--config-env`.
+
+    `--config-env alias.X=VAR` names an environment variable, resolved from the
+    stage's assignments where the command sets it.
+    """
+    out: dict[str, str] = {}
+    for opt, following in _with_next(options):
+        if opt in ("-c", "--config-env"):
+            pair = following
+        elif opt.startswith("--config-env="):
+            pair = opt.split("=", 1)[1]
+        else:
+            continue
+        key, sep, body = pair.partition("=")
+        if sep and key.lower().startswith("alias."):
+            out[key[len("alias.") :].lower()] = body if opt == "-c" else env.get(body, body)
+    return out
+
+
+def _alias_stages(
+    env: dict[str, str], tokens: list[str], depth: int
+) -> list[tuple[dict[str, str], list[str]]]:
+    """The stages a git alias runs when `tokens` invokes one, else [].
+
+    Expansion lived in the git guard alone, so `git -c alias.z='reset --hard' z`
+    and a persistent `alias.nah = !git reset --hard` reached the worktree past
+    the protected-write guard, and `git -c alias.rs=restore rs f` discarded f
+    past the restore prompt (agent-loopholes-911e2929). A plain body runs as
+    git with the call's own global options; a `!` body is a shell command, parsed
+    as one. The call's arguments follow the body, on every stage it runs. A body
+    naming another alias is expanded again, to `_MAX_SHELL_DEPTH`, then split
+    coarsely rather than left unread.
+    """
+    if Path(tokens[0]).name != "git":
+        return []
+    i = skip_git_global_opts(tokens, 1)
+    if i >= len(tokens):
+        return []
+    aliases = git_aliases() | _inline_aliases(tokens[1:i], env)
+    body = aliases.get(tokens[i].lower())
+    if body is None:
+        return []
+    args = tokens[i + 1 :]
+    if depth >= _MAX_SHELL_DEPTH:
+        return _coarse_stages(f"{body.removeprefix('!')} {' '.join(args)}")
+    if body.startswith("!"):
+        inner = shell_stages_with_env(body[1:], _depth=depth + 1)
+        return [(env | e, t + args) for e, t in inner]
+    try:
+        words = shlex.split(body)
+    except ValueError:
+        words = body.split()
+    expanded = [*tokens[:i], *words, *args]
+    return [(env, expanded), *_alias_stages(env, expanded, depth + 1)]
 
 
 def shell_stages(command: str) -> list[list[str]]:
@@ -706,3 +1207,289 @@ def git_calls(command: str) -> list[tuple[str, list[str]]]:
         if i < len(tokens):
             calls.append((tokens[i], tokens[i + 1 :]))
     return calls
+
+
+# ── What a stage writes: one model for every write guard ─────────────────────
+#
+# The protected-write guard and the unguarded-cd guard each kept a verb list,
+# and the two had drifted: the cd guard counted rsync and `find -delete`, the
+# protected-write guard did not, and neither knew `unlink`, `tar -x`,
+# `awk -i inplace` or `curl -o` (agent-loopholes-6bb5ff99). Both now ask
+# `write_targets`. Git is left to each guard, because the two ask different
+# questions of it: the cd guard treats every non-read subcommand as a write,
+# the protected-write guard needs the paths a subcommand touches.
+#
+# Ceiling: a closed list cannot name every program that writes a file. A write
+# made by an interpreter (`python -c`), by a script, or by a program listed
+# nowhere here is not recognised.
+
+# Verbs that write, or remove, every path operand they are given — or, for the
+# `_DEST_LAST` ones, the last. Verbs that write only in some modes (a
+# compressor, `sed -i`, `tar -x`) are in `_WRITE_HANDLERS` instead.
+WRITE_VERBS = frozenset(
+    {
+        *("cp", "mv", "rm", "rmdir", "unlink", "install", "ln", "link", "truncate"),
+        *("dd", "tee", "chmod", "chown", "chgrp", "chattr", "setfacl"),
+        *("shred", "touch", "ed", "ex", "sponge", "mkdir", "mkfifo", "mknod"),
+        *("rename", "rsync", "scp"),
+    }
+)
+# Verbs whose leading operands are sources and whose last is the destination.
+# Scanning every operand as a destination denied `cp scripts/hooks/_hooklib.py
+# /tmp/x`, a read. `mv` is NOT here: it removes its sources, so `mv scripts
+# /tmp/s` writes the tree it names (agent-loopholes-0426afd8). `ln` is: its
+# leading operands are link targets, which it only reads.
+_DEST_LAST = frozenset({"cp", "install", "ln", "link", "scp", "rsync"})
+# Stream editors write only in place; a bare `sed`/`perl` reads and prints.
+_IN_PLACE_EDITORS = frozenset({"sed", "perl", "ruby"})
+_IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+# gawk's in-place extension, loaded as `-i inplace`, `--include=inplace` or
+# by its file name.
+_AWK_INPLACE_LIB = re.compile(r"(?:\S*/)?inplace(?:\.awk)?")
+# `find` writes through these actions; `-exec`'s command runs once per match.
+_FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_FIND_OUTPUTS = frozenset({"-fprint", "-fprint0", "-fprintf", "-fls"})
+# Commands `find -exec` runs that only read. Any other command is taken to
+# write: which file it writes is `{}`, and `{}` is every match.
+_READERS = frozenset(
+    {
+        *("cat", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "head", "tail"),
+        *("wc", "md5sum", "sha1sum", "sha256sum", "sha512sum", "echo", "printf"),
+        *("test", "[", "basename", "dirname", "readlink", "realpath", "du", "diff"),
+        *("cmp", "less", "more", "jq", "true", "false"),
+    }
+)
+
+
+def write_targets(tokens: list[str]) -> tuple[list[str], list[str]] | None:
+    """What a non-git stage writes: (paths, trees), or None when it writes nothing.
+
+    `paths` are operands written as named. `trees` are directories the command
+    writes *below*, at paths its input chooses rather than its command line: an
+    archive's members, `find`'s matches. A caller judges a tree as reaching
+    everything under it, the checkout root included.
+    """
+    verb = Path(tokens[0]).name
+    args = tokens[1:]
+    handler = _WRITE_HANDLERS.get(verb)
+    if handler is not None:
+        return handler(args)
+    if verb in WRITE_VERBS:
+        return _plain_operands(verb, args), []
+    return None
+
+
+def _plain_operands(verb: str, args: list[str]) -> list[str]:
+    """The operands a plain writer writes: all of them, or the destination.
+
+    `-t DIR` / `--target-directory` puts the destination first, and rsync's
+    `--remove-source-files` deletes the sources too; either falls back to every
+    operand, since over-blocking an unusual spelling costs one command and the
+    other direction is a write nothing sees.
+    """
+    if verb not in _DEST_LAST:
+        return args
+    if any(a.startswith(("-t", "--target-directory", "--remove-source")) for a in args):
+        return args
+    operands = [a for a in args if not a.startswith("-")]
+    return operands[-1:] if len(operands) > 1 else args
+
+
+def _in_place_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`sed -i`, `perl -pi`, `ruby -i`: every operand, when editing in place."""
+    return (args, []) if any(_IN_PLACE_RE.match(a) for a in args) else None
+
+
+def _with_next(words: list[str]) -> Iterator[tuple[str, str]]:
+    """Each word with the one after it, the last with "" — empty for no words.
+
+    Not `zip(words, [*words[1:], ""], strict=True)`: for an empty list that
+    pairs nothing with one "", raises, and a bare `sort` in a pipeline sent the
+    guard to its fail-closed arm.
+    """
+    return itertools.zip_longest(words, words[1:], fillvalue="")
+
+
+def _awk_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`awk -i inplace` / `gawk --include=inplace`: every operand is rewritten."""
+    for arg, following in _with_next(args):
+        if arg in ("-i", "--include"):
+            library = following
+        elif arg.startswith(("-i", "--include=")):
+            library = arg.removeprefix("--include=").removeprefix("-i")
+        else:
+            continue
+        if _AWK_INPLACE_LIB.fullmatch(library):
+            return args, []
+    return None
+
+
+def _find_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`find`: its `-fprint`/`-fls` files, and its start points when it deletes.
+
+    `-delete`, or an `-exec`/`-ok` running anything but a reader, writes every
+    match, so the start points are trees. No start point means `.`. What the
+    body writes beyond the matches is judged separately, as a stage of its own
+    (see `_find_exec_stages`).
+    """
+    starts = find_start_points(args)
+    outputs = [b for a, b in itertools.pairwise(args) if a in _FIND_OUTPUTS]
+    if "-delete" in args or find_runs_a_writer(["find", *args]):
+        return outputs, starts or ["."]
+    return (outputs, []) if outputs else None
+
+
+def find_runs_a_writer(tokens: list[str]) -> bool:
+    """True if a `find` stage has an `-exec`-family body whose verb is not a reader."""
+    return any(Path(body[0]).name not in _READERS for body in find_exec_bodies(tokens))
+
+
+def option_values(args: list[str], short: str, long: str) -> list[str]:
+    """Every value given to an option: `-X v`, `-Xv`, `--long v`, `--long=v`, or
+    the letter inside a short cluster (`-sSLo v`, `-cvf v`), whose value is the
+    rest of the cluster or the next word."""
+    out: list[str] = []
+    letter = short[1:]
+    for arg, following in _with_next(args):
+        if arg in (short, long):
+            out.append(following)
+        elif arg.startswith(long + "="):
+            out.append(arg.split("=", 1)[1])
+        elif arg.startswith("-") and not arg.startswith("--") and letter in arg[1:]:
+            out.append(arg[arg.index(letter, 1) + 1 :] or following)
+    return out
+
+
+def _short_flags(args: list[str]) -> str:
+    """Every letter of every short-option cluster, plus tar's dashless first word."""
+    letters = [a[1:] for a in args if a.startswith("-") and not a.startswith("--")]
+    if args and not args[0].startswith("-"):
+        letters.append(args[0])
+    return "".join(letters)
+
+
+def _tar_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`tar`: extraction writes below its `-C` directory; creation writes `-f`.
+
+    Extraction is unscoped the way `git apply` is: the archive's member names,
+    not the command line, decide what is written, so the destination is a tree.
+    `-P`/`--absolute-names` lets members name any path, which is the root `/`.
+    """
+    flags = _short_flags(args)
+    if "x" in flags or "--extract" in args or "--get" in args:
+        if "P" in flags or "--absolute-names" in args:
+            return [], ["/"]
+        return [], option_values(args, "-C", "--directory") or ["."]
+    if any(m in flags for m in "cruA") or "--create" in args or "--append" in args:
+        return _tar_archive(args), []
+    return None
+
+
+def _tar_archive(args: list[str]) -> list[str]:
+    """The archive a creating `tar` writes: `-f X`, `--file=X`, `-cvf X`, or the
+    word after a dashless first word that names `f` (`tar cvf X`)."""
+    found = option_values(args, "-f", "--file")
+    if args and not args[0].startswith("-") and "f" in args[0]:
+        found += args[1:2]
+    return found
+
+
+def _unzip_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`unzip` extracts below `-d DIR` (default `.`) unless it only lists or pipes."""
+    listing = [a for a in args if a.startswith("-") and not a.startswith("-d")]
+    if any(set(a[1:]) & set("ltvpcZz") for a in listing):
+        return None
+    return [], option_values(args, "-d", "--dest") or ["."]
+
+
+def _cpio_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`cpio -i` extracts below `-D DIR`; `cpio -p DIR` copies into DIR."""
+    flags = _short_flags(args)
+    if "i" in flags or "--extract" in args:
+        return [], option_values(args, "-D", "--directory") or ["."]
+    if "p" in flags or "--pass-through" in args:
+        return [], [a for a in args if not a.startswith("-")][-1:] or ["."]
+    return None
+
+
+# A URL operand. `:/` rather than `://`: a guard that folds repeated slashes
+# before asking (the protected-write guard does) turns one into the other.
+_URL = re.compile(r"[A-Za-z][\w+.-]*:/")
+
+
+def _url_names(args: list[str]) -> list[str]:
+    """The file name a download of each URL operand is saved under."""
+    return [Path(a.split("?", 1)[0]).name for a in args if _URL.match(a)]
+
+
+def _curl_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`curl -o FILE`, and `-O`, which saves under the URL's own file name."""
+    outs = option_values(args, "-o", "--output")
+    if "-O" in args or "--remote-name" in args or "--remote-name-all" in args:
+        outs += _url_names(args)
+    return (outs, []) if outs else None
+
+
+def _wget_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`wget` always saves: `-O FILE`, else the URL's name under `-P DIR`."""
+    outs = option_values(args, "-O", "--output-document")
+    if outs:
+        return outs, []
+    prefix = (option_values(args, "-P", "--directory-prefix") or [""])[-1]
+    return [f"{prefix}/{n}" if prefix else n for n in _url_names(args)] or ["."], []
+
+
+_COMPRESSORS = (
+    *("gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma"),
+    *("zstd", "unzstd", "compress", "uncompress"),
+)
+# Compressor options that print, test or list rather than replace a file.
+_COMPRESSOR_READS = frozenset({"--stdout", "--to-stdout", "--test", "--list"})
+
+
+def _compressor_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """A compressor replaces each operand with its (de)compressed file, unless it
+    only writes to stdout (`-c`), tests (`-t`) or lists (`-l`)."""
+    short = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+    if set(short) & set("ctl") or _COMPRESSOR_READS.intersection(args):
+        return None
+    return args, []
+
+
+def _patch_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`patch`: the diff, not the command line, names the files it rewrites.
+
+    Judged by its operands alone, `patch -p1 < evil.diff` rewrote every hook
+    while `git apply` of the same diff was denied (agent-loopholes-88dddd67).
+    So its directory — `-d DIR`, else where it runs — is a tree, as an archive
+    extraction's is. `-o FILE` sends all output to FILE instead, which is then
+    the one path written; `--dry-run` writes nothing. Its operands (an original
+    file, a reject file) are written paths as well.
+    """
+    if "--dry-run" in args:
+        return None
+    operands = [a for a in args if not a.startswith("-")]
+    if option_values(args, "-o", "--output"):
+        return operands + option_values(args, "-o", "--output"), []
+    return operands, option_values(args, "-d", "--directory") or ["."]
+
+
+def _sort_targets(args: list[str]) -> tuple[list[str], list[str]] | None:
+    """`sort -o FILE` writes FILE; a bare `sort` prints."""
+    outs = option_values(args, "-o", "--output")
+    return (outs, []) if outs else None
+
+
+_WRITE_HANDLERS = {
+    **dict.fromkeys(_IN_PLACE_EDITORS, _in_place_targets),
+    **dict.fromkeys(("awk", "gawk"), _awk_targets),
+    **dict.fromkeys(("tar", "bsdtar"), _tar_targets),
+    **dict.fromkeys(_COMPRESSORS, _compressor_targets),
+    "find": _find_targets,
+    "patch": _patch_targets,
+    "unzip": _unzip_targets,
+    "cpio": _cpio_targets,
+    "curl": _curl_targets,
+    "wget": _wget_targets,
+    "sort": _sort_targets,
+}

@@ -12,8 +12,11 @@ nothing checked it (agent-hooks-da747c0c).
 
 A `cd` (or `pushd`) counts as guarded when `|| …` handles its failure, when it
 heads an `&&` chain that reaches the write, or when `set -e`/`set -o errexit`
-ran before it and no `set +e`/`set +o errexit` has cleared it since. `find`
-with `-delete` or `-exec` and `rsync` count as writes. A `cd` inside a
+ran before it and no `set +e`/`set +o errexit` has cleared it since — and bash
+does not suspend it for that cd, as it does before `&&`/`||`, in an
+if/elif/while/until condition, and under `!`. What
+counts as a write is `_hooklib.write_targets` — `find -delete`, `rsync`,
+`tar -x` and the rest — shared with the protected-write guard. A `cd` inside a
 `( … )` or `$( … )` subshell is forgotten when the subshell closes. Each
 batch command is judged on its own, as each runs in its own shell. Bash is out
 of scope: its working directory is the project.
@@ -31,65 +34,44 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hooklib import (
     _COMMENT,
     _CONTINUATION,
+    _STAGE_SPLIT,
     _mask_quoted,
     _tool_input,
     _unmask,
     _wrapper_variants,
+    guard_deadline,
     load_event_strict,
+    redirect_targets,
     skip_git_global_opts,
     strip_reserved,
+    write_targets,
 )
 
 # _hooklib's stage separators, captured, so the separator after each stage is known.
-_SPLIT = re.compile(r"(\|\||&&|\$\(|[|;\n`()]|(?<![<>])&(?!>))")
+# Built from the pattern rather than copied: the copy had drifted, and cut
+# `>|` as a pipe exactly where _hooklib had to stop doing so
+# (agent-loopholes-ff4a37fd).
+_SPLIT = re.compile(f"({_STAGE_SPLIT.pattern})")
 _CHDIR = frozenset({"cd", "pushd"})
 _OPENERS = frozenset({"(", "$("})
-_WRITE_VERBS = frozenset(
-    {
-        "rm",
-        "rmdir",
-        "mv",
-        "cp",
-        "ln",
-        "chmod",
-        "chown",
-        "touch",
-        "tee",
-        "truncate",
-        "dd",
-        "patch",
-        "mkdir",
-        "install",
-        # rsync writes its destination, and `--delete` removes from it
-        # (agent-loopholes-d707fb69).
-        "rsync",
-    }
-)
-# `find` reads, unless an action deletes or runs a command per match: `find .
-# -delete` after a failed cd was a recursive delete the guard never saw
-# (agent-loopholes-d707fb69).
-_FIND_ACTIONS = frozenset({"-delete", "-exec", "-execdir", "-ok", "-okdir"})
-_IN_PLACE = frozenset({"sed", "perl", "ruby"})
-_IN_PLACE_RE = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 # git subcommands that only read; every other one is treated as a write.
 _GIT_READS = frozenset(
     {"status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "grep"}
 )
-_REDIRECT = re.compile(r">{1,2}\s*([^\s&][^\s;|&()<>]*)")
 _ERREXIT = re.compile(r"[-+][a-zA-Z]*e[a-zA-Z]*")
 
 
 def _verb_writes(tokens: list[str]) -> bool:
-    """True if this stage's own verb changes files or the repository."""
-    verb = PurePosixPath(tokens[0]).name
-    if verb == "git":
+    """True if this stage's own verb changes files or the repository.
+
+    Which non-git verbs write is `_hooklib.write_targets`, the model the
+    protected-write guard uses too. This guard kept its own list, which had
+    drifted from that guard's in both directions (agent-loopholes-6bb5ff99).
+    """
+    if PurePosixPath(tokens[0]).name == "git":
         index = skip_git_global_opts(tokens, 1)
         return index < len(tokens) and tokens[index] not in _GIT_READS
-    if verb in _IN_PLACE:
-        return any(_IN_PLACE_RE.match(arg) for arg in tokens[1:])
-    if verb == "find":
-        return any(arg in _FIND_ACTIONS for arg in tokens[1:])
-    return verb in _WRITE_VERBS
+    return write_targets(tokens) is not None
 
 
 def _writes(tokens: list[str]) -> bool:
@@ -100,8 +82,12 @@ def _writes(tokens: list[str]) -> bool:
 
 
 def _redirects(segment: str) -> bool:
-    """True if a stage redirects output into a file other than /dev/null."""
-    return any(match.group(1) != "/dev/null" for match in _REDIRECT.finditer(segment))
+    """True if a stage redirects output into a file other than /dev/null.
+
+    Every operator `_hooklib.redirect_targets` knows counts: `>|` and `>&` wrote
+    a file after a failed cd unseen (agent-loopholes-ff4a37fd).
+    """
+    return any(target != "/dev/null" for target in redirect_targets(segment))
 
 
 def _errexit_after(tokens: list[str], errexit: bool) -> bool:
@@ -124,25 +110,56 @@ def _errexit_after(tokens: list[str], errexit: bool) -> bool:
     return errexit
 
 
+_CONDITION_OPENERS = frozenset({"if", "elif", "while", "until"})
+_CONDITION_CLOSERS = frozenset({"then", "do"})
+
+
+def _in_condition(lead: list[str], condition: bool) -> bool:
+    """Whether the stage after these leading reserved words sits in a condition.
+
+    `if`/`elif`/`while`/`until` open one and `then`/`do` close it, in the order
+    they appear: `then if cd x` is back inside one.
+    """
+    for word in lead:
+        if word in _CONDITION_OPENERS:
+            condition = True
+        elif word in _CONDITION_CLOSERS:
+            condition = False
+    return condition
+
+
 def _unguarded_write(script: str) -> tuple[str, str] | None:
-    """(the unguarded cd, the write it exposes) for the first such pair, else None."""
+    """(the unguarded cd, the write it exposes) for the first such pair, else None.
+
+    errexit guards a cd only where bash applies it. Bash suspends it for a
+    command followed by `&&` or `||`, inside an if/elif/while/until condition,
+    and under `!`, so `set -e; cd /nope && echo in; rm -rf build` and `set -e;
+    if cd /nope; then :; fi; rm -rf build` both ran the delete in the start
+    directory while the guard counted the cd as guarded
+    (agent-loopholes-45d0747b).
+    """
     masked, spans = _mask_quoted(script)
     parts = _SPLIT.split(_CONTINUATION.sub(" ", _COMMENT.sub("", masked)))
     exposed: str | None = None  # a cd whose failure reaches the stages after it
     chained: str | None = None  # a cd guarded only while its `&&` chain lasts
     errexit = False
+    condition = False  # inside an if/elif/while/until condition list
     stack: list[tuple[str | None, str | None]] = []
     for index in range(0, len(parts), 2):
         # Reserved words first: `cd /nope; for f in *; do rm -rf "$f"; done`
         # put the delete behind `do`, a verb no write set names, and `then cd
         # /nope` hid the cd itself (see `_hooklib.strip_reserved`).
-        tokens = strip_reserved([_unmask(token, spans) for token in parts[index].split()])
+        raw = [_unmask(token, spans) for token in parts[index].split()]
+        tokens = strip_reserved(raw)
+        lead = raw[: len(raw) - len(tokens)]
+        condition = _in_condition(lead, condition)
         sep = parts[index + 1] if index + 1 < len(parts) else ""
         if tokens:
             if exposed and (_writes(tokens) or _redirects(parts[index])):
                 return exposed, " ".join(tokens)
             errexit = _errexit_after(tokens, errexit)
-            if PurePosixPath(tokens[0]).name in _CHDIR and not errexit and sep != "||":
+            applies = errexit and not (condition or sep == "&&" or "!" in lead)
+            if PurePosixPath(tokens[0]).name in _CHDIR and not applies and sep != "||":
                 chained, exposed = (
                     (" ".join(tokens), exposed) if sep == "&&" else (None, " ".join(tokens))
                 )
@@ -188,10 +205,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except SystemExit:
-        raise
-    except Exception as exc:  # fail closed — exit 1 would let the call through
-        print(f"  DENIED  unguarded-cd guard failed internally: {exc}", file=sys.stderr, flush=True)
-        sys.exit(2)
+    with guard_deadline("unguarded-cd guard"):
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception as exc:  # fail closed — exit 1 would let the call through
+            print(
+                f"  DENIED  unguarded-cd guard failed internally: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            sys.exit(2)
