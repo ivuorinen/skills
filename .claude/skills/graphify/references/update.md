@@ -186,7 +186,9 @@ Clean up after: `rm -f graphify-out/.graphify_old.json`
 Skip Steps 1–3. Re-run clustering on the existing graph:
 
 ```bash
-graphify cluster-only .
+graphify cluster-only . --no-label
 ```
+
+Always pass `--no-label`. Without it, a graph with no saved community labels is named by an LLM backend that `cluster-only` picks by itself from whichever provider key is in the environment — any of the Gemini, Moonshot, Anthropic, OpenAI, DeepSeek or Azure keys, or `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION` alone (bedrock) — and the node labels of every community go to that provider with no prompt, billed to that key. With `--no-label`, saved labels are reused (a community that changed is renamed after its hub node, locally) and a graph with none keeps `Community N` placeholders; no LLM is called. Never choose a backend from which key happens to be set. For LLM-written names, tell the owner which provider would receive the node labels and ask them to confirm; only on an explicit yes, run `graphify cluster-only . --backend=<name>` for the provider they confirmed, without `--no-label`. `graphify label`, which the command may suggest on stderr, always calls a backend and falls under the same confirmation. On anything else keep `--no-label` (local modification, skill-safety-13ef11d9).
 
 `graphify cluster-only .` is **self-contained**: it re-clusters, names communities, and regenerates `GRAPH_REPORT.md`, `graph.json`, and `graph.html` from the existing graph. **Do not re-run Steps 5–9** — they read intermediate files (`.graphify_extract.json`, `.graphify_detect.json`, `.graphify_analysis.json`) that a prior build's cleanup (Step 9) already deleted, so they raise `FileNotFoundError` (#1392). When it finishes, present the refreshed `GRAPH_REPORT.md` summary as usual.
