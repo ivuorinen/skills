@@ -95,7 +95,8 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   git config judged by their body — and, when git config cannot be read, any
   subcommand that is not a git command; agent-loopholes-92626f23), a
   pre-commit skip variable, `HOME` or
-  `XDG_CONFIG_HOME` on `git commit`,
+  `XDG_CONFIG_HOME` on `git commit` or any other commit-making subcommand
+  (`am`, `merge`, `pull`, `rebase`, `cherry-pick`),
   in front of it or exported earlier in the same command
   (`.claude/rules/commit-gate-integrity.md` names them), `pre-commit uninstall`,
   a `git add` whose pathspec operand resolves to the whole tree (`.`, `:/`,
