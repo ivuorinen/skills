@@ -4677,6 +4677,11 @@ def test_git_guard_allows_config_reads_and_unrelated_settings(command, monkeypat
         "XDG_CONFIG_HOME=/tmp/x git commit -m x",
         "export HOME=/tmp/x && git commit -m x",
         "env HOME=/tmp/x git commit -m x",
+        # Every commit-making subcommand runs hooks, not `commit` alone.
+        "HOME=/tmp/x git merge --no-ff feature",
+        "XDG_CONFIG_HOME=/tmp/x git am p.patch",
+        "SKIP=ruff git merge feature",
+        "PRE_COMMIT_ALLOW_NO_CONFIG=1 git cherry-pick abc123",
     ],
 )
 def test_git_guard_denies_hook_disabling_channels_by_mechanism(command, monkeypatch, capsys):
