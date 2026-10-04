@@ -73,17 +73,22 @@ def main() -> None:
         if p.is_file() and os.path.realpath(p).startswith(root + os.sep)
     )
 
-    output = []
-    failed = False
-    for cmd in (
+    commands = []
+    # With nothing listed — every rule an escaping symlink — the validator is not
+    # run at all: a bare `--` makes it fall back to discovering its own tree.
+    if rules:
         # `--` terminates option parsing. Without it a rule file named
         # `-x.md` — legal on disk and inside .claude/rules/ — reaches `uv` and
         # the validator as a flag rather than an operand.
-        ["uv", "run", "--quiet", str(validator), "--", *rules],
-        ["python3", str(anatomy), "."],
-    ):
+        commands.append(["uv", "run", "--quiet", str(validator), "--", *rules])
+    commands.append(["python3", str(anatomy), "."])
+
+    output = []
+    failed = False
+    for cmd in commands:
         try:
-            # argv is one of the two literal command lists in the loop above.
+            # argv is one of the command lists built above: fixed strings plus the
+            # rules listing, never payload text.
             result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
                 cmd,
                 cwd=str(REPO_ROOT),

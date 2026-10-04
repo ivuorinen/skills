@@ -1553,7 +1553,7 @@ def _rules_hook_argvs(monkeypatch, tmp_path, files, edited_rel):
     a Path for a symlink target) and return the argv of every command it ran."""
     mod = _load("validate-rules-hook")
     rules = tmp_path / ".claude" / "rules"
-    rules.mkdir(parents=True)
+    rules.mkdir(parents=True, exist_ok=True)  # a test may have linked it elsewhere
     for rel, content in files.items():
         (rules / rel).parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, Path):
@@ -1606,6 +1606,22 @@ def test_validate_rules_hook_leaves_a_rule_symlinked_outside_the_project_out_of_
     assert seen[0][-2:] == ["--", str(real / "a-rule.md")]
     assert not any("escape.md" in arg for arg in seen[0])
     assert seen[1][-1] == "."
+
+
+def test_validate_rules_hook_skips_the_validator_when_nothing_is_listed(monkeypatch, tmp_path):
+    """A bare `--` makes validate-rules.py discover its own tree instead, so with no
+    rule left to pass the validator is not run; the anatomy check still is.
+
+    The listing is empty when `.claude/rules` itself links outside the project:
+    the edited file passes the rules-dir guard, and every listed file fails the
+    project-root one."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-rules"
+    outside.mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "rules").symlink_to(outside)
+    seen, _, _ = _rules_hook_argvs(monkeypatch, tmp_path, {"a-rule.md": "x\n"}, "a-rule.md")
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
+    assert seen == [["python3", str(anatomy), "."]]
 
 
 def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):
