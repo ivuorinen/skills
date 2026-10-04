@@ -45,10 +45,15 @@ substitute.
 Never mix the runners (`.claude/rules/use-uv-runner.md`):
 
 - **Shipped skill tools** — anything under `skills/*/scripts/`. Standard library
-  only, run with plain `python3 <script>`, shebang `#!/usr/bin/env python3`, no
-  `# /// script` block. These execute on consumer machines where `uv` cannot be
-  assumed to exist. `scripts/check-stdlib-only.py` (pre-commit + CI) fails the
-  build on any third-party import.
+  only, run with plain `python3 <script>`, no `# /// script` block. These
+  execute on consumer machines where `uv` cannot be assumed to exist. An entry
+  point (a module with a top-level `if __name__ == "__main__":` guard) starts
+  with `#!/usr/bin/env python3` and is executable; a library module (no guard)
+  carries neither the shebang nor the exec bit. `scripts/check-stdlib-only.py`
+  (pre-commit + CI) fails the build on a third-party import or a shebang that
+  does not match the module's role, and the pre-commit hooks
+  `check-executables-have-shebangs` and `check-shebang-scripts-are-executable`
+  keep the exec bit and the shebang together.
 - **Internal dev tooling** — `scripts/`, `scripts/hooks/`, `tests/`. Run with
   `uv run --quiet <script>`; new files start with `#!/usr/bin/env -S uv run
   --quiet` and carry a `# /// script` inline metadata block.
@@ -120,6 +125,22 @@ If auto-merge is already enabled, the merge uses the commit title captured when
 it was enabled, not the current PR title. Disable and re-enable auto-merge after
 retitling, or the old type lands on `main`. The `Lint PR title` check fails
 while the captured title and the PR title disagree.
+
+### What a PR must pass
+
+The `main` branch ruleset is the authority; read it with
+`gh api repos/ivuorinen/skills/rulesets` when this list and a blocked merge
+disagree. At the time of writing it requires:
+
+- **Status checks** `Validate`, `Lint PR title`, `Lint commit messages`,
+  `Analyze (python)` and `Analyze (actions)`, run against a branch that is up
+  to date with `main` (the strict policy: update the branch and let them
+  re-run).
+- **Signed commits** on every commit in the branch.
+- **Linear history** — squash merge is the only method allowed.
+- **A code-owner review** approving the **last push**; a push after approval
+  dismisses the stale review, so it needs approving again.
+- **Every review thread resolved**, automated reviewers' threads included.
 
 ## Adding a command
 

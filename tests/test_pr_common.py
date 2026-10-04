@@ -9,7 +9,6 @@ loosened host check still returns data, and a dropped envelope key still parses.
 import contextlib
 import email.message
 import http.server
-import importlib.util
 import io
 import json
 import runpy
@@ -23,6 +22,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _loader import load_path
 
 _SCRIPTS = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -234,6 +234,55 @@ class TestParsePrUrl:
     def test_url_without_pr_number_raises(self):
         with pytest.raises(c.UsageError):
             c.parse_pr_url("https://github.com/o/r")
+
+    @pytest.mark.parametrize(
+        "url, expected",
+        [
+            # audit-fca23606: the two repro URLs, whose project path holds a
+            # segment shaped like a PR route.
+            (
+                "https://gitlab.com/acme/pull/42/-/merge_requests/7",
+                ("gitlab.com", "acme/pull/42", 7),
+            ),
+            (
+                "https://gitlab.com/acme/merge_requests/3/tools/-/merge_requests/8",
+                ("gitlab.com", "acme/merge_requests/3/tools", 8),
+            ),
+            # GitLab's `/-/` route wins over a PR-shaped segment after it.
+            (
+                "https://gitlab.com/g/p/-/merge_requests/7/diffs/pull/3",
+                ("gitlab.com", "g/p", 7),
+            ),
+            # A segment whose digits run on into text is not a PR route.
+            ("https://github.com/o/pull/12abc/pull/5", ("github.com", "o/pull/12abc", 5)),
+            # Outside GitLab the last route-shaped segment is the PR.
+            (
+                "https://bitbucket.org/ws/pull-requests/2/pull-requests/9",
+                ("bitbucket.org", "ws/pull-requests/2", 9),
+            ),
+            # Neither a query nor a fragment can name the PR.
+            ("https://github.com/o/r/pull/42?x=/pull/9", ("github.com", "o/r", 42)),
+            ("https://github.com/o/r/pull/42#/pull/9", ("github.com", "o/r", 42)),
+            ("https://github.com/o/r/pull/42?w=1", ("github.com", "o/r", 42)),
+            # A `/-/` path with no merge_requests route falls back to the last
+            # route segment, and the `/-` it leaves on the project path is cut.
+            ("https://gitlab.com/g/p/-/pull/5", ("gitlab.com", "g/p", 5)),
+        ],
+    )
+    def test_a_pr_shaped_segment_in_the_project_path_is_not_the_pr(self, url, expected):
+        assert c.parse_pr_url(url) == expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://github.com/o/r?next=/pull/9",  # the route is in the query only
+            "https://github.com/o/pull/12abc",  # the digits do not end the segment
+        ],
+    )
+    def test_a_url_without_a_bounded_route_in_its_path_is_not_a_pr_url(self, url):
+        assert not c.looks_like_pr_url(url)
+        with pytest.raises(c.UsageError):
+            c.parse_pr_url(url)
 
 
 # ── platform detection and target shape ───────────────────────────────────────
@@ -1225,9 +1274,7 @@ def test_entry_points_run_as_scripts(script, operation, monkeypatch, capsys):
 def test_entry_points_do_nothing_when_merely_imported(script, capsys):
     """Imported rather than run, an entry point must stay inert — the `__main__`
     guard is what keeps a tool from firing a network fetch on import."""
-    spec = importlib.util.spec_from_file_location(f"probe_{script.stem}", script)
-    module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
+    load_path(f"probe_{script.stem}", script)
     assert capsys.readouterr().out == ""
 
 

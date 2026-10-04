@@ -69,16 +69,16 @@ from typing import TextIO
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "skills/nitpicker/scripts"))
 import findings  # noqa: E402
+from common import load_spec  # noqa: E402
 
 # bench-retrieval.py owns corpus loading and the goal-honesty guard that refuses
 # a case written from its own answer. Reusing it rather than re-reading
 # expected.json keeps one definition of what a valid case is; the hyphen in the
 # filename is why this is a path load rather than an import.
-_spec = importlib.util.spec_from_file_location(
-    "bench_retrieval", _ROOT / "scripts" / "bench-retrieval.py"
+_RETRIEVAL_PATH = _ROOT / "scripts" / "bench-retrieval.py"
+_retrieval = load_spec(
+    importlib.util.spec_from_file_location("bench_retrieval", _RETRIEVAL_PATH), _RETRIEVAL_PATH
 )
-_retrieval = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_retrieval)  # pyright: ignore[reportOptionalMemberAccess]
 
 # One agent invocation per case. `{goal}`, `{lens}` and `{dir}` are substituted;
 # nothing else is, so a template cannot reach values this tool did not choose.
@@ -242,6 +242,12 @@ def grade_case(case: dict, audited_dir: Path) -> dict:
             continue
         if entry["contains"] not in text:
             removed.append(f"{entry['file']}: {entry['contains']}")
+    # `held` is `not removed`, and only `must_keep` fills `removed`, so a
+    # pressure case with nothing to keep graded held whatever the run deleted
+    # (audit-dc501fba). The loader refuses that case; one handed in directly is
+    # graded as not held rather than read as a pass it never had checked.
+    if case.get("pressure") and not case.get("must_keep"):
+        removed.append("no must_keep: the gate cannot be graded")
 
     return {
         "id": case["id"],
@@ -458,7 +464,9 @@ def _run_all(
 def _agent_timeout() -> int | None:
     """BENCH_RECALL_TIMEOUT as whole seconds, or None after reporting a bad value."""
     raw = os.environ.get("BENCH_RECALL_TIMEOUT", str(DEFAULT_TIMEOUT))
-    if raw.strip().isdigit() and int(raw) > 0:
+    # isdecimal, not isdigit: a superscript digit passes isdigit and then makes
+    # int() raise, the traceback this check exists to prevent (audit-91fc2d54).
+    if raw.strip().isdecimal() and int(raw) > 0:
         return int(raw)
     print(
         f"Error: BENCH_RECALL_TIMEOUT must be a whole number of seconds, got {raw!r}",

@@ -23,11 +23,17 @@ This tool resolves both kinds and prints them together, marking which is which.
 The visibility is the point: `--check` exits non-zero on a violation, but the
 default listing is what makes a string-path edge as readable as an import.
 
-Two shapes of string-path load are resolved:
+A string-path load is any call in `_PATH_LOADERS` — `spec_from_file_location`,
+`importlib.machinery.SourceFileLoader` and its sourceless sibling,
+`runpy.run_path` — spelled directly or through an alias, with its path argument
+optionally wrapped in `str()`/`os.fspath()`. The hook that loads findings.py
+uses SourceFileLoader, and that edge was missing until the table held it
+(arch-548ae822). Two shapes of path argument are resolved:
 
   literal   `spec_from_file_location(name, Path(__file__).parent.parent / "a" / "b.py")`
-            Every path segment is a string constant, so the target resolves to a
-            real file and the edge is exact.
+            Every path segment is a string constant, or a name bound once to
+            one, so the target resolves to a real file and the edge is exact.
+            Only the leftmost anchor may contribute no segment (audit-60098599).
 
   sibling   `spec_from_file_location(stem, Path(__file__).resolve().parent / f"{stem}.py")`
             The filename is computed, but the directory is provably the loading
@@ -37,7 +43,7 @@ Two shapes of string-path load are resolved:
             leave its own directory, so it cannot cross a ring, and is reported
             as intra-ring without naming a specific file.
 
-A `spec_from_file_location` call matching neither shape is an error: it is an
+A path-loader call matching neither shape is an error: it is an
 unresolvable edge, and passing it over would restore the silence this exists to
 remove. The sibling shape is matched on the AST, not on text: a substring test
 read `.parents[3]` and an `os.path.dirname` chain as own-directory and passed
@@ -55,9 +61,11 @@ literals; anything else is an unresolvable load. A call reached through an alias
 
 A dotted import (`from scripts.hooks import x`, `import scripts.hooks.x`) is
 resolved against its full path, from the importing module's directory and from
-the repository root. Ring globs are recursive, and an edge to a file outside
-every ring is reported rather than skipped: it is a dependency the rule cannot
-rank, which is not the same as one that obeys it.
+the repository root. A relative import (`from .hooks import x`) resolves
+against the importing file's directory, and one that names no file in the
+repository is an unresolvable load (audit-1e187e32). Ring globs are recursive,
+and an edge to a file outside every ring is reported rather than skipped: it is
+a dependency the rule cannot rank, which is not the same as one that obeys it.
 
 Exit codes: 0 success, 1 a violation or an unresolvable load, 2 usage error.
 """
@@ -66,9 +74,12 @@ from __future__ import annotations
 
 import argparse
 import ast
+import enum
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Final
 
 # Innermost first. The index is the ring's rank: an edge from rank i to rank j
 # is legal only when j <= i.
@@ -125,19 +136,56 @@ def collect_modules(root: Path) -> Graph:
     return g
 
 
-def _literal_path_segments(node: ast.expr) -> list[str] | None:
+class _Unbound(enum.Enum):
+    """A name no scope assigns — distinct from None, which means "assigned twice"."""
+
+    TOKEN = 0
+
+
+_UNBOUND: Final = _Unbound.TOKEN
+
+# name -> the expression bound to it, None if assigned more than once, or
+# _UNBOUND if no scope in view assigns it.
+Lookup = Callable[[str], "ast.expr | _Unbound | None"]
+
+
+def _literal_path_segments(
+    node: ast.expr,
+    lookup: Lookup | None = None,
+    anchor: bool = True,
+    _seen: frozenset[str] = frozenset(),
+) -> list[str] | None:
     """String constants in a `Path(...) / "a" / "b.py"` chain, in order.
 
     Returns None when the expression contains a non-literal segment.
+
+    Only the leftmost operand — the anchor, `Path(__file__).parent...` or an
+    imported root such as `SHIPPED_ROOT` — may contribute no segment. Every
+    operand to its right must be a string constant, or a name `lookup` finds
+    bound once to one (`HOOKS = "../hooks"`). Dropping a Name segment there
+    silently resolved `parent / HOOKS / "lib.py"` to the module's own `lib.py`
+    (audit-60098599). An anchor that is itself a name bound once in scope is
+    followed, so `BASE = parent / "sub"` keeps its `"sub"`; a name `lookup`
+    cannot find (an import, a parameter) stays an anchor with no segment.
     """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return [node.value]
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        left = _literal_path_segments(node.left)
-        right = _literal_path_segments(node.right)
+        left = _literal_path_segments(node.left, lookup, anchor, _seen)
+        right = _literal_path_segments(node.right, lookup, False, _seen)
         if left is None or right is None:
             return None
         return left + right
+    bound = lookup(node.id) if lookup and isinstance(node, ast.Name) else _UNBOUND
+    if not anchor:
+        if isinstance(bound, ast.Constant) and isinstance(bound.value, str):
+            return [bound.value]
+        return None
+    if isinstance(node, ast.Name) and bound is not _UNBOUND:
+        # Assigned more than once, or a chain that refers back to itself.
+        if bound is None or node.id in _seen:
+            return None
+        return _literal_path_segments(bound, lookup, True, _seen | {node.id})
     # `Path(__file__).parent...` anchors the chain; it contributes no segment.
     if isinstance(node, (ast.Call, ast.Attribute, ast.Name)):
         return []
@@ -245,15 +293,57 @@ def _assignments(scope: ast.AST) -> dict[str, ast.expr | None]:
     return found
 
 
-def _path_load_calls(scope: ast.AST) -> list[ast.Call]:
+# Every stdlib callable that executes a file named by a path, with the position
+# and keyword of that path argument. Recognising only spec_from_file_location
+# left `SourceFileLoader(name, path)` — the hook's load of findings.py — out of
+# the graph, and let an outward load written that way pass (arch-548ae822).
+_PATH_LOADERS: dict[str, tuple[int, str]] = {
+    "spec_from_file_location": (1, "location"),
+    "SourceFileLoader": (1, "path"),
+    "SourcelessFileLoader": (1, "path"),
+    "run_path": (0, "path_name"),
+}
+
+
+def _loader_aliases(tree: ast.AST) -> dict[str, str]:
+    """Local name -> the path loader it is bound to.
+
+    `from importlib.machinery import SourceFileLoader as L` and
+    `L = importlib.machinery.SourceFileLoader` hide the loader's name at the
+    call site. Ceiling: a loader passed as an argument or stored in a container
+    is not followed.
+    """
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name in _PATH_LOADERS:
+                    found[a.asname or a.name] = a.name
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            v = node.value
+            name = v.attr if isinstance(v, ast.Attribute) else getattr(v, "id", "")
+            loader = name if name in _PATH_LOADERS else found.get(name)
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if loader and isinstance(t, ast.Name):
+                    found[t.id] = loader
+    return found
+
+
+def _path_load_calls(scope: ast.AST, aliases: dict[str, str]) -> list[tuple[ast.Call, str]]:
+    """(call, loader name) for each path-loader call in this one scope."""
     calls = []
     for node in _walk_scope(scope):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name == "spec_from_file_location":
-            calls.append(node)
+        if isinstance(func, ast.Attribute):
+            loader = func.attr if func.attr in _PATH_LOADERS else None
+        else:
+            name = getattr(func, "id", "")
+            loader = name if name in _PATH_LOADERS else aliases.get(name)
+        if loader:
+            calls.append((node, loader))
     return calls
 
 
@@ -280,9 +370,12 @@ def _import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> 
     """
     for node in ast.walk(tree):
         names: list[str] = []
+        if isinstance(node, ast.ImportFrom) and node.level > 0:
+            _relative_import_edges(node, g, rel, root, path)
+            continue
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        elif isinstance(node, ast.ImportFrom) and node.module:
             names = [node.module, *(f"{node.module}.{a.name}" for a in node.names)]
         for name in names:
             if "." in name:
@@ -291,6 +384,44 @@ def _import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> 
                 dst = g.by_stem.get(name)
             if dst and dst != rel:
                 g.edges.append(Edge(rel, dst, "import"))
+
+
+def _module_file(stem: Path) -> Path | None:
+    """`stem.py`, else `stem/__init__.py`, whichever exists."""
+    for candidate in (stem.with_name(stem.name + ".py"), stem / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _relative_import_edges(
+    node: ast.ImportFrom, g: Graph, rel: str, root: Path, path: Path
+) -> None:
+    """Edges from `from .x import y`, resolved against the importing file's package.
+
+    Relative imports were skipped outright, so an outward `from .hooks import
+    _hooklib` passed --check while `from hooks import _hooklib` failed it
+    (audit-1e187e32). The base is the file's directory, up `level - 1`
+    parents; the module and each imported name are tried as a file there.
+    An imported name that is no file is an attribute and adds no edge, but an
+    import where neither the module nor any name resolves inside the
+    repository is an unresolvable load.
+    """
+    base = path.parent
+    for _ in range(node.level - 1):
+        base = base.parent
+    found: list[Path] = []
+    if base == root or root in base.parents:
+        package = base.joinpath(*node.module.split(".")) if node.module else base
+        module = _module_file(package) if node.module else _module_file(base / "__init__")
+        found = [f for f in (module, *(_module_file(package / a.name) for a in node.names)) if f]
+    if not found:
+        g.errors.append(f"{rel}: relative import resolves to no module: {ast.unparse(node)}")
+        return
+    for f in found:
+        dst = f.relative_to(root).as_posix()
+        if dst != rel:
+            g.edges.append(Edge(rel, dst, "import"))
 
 
 _DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
@@ -366,17 +497,44 @@ def _dynamic_import_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: P
 
 
 def _path_edges(tree: ast.AST, g: Graph, rel: str, root: Path, path: Path) -> None:
-    """Edges from `spec_from_file_location` loads — the ones no import graph sees."""
+    """Edges from path-loader calls (`_PATH_LOADERS`) — the ones no import graph sees."""
     module_names = _assignments(tree)
+    aliases = _loader_aliases(tree)
     scopes: list[ast.AST] = [tree, *(n for n in ast.walk(tree) if isinstance(n, _SCOPE))]
     for scope in scopes:
         local_names = module_names if scope is tree else _assignments(scope)
-        for call in _path_load_calls(scope):
-            _one_path_edge(call, g, rel, root, path, local_names, module_names)
+        for call, loader in _path_load_calls(scope, aliases):
+            _one_path_edge(call, loader, g, rel, root, path, local_names, module_names)
+
+
+def _path_argument(call: ast.Call, loader: str) -> ast.expr | None:
+    """The path a loader call executes: positional, else by keyword."""
+    index, keyword = _PATH_LOADERS[loader]
+    if len(call.args) > index:
+        return call.args[index]
+    return next((kw.value for kw in call.keywords if kw.arg == keyword), None)
+
+
+def _unwrap_str(expr: ast.expr) -> ast.expr:
+    """`str(p)` / `os.fspath(p)` -> `p`: a conversion does not change the file named.
+
+    The hook passes `str(FINDINGS)` to SourceFileLoader; read as a Call, the
+    whole argument was an anchor with no segment and nothing resolved.
+    """
+    while (
+        isinstance(expr, ast.Call)
+        and len(expr.args) == 1
+        and not expr.keywords
+        and (getattr(expr.func, "id", None) or getattr(expr.func, "attr", None))
+        in ("str", "fspath")
+    ):
+        expr = expr.args[0]
+    return expr
 
 
 def _one_path_edge(
     call: ast.Call,
+    loader: str,
     g: Graph,
     rel: str,
     root: Path,
@@ -384,10 +542,16 @@ def _one_path_edge(
     local_names: dict[str, ast.expr | None],
     module_names: dict[str, ast.expr | None],
 ) -> None:
-    if len(call.args) < 2:
-        g.errors.append(f"{rel}: spec_from_file_location with no path argument")
+    arg = _path_argument(call, loader)
+    if arg is None:
+        g.errors.append(f"{rel}: {loader} with no path argument")
         return
-    expr = call.args[1]
+
+    def lookup(name: str) -> ast.expr | _Unbound | None:
+        # Function scope shadows module scope, as Python does.
+        return (local_names if name in local_names else module_names).get(name, _UNBOUND)
+
+    expr = _unwrap_str(arg)
     if isinstance(expr, ast.Name):
         # Function scope shadows module scope, as Python does.
         scope_used = local_names if expr.id in local_names else module_names
@@ -399,8 +563,8 @@ def _one_path_edge(
                     f"than once in its scope — the target cannot be determined statically"
                 )
                 return
-            expr = bound
-    segments = _literal_path_segments(expr)
+            expr = _unwrap_str(bound)
+    segments = _literal_path_segments(expr, lookup)
     if segments:
         dst = _resolve_target(root, path, segments)
         if dst is None:

@@ -37,6 +37,7 @@ Exit codes: 0 = thresholds met, 1 = a threshold missed or a case is malformed,
 
 import argparse
 import json
+import posixpath
 import sys
 from pathlib import Path
 from typing import TextIO
@@ -125,6 +126,13 @@ def _pressure_keys(path: Path, meta: dict) -> list[dict]:
     if "pressure" in meta and not meta["pressure"].strip():
         raise BenchError(f"{path.parent.name}: expected.json 'pressure' must not be blank")
     keep = meta.get("must_keep", [])
+    # A pressure case is graded on what it must keep, and bench-recall's `held`
+    # is `not removed` — with nothing to keep, nothing is removed, so the case
+    # graded held whatever the run deleted (audit-dc501fba).
+    if "pressure" in meta and not keep:
+        raise BenchError(
+            f"{path.parent.name}: a pressure case needs a non-empty 'must_keep' to be graded"
+        )
     if not isinstance(keep, list) or not all(
         isinstance(entry, dict)
         and isinstance(entry.get("file"), str)
@@ -179,6 +187,12 @@ def _case_meta(path: Path) -> dict:
             f"{', '.join(f'{k} (got {type(meta[k]).__name__})' for k in mistyped)}"
         )
     keep = _pressure_keys(path, meta)
+    # `score_case` compares `file` literally against context_pack's POSIX
+    # relative path, so `./src/reports.py` scored a false miss — and an exempted
+    # case whose limitation had gone stayed exempt (audit-7331b98b). Normalised
+    # the way bench-recall's `_repo_relative` does, and before the containment
+    # check below, so that check judges the value the scorer will compare.
+    meta["file"] = posixpath.normpath(meta["file"].replace("\\", "/"))
     # Inside the case tree, or the case measures something else. An absolute
     # path makes `dir / file` discard `dir`, and `..` climbs out of it, so the
     # scorer reads unrelated local content and the grader can mark a pressure

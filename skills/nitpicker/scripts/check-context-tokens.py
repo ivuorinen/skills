@@ -10,13 +10,14 @@ identically and cost several times as much. This tool measures the other half.
 
 The payloads are measured separately:
 
-    always-loaded   CLAUDE.md, AGENTS.md, .claude/CLAUDE.md, and each
-                    .claude/rules/**/*.md without `paths:` frontmatter — read
-                    every turn whether or not the turn needs them.
+    always-loaded   check-agent-instructions' `always_loaded_files` for Claude
+                    Code and AGENTS.md: the root files, each rule without
+                    `paths:` frontmatter, and every `@path.md` import they pull
+                    in — read every turn whether or not the turn needs them.
     path-scoped     the rules with `paths:` frontmatter, loaded only when a
                     matching file is read.
-    copilot-loaded  .github/copilot-instructions.md — Copilot's per-turn file,
-                    which Claude Code never reads.
+    copilot-loaded  the same list for GitHub Copilot's files, which Claude Code
+                    never reads.
     invocation      the router plus the always-loaded shared conventions plus
                     one command file — what a single `/nitpicker <cmd>` costs
                     before it has looked at any code.
@@ -55,7 +56,7 @@ from context_pack import estimate_tokens
 def _load_sibling(stem: str) -> ModuleType:
     """Import a same-directory script whose filename contains a hyphen.
 
-    `check-agent-instructions.py` owns `is_path_scoped`, and a hyphen cannot
+    `check-agent-instructions.py` owns the always-loaded set, and a hyphen cannot
     appear in an identifier, so a plain `import` cannot reach it. Loaded by path
     the way mcp_server.py's `_load_bundled` does, so check-ring-deps.py resolves
     the edge as intra-ring.
@@ -71,17 +72,29 @@ def _load_sibling(stem: str) -> ModuleType:
 
 _agent_instructions = _load_sibling("check-agent-instructions")
 
-# The files Claude Code reads on every turn. Names, not a glob, because the set
-# is a convention rather than a directory: a stray markdown file next to
-# CLAUDE.md is not loaded and must not be counted as though it were.
-ALWAYS_LOADED = ("CLAUDE.md", "AGENTS.md", ".claude/CLAUDE.md")
-# Another harness's per-turn file, reported as its own row. Claude Code never
+# The harnesses whose files Claude Code reads, as `_HARNESSES` keys in
+# check-agent-instructions. Which files each one means lives there, not here: a
+# private list of names and a rules glob drifted from that table and never
+# followed an `@path.md` import, so this report measured a fraction of what the
+# budget gate charges (audit-13eb0777).
+CLAUDE_HARNESSES = ("Claude Code", "cross-agent")
+# Where one of these exists Claude Code reads it and not AGENTS.md, which then
+# reaches a turn only through an `@AGENTS.md` import the walk already follows
+# (instruction-budget.md). Rooting AGENTS.md anyway overstated the floor.
+_CLAUDE_ROOT_FILES = ("CLAUDE.md", ".claude/CLAUDE.md")
+
+
+def _claude_harnesses(root: Path) -> tuple[str, ...]:
+    """`CLAUDE_HARNESSES`, less the cross-agent file once a CLAUDE.md is present."""
+    if any((root / name).is_file() for name in _CLAUDE_ROOT_FILES):
+        return ("Claude Code",)
+    return CLAUDE_HARNESSES
+
+
+# Another harness's per-turn files, reported as their own row. Claude Code never
 # reads `.github/copilot-instructions.md`, so counting it in the set above
 # inflated Claude's per-turn floor (audit-b761d1f4).
-COPILOT_LOADED = (".github/copilot-instructions.md",)
-# Recursive: Claude Code loads rules from subdirectories, and a one-level glob
-# dropped them from the report (audit-9efa98a4).
-RULES_GLOB = ".claude/rules/**/*.md"
+COPILOT_HARNESSES = ("GitHub Copilot",)
 
 
 class UsageError(Exception):
@@ -110,44 +123,46 @@ def _measure(path: Path, root: Path) -> dict:
     }
 
 
-def _rules(root: Path, scoped: bool) -> list[Path]:
-    """The rule files whose `is_path_scoped` verdict equals `scoped`.
+def _loaded(root: Path, harnesses: tuple[str, ...]) -> list[dict]:
+    """`always_loaded_files` for `harnesses`, measured; an import names its importer.
 
-    Judged by check-agent-instructions' own predicate, so both tools agree on
-    what a turn carries.
+    Exactly check-agent-instructions' list, so both tools agree on what a turn
+    carries: its roots, less the path-scoped files, plus the `@path.md` import
+    closure, with one file under two names measured once (audit-e2afb050).
     """
-    return [
-        p
-        for p in sorted(root.glob(RULES_GLOB))
-        if _agent_instructions.is_path_scoped(
-            p.read_text(encoding="utf-8", errors="replace"), p.relative_to(root).as_posix()
-        )
-        is scoped
-    ]
+    root = root.resolve()
+    rows = []
+    for path, importer in _agent_instructions.always_loaded_files(root, harnesses):
+        row = _measure(path, root)
+        if importer is not None:
+            row["imported_by"] = importer.relative_to(root).as_posix()
+        rows.append(row)
+    return rows
 
 
 def always_loaded(root: Path) -> list[dict]:
-    """Every file Claude Code reads each turn, unscoped rules included.
+    """Every file Claude Code reads each turn, unscoped rules and imports included.
 
     A rule with `paths:` frontmatter loads only when a matching file is read, so
     counting it here overstated the per-turn floor, and the `--baseline` delta
     showed no saving when a rule was path-scoped — the remediation
     instruction-budget.md prescribes (audit-b761d1f4). Those rules are reported
-    by `path_scoped` instead.
+    by `path_scoped` instead. An imported file loads with its importer, so it is
+    here, carrying `imported_by` (audit-13eb0777).
     """
-    rows = [_measure(root / name, root) for name in ALWAYS_LOADED if (root / name).is_file()]
-    rows += [_measure(p, root) for p in _rules(root, scoped=False)]
-    return rows
+    return _loaded(root, _claude_harnesses(root))
 
 
 def path_scoped(root: Path) -> list[dict]:
-    """The rule files that load only when a file matching their `paths:` is read."""
-    return [_measure(p, root) for p in _rules(root, scoped=True)]
+    """Claude Code's files that load only when a file matching their `paths:` is read."""
+    root = root.resolve()
+    files = _agent_instructions.path_scoped_files(root, _claude_harnesses(root))
+    return [_measure(p, root) for p in files]
 
 
 def copilot_loaded(root: Path) -> list[dict]:
-    """GitHub Copilot's per-turn file: a separate harness's floor, not Claude's."""
-    return [_measure(root / name, root) for name in COPILOT_LOADED if (root / name).is_file()]
+    """GitHub Copilot's per-turn files: a separate harness's floor, not Claude's."""
+    return _loaded(root, COPILOT_HARNESSES)
 
 
 def _skill_dir(root: Path, skill: str) -> Path:
@@ -235,7 +250,8 @@ def report(root: Path, skill: str, command: str) -> dict:
 def _render_set(name: str, block: dict, out: TextIO) -> None:
     print(f"\n{name}  ({len(block['files'])} files)", file=out)
     for row in sorted(block["files"], key=lambda r: -r["est_tokens"]):
-        print(f"  {row['est_tokens']:>7,} est  {row['bytes']:>7,} B  {row['path']}", file=out)
+        via = f"  (imported by {row['imported_by']})" if "imported_by" in row else ""
+        print(f"  {row['est_tokens']:>7,} est  {row['bytes']:>7,} B  {row['path']}{via}", file=out)
     totals = block["totals"]
     print(f"  {totals['est_tokens']:>7,} est  {totals['bytes']:>7,} B  TOTAL", file=out)
 

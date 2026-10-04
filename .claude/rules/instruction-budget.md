@@ -1,9 +1,16 @@
 # Instruction Budget
 
-`CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md` and every rule file under
-`.claude/rules/` without `paths:` frontmatter — nested ones included
-(`.claude/rules/**/*.md`) — are read on every turn, whether or not the turn
-needs them. Claude Code spends part of
+`CLAUDE.md`, `.claude/CLAUDE.md`, every file they import with an `@path` line,
+and every rule file under `.claude/rules/` without `paths:` frontmatter —
+nested ones included (`.claude/rules/**/*.md`) — are read on every turn,
+whether or not the turn needs them.
+
+`AGENTS.md` is in that set only through the `@AGENTS.md` import at the top of
+`CLAUDE.md`. Where a `CLAUDE.md` exists, Claude Code reads `CLAUDE.md` files
+and nothing else, so deleting that import drops every shared rule
+`AGENTS.md` holds from Claude's context while Copilot and other agents still
+read it (agent-rules-7ab9c0ff). A rule stated in both files is counted twice
+and read twice; keep each in one of them. Claude Code spends part of
 the window on its own instructions first — roughly 50 — so this set and the
 harness draw on one budget.
 

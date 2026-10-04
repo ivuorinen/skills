@@ -1,6 +1,5 @@
 """Tests for skills/nitpicker/scripts/findings.py — the per-finding audit store CLI."""
 
-import importlib.util
 import json
 import os
 import re
@@ -15,11 +14,10 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
-_spec = importlib.util.spec_from_file_location("findings", _TOOL)
-findings = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(findings)  # pyright: ignore[reportOptionalMemberAccess]
+findings = load_path("findings", _TOOL)
 
 BODY = """## Problem
 Token compared with `==`.
@@ -378,6 +376,35 @@ def test_location_fingerprint_returns_none_rather_than_raising(tmp_path, spec):
     """Provenance is an optimization; a finding must never fail to file over it."""
     repo, _ = _repo_with_store(tmp_path, SOURCE)
     assert findings.location_fingerprint(repo, spec) is None
+
+
+@pytest.mark.parametrize("brk", ["\x0c", "\x1c", "\u2028", "\x85"])
+def test_location_fingerprint_numbers_lines_by_newline_only(tmp_path, brk):
+    """audit-3837502b: `splitlines()` also breaks on form feeds, \\x1c-\\x1e and
+    U+2028/U+0085, so a cited range drifted off the lines grep and an editor
+    number — and a fingerprint of `path:3` hashed a different line than the one
+    the finding quoted. Line 3 here is `third` by every newline-counting tool."""
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    (repo / "src" / "brk.py").write_text(
+        f"first{brk}still first\nsecond\nthird\n", encoding="utf-8"
+    )
+    (repo / "src" / "plain.py").write_text("x\ny\nthird\n", encoding="utf-8")
+    assert findings.location_fingerprint(repo, "src/brk.py:3") == findings.location_fingerprint(
+        repo, "src/plain.py:3"
+    )
+    assert findings.location_fingerprint(repo, "src/brk.py:4") is None
+
+
+def test_location_fingerprint_counts_a_last_line_with_no_final_newline(tmp_path):
+    # Only a final newline adds the trailing empty element that is dropped; a
+    # file ending mid-line keeps its last line citable.
+    repo, _ = _repo_with_store(tmp_path, SOURCE)
+    (repo / "src" / "open.py").write_text("x\ny\nthird", encoding="utf-8")
+    (repo / "src" / "closed.py").write_text("x\ny\nthird\n", encoding="utf-8")
+    assert findings.location_fingerprint(repo, "src/open.py:3") == findings.location_fingerprint(
+        repo, "src/closed.py:3"
+    )
+    assert findings.location_fingerprint(repo, "src/open.py:4") is None
 
 
 def test_location_fingerprint_skips_a_binary_file(tmp_path):
@@ -1193,6 +1220,16 @@ def test_new_force_refuses_reopen_when_ledger_unparseable_and_writes_no_open_fil
     assert not (tmp_path / "security" / "open" / f"{fid}.md").exists()
 
 
+@pytest.mark.parametrize("found", ["2026-02-30", "yesterday"])
+def test_new_refuses_a_malformed_found_date_and_writes_nothing(tmp_path, found):
+    # `validate` rejects the file a malformed `found` produces, so it is refused first.
+    with pytest.raises(findings.FindingError, match="invalid --date"):
+        findings.new_finding(
+            tmp_path, "security", "high", "security", "src/a.py", "T", BODY, found=found
+        )
+    assert not list(tmp_path.rglob("*.md"))
+
+
 def test_validate_flags_duplicate_ledger_id(tmp_path):
     path = _new(tmp_path)
     findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
@@ -1790,6 +1827,28 @@ class TestRedactVendorCoverage:
         ("npm token", "npm_" + "A" * 36),
         ("slack", "xoxb-1234567890-abcdefghij"),
         ("jwt", ".".join(["eyJ" + "h" * 18, "eyJ" + "z" * 18, "s" * 12])),
+        # security-1df0778e: each of these passed through redact() unchanged. Every
+        # one is assembled from parts so no contiguous vendor shape sits in this
+        # file for a secret scanner to report.
+        ("slack app token", "xapp-" + "1-" + "A" * 11 + "-" + "1" * 13 + "-" + "a" * 64),
+        (
+            "slack webhook",
+            "hooks.slack.com/" + "services/" + "T" + "0" * 8 + "/B" + "0" * 8 + "/" + "x" * 24,
+        ),
+        (
+            "slack workflow webhook",
+            "hooks.slack.com/" + "workflows/" + "T" + "0" * 8 + "/" + "x" * 30,
+        ),
+        ("sendgrid", "SG" + "." + "A" * 22 + "." + "B" * 43),
+        ("pypi", "pypi-" + "AgEIcHlwaS5vcmc" + "A" * 60),
+        ("shopify access token", "shp" + "at_" + "a" * 32),
+        ("shopify shared secret", "shp" + "ss_" + "a" * 32),
+        ("digitalocean pat", "do" + "p_v1_" + "a" * 64),
+        ("digitalocean oauth", "do" + "o_v1_" + "a" * 64),
+        ("databricks", "dapi" + "a" * 32),
+        ("linear", "lin_" + "api_" + "A" * 40),
+        ("azure storage account key", "Account" + "Key=" + "A" * 86 + "=="),
+        ("azure shared access key", "SharedAccess" + "Key=" + "A" * 43 + "="),
     ]
 
     @pytest.mark.parametrize("label, token", VENDORS, ids=[v[0] for v in VENDORS])
@@ -1905,6 +1964,29 @@ class TestRedactPrivateKeys:
         out = findings.redact(self._pgp(closed=False) + "\nfound at src/app.py:42")
         assert self._BODY not in out and "=abcd" not in out
         assert out == "[REDACTED PRIVATE KEY]\nfound at src/app.py:42"
+
+    @pytest.mark.parametrize(
+        "sep",
+        ["\n", "\r\n", "\\n"],
+        ids=["lf", "crlf", "json-escaped"],
+    )
+    def test_truncated_key_is_consumed_whatever_the_line_separator(self, sep):
+        """audit-48d24c30, security-6d599c06: the clipped branch only took `\\n`.
+
+        CRLF evidence failed the `(?=\\n|$)` lookahead on the first body line, and
+        a key inside a JSON string (every GCP service-account file) is separated by
+        a literal backslash-n — both left the whole body under a marker that read
+        as redacted. The separator is one mechanism, so all three spellings are
+        pinned together, for a PEM and for an armoured PGP key.
+        """
+        body = sep.join(["A" * 64, "B" * 64, "CC=="])
+        pem = self._pem("RSA", closed=False).replace("\n", sep) + sep + body
+        pgp = self._pgp(closed=False).replace("\n", sep)
+        for text in (pem, pgp):
+            out = findings.redact(f'"private_key": "{text}{sep}found at src/app.py:42')
+            assert "A" * 64 not in out and "CC==" not in out and self._BODY not in out
+            assert "=abcd" not in out
+            assert out.endswith(f"[REDACTED PRIVATE KEY]{sep}found at src/app.py:42")
 
     def test_repeated_unclosed_headers_redact_in_linear_time(self):
         """security-6bfd9bed: each END-less header scanned to the end of the text."""
@@ -3575,6 +3657,98 @@ def test_resolve_finding_still_refuses_a_malformed_date_for_api_callers(tmp_path
         findings.resolve_finding(tmp_path, path.stem, "fixed", "n", date="2026/01/01")
 
 
+class TestImpossibleDates:
+    """audit-e351bd48: dates were checked for shape only, so `2026-13-45` was
+    accepted into the append-only ledger and `validate` reported it consistent."""
+
+    @pytest.mark.parametrize("date", ["2026-13-45", "2026-02-30", "2026-00-10", "2026-04-31"])
+    def test_resolve_refuses_an_impossible_date(self, tmp_path, date):
+        path = _new(tmp_path)
+        with pytest.raises(findings.FindingError, match="invalid --date"):
+            findings.resolve_finding(tmp_path, path.stem, "fixed", "n", date=date)
+        assert path.exists()
+        assert findings.read_ledger(tmp_path) == []
+
+    def test_cli_resolve_exits_two_on_an_impossible_date(self, tmp_path, capsys):
+        path = _new(tmp_path)
+        argv = ["resolve", "--root", str(tmp_path), path.stem, "--status", "fixed", "--notes", "n"]
+        assert findings.main([*argv, "--date", "2026-13-45"]) == 2
+        assert "invalid --date" in capsys.readouterr().err
+        assert findings.read_ledger(tmp_path) == []
+
+    def test_validate_flags_impossible_dates_in_files_and_ledger(self, tmp_path):
+        path = _new(tmp_path)
+        text = path.read_text(encoding="utf-8").replace("found: 2026-07-08", "found: 2026-02-30")
+        path.write_text(text, encoding="utf-8")
+        assert any("found date" in e for e in findings.validate_file(path))
+
+        other = _new(tmp_path, title="Other finding")
+        findings.resolve_finding(tmp_path, other.stem, "fixed", "done", date="2026-07-09")
+        lp = findings.ledger_path(tmp_path)
+        lp.write_text(
+            lp.read_text(encoding="utf-8")
+            .replace('"resolved": "2026-07-09"', '"resolved": "2026-13-45"')
+            .replace('"found": "2026-07-08"', '"found": "2026-99-01"'),
+            encoding="utf-8",
+        )
+        errors = findings.validate_store(tmp_path)
+        assert any("resolved date '2026-13-45'" in e for e in errors)
+        assert any("found date '2026-99-01'" in e for e in errors)
+
+    def test_validate_flags_an_impossible_resolved_date_in_a_resolved_file(self, tmp_path):
+        fm = {
+            "id": "security-00000000",
+            "auditor": "security",
+            "severity": "low",
+            "category": "security",
+            "area": "a",
+            "status": "fixed",
+            "found": "2026-07-08",
+            "resolved": "2026-13-45",
+        }
+        path = tmp_path / "f.md"
+        path.write_text(findings.render_finding(fm, "T", "## Resolution\nx\n"), "utf-8")
+        assert any("invalid resolved date" in e for e in findings.validate_file(path))
+
+    def test_migrate_v1_skips_an_impossible_fixed_date(self, tmp_path):
+        src = tmp_path / "nitpicker-findings.md"
+        src.write_text(
+            V1_DOC.replace("Fixed: 2026-07-06", "Fixed: 2026-13-45, then 2026-07-05"), "utf-8"
+        )
+        root = tmp_path / "findings"
+        findings.migrate_v1(src, root)
+        assert findings.resolved_records(root)["N-102"]["resolved"] == "2026-07-05"
+        assert findings.validate_store(root) == []
+
+
+class TestMultiLineTitleAndArea:
+    """audit-8effe9aa: a multi-line title or area is a wrong invocation, and
+    `new` exited 1 for it — the runtime-error code — while a blank one exits 2."""
+
+    @pytest.mark.parametrize(
+        "extra, message",
+        [
+            (["--area", "src/a.py", "a\nb"], "title must be single-line"),
+            (["--area", "src/a.py\nx", "t"], "area must be single-line"),
+            (["--area", "src/a.py", "a\rb"], "title must be single-line"),
+            (["--area", "src/a.py" + chr(0x2028) + "x", "t"], "area must be single-line"),
+        ],
+        ids=["title-lf", "area-lf", "title-cr", "area-line-separator"],
+    )
+    def test_cli_new_exits_two_on_a_multi_line_field(self, tmp_path, capsys, extra, message):
+        base = ["new", "--root", str(tmp_path), "--auditor", "security"]
+        base += ["--severity", "low", "--category", "docs"]
+        assert findings.main(base + extra) == 2
+        assert message in capsys.readouterr().err
+        assert not list(tmp_path.rglob("*.md"))
+
+    @pytest.mark.parametrize("field", ["title", "area"])
+    def test_new_finding_still_refuses_a_multi_line_field_for_api_callers(self, tmp_path, field):
+        with pytest.raises(findings.FindingError, match="single-line"):
+            _new(tmp_path, **{field: "a\nb"})
+        assert not list(tmp_path.rglob("*.md"))
+
+
 def test_cli_new_force_help_names_the_ledger_record_it_removes(capsys):
     """docs-318027e3: the help described the one ledger-removing route as an overwrite."""
     with pytest.raises(SystemExit):
@@ -3589,6 +3763,17 @@ def test_redact_is_linear_on_a_long_run_without_an_at_sign():
     start = time.monotonic()
     assert findings.redact("a." * 100000) == "a." * 100000
     assert time.monotonic() - start < 1.0
+
+
+def test_redact_is_linear_on_dotless_jwt_fragments():
+    """An unbounded JWT header ran to the end of `eyJ…-eyJ…-` from every `eyJ`;
+    256 KB took over 6 s. A real token is still masked."""
+    body = "eyJaaaaaaaaaaaa-" * 16000
+    start = time.monotonic()
+    assert findings.redact(body) == body
+    assert time.monotonic() - start < 1.0
+    tok = ".".join(("eyJ" + "h" * 17, "eyJ" + "z" * 40, "d" * 43))
+    assert tok not in findings.redact(f"x {tok} y")
 
 
 @pytest.mark.parametrize(

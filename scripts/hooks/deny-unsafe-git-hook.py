@@ -423,7 +423,7 @@ _CONFIG_WRITE_DENIAL = (
     "          .claude/rules/commit-gate-integrity.md."
 )
 _SKIP_DENIAL = (
-    "  DENIED  {var} on `git commit` switches pre-commit hooks off.\n"
+    "  DENIED  {var} on `git {sub}` switches pre-commit hooks off.\n"
     "          Commit without it and fix what fails — see\n"
     "          .claude/rules/commit-gate-integrity.md."
 )
@@ -478,16 +478,21 @@ def _hook_skip_denial(tokens: list[str], env: dict[str, str]) -> str | None:
     (agent-loopholes-f376faa5). `env` includes what earlier stages of the same
     command exported (see `_exports`). Ceiling: a variable exported by an
     earlier *call* carries no token in this one.
+
+    Judged on every subcommand in `_NO_VERIFY_SUBCOMMANDS`, not `commit` alone:
+    `git merge` runs pre-merge-commit and commit-msg, so `HOME=/tmp/x git merge`
+    with a hooksPath in that HOME's config — or `SKIP=` read by pre-commit's
+    commit-msg stage — landed a commit those hooks never saw.
     """
     name = Path(tokens[0]).name
     if name == "pre-commit" and "uninstall" in tokens[1:]:
         return _UNINSTALL_DENIAL
     index = skip_git_global_opts(tokens, 1)
-    if name != "git" or index >= len(tokens) or tokens[index] != "commit":
+    if name != "git" or index >= len(tokens) or tokens[index] not in _NO_VERIFY_SUBCOMMANDS:
         return None
     skipped = [var for var in env if var == "SKIP" or var.startswith("PRE_COMMIT_")]
     if skipped:
-        return _SKIP_DENIAL.format(var=skipped[0])
+        return _SKIP_DENIAL.format(var=skipped[0], sub=tokens[index])
     homes = [var for var in _CONFIG_HOME_VARS if var in env]
     return _ENV_DENIAL.format(var=homes[0]) if homes else None
 

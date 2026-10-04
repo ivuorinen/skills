@@ -48,13 +48,39 @@ explicitly supplied <project_root> that holds no agent instruction files,
 2 = usage error (an unknown `-`-prefixed option, or more than one <project_root>).
 """
 
+import importlib.util
 import json
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
+from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import md_fences
+
+
+def _load_sibling(stem: str) -> ModuleType:
+    """Import a same-directory script whose filename contains a hyphen.
+
+    Loaded by path the way check-context-tokens.py and mcp_server.py load theirs,
+    so check-ring-deps.py resolves the edge as intra-ring.
+    """
+    path = Path(__file__).resolve().parent / f"{stem}.py"
+    spec = importlib.util.spec_from_file_location(stem.replace("-", "_"), path)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging error
+        raise ImportError(f"cannot load bundled script {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Rule frontmatter has one parser, check-rules-anatomy's, which validate-rules.py
+# also imports. This module kept its own and the two disagreed on the same file
+# — a trailing space on the closing fence, `paths: [""]` — so a rule the anatomy
+# gate passed as path-scoped was charged to this budget, or the reverse
+# (arch-da222f46).
+_parse_frontmatter = _load_sibling("check-rules-anatomy")._parse_frontmatter
 
 # Instruction surfaces per harness. This tool audits somebody else's repository,
 # and which agent they run is not ours to assume: a set hardcoded to Claude Code
@@ -153,13 +179,11 @@ def _content_lines(text: str, markup: bool = False):
     # scoping that exempts it — and any frontmatter list inflates the budget,
     # skews position depth, and makes two files declaring the same `paths:` look
     # like they duplicate a rule. Line numbers keep counting through it so a
-    # finding still names the physical line.
-    start = 0
-    if lines and lines[0].strip() == "---":
-        for i, raw in enumerate(lines[1:], 1):
-            if raw.strip() == "---":
-                start = i + 1
-                break
+    # finding still names the physical line. Where the frontmatter ends is the
+    # shared parser's answer, not a second fence rule (arch-da222f46); an
+    # unclosed block leaves the body the whole text, so nothing is skipped.
+    _, body = _parse_frontmatter(text)
+    start = len(lines) - len(body.splitlines())
 
     fence = ""
     for i, raw in enumerate(lines, 1):
@@ -179,46 +203,14 @@ def _content_lines(text: str, markup: bool = False):
         yield i, s
 
 
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+def _declares_globs(value: object) -> bool:
+    """True when a parsed frontmatter value is a list holding a non-empty glob.
 
-
-def _declares_paths(frontmatter: str) -> bool:
-    """True when the frontmatter declares a `paths:` list with at least one item.
-
-    Scanned line by line rather than matched with one pattern. The regex this
-    replaced needed nested quantifiers to skip blank and comment-only lines
-    before the first item, which is catastrophic-backtracking shape — and a
-    reader could not tell what it accepted. A blank or comment-only line
-    continues the search; a list item ends it True; anything else ends it False.
+    A scalar is not a list (check-rules-anatomy reports it `paths_not_list`), and
+    an empty string scopes nothing (it reports that `empty_glob`), so neither
+    takes a rule out of the budget.
     """
-    lines = frontmatter.splitlines()
-    for i, raw in enumerate(lines):
-        if not raw.startswith("paths:"):
-            continue
-        inline = raw[len("paths:") :].strip()
-        if inline:
-            # `paths: [...]` — scoped only when the brackets hold something.
-            return inline.startswith("[") and inline.strip("[]").strip() != ""
-        for rest in lines[i + 1 :]:
-            stripped = rest.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            return stripped.startswith("-") and stripped[1:].strip() != ""
-        return False
-    return False
-
-
-def _frontmatter_value(frontmatter: str, key: str) -> str | None:
-    """The scalar value of top-level `key:` with quotes stripped; None when absent.
-
-    Only the harness keys `_harness_scoped` names are read, each a scalar, so a
-    line scan is enough — the same reasoning `_declares_paths` gives for not
-    reaching for a pattern.
-    """
-    for raw in frontmatter.splitlines():
-        if raw.startswith(f"{key}:"):
-            return raw[len(key) + 1 :].strip().strip("\"'").strip()
-    return None
+    return isinstance(value, list) and any(str(g).strip() for g in value)
 
 
 # Globs a Copilot `applyTo:` may use to mean "every file". A file applying to
@@ -226,7 +218,7 @@ def _frontmatter_value(frontmatter: str, key: str) -> str | None:
 _APPLY_TO_EVERYTHING = frozenset({"**", "**/*"})
 
 
-def _harness_scoped(frontmatter: str, rel: str) -> bool:
+def _harness_scoped(frontmatter: dict, rel: str) -> bool:
     """True when the harness that owns `rel` loads it only on a condition.
 
     Keyed on the harness pattern the file matched, because each harness spells
@@ -242,16 +234,17 @@ def _harness_scoped(frontmatter: str, rel: str) -> bool:
     - Windsurf `.windsurf/rules/**/*.md`: a `trigger:` other than `always_on`.
     """
     if rel.startswith(".github/instructions/") and rel.endswith(".instructions.md"):
-        apply_to = _frontmatter_value(frontmatter, "applyTo")
-        if not apply_to:
-            return False
-        globs = {g.strip().strip("\"'") for g in apply_to.split(",")}
-        return not globs & _APPLY_TO_EVERYTHING
+        apply_to = frontmatter.get("applyTo")
+        # The comma-separated scalar is Copilot's documented form; a flow list
+        # is accepted as the same set of globs.
+        items = apply_to if isinstance(apply_to, list) else str(apply_to or "").split(",")
+        globs = {g.strip().strip("\"'") for g in items} - {""}
+        return bool(globs) and not globs & _APPLY_TO_EVERYTHING
     if rel.startswith(".cursor/rules/") and rel.endswith(".mdc"):
-        return _frontmatter_value(frontmatter, "alwaysApply") == "false"
+        return frontmatter.get("alwaysApply") == "false"
     if rel.startswith(".windsurf/rules/"):
-        trigger = _frontmatter_value(frontmatter, "trigger")
-        return bool(trigger) and trigger != "always_on"
+        trigger = frontmatter.get("trigger")
+        return isinstance(trigger, str) and bool(trigger) and trigger != "always_on"
     return False
 
 
@@ -270,12 +263,14 @@ def is_path_scoped(text: str, rel: str = "") -> bool:
     check-context-tokens.py so both tools agree on what a turn carries
     (audit-b761d1f4).
 
-    An empty `paths:` scopes nothing, so it does not qualify.
+    An empty `paths:`, or one whose only globs are empty strings, scopes nothing,
+    so it does not qualify. Frontmatter that never closes is malformed and loads
+    as plain text, so it scopes nothing either.
     """
-    m = _FRONTMATTER_RE.match(text)
-    if not m:
+    fm, _ = _parse_frontmatter(text)
+    if not fm:
         return False
-    return _declares_paths(m.group(1)) or _harness_scoped(m.group(1), rel)
+    return _declares_globs(fm.get("paths")) or _harness_scoped(fm, rel)
 
 
 def _count_instructions(text: str) -> int:
@@ -384,16 +379,99 @@ def _escaping(files: list[Path], contain: Path | None) -> list[Path]:
     return out
 
 
+def _dedupe(paths: Iterable[Path]) -> tuple[list[Path], dict[Path, Path]]:
+    """(kept, alias -> kept): one entry per file on disk, first spelling kept.
+
+    Keyed on the resolved path, not the spelling. `ln -s AGENTS.md CLAUDE.md` is
+    the common way to serve one file to every harness, and comparing spellings
+    summed that one file's directives twice, failing a budget the real per-turn
+    load met (audit-e2afb050). A spelling seen twice — two patterns matching
+    one path — is the same entry, not an alias.
+
+    `resolve()` is not guarded: every path here passed `detect`'s `is_file()`,
+    which a symlink loop fails, and a non-strict resolve of an existing file
+    does not raise.
+    """
+    kept: list[Path] = []
+    aliases: dict[Path, Path] = {}
+    first: dict[Path, Path] = {}
+    for p in paths:
+        real = p.resolve()
+        if real not in first:
+            first[real] = p
+            kept.append(p)
+        elif first[real] != p:
+            aliases.setdefault(p, first[real])
+    return kept, aliases
+
+
 def loaded_files(project_root: Path) -> list[Path]:
-    """The always-loaded set present in this project, deduplicated and ordered."""
-    seen: set[Path] = set()
-    out = []
-    for found in detect(project_root).values():
-        for p in found:
-            if p not in seen:
-                seen.add(p)
-                out.append(p)
+    """The instruction files present in this project, one per file on disk, ordered."""
+    return _dedupe(p for found in detect(project_root).values() for p in found)[0]
+
+
+def always_loaded_files(
+    project_root: Path, harnesses: Iterable[str] | None = None
+) -> list[tuple[Path, Path | None]]:
+    """(file, importer) for every file a turn carries; importer None for a root.
+
+    The one answer to "what loads every turn": the harness files `detect` finds,
+    less the conditionally loaded ones `is_path_scoped` excludes, plus the
+    closure of their `@path.md` imports. check-context-tokens.py kept a private
+    list of names and a rules glob, and never followed an import, so it measured
+    a fraction of what this tool charges (audit-13eb0777). `check` charges the
+    same set, which a test pins.
+
+    `harnesses` narrows the set to those `_HARNESSES` keys, for a caller
+    reporting one agent's floor; omitted, every harness counts, as `check` does.
+    Paths are under the resolved `project_root`. There is no `contain` boundary:
+    the caller that confines a root calls `check`.
+    """
+    root, files, scoped = _split(project_root, harnesses)
+    roots = [f for f in files if f not in scoped]
+    _, edges = _import_findings(root, files)
+    imported = _imported_targets(edges, roots, files, root)
+    out: list[tuple[Path, Path | None]] = [(p, None) for p in roots]
+    out += imported.items()
     return out
+
+
+def path_scoped_files(project_root: Path, harnesses: Iterable[str] | None = None) -> list[Path]:
+    """The harness files that load only on a condition, under the same filter as
+    `always_loaded_files` — the files its roots leave out."""
+    _, files, scoped = _split(project_root, harnesses)
+    return [f for f in files if f in scoped]
+
+
+def _split(
+    project_root: Path, harnesses: Iterable[str] | None
+) -> tuple[Path, list[Path], set[Path]]:
+    """(resolved root, deduplicated harness files, the path-scoped subset)."""
+    root = project_root.resolve()
+    found = detect(root)
+    if harnesses is not None:
+        wanted = set(harnesses)
+        found = {h: fs for h, fs in found.items() if h in wanted}
+    spellings = [p for fs in found.values() for p in fs]
+    files, _ = _dedupe(spellings)
+    always = _unconditional(spellings, root)
+    return root, files, {f for f in files if f.resolve() not in always}
+
+
+def _unconditional(spellings: Iterable[Path], root: Path) -> set[Path]:
+    """The resolved files some spelling loads on every turn.
+
+    Judged per spelling, before `_dedupe` keeps one: scope is read off the
+    spelling's own path, so `AGENTS.md` linked to a Cursor `.mdc` with
+    `alwaysApply: false` is scoped under the Cursor name and unconditional under
+    its own. Judging only the kept spelling dropped the file from the budget
+    whenever the Cursor name was detected first.
+    """
+    return {
+        p.resolve()
+        for p in spellings
+        if not is_path_scoped(p.read_text(encoding="utf-8", errors="replace"), _rel_to(p, root))
+    }
 
 
 # An `@path.md` import. Harnesses that support imports pull the target in as
@@ -512,8 +590,12 @@ def _imported_targets(
     already in the scanned set `files` is never a target: it is counted, or
     excluded as scoped, as itself. A path-scoped target is neither charged nor
     followed, since what it imports loads only when it does.
+
+    `files` is compared resolved, because targets are: a root file that is a
+    symlink matched its own import target under neither spelling, and the file
+    behind it was charged twice (audit-e2afb050).
     """
-    seen = set(files)
+    seen = {f.resolve() for f in files}
     out: dict[Path, Path] = {}
     frontier = list(roots)
     for _depth in range(_MAX_IMPORT_DEPTH):
@@ -753,6 +835,27 @@ def _length_findings(rel: str, text: str) -> list[dict]:
     ]
 
 
+def _alias_rows(aliases: dict[Path, Path], rows: list[dict], project_root: Path) -> list[dict]:
+    """One `alias_of` row per second name for a file already in `rows`.
+
+    Listed so the report accounts for every name found, and charged nothing: the
+    directives are the kept file's, already counted (audit-e2afb050).
+    """
+    verdict = {r["file"]: r["path_scoped"] for r in rows}
+    out = []
+    for alias, kept in aliases.items():
+        kept_rel = kept.relative_to(project_root).as_posix()
+        out.append(
+            {
+                "file": alias.relative_to(project_root).as_posix(),
+                "instructions": 0,
+                "path_scoped": verdict[kept_rel],
+                "alias_of": kept_rel,
+            }
+        )
+    return out
+
+
 def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     """The report for `project_root`, and whether it blocks; (report, blocking).
 
@@ -777,12 +880,15 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     # point is the only place it has to happen.
     project_root = project_root.resolve()
     harnesses = detect(project_root)
-    files = loaded_files(project_root)
-    escaping = _escaping(files, contain)
+    # Containment is judged per spelling, before deduplication, so an escaping
+    # link is reported even when an in-root name for the same file came first.
+    escaping = _escaping(list(dict.fromkeys(p for fs in harnesses.values() for p in fs)), contain)
     if escaping:
-        files = [f for f in files if f not in escaping]
         harnesses = {h: [f for f in fs if f not in escaping] for h, fs in harnesses.items()}
         harnesses = {h: fs for h, fs in harnesses.items() if fs}
+    spellings = [p for fs in harnesses.values() for p in fs]
+    files, aliases = _dedupe(spellings)
+    always = _unconditional(spellings, project_root)
     if not files:
         raise ValueError(
             f"{project_root} holds no agent instruction file for any known harness "
@@ -792,8 +898,10 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     # Which harnesses read each file, so a duplicate can be judged by whether one
     # session ever holds both copies.
     owners: dict[str, set[str]] = {}
+    # An alias's readers are the kept file's readers too: it is one file.
     for harness, found in harnesses.items():
         for f in found:
+            f = aliases.get(f, f)
             owners.setdefault(f.relative_to(project_root).as_posix(), set()).add(harness)
 
     findings: list[dict] = [
@@ -818,7 +926,7 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
         rel = path.relative_to(project_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         count = _count_instructions(text)
-        scoped = is_path_scoped(text, rel)
+        scoped = path.resolve() not in always
         # Scanned either way — a path-scoped file still loads, so a duplicate or
         # a buried directive in it is still a defect. Only the budget excludes
         # it, because the budget is about what every turn carries.
@@ -830,6 +938,8 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
         per_file.append({"file": rel, "instructions": count, "path_scoped": scoped})
         findings += _scan_file(rel, text, owners, seen_lines)
         findings += _length_findings(rel, text)
+
+    per_file += _alias_rows(aliases, per_file, project_root)
 
     import_findings, edges = _import_findings(project_root, files)
     findings += import_findings
@@ -882,7 +992,10 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
         "budget": {"warn": _BUDGET_WARN, "limit": _BUDGET_ERROR},
         "findings": findings,
         "summary": {
-            "files": len(files),
+            # Every row of `files`: imported targets and alias rows included, so
+            # the summary reconciles with the array it summarises. `len(files)`
+            # counted the scanned roots only (audit-5d9a53b7).
+            "files": len(per_file),
             "findings": len(findings),
             "blocking": blocking,
         },

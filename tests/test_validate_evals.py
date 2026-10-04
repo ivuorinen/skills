@@ -1,6 +1,5 @@
 """Tests for scripts/validate-evals.py."""
 
-import importlib.util
 import json
 import re
 import runpy
@@ -8,11 +7,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "validate-evals.py"
-_spec = importlib.util.spec_from_file_location("validate_evals", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("validate_evals", _TOOL)
 
 
 def _has(errors: list[str], fragment: str) -> bool:

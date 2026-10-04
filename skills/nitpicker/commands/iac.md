@@ -59,7 +59,6 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Pin a base image to `tag@sha256:<digest>`
 - Add `encrypted = true` / a KMS key to a not-yet-created resource
 - Require IMDSv2 (`http_tokens = "required"`) and enable audit logging on a not-yet-created resource
-- Add `resources.limits`/`requests`
 - Add a `.dockerignore` excluding `.git` and secret paths
 
 **Requires explicit approval per change:**
@@ -71,6 +70,7 @@ Absent explicit evidence a workload is non-production — a `dev`/`staging` name
 - Adding a Dockerfile `HEALTHCHECK` — the health command is image- and service-specific, and a wrong or unreachable command marks a healthy container unhealthy, changing restart and load-balancer routing
 - Adding a non-root `USER`/`securityContext` (`runAsNonRoot`, `allowPrivilegeEscalation: false`, drop `ALL` capabilities) — an image built to run as root fails to start (`CreateContainerConfigError`) or loses a capability it needs
 - Adding liveness/readiness probes — the same reason as `HEALTHCHECK`: a guessed path or port restart-loops a healthy pod or pulls it from the load balancer
+- Adding `resources.limits`/`requests` — a memory limit below the working set OOMKills every replica, a CPU limit throttles it, and a request above node capacity leaves it `Pending`; the values come from observed usage the owner supplies, never a default
 
 **Never auto-apply:**
 

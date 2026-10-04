@@ -32,7 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
-from typing import IO, Any
+from typing import IO, Any, cast
 
 PLATFORMS = ("github", "gitlab", "bitbucket")
 
@@ -547,7 +547,9 @@ def paginate_link(url: str, headers: dict[str, str], allowed_netloc: str) -> lis
     for _ in range(_MAX_PAGES):
         body, resp_headers = http_json(url, headers, allowed_netloc)
         if isinstance(body, list):
-            results.extend(body)
+            # `isinstance` narrows parsed JSON to `list[Unknown]`; the elements
+            # are untyped JSON values, which `Any` states (types-93a4d6bd).
+            results.extend(cast("list[Any]", body))
         elif body is not None:
             results.append(body)
         url = _next_from_link(resp_headers.get("Link", ""))
@@ -569,8 +571,9 @@ def paginate_body_next(url: str, headers: dict[str, str], allowed_netloc: str) -
         body, _ = http_json(url, headers, allowed_netloc)
         if not isinstance(body, dict):
             return results
-        results.extend(body.get("values") or [])
-        url = body.get("next") or ""
+        page = cast("dict[str, Any]", body)
+        results.extend(page.get("values") or [])
+        url = page.get("next") or ""
         if not url:
             return results
         _check_url(url, allowed_netloc)
@@ -711,6 +714,22 @@ def degrade(message: str) -> None:
     """
     _DEGRADED.append(message)
     warn(message)
+
+
+def degraded_mark() -> int:
+    """A position in the degrade record, for `discard_degraded_since`."""
+    return len(_DEGRADED)
+
+
+def discard_degraded_since(mark: int) -> None:
+    """Drop the notes recorded after `mark`, keeping the ones before it.
+
+    For a transport attempt whose whole result is thrown away: its notes
+    describe threads the envelope will not hold, so `degraded` would name a
+    section of a complete result as incomplete (audit-9b9819fd). Notes from
+    before the attempt still describe the result, so they stay.
+    """
+    del _DEGRADED[mark:]
 
 
 def _take_degraded() -> list[str]:
@@ -966,8 +985,32 @@ _PROVIDER_MODULES = {
     "bitbucket": "pr_bitbucket",
 }
 
-# The PR path segment each platform puts before the number in a web URL.
-_URL_PR_RE = re.compile(r"/(?:pull|pull-requests|merge_requests)/(\d+)")
+# The PR path segment each platform puts before the number in a web URL. The
+# number must end its segment: `/pull/12abc` is a project path, not a route.
+_URL_PR_RE = re.compile(r"/(?:pull|pull-requests|merge_requests)/(\d+)(?=/|$)")
+# GitLab's route form. `-` is not a legal project path segment, so the first
+# `/-/` is where the project path ends.
+_GITLAB_MR_RE = re.compile(r"/-/merge_requests/(\d+)(?=/|$)")
+
+
+def _pr_route(url: str) -> re.Match[str] | None:
+    """The PR route in `url`'s path: the one after the project path, not in it.
+
+    audit-fca23606: the leftmost match won, so a project path segment shaped
+    like a route (`acme/pull/42/-/merge_requests/7`) named the wrong project and
+    number, and the token went to it. GitLab's `/-/merge_requests/` form is
+    taken when present; otherwise the last route-shaped segment is. The query
+    and fragment are cut first, since neither is part of the path. Ceiling: a
+    GitHub or Bitbucket URL whose trailing route itself holds a
+    `/pull/<n>` segment resolves to that later number.
+    """
+    path = re.split(r"[?#]", url, maxsplit=1)[0]
+    if "/-/" in path:
+        match = _GITLAB_MR_RE.search(path)
+        if match:
+            return match
+    matches = list(_URL_PR_RE.finditer(path))
+    return matches[-1] if matches else None
 
 
 def parse_pr_url(url: str) -> tuple[str, str, int]:
@@ -977,7 +1020,7 @@ def parse_pr_url(url: str) -> tuple[str, str, int]:
     a single argument on both CLIs. GitLab's `/-/` infix is stripped because it
     separates the project path from the route, and is not part of the path.
     """
-    match = _URL_PR_RE.search(url)
+    match = _pr_route(url)
     if not match:
         raise UsageError(f"no PR/MR number in URL: {url!r}")
     host, path = parse_remote_url(url[: match.start()])
@@ -993,7 +1036,7 @@ def looks_like_pr_url(spec: str) -> bool:
     `parse_pr_url` rather than in the CLI adapter that branches on it — which
     would otherwise have to reach for the private `_URL_PR_RE`.
     """
-    return _URL_PR_RE.search(spec) is not None
+    return _pr_route(spec) is not None
 
 
 def resolve_target_from_remote(platform: str = "", remote: str = "origin") -> Target:

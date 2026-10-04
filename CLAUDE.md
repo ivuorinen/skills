@@ -1,6 +1,13 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Shared cross-agent rules live in `AGENTS.md`; this file adds the Claude Code specifics.
+@AGENTS.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+The `@AGENTS.md` line above imports the rules shared with every agent. Where a
+`CLAUDE.md` exists, Claude Code reads `AGENTS.md` only through that import, so
+keep it (agent-rules-7ab9c0ff). This file adds the Claude Code specifics and
+does not restate what `AGENTS.md` says.
 
 ## What This Repo Is
 
@@ -15,34 +22,6 @@ The repo is installable as a Claude Code plugin via `/plugins`, and into
 Copilot, pi and other agents via `npx skills add ivuorinen/skills` (open Agent
 Skills format). Internal dev skills — scaffolding, validation, release — live
 under `.claude/skills/` and are not shipped to consumers.
-
-## Context Discipline
-
-`_conventions.md` carries only what binds every command. Four protocols load on a
-trigger instead — `_findings-store` before the first store operation,
-`_committing` before a commit, `_documentation` before a fix or a `docs` finding,
-`_audit-coverage` for `audit`. Each trigger is stated in `_conventions.md` and in
-SKILL.md's execution order, and both are binding: a protocol not loaded is a
-protocol not followed. Rules that hold in *every* run — the finding contract,
-redaction, the migration consent gate, the run protocol's shape — stay in the
-core file rather than moving with their protocol.
-
-`skills/nitpicker/scripts/context_pack.py` (MCP: `np_context_pack`) is the portable context
-firewall. It answers with coordinates — path, line range, enclosing symbol, why
-it matched — not with file bodies. Its modes are the acquisition ladder:
-`inventory` (A), `symbols` and `diff` (B), `evidence` (C). Level D is a direct
-read the caller performs after the pack narrows it. The invariant the callers
-are held to: **compression may decide what to inspect next; only original source
-may prove a finding.** `--self-test` runs the known-positive controls, because a
-retriever returning nothing is otherwise indistinguishable from a repository
-containing nothing.
-
-`skills/nitpicker/scripts/check-context-tokens.py` reports the size of the set loaded on every
-turn and of one invocation. It is CLI-only and **cannot fail a build**: its
-numbers are four-characters-per-token estimates, and gating on an estimate turns
-an approximation into a rule nobody can reproduce. Read the `--baseline` delta,
-not the absolute. `check-agent-instructions.py` remains the directive-count gate;
-the two measure different halves of the same budget.
 
 ## Development Commands
 
@@ -64,149 +43,36 @@ make agentlinter  # agentlinter scan (Codacy's other engine) against the committ
 
 The authoritative command listing (categorized, with aliases) is `## Commands` in `skills/nitpicker/SKILL.md`; `/nitpicker help` prints it. The 1.x standalone skill names (`security-auditor`, `test-auditor`, …) are aliases of the new short names (`security`, `tests`, …).
 
-## Agent Skills Spec Compliance
-
-The normative format is the open spec at <https://agentskills.io/specification>.
-`scripts/validate-skill.py` enforces it. Required: `name` (≤64 chars,
-lowercase/digits/hyphens, no leading, trailing or consecutive hyphen, matching
-its directory) and `description` (≤1024 chars). Optional: `license`,
-`compatibility` (≤500 chars), `metadata` (a string→string map) and
-`allowed-tools` (one space-separated string).
-
-A top-level key outside that set is an **error**. Client-specific properties go
-under `metadata`, which is what the spec designates it for. There is no
-allowlist and no exemption; internal dev skills are held to the same rule. Body
-size warns past 500 lines or ~5000 tokens, the progressive-disclosure
-instructions tier.
-
-`disable-model-invocation` therefore lives under `metadata` as `"true"`, quoted
-because metadata values are strings. Claude Code reads that key from the top
-level only, so under `metadata` it is inert and those skills become
-model-invocable. That trade was accepted deliberately, buying portability.
-
-Each skill's eval sets live in `<skill-dir>/evals/` — `evals.json` (output-quality cases with gradable assertions), `trigger-queries.json` (description trigger accuracy, fixed train/validation split) and `pressure-records.json` (which commands were pressure-tested) — gated by `make validate-evals`. See `.claude/rules/skill-official-best-practices.md`.
-
-`make spec-check` cross-checks every skill against the Agent Skills reference
-validator. It needs network access, so it sits outside `make check`;
-`validate-skill.py` enforces the same constraints offline. Every skill passed at
-the time of writing, internal dev skills included — re-run it rather than
-trusting that, since a spec release can change the verdict.
-
-Three install traps, each hit once already:
-
-- The PyPI package is `skills-ref`, but its console script is `agentskills`.
-  The spec page still documents a `skills-ref` command, which no longer exists
-  and exits 1 with no output.
-- The identically-named npm package is unrelated to Anthropic.
-- Failures print to stderr and successes to stdout, so merge stderr before
-  judging a run clean.
-
 ## Command File Format
 
 - Only the router `skills/nitpicker/SKILL.md` has YAML frontmatter (`name`, `description` with "Use when", ≤1024 chars, single-quoted when it contains ": ", plus `license` and `compatibility`).
 - Command files have no frontmatter. Required shape: h1 `# /nitpicker <command> — <Title>` (must match the filename), a `## When to use` section, no header-level jumps. Enforced by `scripts/validate-skill.py`.
-- Every command file in `commands/` whose name does not begin with `_` needs a
-  row in one of SKILL.md's command tables (`## Commands` or
-  `## Internal commands`), 1:1, enforced by `scripts/validate-skill.py`.
-  Shared files prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are the
-  exception, and carry no row.
-- No behavioral reliance on Claude-only features (`$ARGUMENTS`, `argument-hint`): arguments are parsed from the free text after the invocation so the skill works in Copilot and pi.
+- The 1:1 command-file ↔ table-row rule is in `AGENTS.md`. Shared files
+  prefixed `_` (`_conventions.md`, `_audit-coverage.md`) are the exception,
+  and carry no row.
+- The ban on Claude-only argument features (`$ARGUMENTS`, `$N`,
+  `argument-hint`) lives in `.claude/rules/skill-format.md`.
 
-## Findings Store
+## Where the detail lives
 
-One file per **open** finding under
-`docs/audit/findings/<auditor>/open/<id>.md`. Resolving one appends a record to
-the append-only `docs/audit/findings/resolved.jsonl` ledger and deletes the open
-file, so the tree does not accumulate hundreds of resolved files.
+Each topic below has a rule under `.claude/rules/` with `paths:` frontmatter, so
+it loads with the files it governs rather than on every turn:
 
-`INDEX.md` is generated: the index (rebuilt by findings.py and by the
-PostToolUse hook below) is tool output, not a file to hand-edit. An in-store
-`.gitattributes`, self-written by findings.py, marks the store
-`linguist-generated` so audit runs don't flood PR diffs.
-
-The store is managed through the `np_*` MCP tools where the session exposes
-them, else the shipped, stdlib-only CLI. `commands/_findings-store.md` maps
-every operation to its interface and names the ones no tool wraps. Read it
-there rather than keeping a second list here — that is how this paragraph came
-to name three of the five.
-
-```bash
-python3 skills/nitpicker/scripts/findings.py --help    # every subcommand
-```
-
-IDs are content-hashed rather than hand-assigned. `new --force` re-opens a
-resolved finding under the id it already had, dropping its ledger record; that
-is the one route by which an id in the ledger comes back.
-
-`migrate` converts 1.x `docs/audit/*-findings.md` documents. `migrate-resolved`
-folds a legacy `<auditor>/resolved/*.md` tree into the ledger.
-
-`export --format sarif|json|junit` (in `findings_export.py`) renders the store
-for another system. The Static Analysis Results Interchange Format (SARIF) —
-what a code-scanning UI ingests — omits resolved findings, since an alert on a
-fixed defect is indistinguishable from a live one. JUnit maps open to failure
-and resolved to pass, so a CI panel shows unfixed findings beside failing tests.
-
-`new --location path:START-END` records where the evidence was read — START (the
-first cited line) and END (the last) — plus a fingerprint of that source.
-`recheck` re-computes every one, so `reverify` can skip a finding whose cited
-bytes are unchanged rather than spend a model pass on it.
-
-The fingerprint covers the cited line range, so an unrelated edit *above* it
-reads as `changed`. That is the safe direction: it costs a re-check rather than
-a missed change. `location` is deliberately outside the content-hashed id.
-
-The PostToolUse hook `validate-audit-findings-hook.py` validates edited open
-findings and the ledger, and regenerates the index.
-
-## PR Fetchers
-
-`cr` reads a PR's review surface through `fetch-pr-comments.py` and
-`fetch-pr-status.py`, which cover GitHub, GitLab and Bitbucket Cloud behind one
-JSON format; the MCP (Model Context Protocol) tools `np_pr_comments` and
-`np_pr_status` wrap the same providers. `.claude/rules/pr-fetchers.md` loads
-with those modules and holds the port/adapter split and the credential-pinning
-invariants.
-
-## Editing a shipped tool mid-session
-
-The running MCP server holds the shipped modules it imported at startup, so an
-edit under `skills/*/scripts/` does not change what it executes.
-`.claude/rules/mcp-stale-server.md` loads with those files and names the
-interface to use for the rest of the session.
-
-## Script Execution
-
-Two classes (see `.claude/rules/use-uv-runner.md`):
-
-- **Shipped skill tools** (`skills/*/scripts/`): stdlib-only, plain `python3`. An entry point (top-level `__main__` guard) carries `#!/usr/bin/env python3` and the exec bit. A library module carries neither. `scripts/check-stdlib-only.py` (pre-commit + CI) fails on a third-party import or a mismatched shebang.
-- **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`): `uv run --quiet`, `#!/usr/bin/env -S uv run --quiet` + `# /// script` block.
-
-Every shipped tool answers `--help`/`-h` with its interface on stdout at exit 0.
-Structured data goes to stdout, diagnostics to stderr. Exit codes are distinct
-per failure class: 0 success, 1 runtime or I/O error, 2 usage error.
-
-Handle `--help` before any positional argument resolves as a path. Otherwise the
-flag is read as input and the agent gets a path error in place of usage text.
-The design rules live in `.claude/rules/use-uv-runner.md`; enforcement is author
-discipline plus the per-tool `--help` tests.
-
-## Suppression Markers
-
-`# nosec` marks a bandit finding and `# nosemgrep` an opengrep one; `make
-opengrep` reproduces Codacy's opengrep findings and fails on a `# nosemgrep`
-that suppresses nothing. Locally the target skips when opengrep is absent; the
-`Validate` workflow installs a pinned binary, so under CI it fails instead.
-`.claude/rules/suppression-markers.md` loads with `scripts/` and `skills/` and
-holds the placement rule and the gate's limits.
-
-## The Agentlinter Baseline
-
-`make agentlinter` reproduces Codacy's Agentlinter engine over `CLAUDE.md`,
-`AGENTS.md`, `.claude/rules/` and the command files, and fails on a diagnostic
-missing from `.agentlinter-baseline.json` — fix it, or accept it with `make
-agentlinter-update`. `.claude/rules/agentlinter-baseline.md` covers the
-baseline and its justifications.
+- The Agent Skills spec, `metadata`-only client keys, `make spec-check` and its
+  install traps — `agent-skills-spec.md`.
+- The findings store's generated index, content-hashed ids, `export`, and
+  `--location` fingerprints — `audit-store.md`; `AGENTS.md` holds the store
+  rules every agent keeps.
+- On-trigger protocol loading, the `context_pack.py` firewall and
+  `check-context-tokens.py` — `context-discipline.md`.
+- The shipped/internal script classes, the entry-point/library shebang split, `--help`,
+  stdout/stderr and exit codes — `use-uv-runner.md`.
+- The MCP (Model Context Protocol) server running stale code after an edit under `skills/*/scripts/` —
+  `mcp-stale-server.md`.
+- The PR fetchers behind `cr` — `pr-fetchers.md`.
+- `# nosec` / `# nosemgrep` and `make opengrep` — `suppression-markers.md`.
+- `make agentlinter` and `.agentlinter-baseline.json` — `agentlinter-baseline.md`.
+- The version manifests, `uv.lock` and both bump paths — `version-bumps.md`.
 
 ## Adding a New Command
 
@@ -226,58 +92,46 @@ part, and some not at all. Each rule states its own enforcement. Read that
 statement in the rule itself rather than assuming a rule here is gated end to
 end.
 
-- `skill-format.md`
-- `skill-style.md`
+A rule's own frontmatter decides when it loads, and it is the authority: one
+with `paths:` loads with the files it governs, one without loads every turn.
+`grep -L '^paths:' .claude/rules/*.md` lists the second kind; file a new rule
+under the group its frontmatter puts it in.
+
+Loaded every turn:
+
 - `counts-in-prose.md` (author discipline for counts; the neighbouring
   reference drift — stale paths, dead anchors, stale dates, placeholders — is
   gated by `check-rules-anatomy.py`)
 - `instruction-budget.md` (gated by `check-agent-instructions.py`: every file a
   session loads each turn draws on one shared budget; the rule file names the
   command that reports the current total)
-- `skill-lifecycle.md` (agent discipline; no gate)
-- `skill-official-best-practices.md`
-- `use-uv-runner.md`
-- `github-actions-security.md`
 - `use-context-mode.md`
 - `commit-gate-integrity.md`
 - `commit-types.md` (author discipline; the CI `commit-lint` job gates only the
   CI-only-diff-with-a-breaking-marker case)
-- `write-surgical-code.md` (agent discipline; no gate)
 - `snapshot-before-mutating.md` (partly gated: the hook covers direct Bash and
   context-mode shell calls only, not a `git checkout` inside a script)
-- `vendored-skills.md`
 - `graphify.md` (the knowledge-graph rules `graphify claude install` wrote)
-- Path-scoped, loaded with the files they govern: `mcp-stale-server.md`,
-  `suppression-markers.md`, `agentlinter-baseline.md`, `version-bumps.md`,
-  `enforcement-surface-owner.md`, `hooks-fail-closed.md`, `pr-fetchers.md`,
-  `hook-inventory.md`
 
-## Plugin Metadata
+Path-scoped, loaded with the files they govern:
 
-| File                              | Purpose                                  |
-| --------------------------------- | ---------------------------------------- |
-| `.claude-plugin/plugin.json`      | Plugin name, version, author, keywords   |
-| `.claude-plugin/marketplace.json` | Marketplace listing (used by `/plugins`) |
+- `skill-format.md`, `skill-style.md`, `skill-official-best-practices.md`,
+  `use-uv-runner.md`, `github-actions-security.md`, `vendored-skills.md`
+- `skill-lifecycle.md` and `write-surgical-code.md` (agent discipline; no gate)
+- `mcp-stale-server.md`, `suppression-markers.md`, `agentlinter-baseline.md`,
+  `version-bumps.md`, `enforcement-surface-owner.md`, `hooks-fail-closed.md`,
+  `pr-fetchers.md`, `hook-inventory.md`, `agent-skills-spec.md`,
+  `audit-store.md`, `context-discipline.md`
 
-The version is recorded in `package.json`, `.claude-plugin/plugin.json`,
-`.claude-plugin/marketplace.json`, `.release-please-manifest.json` and
-`pyproject.toml`, and `scripts/check-version-sync.py` fails the build when
-they disagree; `uv.lock` holds one more copy.
-`.claude/rules/version-bumps.md` loads with those files and covers both bump
-paths and resyncing the lockfile.
+## Plugin Metadata and Releases
 
-## Versioning
-
-[Semantic Versioning](https://semver.org/) with [release-please](https://github.com/googleapis/release-please):
-
-| Prefix                                | Effect                                      |
-| ------------------------------------- | ------------------------------------------- |
-| `feat:`                               | Minor bump (new command or feature)         |
-| `fix:`                                | Patch bump (command improvement or bug fix) |
-| `feat!:` / `BREAKING CHANGE:` footer  | Major bump                                  |
-| `chore:`, `docs:`, `refactor:`, `ci:` | No bump                                     |
-
-Merge to `main` → release-please opens a Release PR → merging it creates the GitHub Release and tag.
+`.claude-plugin/plugin.json` holds the plugin's name, version, author and
+keywords; `.claude-plugin/marketplace.json` is the marketplace listing `/plugins`
+reads. Versioning is [Semantic Versioning](https://semver.org/) driven by
+[release-please](https://github.com/googleapis/release-please) from the commit
+type (`.claude/rules/commit-types.md`). The release workflow: merge to `main` →
+release-please opens a Release PR → merging it creates the GitHub Release and
+tag.
 
 ## Configuration
 
@@ -289,7 +143,7 @@ Merge to `main` → release-please opens a Release PR → merging it creates the
 - `validate-json-hook.py` — validates JSON syntax on any edited `.json` file
 - `check-version-sync-hook.py` — warns when a version file edit desyncs the version manifests
 - `ruff-hook.py` — auto-fixes and lints any edited `.py` file
-- `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates `INDEX.md`
+- `validate-audit-findings-hook.py` — validates files under `docs/audit/findings/` and regenerates the findings index
 - `validate-rules-hook.py` — validates any edited `.claude/rules/*.md` file (`validate-rules.py` + `check-rules-anatomy.py`)
 - `validate-evals-hook.py` — validates the eval set of any edited `skills/*/evals/*.json`
 - `count-in-prose-hook.py` — reports a spelled-out count of a growing set in written Markdown or docstrings; feedback via exit 2, not a gate (`.claude/rules/counts-in-prose.md`)

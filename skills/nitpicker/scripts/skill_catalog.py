@@ -13,6 +13,7 @@ import re
 import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import TypedDict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import md_fences
@@ -74,13 +75,28 @@ def _unknown(subject: str, name: str, valid: Iterable[str]) -> KeyError:
     return KeyError(f"unknown {subject} {name!r}; known {subject}s: {', '.join(sorted(valid))}")
 
 
-def list_skills(root: Path | None = None) -> list[dict]:
+class CommandRow(TypedDict):
+    """One row of SKILL.md's command tables, as `list_commands` reports it (types-93a4d6bd)."""
+
+    name: str
+    category: str
+    aliases: list[str]
+    purpose: str
+
+
+# A skill entry's keys are strings, plus a `commands` name list on nitpicker's
+# alone. A plain map rather than a TypedDict with an optional key, because the
+# optional key would turn every caller's `entry["commands"]` into a type error.
+SkillEntry = dict[str, str | list[str]]
+
+
+def list_skills(root: Path | None = None) -> list[SkillEntry]:
     root = root or plugin_root()
-    out: list[dict] = []
+    out: list[SkillEntry] = []
     for path in _skill_files(root):
         fm, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
         name = fm.get("name", path.parent.name)
-        entry: dict = {
+        entry: SkillEntry = {
             "name": name,
             "description": fm.get("description", ""),
             "path": path.relative_to(root).as_posix(),
@@ -104,7 +120,7 @@ def read_skill(name: str, root: Path | None = None) -> str:
     either way.
     """
     root = root or plugin_root()
-    known = []
+    known: list[str] = []
     for path in _skill_files(root):
         fm, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
         found = fm.get("name", path.parent.name)
@@ -139,7 +155,7 @@ def _outside_fences(body: str) -> Iterator[str]:
         yield line
 
 
-def _filter_category(rows: list[dict], category: str) -> list[dict]:
+def _filter_category(rows: list[CommandRow], category: str) -> list[CommandRow]:
     """The rows in one category, or a ValueError naming every known category.
 
     Split out of `list_commands` so that function stays under the cyclomatic
@@ -158,7 +174,7 @@ def _filter_category(rows: list[dict], category: str) -> list[dict]:
     raise ValueError(f"unknown category {category!r}; known categories: {', '.join(known)}")
 
 
-def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
+def list_commands(root: Path | None = None, category: str = "") -> list[CommandRow]:
     """Parse the nitpicker SKILL.md Commands tables → name, category, aliases, purpose.
 
     `category` is the heading a row sits under: the `###` group inside
@@ -175,7 +191,7 @@ def list_commands(root: Path | None = None, category: str = "") -> list[dict]:
     """
     root = root or plugin_root()
     body = (_nitpicker_dir(root) / "SKILL.md").read_text(encoding="utf-8")
-    out: list[dict] = []
+    out: list[CommandRow] = []
     section = ""  # nearest `##`; the category for a table with no `###` group
     group = ""  # nearest `###` under the current `##`
     for line in _outside_fences(body):

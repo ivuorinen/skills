@@ -126,7 +126,26 @@ _SECRET_RE = re.compile(
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
     r"|npm_[A-Za-z0-9]{36}"  # npm automation token
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
+    # The header segment is bounded: its class takes `-`, so unbounded it ran to
+    # the end of a dotless `eyJ…-eyJ…-` run from every `eyJ` in it, quadratic in
+    # the body. A real header is a short JSON object; 4096 leaves room for x5c.
+    r"|eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    # Vendors gitleaks' default rules report and `security` then quotes as
+    # evidence; each came back from redact() whole (security-1df0778e). Every
+    # alternative opens on a fixed literal and has one bounded class, so the
+    # scan stays linear. A webhook is masked from the host on, since the path
+    # after it is the credential; the scheme before it is not secret.
+    r"|xapp-\d-[A-Za-z0-9-]{10,}"  # Slack app-level token
+    r"|hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9+/_-]{20,}"
+    r"|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"  # SendGrid
+    r"|pypi-AgE[A-Za-z0-9_-]{20,}"  # PyPI upload token (macaroon)
+    r"|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}"  # Shopify
+    r"|do[por]_v1_[a-f0-9]{64}"  # DigitalOcean PAT, OAuth and refresh tokens
+    r"|dapi[a-f0-9]{32}(?:-\d)?"  # Databricks
+    r"|lin_api_[A-Za-z0-9]{40}"  # Linear
+    # Azure connection strings: the storage account key and the Service Bus /
+    # Event Hubs shared access key are the same base64 field under two names.
+    r"|(?:Account|SharedAccess)Key=[A-Za-z0-9+/]{20,}={0,2})"
 )
 
 # PEM blocks need their own pattern: `_SECRET_RE` opens with `\b`, which cannot
@@ -142,6 +161,9 @@ _SECRET_RE = re.compile(
 # The regex-dos rule flags the tempered body's nested quantifier by shape; the
 # lookahead is what bounds each lazy scan to the next header, and
 # test_repeated_unclosed_headers_redact_in_linear_time pins it.
+# A line break inside key text: LF, CRLF, or the two characters `\n` a JSON
+# string escapes it to. The three alternatives share no first character.
+_PEM_SEP = r"(?:\r?\n|\\n)"
 # nosemgrep: python.lang.security.audit.regex-dos.regex_dos
 _PEM_RE = re.compile(
     r"-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN)[\s\S])*?"
@@ -161,8 +183,15 @@ _PEM_RE = re.compile(
     # An armoured PGP body opens with `Key: value` header lines and a blank line
     # before the base64, so a clipped PGP key has both consumed first — without
     # them the blank line ends the run and the whole key body survives.
+    #
+    # The line separator is `_PEM_SEP`, not `\n`: CRLF evidence failed the
+    # lookahead on the first body line (audit-48d24c30), and a key inside a JSON
+    # string — every GCP service-account file — is split by a literal backslash-n
+    # (security-6d599c06). Both left the whole body under the marker. A `"` also
+    # ends a body line, since that is where the JSON string closes.
     r"|-----BEGIN[A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
-    r"(?:\n[A-Za-z-]+: [^\n]*)*(?:\n(?=\n))?(?:\n[A-Za-z0-9+/=]+(?=\n|$))*"
+    rf"(?:{_PEM_SEP}[A-Za-z-]+: (?:(?!\\n)[^\r\n])*)*(?:{_PEM_SEP}(?={_PEM_SEP}))?"
+    rf"(?:{_PEM_SEP}[A-Za-z0-9+/=]+(?={_PEM_SEP}|$|\"))*"
 )
 
 # A bare AWS secret access key is 40 base64 characters with no prefix. Matching
@@ -333,9 +362,26 @@ def _check_not_blank(**fields: str) -> None:
             raise FindingError(f"{name} must not be blank")
 
 
+def _is_date(value: str) -> bool:
+    """Whether `value` is a real `YYYY-MM-DD` calendar date.
+
+    audit-e351bd48: the shape regex alone accepted `2026-13-45`, which then sat
+    in the append-only ledger with `validate` calling the store consistent.
+    `fromisoformat` rejects the impossible month or day; the regex stays because
+    `fromisoformat` also accepts shapes the store does not write (`20260101`).
+    """
+    if not _DATE.match(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_date(date: str) -> None:
     """Refuse a `--date` that is not `YYYY-MM-DD`; shared by the API and the CLI."""
-    if not _DATE.match(date):
+    if not _is_date(date):
         raise FindingError(f"invalid --date {date!r}: want YYYY-MM-DD")
 
 
@@ -1323,9 +1369,16 @@ def location_fingerprint(repo_root: Path, spec: str) -> str | None:
     if not target.is_relative_to(repo_root.resolve()) or not target.is_file():
         return None
     try:
-        lines = target.read_text(encoding="utf-8").splitlines()
+        text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
+    # `\n` only, after read_text's universal-newline translation: splitlines()
+    # also breaks on form feeds, \x1c-\x1e and U+0085/U+2028, so `path:3` hashed
+    # a different line than the one grep and the finding's quote call line 3
+    # (audit-3837502b). The trailing empty element is what a final newline adds.
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
     start = int(match.group("start"))
     end = int(match.group("end") or start)
     if start < 1 or end < start or start > len(lines):
@@ -1385,7 +1438,12 @@ def _open_frontmatter(
     Split from `new_finding` so that function stays under the repo's cyclomatic
     ceiling; building the block and serializing it under the store lock are
     independent concerns.
+
+    A supplied `found` is checked here, before anything is written: `validate`
+    rejects a malformed date, so writing one left a store that failed its own check.
     """
+    if found:
+        _check_date(found)
     fm = {
         "id": fid,
         "auditor": auditor,
@@ -1645,7 +1703,7 @@ def validate_file(path: Path, text: str | None = None) -> list[str]:  # noqa: C9
             err(f"missing {key}")
     if status and status not in STATUSES:
         err(f"invalid status {status!r}")
-    if fm.get("found") and not _DATE.match(fm["found"]):
+    if fm.get("found") and not _is_date(fm["found"]):
         err(f"invalid found date {fm['found']!r}")
 
     severity = fm.get("severity", "")
@@ -1682,7 +1740,7 @@ def validate_file(path: Path, text: str | None = None) -> list[str]:  # noqa: C9
         resolved = fm.get("resolved", "")
         if not resolved:
             err("resolved finding missing resolved date")
-        elif not _DATE.match(resolved):
+        elif not _is_date(resolved):
             err(f"invalid resolved date {resolved!r}")
 
     if not title:
@@ -1714,9 +1772,9 @@ def validate_ledger_record(  # noqa: C901
     for key in ("auditor", "found", "resolved", "title"):
         if not rec.get(key):
             err(f"missing {key}")
-    if rec.get("found") and not _DATE.match(str(rec["found"])):
+    if rec.get("found") and not _is_date(str(rec["found"])):
         err(f"invalid found date {rec['found']!r}")
-    if rec.get("resolved") and not _DATE.match(str(rec["resolved"])):
+    if rec.get("resolved") and not _is_date(str(rec["resolved"])):
         err(f"invalid resolved date {rec['resolved']!r}")
     severity = rec.get("severity", "")
     category = rec.get("category", "")
@@ -2074,11 +2132,17 @@ def _build_v1(
 
     # migrations-0078af5d: v1 `Fixed:` is prose as often as a date ("in commit
     # abc1234"), and storing it verbatim wrote a resolved date `validate` rejects.
-    # Take the first ISO date in it, else fall back as a missing one does.
-    fixed = re.search(r"\d{4}-\d{2}-\d{2}", fields.get("Fixed", ""))
-    resolved = (
-        (fixed.group() if fixed else "") or entry.get("pass_date", "") or generated or "1970-01-01"
+    # Take the first ISO date in it, else fall back as a missing one does. Only a
+    # real calendar date counts (audit-e351bd48): `2026-13-45` is skipped, not kept.
+    fixed = next(
+        (
+            m.group()
+            for m in re.finditer(r"\d{4}-\d{2}-\d{2}", fields.get("Fixed", ""))
+            if _is_date(m.group())
+        ),
+        "",
     )
+    resolved = fixed or entry.get("pass_date", "") or generated or "1970-01-01"
     notes = fields.get("Notes", "").strip()
     body = f"## Resolution\n{notes}" if notes else "## Resolution\n(none recorded)"
     pass_bits = ", ".join(
@@ -2581,10 +2645,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # exited 1 — telling the caller the store or environment failed rather than
     # that a corrected retry would succeed. The functions raise the same errors
     # for API callers; the CLI answers them here with 2, before any store access.
+    # A multi-line title or area is the same class (audit-8effe9aa): the refusal
+    # lived only in render_finding, whose FindingError the `new` branch maps to 1.
     try:
         if args.cmd == "new":
             _check_auditor(args.auditor)
             _check_not_blank(title=args.title, area=args.area)
+            for name, value in (("title", args.title), ("area", args.area)):
+                if _multiline(value):
+                    raise FindingError(f"{name} must be single-line")
         if args.cmd == "resolve" and args.date is not None:
             _check_date(args.date)
     except FindingError as e:

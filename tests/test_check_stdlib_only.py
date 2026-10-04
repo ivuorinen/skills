@@ -1,16 +1,14 @@
 """Tests for scripts/check-stdlib-only.py."""
 
 import ast
-import importlib.util
 import runpy
 from pathlib import Path
 
 import pytest
+from _loader import load_path
 
 _TOOL = Path(__file__).parent.parent / "scripts" / "check-stdlib-only.py"
-_spec = importlib.util.spec_from_file_location("check_stdlib_only", _TOOL)
-_mod = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(_mod)  # pyright: ignore[reportOptionalMemberAccess]
+_mod = load_path("check_stdlib_only", _TOOL)
 
 find_violations = _mod.find_violations
 find_runner_violations = _mod.find_runner_violations
@@ -61,6 +59,64 @@ def test_uncheckable_ignores_non_builtins_receiver() -> None:
     # builtins — not a hidden import, so the gate must not falsely flag them.
     assert _mod._uncheckable_calls(ast.parse("worker.exec('x')\n")) == []
     assert _mod._uncheckable_calls(ast.parse("getattr(worker, 'eval')('1')\n")) == []
+
+
+@pytest.mark.parametrize(
+    ("src", "expected"),
+    [
+        ("run = exec\nrun('import requests')\n", ["exec"]),
+        ("from typing import Any\nrun: Any = eval\nrun('1')\n", ["eval"]),
+        ("from builtins import exec as run\nrun('import requests')\n", ["exec"]),
+        ("from builtins import eval\neval('1')\n", ["eval"]),
+        ("import builtins as b\nb.exec('import requests')\n", ["exec"]),
+        ("import builtins as b\ngetattr(b, 'eval')('1')\n", ["eval"]),
+        ("import builtins\nb = builtins\nb.exec('x')\n", ["exec"]),
+        ("import builtins as b\nrun = b.exec\nrun('x')\n", ["exec"]),
+        ("import builtins\nrun = getattr(builtins, 'exec')\nrun('x')\n", ["exec"]),
+        ("run = exec\nagain = run\nagain('x')\n", ["exec"]),
+    ],
+)
+def test_uncheckable_flags_exec_reached_through_an_alias(src: str, expected: list[str]) -> None:
+    """audit-81145476: only the direct spellings were recognised, so exec bound
+    to another name, imported under one, or reached through `import builtins as
+    b` passed the gate while `exec(...)` failed it."""
+    assert _mod._uncheckable_calls(ast.parse(src)) == expected
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import builtins as b\nb.print('x')\n",
+        "run = worker.exec\nrun('x')\n",
+        "import os as b\nb.exec('x')\n",
+        "from builtins import print as exec_\nexec_('x')\n",
+    ],
+)
+def test_uncheckable_alias_tracking_stays_on_the_builtins(src: str) -> None:
+    """The negative controls: an alias of something that is not the builtin
+    exec/eval, or a namespace that is not `builtins`, is not flagged."""
+    assert _mod._uncheckable_calls(ast.parse(src)) == []
+
+
+def test_annotated_alias_of_import_module_flagged(tmp_path: Path) -> None:
+    """audit-81145476: `_import_aliases` read `ast.Assign` only, so the same
+    alias written with an annotation hid the import."""
+    _tool(
+        tmp_path,
+        "bad.py",
+        "import importlib\nfrom typing import Any\n"
+        "imp: Any = importlib.import_module\nimp('requests')\n",
+    )
+    assert any("'requests'" in p for p in find_violations(tmp_path))
+
+
+def test_chained_alias_of_import_module_flagged(tmp_path: Path) -> None:
+    _tool(
+        tmp_path,
+        "bad.py",
+        "import importlib\nimp = importlib.import_module\nagain = imp\nagain('requests')\n",
+    )
+    assert any("'requests'" in p for p in find_violations(tmp_path))
 
 
 def test_first_party_sibling_allowed(tmp_path: Path) -> None:

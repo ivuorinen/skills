@@ -4677,6 +4677,11 @@ def test_git_guard_allows_config_reads_and_unrelated_settings(command, monkeypat
         "XDG_CONFIG_HOME=/tmp/x git commit -m x",
         "export HOME=/tmp/x && git commit -m x",
         "env HOME=/tmp/x git commit -m x",
+        # Every commit-making subcommand runs hooks, not `commit` alone.
+        "HOME=/tmp/x git merge --no-ff feature",
+        "XDG_CONFIG_HOME=/tmp/x git am p.patch",
+        "SKIP=ruff git merge feature",
+        "PRE_COMMIT_ALLOW_NO_CONFIG=1 git cherry-pick abc123",
     ],
 )
 def test_git_guard_denies_hook_disabling_channels_by_mechanism(command, monkeypatch, capsys):
@@ -6854,9 +6859,9 @@ def test_git_aliases_is_read_once_per_checkout(monkeypatch, tmp_path):
     calls: list[str] = []
 
     def _fake(argv, cwd, **_k):
-        """Answer `git config --get-regexp` with one alias, counting the calls."""
+        """Answer `git config -z --get-regexp` with one alias, counting the calls."""
         calls.append(cwd)
-        return _Result(stdout="alias.st status\n")
+        return _Result(stdout="alias.st\nstatus\0")
 
     monkeypatch.setattr(lib.subprocess, "run", _fake)
     assert lib.git_aliases(tmp_path) == {"st": "status"}
@@ -6864,6 +6869,19 @@ def test_git_aliases_is_read_once_per_checkout(monkeypatch, tmp_path):
     assert calls == [str(tmp_path)]
     monkeypatch.setattr(lib.subprocess, "run", lambda *_a, **_k: _Result(returncode=1))
     assert lib.git_aliases(tmp_path / "other") == {}
+
+
+def test_a_multiline_alias_body_is_read_whole(monkeypatch, tmp_path):
+    """The plain `--get-regexp` form prints a body's newlines raw, so a per-line
+    split kept `!true` and read the second command as an alias named `echo` —
+    git runs both lines, the guards judged one. Read through real git."""
+    cfg = tmp_path / "global.cfg"
+    cfg.write_text('[alias]\n\tst = status\n\tx = "!true\\necho second"\n', encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    work = tmp_path / "work"
+    work.mkdir()
+    assert _hooklib()._read_aliases(str(work)) == {"st": "status", "x": "!true\necho second"}
 
 
 # ── agent-loopholes-df530242: eval, source, coproc and here-strings are unwrapped ──

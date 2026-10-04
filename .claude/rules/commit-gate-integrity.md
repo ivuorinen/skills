@@ -23,8 +23,10 @@ call — spelled in the command or already in git config, and including a
 `!`-prefixed body, which is a shell command rather than a git subcommand. When
 git config cannot be read, a subcommand that is not a git command is denied,
 since it may be an alias nobody could judge (agent-loopholes-92626f23). It
-also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit` — in front of
-it or exported earlier in the same command — and `pre-commit uninstall`. A
+also denies `SKIP=` or a `PRE_COMMIT_*` variable on `git commit` and the other
+commit-making subcommands (`am`, `merge`, `pull`, `rebase`, `cherry-pick`) — in
+front of it or exported earlier in the same command — and `pre-commit
+uninstall`. A
 command nested in `$(...)`, backticks or a subshell is judged as its own stage,
 and so is a git call behind a wrapper (`env`, `sudo`, `xargs`, …), behind
 `coproc`, inside a command string (`bash -c '…'`, `fish --command`, `eval`,

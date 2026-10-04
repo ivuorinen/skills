@@ -21,4 +21,4 @@ Command files (`skills/<skill>/commands/<command>.md`) have **no** YAML frontmat
 Required shape: exactly one h1 reading `# /<skill> <command> — <Title>` where `<command>` matches the filename stem; a `## When to use` section; no header-level jumps.
 Every command file must have a row in one of the command tables of its skill's SKILL.md (`## Commands` or `## Internal commands`) and vice versa (1:1, enforced by `scripts/validate-skill.py`; files starting with `_` are shared references, exempt).
 Never duplicate `commands/_conventions.md` content (severity table, findings protocol, generic rules) into a command file.
-Never rely on Claude-only argument substitution (`$ARGUMENTS`, `$N`) in any skill or command body — parse the free text following the invocation, so the skill behaves identically in Copilot and pi.
+Never rely on Claude-only argument features (`$ARGUMENTS`, `$N` substitution, `argument-hint` frontmatter) in any skill or command body — parse the free text following the invocation, so the skill behaves identically in Copilot and pi.

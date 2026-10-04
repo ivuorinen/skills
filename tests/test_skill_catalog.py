@@ -1,14 +1,13 @@
 """Tests for skills/nitpicker/scripts/skill_catalog.py."""
 
-import importlib.util
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location(
+from _loader import load_path
+
+sc = load_path(
     "skill_catalog",
     Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "skill_catalog.py",
 )
-sc = importlib.util.module_from_spec(_spec)  # pyright: ignore[reportArgumentType]
-_spec.loader.exec_module(sc)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def test_plugin_root_is_repo_root():
@@ -264,14 +263,8 @@ def _skill_body_outside_fences() -> str:
     the two cannot disagree about what counts as a live mention. A name inside a
     fence is an example, not an instruction to load the file.
     """
-    import importlib.util
-
     root = sc.plugin_root()
-    spec = importlib.util.spec_from_file_location(
-        "validate_skill", root / "scripts" / "validate-skill.py"
-    )
-    vs = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
-    spec.loader.exec_module(vs)  # pyright: ignore[reportOptionalMemberAccess]
+    vs = load_path("validate_skill", root / "scripts" / "validate-skill.py")
     body = (root / "skills/nitpicker/SKILL.md").read_text(encoding="utf-8")
     return "\n".join(vs.strip_fences(body.splitlines()))
 
