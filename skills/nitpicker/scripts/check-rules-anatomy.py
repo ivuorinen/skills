@@ -98,6 +98,8 @@ _SETEXT_UNDERLINE_RE = re.compile(r"^(?:=+|-+)\s*$")
 # A line that cannot be a paragraph a setext underline titles: a list item, a
 # blockquote or a table row. Under one of these `---` is a thematic break.
 _NOT_PARAGRAPH_RE = re.compile(r"^(?:[-*+]\s|\d+[.)]\s|>|\|)")
+# The list-item half of the above: where an example quotation cannot carry over.
+_LIST_ITEM_RE = re.compile(r"^(?:[-*+]\s|\d+[.)]\s)")
 
 # A code span or a double quote mark, straight or curly, for `_unquoted`.
 _QUOTE_TOKEN_RE = re.compile(r"`[^`]*`|[\"“”]")
@@ -462,6 +464,10 @@ def _check_file(path: Path, project_root: Path, contain: Path | None = None) -> 
             continue
         if _NOT_PARAGRAPH_RE.match(stripped):
             para = None
+            # A list item starts a new block, so a quote left open by the item
+            # above cannot silence the paths in this one.
+            if _LIST_ITEM_RE.match(stripped):
+                in_quote = False
         elif para is not None:
             para.append(stripped)
 

@@ -161,9 +161,12 @@ _UNSAFE_SHELL_RE = re.compile(
     # only when it has no program of its own: `| python3` and `| perl -` run
     # the download, while `| python3 -m json.tool` and `| perl -ne '…'` read it
     # as data. So an interpreter counts only with bare flags up to the end of
-    # the command (audit-9ab4d785).
+    # the command (audit-9ab4d785). An output redirection or a comment ends the
+    # command's program arguments too: `| python3 - > install.log` still runs
+    # the download. An input redirection does not count — `| python3 < f`
+    # reads its program from `f`, never from the pipe.
     r"(?:(?:ba|z|k|da)?sh\b"
-    r"|(?:python[\d.]*|perl|ruby|node|php)(?:\s+-[A-Za-z]*){0,4}\s*(?:$|[;&|)]))"
+    r"|(?:python[\d.]*|perl|ruby|node|php)(?:\s+-[A-Za-z]*){0,4}\s*(?:$|[;&|)]|\d*>|(?<=\s)#))"
     # Process and command substitution feed a download to a shell with no pipe
     # at all: `bash <(curl …)`, `source <(curl …)`, `sh -c "$(curl …)"`.
     # `cat <(curl …)` and `echo "$(curl …)"` do not execute, so the consumer

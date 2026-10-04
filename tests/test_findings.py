@@ -1220,6 +1220,16 @@ def test_new_force_refuses_reopen_when_ledger_unparseable_and_writes_no_open_fil
     assert not (tmp_path / "security" / "open" / f"{fid}.md").exists()
 
 
+@pytest.mark.parametrize("found", ["2026-02-30", "yesterday"])
+def test_new_refuses_a_malformed_found_date_and_writes_nothing(tmp_path, found):
+    # `validate` rejects the file a malformed `found` produces, so it is refused first.
+    with pytest.raises(findings.FindingError, match="invalid --date"):
+        findings.new_finding(
+            tmp_path, "security", "high", "security", "src/a.py", "T", BODY, found=found
+        )
+    assert not list(tmp_path.rglob("*.md"))
+
+
 def test_validate_flags_duplicate_ledger_id(tmp_path):
     path = _new(tmp_path)
     findings.resolve_finding(tmp_path, path.stem, "fixed", "done")
@@ -3753,6 +3763,17 @@ def test_redact_is_linear_on_a_long_run_without_an_at_sign():
     start = time.monotonic()
     assert findings.redact("a." * 100000) == "a." * 100000
     assert time.monotonic() - start < 1.0
+
+
+def test_redact_is_linear_on_dotless_jwt_fragments():
+    """An unbounded JWT header ran to the end of `eyJ…-eyJ…-` from every `eyJ`;
+    256 KB took over 6 s. A real token is still masked."""
+    body = "eyJaaaaaaaaaaaa-" * 16000
+    start = time.monotonic()
+    assert findings.redact(body) == body
+    assert time.monotonic() - start < 1.0
+    tok = ".".join(("eyJ" + "h" * 17, "eyJ" + "z" * 40, "d" * 43))
+    assert tok not in findings.redact(f"x {tok} y")
 
 
 @pytest.mark.parametrize(

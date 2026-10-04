@@ -78,6 +78,19 @@ _agent_instructions = _load_sibling("check-agent-instructions")
 # followed an `@path.md` import, so this report measured a fraction of what the
 # budget gate charges (audit-13eb0777).
 CLAUDE_HARNESSES = ("Claude Code", "cross-agent")
+# Where one of these exists Claude Code reads it and not AGENTS.md, which then
+# reaches a turn only through an `@AGENTS.md` import the walk already follows
+# (instruction-budget.md). Rooting AGENTS.md anyway overstated the floor.
+_CLAUDE_ROOT_FILES = ("CLAUDE.md", ".claude/CLAUDE.md")
+
+
+def _claude_harnesses(root: Path) -> tuple[str, ...]:
+    """`CLAUDE_HARNESSES`, less the cross-agent file once a CLAUDE.md is present."""
+    if any((root / name).is_file() for name in _CLAUDE_ROOT_FILES):
+        return ("Claude Code",)
+    return CLAUDE_HARNESSES
+
+
 # Another harness's per-turn files, reported as their own row. Claude Code never
 # reads `.github/copilot-instructions.md`, so counting it in the set above
 # inflated Claude's per-turn floor (audit-b761d1f4).
@@ -137,13 +150,13 @@ def always_loaded(root: Path) -> list[dict]:
     by `path_scoped` instead. An imported file loads with its importer, so it is
     here, carrying `imported_by` (audit-13eb0777).
     """
-    return _loaded(root, CLAUDE_HARNESSES)
+    return _loaded(root, _claude_harnesses(root))
 
 
 def path_scoped(root: Path) -> list[dict]:
     """Claude Code's files that load only when a file matching their `paths:` is read."""
     root = root.resolve()
-    files = _agent_instructions.path_scoped_files(root, CLAUDE_HARNESSES)
+    files = _agent_instructions.path_scoped_files(root, _claude_harnesses(root))
     return [_measure(p, root) for p in files]
 
 

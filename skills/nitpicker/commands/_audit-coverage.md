@@ -172,8 +172,9 @@ enumerates only Claude Code paths.
 - **AUD:A0 Agent loopholes** (`agent-loopholes`) — bypassable or unenforced
   constraints in rules, hooks, settings, permissions, skills. N/A when the
   project has no Claude Code enforcement surface (`.claude/rules/`,
-  `.claude/settings*.json`, their hooks); another harness's rules are covered
-  by A2 and its hooks by A1, never closed clean under A0.
+  `.claude/settings*.json`, their hooks, `.claude/skills/`); another
+  harness's rules are covered by A2 and its hooks by A1, never closed clean
+  under A0.
 - **AUD:A1 Agent hooks** (`agent-hooks`) — hook coverage against the project's
   evidence base; recurring failures no hook guards. N/A when `agent-hooks`'
   harness detection finds none.

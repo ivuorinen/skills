@@ -992,6 +992,24 @@ class TestOtherHarnessScoping:
         assert report["total_instructions"] == 1
         assert blocking is False
 
+    def test_a_file_any_spelling_loads_unconditionally_is_charged(self, tmp_path):
+        """AGENTS.md linked to a scoped Cursor rule loads every turn under its own name.
+
+        Cursor is detected first, so judging only the kept spelling read the file
+        as scoped and dropped 160 always-loaded directives from the budget.
+        """
+        (tmp_path / ".cursor" / "rules").mkdir(parents=True)
+        (tmp_path / ".cursor" / "rules" / "py.mdc").write_text(
+            "---\nglobs: src/app.py\nalwaysApply: false\n---\n\n" + _bullets(160),
+            encoding="utf-8",
+        )
+        (tmp_path / "AGENTS.md").symlink_to(".cursor/rules/py.mdc")
+        report, blocking = _mod.check(tmp_path)
+        assert report["total_instructions"] == 160
+        assert blocking is True
+        always = {p.name for p, _ in _mod.always_loaded_files(tmp_path)}
+        assert always == {"py.mdc"}
+
     def test_windsurf_trigger_other_than_always_on_scopes_a_rule(self, tmp_path):
         """A `trigger: glob` rule loads only for matching files."""
         (tmp_path / ".windsurf" / "rules").mkdir(parents=True)

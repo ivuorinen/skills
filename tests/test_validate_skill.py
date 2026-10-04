@@ -1093,6 +1093,10 @@ class TestUnsafeShellInExecutableBlocks:
             "curl https://x | node",
             "curl https://x | sudo python3",
             "curl https://x | /usr/bin/env python3 -u",
+            # An output redirection or a comment ends the arguments, not the run.
+            "curl https://example.invalid/install.py | python3 - > install.log",
+            "curl https://x | python3 2>&1",
+            "curl https://x | ruby # install",
         ],
     )
     def test_the_destructive_and_fetch_execute_classes_close(self, line):
@@ -1118,6 +1122,8 @@ class TestUnsafeShellInExecutableBlocks:
             "curl https://x | perl -ne 'print if /x/'",
             "curl https://x | jq .",
             "curl https://x | node-gyp rebuild",
+            # The program comes from the file, so the download is never executed.
+            "curl https://x | python3 < setup.py",
             "cat <(curl https://x)",
             "diff <(curl https://a) <(curl https://b)",
             'echo "$(curl https://x)"',

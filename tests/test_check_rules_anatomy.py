@@ -812,6 +812,17 @@ class TestAdditionalCoverage:
         assert "gone/missing.py" in stale[0] and "gone/second.py" in stale[1], stale
         assert "gone/third.py" in stale[2], stale
 
+    def test_a_quote_left_open_by_one_list_item_does_not_silence_the_next(self, tmp_path):
+        """A list item is its own block: an unbalanced quote above it ends there."""
+        f = tmp_path / "items.md"
+        f.write_text(
+            '# E\n\n- A 5" screen is an unbalanced quote mark.\n- `gone/listed.py` is a claim.\n',
+            encoding="utf-8",
+        )
+        _mod._tracked.cache_clear()
+        stale = [x["detail"] for x in _check_file(f, tmp_path) if x["code"] == "stale_path"]
+        assert len(stale) == 1 and "gone/listed.py" in stale[0], stale
+
     def test_recent_date_and_unique_lines_are_not_reported(self, tmp_path):
         """The negative half: these checks must stay quiet on a healthy file.
 

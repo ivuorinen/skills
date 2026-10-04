@@ -452,13 +452,26 @@ def _split(
     if harnesses is not None:
         wanted = set(harnesses)
         found = {h: fs for h, fs in found.items() if h in wanted}
-    files, _ = _dedupe(p for fs in found.values() for p in fs)
-    scoped = {
-        f
-        for f in files
-        if is_path_scoped(f.read_text(encoding="utf-8", errors="replace"), _rel_to(f, root))
+    spellings = [p for fs in found.values() for p in fs]
+    files, _ = _dedupe(spellings)
+    always = _unconditional(spellings, root)
+    return root, files, {f for f in files if f.resolve() not in always}
+
+
+def _unconditional(spellings: Iterable[Path], root: Path) -> set[Path]:
+    """The resolved files some spelling loads on every turn.
+
+    Judged per spelling, before `_dedupe` keeps one: scope is read off the
+    spelling's own path, so `AGENTS.md` linked to a Cursor `.mdc` with
+    `alwaysApply: false` is scoped under the Cursor name and unconditional under
+    its own. Judging only the kept spelling dropped the file from the budget
+    whenever the Cursor name was detected first.
+    """
+    return {
+        p.resolve()
+        for p in spellings
+        if not is_path_scoped(p.read_text(encoding="utf-8", errors="replace"), _rel_to(p, root))
     }
-    return root, files, scoped
 
 
 # An `@path.md` import. Harnesses that support imports pull the target in as
@@ -873,7 +886,9 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
     if escaping:
         harnesses = {h: [f for f in fs if f not in escaping] for h, fs in harnesses.items()}
         harnesses = {h: fs for h, fs in harnesses.items() if fs}
-    files, aliases = _dedupe(p for fs in harnesses.values() for p in fs)
+    spellings = [p for fs in harnesses.values() for p in fs]
+    files, aliases = _dedupe(spellings)
+    always = _unconditional(spellings, project_root)
     if not files:
         raise ValueError(
             f"{project_root} holds no agent instruction file for any known harness "
@@ -911,7 +926,7 @@ def check(project_root: Path, contain: Path | None = None) -> tuple[dict, bool]:
         rel = path.relative_to(project_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         count = _count_instructions(text)
-        scoped = is_path_scoped(text, rel)
+        scoped = path.resolve() not in always
         # Scanned either way — a path-scoped file still loads, so a duplicate or
         # a buried directive in it is still a defect. Only the budget excludes
         # it, because the budget is about what every turn carries.

@@ -44,7 +44,15 @@ def test_estimate_tokens_rounds_up():
 def test_always_loaded_collects_the_named_files_and_every_rule(tmp_path):
     root = _project(tmp_path, rules=3)
     paths = {row["path"] for row in _mod.always_loaded(root)}
-    assert paths == {"CLAUDE.md", "AGENTS.md"} | {f".claude/rules/r{i}.md" for i in range(3)}
+    assert paths == {"CLAUDE.md"} | {f".claude/rules/r{i}.md" for i in range(3)}
+
+
+def test_agents_md_is_claudes_only_without_a_claude_md(tmp_path):
+    """Beside a CLAUDE.md that does not import it, AGENTS.md is not in Claude's turn."""
+    root = _project(tmp_path, rules=0)
+    assert [r["path"] for r in _mod.always_loaded(root)] == ["CLAUDE.md"]
+    (root / "CLAUDE.md").unlink()
+    assert [r["path"] for r in _mod.always_loaded(root)] == ["AGENTS.md"]
 
 
 def test_always_loaded_includes_rules_in_subdirectories(tmp_path):
@@ -120,6 +128,8 @@ def test_an_imported_file_is_part_of_the_always_loaded_set(tmp_path):
 def test_the_always_loaded_set_is_check_agent_instructions_set(tmp_path):
     """No private list: the same project answers the same files in both tools."""
     root = _project(tmp_path, rules=2)
+    # Imported, so AGENTS.md is in Claude's turn as well as in the all-harness gate.
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
     (root / ".claude" / "rules" / "s.md").write_text(
         '---\npaths:\n  - "src/**"\n--- \n# s\n', encoding="utf-8"
     )

@@ -126,7 +126,10 @@ _SECRET_RE = re.compile(
     r"|AIza[A-Za-z0-9_-]{35}"  # Google API key
     r"|npm_[A-Za-z0-9]{36}"  # npm automation token
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    # The header segment is bounded: its class takes `-`, so unbounded it ran to
+    # the end of a dotless `eyJ…-eyJ…-` run from every `eyJ` in it, quadratic in
+    # the body. A real header is a short JSON object; 4096 leaves room for x5c.
+    r"|eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
     # Vendors gitleaks' default rules report and `security` then quotes as
     # evidence; each came back from redact() whole (security-1df0778e). Every
     # alternative opens on a fixed literal and has one bounded class, so the
@@ -1435,7 +1438,12 @@ def _open_frontmatter(
     Split from `new_finding` so that function stays under the repo's cyclomatic
     ceiling; building the block and serializing it under the store lock are
     independent concerns.
+
+    A supplied `found` is checked here, before anything is written: `validate`
+    rejects a malformed date, so writing one left a store that failed its own check.
     """
+    if found:
+        _check_date(found)
     fm = {
         "id": fid,
         "auditor": auditor,
