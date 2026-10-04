@@ -1,6 +1,7 @@
 """Tests for scripts/check-version-sync.py — main() cross-manifest version check."""
 
 import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,28 @@ SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 def _load_mod():
     """Load check-version-sync.py; code lives under __main__, so import has no side effects."""
     return load_path("check_version_sync_module", SCRIPTS_DIR / "check-version-sync.py")
+
+
+@pytest.fixture(autouse=True)
+def _bare_argv(monkeypatch) -> None:
+    """main() reads sys.argv, which under pytest holds pytest's own arguments."""
+    monkeypatch.setattr(sys, "argv", ["check-version-sync.py"])
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_main_answers_help_without_running_the_check(flag, tmp_path, monkeypatch, capsys):
+    """`--help` ran the whole check and printed its verdict at exit 0."""
+    monkeypatch.setattr(sys, "argv", ["check-version-sync.py", flag])
+    assert _run(tmp_path) == 0  # tmp_path holds no manifests: the check would fail
+    out = capsys.readouterr().out
+    assert "Usage:" in out and "Exit codes:" in out
+    assert "Reference version" not in out
+
+
+def test_main_rejects_an_argument_as_a_usage_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["check-version-sync.py", "1.2.3"])
+    assert _run(tmp_path) == 2
+    assert "unexpected argument '1.2.3'" in capsys.readouterr().err
 
 
 def _make_repo(

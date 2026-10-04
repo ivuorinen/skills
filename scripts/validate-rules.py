@@ -2,7 +2,18 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Validate .claude/rules/ files for structural correctness and glob freshness."""
+"""Validate .claude/rules/ files for structural correctness and glob freshness.
+
+Usage:
+    validate-rules.py [--] [<rule.md> ...]
+
+With no arguments, validates every rule under .claude/rules/ and runs the
+repo-wide checks (the CLAUDE.md rule index). A leading `--` ends option
+parsing, so a rule file whose name begins with `-` is read as a path.
+
+Exit codes: 0 = valid, 1 = a rule failed validation, 2 = usage error (an
+unknown option).
+"""
 
 import importlib.util
 import re
@@ -255,6 +266,20 @@ def main() -> None:
     args = sys.argv[1:]
     if args and args[0] == "--":
         args = args[1:]
+    else:
+        # Before any argument becomes a path: `--help` was validated as a rule
+        # file and answered with three path errors at exit 1.
+        if "--help" in args or "-h" in args:
+            print(__doc__)
+            return
+        unknown = [a for a in args if a.startswith("-")]
+        if unknown:
+            print(
+                f"Error: unknown option {unknown[0]!r}; validate-rules.py takes only "
+                "rule files and --help. Pass a path beginning with '-' after '--'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
     if args:
         targets = [Path(a) for a in args]
     else:
