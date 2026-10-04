@@ -1548,17 +1548,18 @@ def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, c
     assert "RULE VIOLATION" in capsys.readouterr().err
 
 
-def test_validate_rules_hook_argv_carries_the_rules_listing_not_the_payload_path(
-    monkeypatch, tmp_path
-):
-    """CodeQL alert #4 (py/command-line-injection): the payload path reached the
-    validator's argv, and no containment guard cleared it. The argv is now the
-    rules tree listed from disk; the payload only decides whether to run."""
+def _rules_hook_argvs(monkeypatch, tmp_path, files, edited_rel):
+    """Run validate-rules-hook over a rules tree holding `files` (name -> text, or
+    a Path for a symlink target) and return the argv of every command it ran."""
     mod = _load("validate-rules-hook")
     rules = tmp_path / ".claude" / "rules"
-    (rules / "nested").mkdir(parents=True)
-    for rel in ("b-rule.md", "a-rule.md", "nested/c-rule.md", "notes.txt"):
-        (rules / rel).write_text("x\n", encoding="utf-8")
+    rules.mkdir(parents=True)
+    for rel, content in files.items():
+        (rules / rel).parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, Path):
+            (rules / rel).symlink_to(content)
+        else:
+            (rules / rel).write_text(content, encoding="utf-8")
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "validate-rules.py").touch()
     anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
@@ -1574,13 +1575,37 @@ def test_validate_rules_hook_argv_carries_the_rules_listing_not_the_payload_path
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(mod.subprocess, "run", _record)
-    edited = str(rules / "nested" / ".." / "a-rule.md")
+    edited = str(rules / edited_rel)
     _run(mod, json.dumps({"tool_input": {"file_path": edited}}), monkeypatch)
+    return seen, Path(os.path.realpath(rules)), edited
 
-    real = Path(os.path.realpath(rules))
+
+def test_validate_rules_hook_argv_carries_the_rules_listing_not_the_payload_path(
+    monkeypatch, tmp_path
+):
+    """CodeQL alert #4 (py/command-line-injection): the payload path reached the
+    validator's argv, and no containment guard cleared it. The argv is now the
+    rules tree listed from disk; the payload only decides whether to run."""
+    files = {r: "x\n" for r in ("b-rule.md", "a-rule.md", "nested/c-rule.md", "notes.txt")}
+    seen, real, edited = _rules_hook_argvs(monkeypatch, tmp_path, files, "nested/../a-rule.md")
     expected = [str(real / r) for r in ("a-rule.md", "b-rule.md", "nested/c-rule.md")]
     assert seen[0][-4:] == ["--", *expected]
     assert edited not in seen[0]
+
+
+def test_validate_rules_hook_leaves_a_rule_symlinked_outside_the_project_out_of_argv(
+    monkeypatch, tmp_path
+):
+    """The validator reads every target it is given, so an escaping link would put
+    an outside file's contents in the diagnostics. The anatomy check, run over the
+    whole tree, is what reports the link."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text("secret\n", encoding="utf-8")
+    files = {"a-rule.md": "x\n", "escape.md": outside}
+    seen, real, _ = _rules_hook_argvs(monkeypatch, tmp_path, files, "a-rule.md")
+    assert seen[0][-2:] == ["--", str(real / "a-rule.md")]
+    assert not any("escape.md" in arg for arg in seen[0])
+    assert seen[1][-1] == "."
 
 
 def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):

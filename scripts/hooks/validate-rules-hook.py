@@ -63,7 +63,15 @@ def main() -> None:
     # the argv: no containment guard cleared it, realpath + startswith included.
     # A listing carries no payload text, so there is nothing to guard. It is the
     # same scope check-rules-anatomy.py below already runs on.
-    rules = sorted(str(p) for p in Path(rules_dir).rglob("*.md") if p.is_file())
+    # A rule symlinked outside the project is left out: the validator would read
+    # the target and could echo it into these diagnostics. check-rules-anatomy.py
+    # still walks the whole tree and reports the link as symlink_escapes_root.
+    root = os.path.realpath(REPO_ROOT)
+    rules = sorted(
+        str(p)
+        for p in Path(rules_dir).rglob("*.md")
+        if p.is_file() and os.path.realpath(p).startswith(root + os.sep)
+    )
 
     output = []
     failed = False
