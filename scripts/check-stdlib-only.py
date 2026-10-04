@@ -39,6 +39,14 @@ The stdlib allowlist is the running interpreter's ``sys.stdlib_module_names``.
 The PEP 723 block above pins the interpreter to ``==3.11.*`` — the minimum
 supported Python — so uv cannot select a newer one whose allowlist would
 wrongly accept a module added to the stdlib after 3.11.
+
+Usage:
+    check-stdlib-only.py [--help]
+
+Takes no arguments; checks the checkout it lives in.
+
+Exit codes: 0 = contract intact, 1 = a violation (or a stale shipped-tool
+glob), 2 = usage error (any argument other than --help).
 """
 
 import ast
@@ -440,6 +448,17 @@ def find_runner_violations(repo_root: Path, collected: Collected | None = None) 
 
 
 def main() -> int:
+    # `--help` ran the whole check and printed its verdict at exit 0.
+    args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        return 0
+    if args:
+        print(
+            f"Error: unexpected argument {args[0]!r}; check-stdlib-only.py takes only --help.",
+            file=sys.stderr,
+        )
+        return 2
     # Both checks always run: find_runner_violations also covers internal
     # tooling, which an early return on an empty shipped-tool glob would skip.
     collected = collect(REPO_ROOT)

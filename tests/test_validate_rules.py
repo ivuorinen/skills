@@ -113,6 +113,34 @@ def test_main_treats_a_leading_double_dash_as_a_separator(monkeypatch, tmp_path,
     assert "OK" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_main_answers_help_before_reading_any_path(flag, monkeypatch, capsys):
+    """`--help` was validated as a rule file: three path errors at exit 1."""
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", flag])
+    monkeypatch.setattr(_mod, "validate", lambda *_a, **_k: pytest.fail("validated a flag"))
+    assert _mod.main() is None
+    out = capsys.readouterr().out
+    assert "Usage:" in out and "Exit codes:" in out
+
+
+def test_main_rejects_an_unknown_option_as_a_usage_error(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", "--strict"])
+    monkeypatch.setattr(_mod, "validate", lambda *_a, **_k: pytest.fail("validated a flag"))
+    with pytest.raises(SystemExit) as exc:
+        _mod.main()
+    assert exc.value.code == 2
+    assert "unknown option '--strict'" in capsys.readouterr().err
+
+
+def test_main_reads_a_flag_shaped_name_after_the_separator_as_a_path(monkeypatch, tmp_path, capsys):
+    """After `--`, `--help` is a file name, not a request for usage."""
+    seen: list[Path] = []
+    monkeypatch.setattr(sys, "argv", ["validate-rules.py", "--", "--help"])
+    monkeypatch.setattr(_mod, "validate", lambda p, *_a, **_k: seen.append(p))
+    _mod.main()
+    assert seen == [Path("--help")]
+
+
 def test_main_exits_one_when_validate_reports_errors(monkeypatch, tmp_path, capsys):
     target = tmp_path / "r.md"
     target.write_text("x\n", encoding="utf-8")

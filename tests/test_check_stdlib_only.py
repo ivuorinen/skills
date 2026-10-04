@@ -2,6 +2,7 @@
 
 import ast
 import runpy
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,29 @@ _mod = load_path("check_stdlib_only", _TOOL)
 find_violations = _mod.find_violations
 find_runner_violations = _mod.find_runner_violations
 REPO_ROOT = _mod.REPO_ROOT
+
+
+@pytest.fixture(autouse=True)
+def _bare_argv(monkeypatch) -> None:
+    """main() reads sys.argv, which under pytest holds pytest's own arguments."""
+    monkeypatch.setattr(sys, "argv", [str(_TOOL)])
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_main_answers_help_without_running_the_check(flag, monkeypatch, capsys) -> None:
+    """`--help` ran the whole check and printed its verdict at exit 0."""
+    monkeypatch.setattr(sys, "argv", [str(_TOOL), flag])
+    monkeypatch.setattr(_mod, "collect", lambda *_a: pytest.fail("ran the check"))
+    assert _mod.main() == 0
+    out = capsys.readouterr().out
+    assert "Usage:" in out and "Exit codes:" in out
+
+
+def test_main_rejects_an_argument_as_a_usage_error(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", [str(_TOOL), "skills/"])
+    monkeypatch.setattr(_mod, "collect", lambda *_a: pytest.fail("ran the check"))
+    assert _mod.main() == 2
+    assert "unexpected argument 'skills/'" in capsys.readouterr().err
 
 
 def _internal(root: Path, name: str, body: str) -> None:

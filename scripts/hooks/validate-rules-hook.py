@@ -34,18 +34,15 @@ _BY_HAND = (
 def main() -> None:
     """Validate an edited rule file, and the anatomy of the whole rules tree.
 
-    Two checks rather than one: validate-rules.py judges the edited file,
-    while check-rules-anatomy.py judges the tree — catching a rule that is
-    well-formed on its own but stale against the paths it names.
+    Two checks rather than one: validate-rules.py judges each rule file's
+    structure, while check-rules-anatomy.py judges the tree — catching a rule
+    that is well-formed on its own but stale against the paths it names.
     """
     path = event_path()
     if path is None:
         return
 
-    # Containment spelled with `os.path.realpath` and `str.startswith` rather
-    # than `Path.resolve()` and `Path.is_relative_to`. Equivalent for these
-    # absolute paths, but only this form is one CodeQL recognises as a guard, so
-    # the pathlib spelling left `path` tainted all the way into the argv below.
+    # The edited path only decides whether to run; it never reaches the argv.
     # The `+ os.sep` matters: without it `.claude/rules-evil` counts as inside
     # `.claude/rules`.
     rules_dir = os.path.realpath(REPO_ROOT / ".claude" / "rules")
@@ -60,24 +57,38 @@ def main() -> None:
     if not validator.exists() or not anatomy.exists():
         report_skip(_HOOK, "validate-rules.py or check-rules-anatomy.py not found", _BY_HAND)
 
-    output = []
-    failed = False
-    for cmd in (
-        # `candidate`, not `path`: the argv carries the value that was checked,
-        # not the one it was derived from. Passing `path` here validated one
-        # string and used another — correct only by coincidence, and the reason
-        # the guard above did not count as a barrier.
+    # Every rule file, listed from disk, rather than the one the event named.
+    # The event path comes from the hook payload on stdin, and CodeQL
+    # (py/command-line-injection, alert #4) treated it as tainted all the way into
+    # the argv: no containment guard cleared it, realpath + startswith included.
+    # A listing carries no payload text, so there is nothing to guard. It is the
+    # same scope check-rules-anatomy.py below already runs on.
+    # A rule symlinked outside the project is left out: the validator would read
+    # the target and could echo it into these diagnostics. check-rules-anatomy.py
+    # still walks the whole tree and reports the link as symlink_escapes_root.
+    root = os.path.realpath(REPO_ROOT)
+    rules = sorted(
+        str(p)
+        for p in Path(rules_dir).rglob("*.md")
+        if p.is_file() and os.path.realpath(p).startswith(root + os.sep)
+    )
+
+    commands = []
+    # With nothing listed — every rule an escaping symlink — the validator is not
+    # run at all: a bare `--` makes it fall back to discovering its own tree.
+    if rules:
         # `--` terminates option parsing. Without it a rule file named
         # `-x.md` — legal on disk and inside .claude/rules/ — reaches `uv` and
-        # the validator as a flag rather than an operand. A containment check
-        # cannot prevent that, which is why it is not a barrier for
-        # py/command-line-injection: the path is *inside* the tree and still
-        # argument-injects.
-        ["uv", "run", "--quiet", str(validator), "--", candidate],
-        ["python3", str(anatomy), "."],
-    ):
+        # the validator as a flag rather than an operand.
+        commands.append(["uv", "run", "--quiet", str(validator), "--", *rules])
+    commands.append(["python3", str(anatomy), "."])
+
+    output = []
+    failed = False
+    for cmd in commands:
         try:
-            # argv is one of the two literal command lists in the loop above.
+            # argv is one of the command lists built above: fixed strings plus the
+            # rules listing, never payload text.
             result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
                 cmd,
                 cwd=str(REPO_ROOT),

@@ -4,10 +4,17 @@
 # ///
 """Verify that version is consistent across all manifests.
 
-Exits 1 if any file disagrees with package.json.
+Usage:
+    check-version-sync.py [--help]
+
+Takes no arguments; checks the checkout it lives in against package.json.
+
+Exit codes: 0 = all versions in sync, 1 = a manifest disagrees or cannot be
+read, 2 = usage error (any argument other than --help).
 """
 
 import json
+import sys
 import tomllib
 from pathlib import Path
 
@@ -40,7 +47,27 @@ def read_toml_version(rel_path: str) -> str:
         raise KeyError("[project] version field not found") from e
 
 
+def _answer_args(args: list[str]) -> int | None:
+    """Exit code for `--help` (0) or any other argument (2); None to run the check.
+
+    `--help` ran the whole check and printed its verdict at exit 0.
+    """
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        return 0
+    if args:
+        print(
+            f"Error: unexpected argument {args[0]!r}; check-version-sync.py takes only --help.",
+            file=sys.stderr,
+        )
+        return 2
+    return None
+
+
 def main() -> int:
+    early = _answer_args(sys.argv[1:])
+    if early is not None:
+        return early
     try:
         base = read_json("package.json")["version"]
     except (KeyError, OSError, json.JSONDecodeError) as e:

@@ -1548,6 +1548,82 @@ def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, c
     assert "RULE VIOLATION" in capsys.readouterr().err
 
 
+def _rules_hook_argvs(monkeypatch, tmp_path, files, edited_rel):
+    """Run validate-rules-hook over a rules tree holding `files` (name -> text, or
+    a Path for a symlink target) and return the argv of every command it ran."""
+    mod = _load("validate-rules-hook")
+    rules = tmp_path / ".claude" / "rules"
+    rules.mkdir(parents=True, exist_ok=True)  # a test may have linked it elsewhere
+    for rel, content in files.items():
+        (rules / rel).parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, Path):
+            (rules / rel).symlink_to(content)
+        else:
+            (rules / rel).write_text(content, encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-rules.py").touch()
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
+    anatomy.mkdir(parents=True)
+    (anatomy / "check-rules-anatomy.py").touch()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
+    seen: list[list[str]] = []
+
+    def _record(cmd, *_a, **_k):
+        """Record the argv and pass."""
+        seen.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", _record)
+    edited = str(rules / edited_rel)
+    _run(mod, json.dumps({"tool_input": {"file_path": edited}}), monkeypatch)
+    return seen, Path(os.path.realpath(rules)), edited
+
+
+def test_validate_rules_hook_argv_carries_the_rules_listing_not_the_payload_path(
+    monkeypatch, tmp_path
+):
+    """CodeQL alert #4 (py/command-line-injection): the payload path reached the
+    validator's argv, and no containment guard cleared it. The argv is now the
+    rules tree listed from disk; the payload only decides whether to run."""
+    files = {r: "x\n" for r in ("b-rule.md", "a-rule.md", "nested/c-rule.md", "notes.txt")}
+    seen, real, edited = _rules_hook_argvs(monkeypatch, tmp_path, files, "nested/../a-rule.md")
+    expected = [str(real / r) for r in ("a-rule.md", "b-rule.md", "nested/c-rule.md")]
+    assert seen[0][-4:] == ["--", *expected]
+    assert edited not in seen[0]
+
+
+def test_validate_rules_hook_leaves_a_rule_symlinked_outside_the_project_out_of_argv(
+    monkeypatch, tmp_path
+):
+    """The validator reads every target it is given, so an escaping link would put
+    an outside file's contents in the diagnostics. The anatomy check, run over the
+    whole tree, is what reports the link."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text("secret\n", encoding="utf-8")
+    files = {"a-rule.md": "x\n", "escape.md": outside}
+    seen, real, _ = _rules_hook_argvs(monkeypatch, tmp_path, files, "a-rule.md")
+    assert seen[0][-2:] == ["--", str(real / "a-rule.md")]
+    assert not any("escape.md" in arg for arg in seen[0])
+    assert seen[1][-1] == "."
+
+
+def test_validate_rules_hook_skips_the_validator_when_nothing_is_listed(monkeypatch, tmp_path):
+    """A bare `--` makes validate-rules.py discover its own tree instead, so with no
+    rule left to pass the validator is not run; the anatomy check still is.
+
+    The listing is empty when `.claude/rules` itself links outside the project:
+    the edited file passes the rules-dir guard, and every listed file fails the
+    project-root one."""
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-rules"
+    outside.mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "rules").symlink_to(outside)
+    seen, _, _ = _rules_hook_argvs(monkeypatch, tmp_path, {"a-rule.md": "x\n"}, "a-rule.md")
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts" / "check-rules-anatomy.py"
+    assert seen == [["python3", str(anatomy), "."]]
+
+
 def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):
     """A brand-new unstaged command file appears only in `git ls-files --others`,
     not in either `git diff` form — it must still be flagged."""
