@@ -50,7 +50,7 @@ Drop any folder of code, docs, papers, images, or video into graphify and get a 
 
 If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
 
-**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `graphify query "<question>"` immediately. Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
+**Fast path — existing graph:** Before doing anything else, check whether `graphify-out/graph.json` exists. The expected location is `graphify-out/graph.json` relative to the **current working directory** (i.e. the project root where you are running commands). If it exists AND the user's request is a natural-language question about the codebase (e.g. "How does X work?", "What calls Y?", "Trace the data flow through Z") and NOT an explicit rebuild command (`--update`, `--cluster-only`, or a bare path/URL that implies fresh extraction): **skip Steps 1–5 entirely and jump straight to `## For /graphify query`.** Run `graphify query '<question>'` immediately, single-quoted with each `'` in the question written as `'\''` (`references/query.md`, Quoting). Do not run detect. Do not check corpus size. Do not ask the user to narrow. The graph is already built — use it.
 
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
@@ -160,14 +160,14 @@ Skip this step entirely if `detect` returned zero `video` files. When the corpus
 
 This step has two parts: **structural extraction** (deterministic, free) and **semantic extraction** (LLM, costs tokens).
 
-> **graphify needs no API key. Never ask the user for one, and never block on one.** Code is extracted structurally (AST) with no LLM and no key at all — a code-only corpus (the common `/graphify .` on a repo) skips semantic extraction entirely, so it needs nothing here: go straight to Part A and skip Part B. Semantic extraction (only for docs, papers, and images) uses Gemini **only if** `GEMINI_API_KEY` is already set **and** the owner confirms the upload for this corpus (below); otherwise the host agent itself is the LLM. graphify does **not** read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or any other provider key. If you catch yourself about to prompt for, wait on, or stop because of a missing API key, that is a misread of this skill — proceed without one.
+> **graphify needs no API key. Never ask the user for one, and never block on one.** Code is extracted structurally (AST) with no LLM and no key at all — a code-only corpus (the common `/graphify .` on a repo) skips semantic extraction entirely, so it needs nothing here: go straight to Part A and skip Part B. Semantic extraction (only for docs, papers, and images) uses Gemini **only if** `GEMINI_API_KEY` is already set **and** the owner confirms the upload for this corpus (below); otherwise the host agent itself is the LLM. This skill's pipeline reads no other provider key, but the graphify CLI does: `graphify extract` and `graphify cluster-only`/`label` pick an LLM backend by themselves from whichever of the Gemini, Google, Moonshot, Anthropic, OpenAI, DeepSeek or Azure keys, `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION` (bedrock) or `OLLAMA_BASE_URL` is set, and upload corpus text to it unasked. Wherever this skill runs those commands it passes `--code-only` or `--no-label` so none is called, and passes `--backend` only after the owner confirms the upload to that provider (`references/update.md`, `references/github-and-merge.md`; local modification, skill-safety-13ef11d9). If you catch yourself about to prompt for, wait on, or stop because of a missing API key, that is a misread of this skill — proceed without one.
 
 **Before semantic extraction:** check whether `GEMINI_API_KEY` is set. If it is not set, print this one-liner to the user:
 > Tip: set `GEMINI_API_KEY` to use Gemini for semantic extraction (`pip install "graphifyy[gemini]==$(cat .claude/skills/graphify/.graphify_version)"`).
 
 Print it once, then continue — do not wait for the user to supply a key. If `GEMINI_API_KEY` IS set, do not use it unasked: Gemini extraction uploads every doc, paper and image in the corpus to Google and spends that key. Tell the owner how many files would be uploaded and ask them to confirm the upload for this corpus. Only on an explicit yes, use `graphify.llm.extract_corpus_parallel(files, backend="gemini")` for semantic extraction instead of dispatching subagents; on anything else, dispatch the subagents as in Part B. That question is about sending files to a third party, not about a key, so it does not contradict the no-key rule above. `GOOGLE_API_KEY` is never used for this: it is a generic name other Google SDKs set, so its presence says nothing about wanting graphify to upload the corpus (local modification, skill-safety-39614de9). The default Gemini model is `gemini-3-flash-preview`; set `GRAPHIFY_GEMINI_MODEL` or pass `--model` in headless CLI flows to override it.
 
-> **No other API keys are read.** When `GEMINI_API_KEY` is unset, or the owner did not confirm the upload, semantic extraction falls to the host agent itself — the running session is the LLM. On a host that dispatches subagents (e.g. Claude Code), dispatch them as written in Part B. On a host that runs the CLI directly in a terminal and cannot dispatch subagents, do not stall: a code-only corpus has no semantic work, so write the empty semantic file (Part B "Fast path") and continue to Part C; for a corpus with docs/papers/images, either set a Gemini key or extract those inline yourself, but in no case prompt for `ANTHROPIC_API_KEY` — that prompt is a misread of this skill.
+> **No other API keys are read.** That holds for this skill's own pipeline; the graphify CLI's backend auto-selection is gated as described above. When `GEMINI_API_KEY` is unset, or the owner did not confirm the upload, semantic extraction falls to the host agent itself — the running session is the LLM. On a host that dispatches subagents (e.g. Claude Code), dispatch them as written in Part B. On a host that runs the CLI directly in a terminal and cannot dispatch subagents, do not stall: a code-only corpus has no semantic work, so write the empty semantic file (Part B "Fast path") and continue to Part C; for a corpus with docs/papers/images, either set a Gemini key or extract those inline yourself, but in no case prompt for `ANTHROPIC_API_KEY` — that prompt is a misread of this skill.
 
 **Run Part A (AST) and Part B (semantic) in parallel. Dispatch all semantic subagents AND start AST extraction in the same message. Both can run simultaneously since they operate on different file types. Merge results in Part C as before.**
 
@@ -489,6 +489,10 @@ Read `graphify-out/.graphify_analysis.json`. For each community key, look at its
 Then regenerate the report and save the labels for the visualizer:
 
 ```bash
+labels_file=$(mktemp)
+cat > "$labels_file" <<'GRAPHIFY_LABELS'
+LABELS_JSON
+GRAPHIFY_LABELS
 $(cat graphify-out/.graphify_python) -c "
 import sys, json
 from graphify.build import build_from_json
@@ -507,8 +511,9 @@ communities = {int(k): v for k, v in analysis['communities'].items()}
 cohesion = {int(k): v for k, v in analysis['cohesion'].items()}
 tokens = {'input': extraction.get('input_tokens', 0), 'output': extraction.get('output_tokens', 0)}
 
-# LABELS - replace these with the names you chose above
-labels = LABELS_DICT
+# LABELS - the names you chose above, read from the file the heredoc wrote
+with open(sys.argv[1], encoding='utf-8') as f:
+    labels = {int(k): v for k, v in json.load(f).items()}
 
 # Regenerate questions with real community labels (labels affect question phrasing)
 questions = suggest_questions(G, communities, labels)
@@ -517,10 +522,11 @@ report = generate(G, communities, cohesion, labels, analysis['gods'], analysis['
 Path('graphify-out/GRAPH_REPORT.md').write_text(report, encoding=\"utf-8\")
 Path('graphify-out/.graphify_labels.json').write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding=\"utf-8\")
 print('Report updated with community labels')
-"
+" "$labels_file"
+rm -f "$labels_file"
 ```
 
-Replace `LABELS_DICT` with the actual dict you constructed (e.g. `{0: "Attention Mechanism", 1: "Training Pipeline"}`).
+Replace `LABELS_JSON` with the labels you chose as one JSON object keyed by community id (e.g. `{"0": "Attention Mechanism", "1": "Training Pipeline"}`). It goes through the quoted heredoc (`<<'GRAPHIFY_LABELS'`), whose body the shell never expands, and never into the double-quoted `-c "…"` program: the labels are written from node labels, which are repository content, and backticks or `$(...)` there would execute (local modification, skill-safety-92d2d3a1).
 Replace INPUT_PATH with the actual path.
 
 ### Step 6 - Generate Obsidian vault (opt-in) + HTML
@@ -658,8 +664,10 @@ Both are non-default subcommands. `--update` re-extracts only new or changed fil
 When `graphify-out/graph.json` already exists and the user asks a question about the corpus, answer from the graph rather than rebuilding it:
 
 ```bash
-graphify query "<question>"
+graphify query '<question>'
 ```
+
+Single-quote the question, writing each `'` in it as `'\''`; never put it in double quotes, where backticks and `$(...)` execute (local modification, skill-safety-92d2d3a1).
 
 Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. If the `graphify query` CLI is unavailable, fall back to an inline NetworkX traversal of `graphify-out/graph.json`. Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. For that vocab-expansion step, the BFS/DFS traversal modes, the `--budget` cap, the NetworkX fallback, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
 

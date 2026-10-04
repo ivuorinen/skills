@@ -19,13 +19,13 @@ Read the top god node labels from detect output or analysis, then compose a shor
 - Labels: `transformer, attention, encoder, decoder` → `"Machine learning research on transformer architectures and attention mechanisms. Use proper punctuation and paragraph breaks."`
 - Labels: `kubernetes, deployment, pod, helm` → `"DevOps discussion about Kubernetes deployments and Helm charts. Use proper punctuation and paragraph breaks."`
 
-**Export** it as `GRAPHIFY_WHISPER_PROMPT` (the exact name the transcriber reads — and it must be `export`ed so the child Python process sees it) for the next command.
+**Export** it as `GRAPHIFY_WHISPER_PROMPT` (the exact name the transcriber reads — and it must be `export`ed so the child Python process sees it) for the next command. Single-quote it, writing each `'` in the hint as `'\''` (local modification, skill-safety-7a4afcd8): the hint is built from god-node labels, which are repository content, and inside double quotes their backticks and `$(...)` would execute. See the quoting rule in `references/query.md`.
 
 **Step 2 - Transcribe:**
 
 ```bash
 export GRAPHIFY_WHISPER_MODEL=base  # or whatever --whisper-model the user passed (must be exported)
-export GRAPHIFY_WHISPER_PROMPT="<the one-sentence domain hint you composed in Step 1>"
+export GRAPHIFY_WHISPER_PROMPT='<the one-sentence domain hint you composed in Step 1>'
 $(cat graphify-out/.graphify_python) -c "
 import json, os, sys
 from pathlib import Path
