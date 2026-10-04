@@ -1548,6 +1548,41 @@ def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, c
     assert "RULE VIOLATION" in capsys.readouterr().err
 
 
+def test_validate_rules_hook_argv_carries_the_rules_listing_not_the_payload_path(
+    monkeypatch, tmp_path
+):
+    """CodeQL alert #4 (py/command-line-injection): the payload path reached the
+    validator's argv, and no containment guard cleared it. The argv is now the
+    rules tree listed from disk; the payload only decides whether to run."""
+    mod = _load("validate-rules-hook")
+    rules = tmp_path / ".claude" / "rules"
+    (rules / "nested").mkdir(parents=True)
+    for rel in ("b-rule.md", "a-rule.md", "nested/c-rule.md", "notes.txt"):
+        (rules / rel).write_text("x\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "validate-rules.py").touch()
+    anatomy = tmp_path / "skills" / "nitpicker" / "scripts"
+    anatomy.mkdir(parents=True)
+    (anatomy / "check-rules-anatomy.py").touch()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SHIPPED_ROOT", tmp_path)
+    seen: list[list[str]] = []
+
+    def _record(cmd, *_a, **_k):
+        """Record the argv and pass."""
+        seen.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", _record)
+    edited = str(rules / "nested" / ".." / "a-rule.md")
+    _run(mod, json.dumps({"tool_input": {"file_path": edited}}), monkeypatch)
+
+    real = Path(os.path.realpath(rules))
+    expected = [str(real / r) for r in ("a-rule.md", "b-rule.md", "nested/c-rule.md")]
+    assert seen[0][-4:] == ["--", *expected]
+    assert edited not in seen[0]
+
+
 def test_stop_reminder_flags_untracked_new_command(monkeypatch, capsys):
     """A brand-new unstaged command file appears only in `git ls-files --others`,
     not in either `git diff` form — it must still be flagged."""
