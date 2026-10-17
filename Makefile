@@ -127,7 +127,7 @@ index-check:
 	echo "OK  INDEX.md current."
 
 pre-commit:
-	uv run --with pre-commit==4.6.2 pre-commit run --all-files --show-diff-on-failure
+	uv run --with pre-commit==4.7.0 pre-commit run --all-files --show-diff-on-failure
 
 list:
 	$(UV) scripts/list-skills.py
