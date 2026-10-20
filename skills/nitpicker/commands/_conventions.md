@@ -131,6 +131,28 @@ server, fall through to the next tier — the shell is a valid last resort, neve
 a first reach. Reading a file you are about to change with Edit is not
 inspection; read it directly so the exact bytes are in hand.
 
+The tier is chosen per call, and the choice does not decay over a run:
+
+- **A repeat read uses the tool the first read used.** A loop, a re-check, a
+  poll and a background wait read through the same `np_*` tool as the step that
+  first named it. A command that names a tool once has named it for every
+  repetition of that read.
+- **Falling through changes how a bundled tool runs, never which tool.** Without
+  its MCP form — another harness, or a context inside this session that cannot
+  call MCP, such as a background shell loop — run the bundled CLI the tool
+  wraps. A hand-written API call, query or parser standing in for a bundled tool
+  is not a tier: it drops everything the tool normalises, and the step reading
+  its result has no way to tell.
+- **A result too long to re-read is a filtering problem.** Run the bundled CLI
+  where its output is filtered before it reaches context — the context-mode
+  sandbox, else a pipe into a filter — and print only the fields the step
+  needs. Writing a
+  narrower query of your own to get a shorter answer is the substitution the
+  previous rule forbids.
+- **An endpoint or raw-API recipe in a command file is fallback spelling**, the
+  same as its `python3 scripts/…` form, and binds only under the condition the
+  command states for it.
+
 One limit bounds the skill tools: `np_read_command`, `np_read_reference` and
 `np_read_skill` read *this plugin's* bundled files, never the audited repo's. A
 command whose subject is the target repo's skills, rules or hooks
