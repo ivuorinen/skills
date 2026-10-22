@@ -57,6 +57,19 @@ each new release directly beneath the header above, and these notes stay here.
 > itself is the maintainer's decision, made in the open, and the CI guard
 > prevents a repeat.
 
+## [3.2.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v3.1.0...ivuorinen-skills-v3.2.0) (2026-10-22)
+
+
+### Features
+
+* fix the third audit's findings in the shipped tools, gates and docs ([#153](https://github.com/ivuorinen/skills/issues/153)) ([eefa781](https://github.com/ivuorinen/skills/commit/eefa781f2c3fcd7846d7cc8dc953ee77771baf88))
+* harden nitpicker's tools, gates and guards from the 2026-09-28 audits ([#150](https://github.com/ivuorinen/skills/issues/150)) ([b9c6b9f](https://github.com/ivuorinen/skills/commit/b9c6b9f9771630bfd9319f785bfb3079f459dc8b))
+
+
+### Bug Fixes
+
+* keep the CodeRabbit loop's reads on the MCP tools ([#163](https://github.com/ivuorinen/skills/issues/163)) ([21867ba](https://github.com/ivuorinen/skills/commit/21867badfad889cec37b2fc04d3360e1d627fdcb))
+
 ## [3.1.0](https://github.com/ivuorinen/skills/compare/ivuorinen-skills-v3.0.0...ivuorinen-skills-v3.1.0) (2026-09-26)
 
 
