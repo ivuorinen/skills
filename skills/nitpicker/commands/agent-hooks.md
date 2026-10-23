@@ -55,7 +55,7 @@ A `Bash` (or `Read`) invocation is **exempt** from context routing only when it 
 Exempt (may run direct):
 
 - State mutation: `git` commits/branches/merges, package installs, `mkdir`/`mv`/`rm`, file writes, migrations
-- Build/test/lint runners whose pass/fail is the signal: `npm test`, `uv run pytest`, `make check`, compilers, servers
+- Build/test/lint runners whose pass/fail is the signal: `npm test`, `uv run pytest`, `make check`, `mise run check`, compilers, servers
 - Short fixed-output OBSERVE: `pwd`, `whoami`, `git status` on a clean tree, a one-line version check
 - Interactive or stateful commands: logins, port-binding servers, anything holding a lock
 

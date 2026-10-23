@@ -35,7 +35,7 @@ Work these steps in order. Copy every plan task into the task list before Step 2
 
 1. **Clean start.** Run `git status`. If the working tree has uncommitted changes to any file the plan will touch, STOP and ask the user to stash or commit them first — a pre-existing edit staged with the plan's work corrupts both the commit and the Step 2.2 staleness check.
 2. **Branch.** Never write implementation code on `main` or `master`. Run `git branch --show-current`; if it returns `main` or `master`, STOP and create/switch to a feature branch with the user's consent (`git switch -c <slug>` derived from the plan) before editing anything. Being already on `main` is not consent to build there.
-3. **Identify the project's check command** — the canonical full verification the whole change is finished behind. Inspect in order: `Makefile` (`check`/`test`/`lint` targets), `package.json` `scripts`, `pyproject.toml` (configured tools), then `README`/`CONTRIBUTING`. If it cannot be determined, ask the user.
+3. **Identify the project's check command** — the canonical full verification the whole change is finished behind. Inspect in order: `Makefile` (`check`/`test`/`lint` targets), mise tasks (`[tasks]` in `mise.toml` or `.mise.toml`, and file tasks under `.mise/tasks/`, `mise-tasks/` or `.config/mise/tasks/`; a `check`/`test`/`lint` task runs as `mise run <task>`), `package.json` `scripts`, `pyproject.toml` (configured tools), then `README`/`CONTRIBUTING`. If it cannot be determined, ask the user.
 4. **Confirm the commit-message convention:** `git log --oneline -10`; note the prefix in use (`feat:`, `fix:`, `chore:`).
 
 ### Step 2 — Execute one task at a time

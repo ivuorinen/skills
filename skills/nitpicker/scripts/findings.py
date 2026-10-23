@@ -2677,7 +2677,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         except FindingError as e:
             print(f"ERROR  {e}", file=sys.stderr)
             return 1
-        # INDEX.md is generated from the store, and `make check`/CI fail when the
+        # INDEX.md is generated from the store, and `mise run check`/CI fail when the
         # two drift. mcp_server.py regenerates after every mutation; the CLI must
         # too, or the documented way to close a finding leaves a red build.
         write_index(args.root)

@@ -45,7 +45,7 @@ A dependency is "unused" only after every reference form its ecosystem supports 
 | Ecosystem | Reference forms to scan |
 | --- | --- |
 | JS/TS | `require()`, static `import`/`export from`, dynamic `import()`, type-only imports and `@types/*` pairing, `package.json` scripts binaries, config plugin/preset/extends strings (eslint, prettier, babel, jest, postcss, tailwind, vite/webpack plugin arrays) |
-| Python | `import` / `from ... import`, `importlib`, `__import__`, entry points, plugins auto-loaded from config (pytest, flake8), tool sections in `pyproject.toml`/`setup.cfg`, Makefile/CI script invocations |
+| Python | `import` / `from ... import`, `importlib`, `__import__`, entry points, plugins auto-loaded from config (pytest, flake8), tool sections in `pyproject.toml`/`setup.cfg`, Makefile/mise task/CI script invocations |
 | Other (Rust, Go, PHP, Ruby, ...) | That ecosystem's full import/use/require forms plus build-config and task-runner references |
 
 Map package names to import names before scanning (`beautifulsoup4` → `bs4`, `Pillow` → `PIL`, `@scope/pkg` subpaths) — a grep for the package name alone proves nothing in either direction.
@@ -68,7 +68,7 @@ A tool's candidate list is input, not a finding — verify every candidate again
 
 ## Process
 
-1. **Inventory:** find every manifest + lockfile pair (package.json, pyproject.toml, requirements*.txt, Cargo.toml, go.mod, composer.json, Gemfile + their lockfiles). A generated-but-uncommitted lockfile is manifest-lockfile-drift (severity per the guide: application vs. published library).
+1. **Inventory:** find every manifest + lockfile pair (package.json, pyproject.toml, requirements*.txt, Cargo.toml, go.mod, composer.json, Gemfile, the tool manifest `mise.toml` `[tools]` + their lockfiles, `mise.lock` for mise). A generated-but-uncommitted lockfile is manifest-lockfile-drift (severity per the guide: application vs. published library).
 2. **Probe tools** per the tooling table; record available/not-available in the run summary.
 3. **Build three sets per ecosystem:** Declared (manifest, per section), Locked (lockfile), Referenced (full usage scan per import-form coverage).
 4. **Cross-reference the sets;** file findings per defect class via the store protocol in `_conventions.md`, under the `deps` auditor key. Each finding's Evidence carries the three legs (manifest file:line and section, lockfile entry or "missing", referencing file:line or the exhaustive negative) plus ecosystem and `name@version`. Examine every declared dependency against every class; anything not fully examined is recorded as unexamined and forces run verdict INCOMPLETE.
