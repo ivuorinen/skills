@@ -176,8 +176,8 @@ def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys)
 def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
     # Regression (audit-307527a8): the hook must regenerate INDEX with the same
     # repo-relative paths as canonical `findings.py index` — never absolute paths,
-    # which leak the checkout directory and fail make check / CI index-check.
-    """Absolute paths leak the checkout directory and fail make check's index-check."""
+    # which leak the checkout directory and fail mise run check / CI index-check.
+    """Absolute paths leak the checkout directory and fail mise run check's index-check."""
     findings = load_path("findings", FINDINGS_PATH)
 
     root = tmp_path / "docs" / "audit" / "findings"

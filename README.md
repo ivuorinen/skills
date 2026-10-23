@@ -249,9 +249,9 @@ is in `skills/nitpicker/commands/cr.md`.
 ## Development
 
 ```bash
-make check     # the full gate; make help lists every target
-make list      # list the skill and its commands
-make test      # pytest suite for the tooling
+mise run check     # the full gate; `mise tasks` lists every task
+mise run list      # list the skill and its commands
+mise run test      # pytest suite for the tooling
 ```
 
 Skills in this repo conform to the open

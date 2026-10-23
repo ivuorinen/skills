@@ -32,8 +32,8 @@ them.
 
 ## The reference validator
 
-`make spec-check` cross-checks every skill against the Agent Skills reference
-validator. It needs network access, so it sits outside `make check`;
+`mise run spec-check` cross-checks every skill against the Agent Skills reference
+validator. It needs network access, so it sits outside `mise run check`;
 `validate-skill.py` enforces the same constraints offline. Every skill passed at
 the time of writing, internal dev skills included — re-run it rather than
 trusting that, since a spec release can change the verdict.
@@ -49,7 +49,7 @@ Install traps, each hit once already:
 
 ## Enforcement
 
-Gated. `scripts/validate-skill.py` runs under `make validate`, in pre-commit
+Gated. `scripts/validate-skill.py` runs under `mise run validate`, in pre-commit
 and in CI, and fails on a frontmatter key or value outside the spec.
-`make spec-check` is the network cross-check and gates nothing, since it sits
-outside `make check`.
+`mise run spec-check` is the network cross-check and gates nothing, since it sits
+outside `mise run check`.

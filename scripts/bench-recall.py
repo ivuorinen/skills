@@ -14,7 +14,7 @@ about them, at a severity that reflects the risk, citing the range where the
 defect actually is?** A lens could receive the exact range on every case and
 report clean, and every gate in this repository would stay green.
 
-Deliberately NOT in `make check`, and the split below is why. Grading is pure
+Deliberately NOT in `mise run check`, and the split below is why. Grading is pure
 and deterministic. Running is not: it needs credentials, takes minutes per case,
 and the same case can grade differently twice. A nondeterministic check wired
 into a commit gate is a check people learn to re-run until it passes.
@@ -415,7 +415,7 @@ def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bench-recall",
         description="Score whether a lens recognises a seeded defect it has been shown. "
-        "Not part of `make check`: it needs an agent, credentials and minutes per case.",
+        "Not part of `mise run check`: it needs an agent, credentials and minutes per case.",
         epilog="Environment: BENCH_RECALL_TIMEOUT — whole seconds each --run agent invocation "
         f"may take (default {DEFAULT_TIMEOUT}). "
         "Exit codes: 0 graded, 1 runtime error, 2 usage error (including a bad timeout), "

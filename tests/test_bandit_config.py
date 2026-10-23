@@ -175,7 +175,7 @@ def test_bandits_own_ini_loader_returns_the_skips():
     file looking correct while changing nothing. `_get_options_from_ini` is what
     `--ini` invokes, so a value that does not reach bandit does not reach this
     assertion either. The pyproject side needs no equivalent — `-c
-    pyproject.toml` is exercised by `make security` and the pre-commit hook on
+    pyproject.toml` is exercised by `mise run security` and the pre-commit hook on
     every run, and a TOML table has no such failure mode.
 
     Deliberately not a subprocess. An earlier version shelled out to the real

@@ -7,38 +7,38 @@ of it is aspirational.
 ## Setup
 
 ```bash
-uv sync --extra dev    # the dev environment the Makefile's `uv run --extra dev` targets use
-pre-commit install     # installs both hook types .pre-commit-config.yaml declares
+mise install           # the tools mise.toml pins: uv, ruff, pyright, prek, opengrep
+uv sync --extra dev    # the dev environment the `uv run --extra dev` tasks use
+prek install           # installs both hook types .pre-commit-config.yaml declares
 ```
 
 `.pre-commit-config.yaml` sets `default_install_hook_types: [pre-commit,
-commit-msg]`, so one `pre-commit install` wires the file validators and the
-commit-message check. `pre-commit` is not in the dev extra: `make pre-commit`
-runs version 4.6.2 through `uv run --with`, so install that version wherever you
-put it on `PATH` (for example `uv tool install pre-commit==4.6.2`). On a clone
-without the hooks, nothing local runs until CI rejects the push.
+commit-msg]`, so one `prek install` wires the file validators and the
+commit-message check. Its local hooks run mise tasks, so committing needs `mise`
+on `PATH`. On a clone without the hooks, nothing local runs until CI rejects the
+push.
 
 ## Before every commit
 
 ```bash
-make check
+mise run check
 ```
 
 ```bash
-make help    # every target, with what each one does
+mise tasks    # every task, with what each one does
 ```
 
-`make help` lists every target; the `check:` line in the `Makefile` gives the
-gate and its order. `check-make-help.py` compares the help names against the
-`Makefile`'s targets and `.PHONY` as sets, in both directions, so no target goes
-missing from the help — it does not check order, and `make help` also lists
-targets `check` never runs. A table transcribed into this file has no gate at
-all — the one that used to sit here was missing `ring-deps` and `bench`, both of
-which `check` runs.
+`mise tasks` lists every task from the description in its own file, so there is
+no second list to drift. `.mise/tasks/check` gives the gate: the read-only gates
+run in parallel, then the tree-writing ones (`index-check`, `prek`) one at a
+time, and every failure is reported in one run. `mise tasks` also lists tasks
+`check` never runs. A table transcribed into this file has no gate at all — the
+one that used to sit here was missing `ring-deps` and `bench`, both of which
+`check` runs.
 
-`index-check` and `pre-commit` are the slow ones. The CI `Validate` job is the
-authoritative gate — a green `make check` locally is the fast path to it, not a
-substitute.
+`index-check` and `prek` are the slow ones. The CI `Validate` job is the
+authoritative gate — a green `mise run check` locally is the fast path to it,
+not a substitute.
 
 ## Two script classes
 
@@ -61,7 +61,7 @@ Never mix the runners (`.claude/rules/use-uv-runner.md`):
 ## Testing
 
 ```bash
-make test    # the whole pytest suite under tests/
+mise run test    # the whole pytest suite under tests/
 ```
 
 `pyproject.toml` runs pytest with coverage on by default (`addopts`) and sets
@@ -72,13 +72,13 @@ and then exits 1 on the coverage total. Pass `--no-cov` for a scoped run:
 uv run --extra dev pytest tests/test_md_fences.py -q --no-cov
 ```
 
-Run `make test` without `--no-cov` before pushing; CI holds the 100% gate.
+Run `mise run test` without `--no-cov` before pushing; CI holds the 100% gate.
 
 ## Code style
 
 ```bash
-make lint      # ruff check over scripts/, tests/ and skills/
-make format    # ruff format over the same trees
+mise run lint      # ruff check over scripts/, tests/ and skills/
+mise run format    # ruff format over the same trees
 ```
 
 The pre-commit hooks run `ruff-check` and `ruff-format` on every commit, so a

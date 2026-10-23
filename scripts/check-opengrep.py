@@ -323,7 +323,7 @@ def _resolve_opengrep() -> tuple[str | None, int]:
     if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
         print(
             "ERROR  opengrep is not installed, and this gate cannot be skipped under CI.\n"
-            "       Install it in the workflow before `make check`.",
+            "       Install it in the workflow before `mise run check`.",
             file=sys.stderr,
         )
         return None, 1

@@ -16,7 +16,7 @@ Use `scripts/bump-version.py` for manual bumps; release-please handles it on CI.
 
 `uv.lock` carries one more copy in its root `[[package]]` entry.
 Neither `check-version-sync.py` nor release-please covers it — 3.0.0 shipped
-with the lockfile still declaring 2.0.0. `make lock-check` gates it with
+with the lockfile still declaring 2.0.0. `mise run lock-check` gates it with
 `uv lock --check`, uv's own staleness test, which also catches dependency drift.
 
 Both bump paths keep it current. `bump-version.py` re-locks after writing the
@@ -35,6 +35,6 @@ a stopgap: the next `uv lock` overwrites the value.
 
 ## Enforcement
 
-The values are gated: `make version-sync` fails on manifests that disagree, and
-`make lock-check` on a stale `uv.lock`. Which route moved them — the script, CI,
+The values are gated: `mise run version-sync` fails on manifests that disagree, and
+`mise run lock-check` on a stale `uv.lock`. Which route moved them — the script, CI,
 or a hand edit — is author discipline.

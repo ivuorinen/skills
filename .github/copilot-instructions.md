@@ -50,7 +50,7 @@ implementation.
 
 ## File Format — Non-Negotiable Rules
 
-Enforced by `scripts/validate-skill.py` (run via `make validate`, part of `make check` and CI):
+Enforced by `scripts/validate-skill.py` (run via `mise run validate`, part of `mise run check` and CI):
 
 The normative format is the open
 [Agent Skills specification](https://agentskills.io/specification); the rules below are
@@ -122,9 +122,9 @@ error. Bad input fails non-zero — an empty-but-valid result at exit 0 reads as
 ## Validation — Run Before Every Commit
 
 ```bash
-make check     # the full gate; make help lists every target
-make list      # list the skill and its commands
-make test      # pytest suite for the tooling
+mise run check     # the full gate; `mise tasks` lists every task
+mise run list      # list the skill and its commands
+mise run test      # pytest suite for the tooling
 ```
 
 CI runs the same checks on every push to `main` and every pull request.
@@ -137,7 +137,7 @@ The canonical version lives in `package.json`. These must match it: `package.jso
 for manual bumps — never edit version fields by hand in individual files.
 
 `uv.lock` holds one more copy in its root `[[package]]` entry that neither
-`check-version-sync.py` nor release-please updates. `make lock-check`
+`check-version-sync.py` nor release-please updates. `mise run lock-check`
 (`uv lock --check`) gates it.
 
 `bump-version.py` re-locks on a best-effort basis. When `uv` is absent, times
@@ -165,7 +165,7 @@ release-please derives releases from these prefixes; a wrong prefix mis-versions
 2. Add its row to the `## Commands` table in `skills/nitpicker/SKILL.md`.
 3. Add it to the Routing Guide in `.claude/skills/skills/SKILL.md`.
 4. Add it to the command table in `README.md` and mention it here if it changes the rules above.
-5. `make check` must pass (the validator enforces table ↔ file sync).
+5. `mise run check` must pass (the validator enforces table ↔ file sync).
 6. Commit with `feat: add /nitpicker <name> command`.
 
 ## Common Mistakes to Avoid

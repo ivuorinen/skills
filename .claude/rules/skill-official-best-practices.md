@@ -56,7 +56,7 @@ Quote the value. The spec defines `metadata` as a map of string keys to string
 
 ## Cross-checking against the reference validator
 
-`make spec-check` runs the Agent Skills reference implementation over every
+`mise run spec-check` runs the Agent Skills reference implementation over every
 skill in the repo; all of them pass. Three traps, each hit once already:
 
 - The PyPI package is `skills-ref`, but the console script it installs is
@@ -156,7 +156,7 @@ already handles correctly without the instruction.
 ## Evals
 
 A skill carries its eval sets under `<skill-dir>/evals/`, validated by
-`scripts/validate-evals.py` in `make check`:
+`scripts/validate-evals.py` in `mise run check`:
 
 - `evals.json` — output-quality cases, each with a realistic `prompt`, an
   `expected_output`, and at least one objectively gradable assertion

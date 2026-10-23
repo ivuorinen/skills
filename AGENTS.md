@@ -19,8 +19,8 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
 
 ## Working on this repo
 
-- Run `make check` before declaring any change done (validation, lint,
-  format check, tests). `make list` shows the skill and its commands.
+- No change is done until `mise run check` passes (validation, lint, format
+  check, tests). The `list` task shows the skill and its commands.
 - **Shipped skill tools** (`skills/*/scripts/*.py`) are stdlib-only and run
   with plain `python3` — never add non-stdlib imports or uv invocations;
   consumer machines cannot be assumed to have uv.
@@ -47,7 +47,7 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
   see `.claude/rules/commit-types.md` for which type a change takes.
   Version must stay in sync across package.json, pyproject.toml,
   .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and
-  .release-please-manifest.json (`make version-sync`).
+  .release-please-manifest.json (`mise run version-sync`).
 - A script that mutates a file to prove a check fails restores it from a `cp`
   snapshot. `git checkout --` and `git restore` overwrite the working tree from
   the index, which destroys the unstaged fix the proof exists to validate and

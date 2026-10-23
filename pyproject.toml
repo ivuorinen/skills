@@ -8,9 +8,10 @@ license-files = ["LICENSE"]
 [project.optional-dependencies]
 # ruff is a test dependency, not just a linter: tests/test_hooks.py exercises
 # ruff-hook.py, which shells out to the real `ruff` binary.
-# ruff is pinned to the same version the .pre-commit-config.yaml rev names, and
-# the Makefile and scripts/hooks/ruff-hook.py pin it too, so none of the four
-# call sites can disagree about what passes. test_hooks.py enforces the match.
+# ruff is pinned to the same version mise.toml names (which the lint and format
+# tasks and the prek ruff hooks run), and scripts/hooks/ruff-hook.py pins it
+# too, so no call site can disagree about what passes. test_hooks.py enforces
+# the match.
 # bandit is pinned to its .pre-commit-config.yaml rev for the same reason.
 # pyyaml parses the workflows in tests/test_hooks.py. It was already importable
 # as a transitive of another dev tool, and the guard that reads the Validate job
@@ -70,7 +71,7 @@ ignore = ["SIM108"]
 [tool.ruff.lint.mccabe]
 # The ceiling for new code. Codacy already fails a PR on a newly complex
 # function, but only after it is pushed and only with a metric that names no
-# location; this fails it in `make check` instead.
+# location; this fails it in `mise run check` instead.
 #
 # Functions that predate the gate carry an explicit `# noqa: C901` rather than
 # being exempted by path, so a *new* complex function in an already-complex file
@@ -132,10 +133,11 @@ pythonVersion = "3.11"
 # (e.g. `from findings import ...`); add those dirs so pyright resolves them.
 extraPaths = ["skills/nitpicker/scripts"]
 # Declared rather than inherited, so an editor's language server and the pinned
-# CLI in `make check` resolve the same rules. Left unset, each side falls back to
-# its own default and the editor can report problems CI never sees, or miss ones
-# it does. The Makefile gates on errorCount alone; that floor only means the same
-# thing on both sides if the mode producing the errors is fixed here.
+# CLI in `mise run check` resolve the same rules. Left unset, each side falls
+# back to its own default and the editor can report problems CI never sees, or
+# miss ones it does. The `typecheck` task gates on errorCount alone; that floor
+# only means the same thing on both sides if the mode producing the errors is
+# fixed here.
 typeCheckingMode = "standard"
 # types-93a4d6bd: strict mode is a per-file ratchet. A module joins this list
 # once it reports no strict errors, and a later edit that reintroduces an

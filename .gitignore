@@ -16,7 +16,8 @@ __pycache__
 # findings.py's flock file — must stay on disk for locking, never committed
 docs/audit/findings/.lock
 
-# `make index-check` scratch copy — see INDEX_SNAPSHOT in the Makefile
+# Scratch copy an older `index-check` wrote; `.mise/tasks/index-check` now
+# snapshots to a `mktemp` file instead
 .index-check.before
 
 # Unignore the CLAUDE.md and the whole .claude, then do certain ignores

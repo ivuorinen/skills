@@ -83,8 +83,8 @@ and print a `SKIP` line rather than passing silently.
 
 ## Cross-checking against the reference validator
 
-`make spec-check` runs the Agent Skills reference implementation over every
-skill. It needs network access, so it is not part of `make check`;
+`mise run spec-check` runs the Agent Skills reference implementation over every
+skill. It needs network access, so it is not part of `mise run check`;
 `validate-skill.py` enforces the same constraints offline.
 
 Every skill in the repo passes it, internal dev skills included. Two traps when

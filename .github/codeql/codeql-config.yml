@@ -25,7 +25,7 @@ threat-models:
 
 # benchmarks/corpus/ holds seeded-defect fixtures: each directory is a miniature
 # repository containing exactly one deliberately planted defect, and
-# `expected.json` names the line it sits on. `make bench` scores whether
+# `expected.json` names the line it sits on. `mise run bench` scores whether
 # retrieval surfaces that line. Reporting the planted defects as alerts inverts
 # the point — the alert is the fixture working — and it fails a required check
 # on code that is never executed, only read by the scorer.

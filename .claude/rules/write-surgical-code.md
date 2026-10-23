@@ -42,5 +42,5 @@ code gets mentioned, not deleted, unless removing it is the task.
 A change is done when a check proves it, not when it looks right. Non-trivial
 logic (a branch, a parser, a validator, a findings-store mutation) leaves one
 runnable check behind — a `test_*.py` in the existing pytest convention, or an
-assert-based self-check — and `make check` passes before the change is called
+assert-based self-check — and `mise run check` passes before the change is called
 finished. "Make it work" is not a success criterion; "this test now passes" is.

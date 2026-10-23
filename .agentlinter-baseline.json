@@ -64,19 +64,7 @@
       "rule": "clarity/escape-hatch-missing",
       "file": "CLAUDE.md",
       "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"- Command files have no frontmatter. Required shape: h1 `# /nitpicker \""
-    },
-    {
-      "rule": "clarity/escape-hatch-missing",
-      "file": "CLAUDE.md",
-      "severity": "warning",
-      "message": "Absolute rule without escape hatch: \"4. `make check` must pass (the validator enforces table ↔ file sync).\""
-    },
-    {
-      "rule": "clarity/undefined-term",
-      "file": "CLAUDE.md",
-      "severity": "info",
-      "message": "Undefined acronym \"AST\" — define on first use or add to glossary."
+      "message": "Absolute rule without escape hatch: \"4. `mise run check` must pass (the validator enforces table ↔ file syn\""
     },
     {
       "rule": "clarity/undefined-term",
@@ -113,30 +101,6 @@
       "file": "AGENTS.md",
       "severity": "critical",
       "message": "Referenced section \".claude/rules/vendored-skills.md\" not found in any file."
-    },
-    {
-      "rule": "consistency/outdated-cross-references",
-      "file": "CLAUDE.md",
-      "severity": "critical",
-      "message": "Referenced section \".claude/rules/skill-official-best-practices.md\" not found in any file."
-    },
-    {
-      "rule": "consistency/outdated-cross-references",
-      "file": "CLAUDE.md",
-      "severity": "critical",
-      "message": "Referenced section \".claude/rules/snapshot-before-mutating.md\" not found in any file."
-    },
-    {
-      "rule": "consistency/outdated-cross-references",
-      "file": "CLAUDE.md",
-      "severity": "critical",
-      "message": "Referenced section \".claude/rules/use-uv-runner.md\" not found in any file."
-    },
-    {
-      "rule": "consistency/referenced-files-exist",
-      "file": "CLAUDE.md",
-      "severity": "critical",
-      "message": "Referenced file \"INDEX.md\" not found in workspace."
     },
     {
       "rule": "runtime/config-exists",

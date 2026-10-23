@@ -7,13 +7,13 @@ paths:
 # Suppression Markers
 
 Two scanners run over `skills/` and `scripts/`, and each has its own marker:
-`# nosec` for bandit, `# nosemgrep` for opengrep. `make opengrep` gates the
+`# nosec` for bandit, `# nosemgrep` for opengrep. `mise run opengrep` gates the
 second, and `scripts/check-opengrep.py` is the tool.
 
 opengrep is the scanner Codacy reports code findings from, and its ruleset lived
 only in the Codacy UI — so a finding was invisible from a checkout and
 reproducible only by pushing. Two commits went to configuring bandit before the
-owner pointed out which engine was actually reporting. `make opengrep` runs
+owner pointed out which engine was actually reporting. `mise run opengrep` runs
 `r/python.lang.security.audit`, the namespace that reproduces those findings
 (`p/python` returns nothing here; it omits the `-audit` rule variants).
 
@@ -41,12 +41,13 @@ This is also why the gate runs opengrep rather than semgrep: semgrep 1.172.0
 cannot parse a `match` statement and drops the whole file, and this repo uses
 them.
 
-Locally the target skips when opengrep is absent; under CI it fails instead,
-because a gate that skips silently is not a gate. The `Validate` workflow
-installs a version-pinned, digest-verified binary before `make check`.
+Locally the task skips when opengrep is absent; under CI it fails instead,
+because a gate that skips silently is not a gate. `mise.toml` pins the version
+and `mise.lock` its checksum, and the `Validate` workflow installs it through
+mise before `mise run check`.
 
 ## Enforcement
 
-Gated for `# nosemgrep`: `make opengrep` fails on a marker that suppresses no
+Gated for `# nosemgrep`: `mise run opengrep` fails on a marker that suppresses no
 finding, which covers the misplaced reason comment. A `# nosec` marker has no
 staleness pass.

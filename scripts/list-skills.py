@@ -67,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the inventory `make list` shows, after parsing argv (none accepted)."""
+    """Print the inventory `mise run list` shows, after parsing argv (none accepted)."""
     _parser().parse_args(argv)
     public = collect_skills(REPO_ROOT / "skills")
     private = collect_skills(REPO_ROOT / ".claude" / "skills")

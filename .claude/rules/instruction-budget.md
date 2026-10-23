@@ -48,7 +48,7 @@ what buys the budget back.
 
 ## Enforcement
 
-Gated. `check-agent-instructions.py` runs in pre-commit and under `make check`,
+Gated. `check-agent-instructions.py` runs in pre-commit and under `mise run check`,
 and exits non-zero above the limit.
 
 Two companion findings from the same tool report without blocking, because both

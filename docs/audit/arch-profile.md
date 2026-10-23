@@ -130,7 +130,7 @@ Evidence:
 Governs: the code layer.
 
 Evidence — three rings, verified acyclic and inward-only across the full static
-import graph `make ring-deps` prints:
+import graph `mise run ring-deps` prints:
 
 | Ring | Path | Runtime contract |
 | --- | --- | --- |
@@ -150,7 +150,7 @@ import graph `make ring-deps` prints:
   `validate-audit-findings-hook.py` loads `findings.py` by path through
   `SourceFileLoader`. Within the middle ring,
   `scripts/bench-recall.py` loads `scripts/bench-retrieval.py` by path.
-  `make ring-deps` prints the current edge list; read it there rather than
+  `mise run ring-deps` prints the current edge list; read it there rather than
   trusting this copy.
 - The inner ring's contract is **machine-enforced**, not conventional:
   `scripts/check-stdlib-only.py` walks `SHIPPED_GLOB = "skills/*/scripts/**/*.py"`,
@@ -159,7 +159,7 @@ import graph `make ring-deps` prints:
   matches nothing (`find_violations`, `find_runner_violations` and `main` in
   `check-stdlib-only.py`).
 - The **direction** is enforced separately by `scripts/check-ring-deps.py`
-  (`make ring-deps`, in `make check`), which builds the graph from `import`
+  (`mise run ring-deps`, in `mise run check`), which builds the graph from `import`
   statements (relative ones included) *and* from path loads —
   `spec_from_file_location`, `SourceFileLoader`, `runpy.run_path`, the set
   `_PATH_LOADERS` names — and exits non-zero on
@@ -330,7 +330,7 @@ These are what `/nitpicker arch` should validate against.
  1. Every module load resolves statically. A path load (any loader in
     `_PATH_LOADERS`) or a relative import whose target cannot be determined —
     a computed path outside the module's own directory, a name assigned twice
-    in one scope, a non-literal segment after the anchor — fails `make ring-deps`
+    in one scope, a non-literal segment after the anchor — fails `mise run ring-deps`
     rather than being passed over, because an unresolved load is a hidden edge
     and a hidden edge is how a ring violation gets in.
 
@@ -349,19 +349,19 @@ does not exist: the import sits *inside* the `export` subcommand handler
 imports it as a library and the PostToolUse hook shells out to it … pointing the
 core at its own adapter made every one of those callers pay for the renderer".
 The original scan walked function bodies and conflated a deferred import with a
-module-level one. `make ring-deps` now distinguishes them.
+module-level one. `mise run ring-deps` now distinguishes them.
 
 **One hook loads a shipped module by path; the rest shell out.**
 `validate-audit-findings-hook.py` loads `skills/nitpicker/scripts/findings.py`
 through `importlib.machinery.SourceFileLoader` (`_load_findings`), so it can
 read `findings.DEFAULT_ROOT` rather than copy it. That edge points inward
-(hooks → shipped) and is legal, but `make ring-deps` did not see it until
+(hooks → shipped) and is legal, but `mise run ring-deps` did not see it until
 SourceFileLoader joined the loaders it resolves (arch-548ae822). The hooks'
 validator runs still go through `subprocess` — the `subprocess.run` calls in
 that hook's `main`, among others — and a process boundary is not an import
 edge, is legitimately absent from a dependency graph, and cannot carry a ring
 violation. The authoritative list of string-path importers is what
-`make ring-deps` marks `[string-path load]` and
+`mise run ring-deps` marks `[string-path load]` and
 `[string-path load, own directory]`; read it there rather than from a copy.
 
 ### Fixed
@@ -406,7 +406,7 @@ nodes — it has indexed manifest strings as architectural concepts, and surface
 none of the patterns above. This is not a defect in this repo's architecture and
 nothing here fixes it; `graphify` is vendored (`.claude/rules/vendored-skills.md`)
 and its index is generated. Use `graphify query` as a locator, and read the
-dependency graph from `make ring-deps` instead.
+dependency graph from `mise run ring-deps` instead.
 
 ## Confidence
 
@@ -418,5 +418,5 @@ Low-confidence entry (append-only ledger) is labelled as partial and explained.
 Two first-pass findings did not survive re-reading the source and are recorded
 as corrections rather than deleted. Both had the same cause: an AST walk that
 descended into function bodies, so a deliberately deferred import read as a
-module-level dependency. `make ring-deps` now separates the two, which is why
+module-level dependency. `mise run ring-deps` now separates the two, which is why
 that distinction is a gate and not a habit.

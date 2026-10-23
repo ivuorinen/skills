@@ -7,7 +7,7 @@ change, never from how much work the change took.
 ## Which type
 
 `feat:` — a new command, a new shipped capability, or a new gate wired into
-`make check` or CI. A new enforcement gate is a feature: it changes what
+`mise run check` or CI. A new enforcement gate is a feature: it changes what
 passes the build for everyone who pins this repo.
 
 `fix:` — repaired behaviour in something that already shipped. Nothing new.

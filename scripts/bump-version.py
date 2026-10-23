@@ -102,7 +102,7 @@ def relock() -> bool:
 
     uv.lock records the root package's version in its own `[[package]]` entry,
     and release-please has no updater for it — 3.0.0 shipped with the lockfile
-    still declaring 2.0.0. `make lock-check` now fails on that drift, so a bump
+    still declaring 2.0.0. `mise run lock-check` now fails on that drift, so a bump
     that skipped this step would leave the tree failing its own gate.
 
     Returns False (never raises) when uv is absent or the lock cannot be
@@ -171,7 +171,7 @@ def main() -> int:
     print("Next steps:")
     if not locked:
         print("  0. Run `uv lock` — uv.lock still names the old version, and")
-        print("     `make lock-check` fails until it does not")
+        print("     `mise run lock-check` fails until it does not")
     # Staged by path, never `git add -A`: the repo's git guard denies it, and it
     # would sweep unrelated work into a release commit. No CHANGELOG entry and
     # no tag: release-please writes both, and a hand-made pair collides with

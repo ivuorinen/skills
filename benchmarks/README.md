@@ -6,10 +6,10 @@ and which lens owns it.
 
 The corpus answers two different questions, and only the first is gated here:
 
-| Question | Scored by | Gated by `make check` | Needs a model |
+| Question | Scored by | Gated by `mise run check` | Needs a model |
 | --- | --- | --- | --- |
-| Did retrieval surface the defect's location at all? | `scripts/bench-retrieval.py` (`make bench`) | Yes | No |
-| Did the lens recognise the defect once it saw it? | `scripts/bench-recall.py` (`make bench-recall`) | No | Yes |
+| Did retrieval surface the defect's location at all? | `scripts/bench-retrieval.py` (`mise run bench`) | Yes | No |
+| Did the lens recognise the defect once it saw it? | `scripts/bench-recall.py` (`mise run bench-recall`) | No | Yes |
 
 **Retrieval is scored first because it is the half that can fail silently.** A
 lens that never receives the defect's lines cannot report it, and the resulting
@@ -19,9 +19,9 @@ is exactly what a context-reduction change puts at risk — so it is measured on
 every commit, without credentials and without a model.
 
 Model recall needs an agent per case: minutes of wall clock, API credentials,
-and a nondeterministic verdict. It does not belong in `make check` and must stay
-out — a gate that grades differently twice on the same input is one people learn
-to re-run until it passes. Run `make bench-recall` by hand, or from a scheduled
+and a nondeterministic verdict. It does not belong in `mise run check` and must
+stay out — a gate that grades differently twice on the same input is one people
+learn to re-run until it passes. Run `mise run bench-recall` by hand, or from a scheduled
 job, when a lens or a command file changes.
 
 `bench-recall.py` splits along that line deliberately:
@@ -116,7 +116,7 @@ approval must leave the handler in place.
 3. Run `uv run --quiet scripts/bench-retrieval.py --case <case-id> -v` and read the
    rank. A case that scores a perfect 1.0 with no distractors is not testing
    retrieval, it is testing `grep`.
-4. `make bench` must still pass.
+4. `mise run bench` must still pass.
 5. Optionally `uv run --quiet scripts/bench-recall.py --run --case <case-id>` to see
    whether a lens actually reports it. Not required to land a case: retrieval is
    what gates.

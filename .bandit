@@ -14,7 +14,7 @@
 # Keep this the only `.bandit` in the tree. Discovery collects all of them and
 # two is a hard error — bandit exits 2 rather than choosing one.
 #
-# So `-c pyproject.toml` (what `make security` and the pre-commit hook pass) and
+# So `-c pyproject.toml` (what `mise run security` and the pre-commit hook pass) and
 # a hosted runner invoking `bandit -r .` reach the same policy only because both
 # files exist and agree. Without this one, any runner that does not pass `-c`
 # would silently fall back to bandit's defaults and report B404/B603/B607.
@@ -37,7 +37,7 @@
 #   exclude=*/tests/*  target=tests  -> tests/ still scanned
 #
 # bandit matches the exclusion against the path it walked, and that path depends
-# on the target it was given. `make security` passes `-r skills/ scripts/`; a
+# on the target it was given. `mise run security` passes `-r skills/ scripts/`; a
 # hosted runner may pass `.` or the directory itself. Listing both forms is the
 # only spelling that holds for every invocation, and `tests/test_bandit_config.py`
 # asserts the resulting behaviour through bandit's own file discovery rather
