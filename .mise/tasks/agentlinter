@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="agentlinter scan (the other engine Codacy reports) vs the committed baseline"
+# The same gap, closed for Codacy's other engine: Agentlinter's findings on
+# CLAUDE.md, AGENTS.md and the command files were reproducible only by pushing.
+#
+# It is a baseline gate, not a severity gate — its `critical` rules were all
+# false positives on this tree when it was wired in, so failing on severity
+# would fail forever on noise. The script's docstring carries the detail and the
+# reasons the invocation is shaped the way it is (`--local`, the version pin,
+# the parsed JSON rather than the always-zero exit code).
+#
+# `agentlinter-update` is not in `check` — it re-records the accepted set, so
+# running it as part of the gate would make the gate pass by definition.
+set -euo pipefail
+uv run --quiet scripts/check-agentlinter.py

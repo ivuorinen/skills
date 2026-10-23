@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="opengrep scan (the rules Codacy reports) + stale-suppression check"
+# The second scanner, and one of the engines Codacy also reports from (the
+# `agentlinter` task covers the other). Its ruleset lived solely in the Codacy
+# UI until this gate existed, so a finding was invisible from a checkout and
+# reproducible only by pushing. Also fails on a `# nosemgrep` that suppresses
+# nothing — a check nothing else here performs.
+#
+# opengrep is pinned in mise.toml, so `mise run` puts it on PATH. The script
+# still degrades to a skip when opengrep is absent; under CI it fails instead,
+# because a gate that skips silently is not a gate.
+set -euo pipefail
+uv run --quiet scripts/check-opengrep.py

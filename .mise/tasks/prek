@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run the full prek hook suite (markdownlint, yamllint, gitleaks, …)"
+# Its fixers rewrite files, so `check` runs it in the writer phase.
+set -euo pipefail
+prek run --all-files --show-diff-on-failure

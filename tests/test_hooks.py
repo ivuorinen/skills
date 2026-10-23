@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from mise_check import check_phases
 
 HOOKS_DIR = Path(__file__).parent.parent / "scripts" / "hooks"
 SCRIPTS_DIR = HOOKS_DIR.parent
@@ -564,7 +565,7 @@ def test_deny_agents_blocks_content_addressed_reach(command, monkeypatch):
 @pytest.mark.parametrize(
     "command",
     [
-        "make check",
+        "mise run check",
         "uv run --extra dev pytest tests/",
         "git commit -m 'fix: review comments'",
         "grep -rn review skills/nitpicker/commands/",
@@ -644,40 +645,91 @@ def _pyproject_pin(package: str) -> str:
 
 
 def test_every_ruff_call_site_names_the_same_version():
-    """Four places invoke ruff and two of them WRITE (`make format`, the hook).
+    """Several places invoke ruff and two of them WRITE (`mise run format`, the hook).
 
     A version that drifts between them means the tree gets formatted one way and
     judged another — reformat churn whose cause appears nowhere in the diff. This
     already happened: pyproject moved to 0.16.0 while the Makefile, CI, and the
     pre-commit rev stayed on 0.15.21.
 
-    CI is no longer a site: the Validate job runs `make check`, so it inherits
-    the Makefile's pin instead of carrying a fifth copy. That is the point of
-    the collapse — fewer places to keep in step, not merely fewer lines.
+    The `lint`, `format` and `format-check` tasks and the prek ruff hooks take
+    ruff from mise's PATH, so `mise.toml` is their single pin. CI is not a site
+    either: the Validate job runs `mise run check` and inherits the same pin.
     """
     want = _pyproject_pin("ruff")
     sites = {
-        "scripts/hooks/ruff-hook.py": rf'"ruff=={re.escape(want)}"',
-        "Makefile": rf"ruff=={re.escape(want)}\b",
-        # SHA-pinned per github-actions-security.md, so the version lives in the
-        # trailing comment; that is what has to match.
-        ".pre-commit-config.yaml": rf"#\s*v{re.escape(want)}\b",
+        "scripts/hooks/ruff-hook.py": (rf'"ruff=={re.escape(want)}"', 0),
+        "mise.toml": (rf'^ruff = "{re.escape(want)}"$', re.M),
     }
-    for rel, pattern in sites.items():
+    for rel, (pattern, flags) in sites.items():
         text = (ROOT / rel).read_text(encoding="utf-8")
-        assert re.search(pattern, text), f"{rel} does not name ruff {want}"
-
-    # Both writing call sites, not just one of them.
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    assert len(re.findall(rf"ruff=={re.escape(want)}\b", makefile)) == 2, (
-        "Makefile must pin ruff in both `format` and `format-check`"
-    )
+        assert re.search(pattern, text, flags), f"{rel} does not name ruff {want}"
 
     # And CI must not quietly reacquire its own pin.
     workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
     assert "ruff==" not in workflow, (
-        "the Validate job runs `make check`; a ruff pin here is a reintroduced second copy"
+        "the Validate job runs `mise run check`; a ruff pin here is a reintroduced second copy"
     )
+
+
+def _local_hooks() -> dict[str, dict]:
+    """The `repo: local` hooks of .pre-commit-config.yaml, by id."""
+    cfg = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    return {h["id"]: h for r in cfg["repos"] if r["repo"] == "local" for h in r["hooks"]}
+
+
+def test_prek_ruff_hooks_use_the_mise_pin():
+    """A `rev:` on astral-sh/ruff-pre-commit was one more copy of the ruff pin.
+
+    As local hooks behind `mise exec`, they run the ruff mise.toml names, so the
+    commit hook and the gate cannot format the tree two different ways.
+    """
+    hooks = _local_hooks()
+    assert hooks["ruff-check"]["entry"] == "mise exec -- ruff check --fix"
+    assert hooks["ruff-format"]["entry"] == "mise exec -- ruff format"
+    for hook_id in ("ruff-check", "ruff-format"):
+        assert hooks[hook_id]["language"] == "system", hook_id
+        assert hooks[hook_id]["types"] == ["python"], hook_id
+    cfg_text = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "astral-sh/ruff-pre-commit" not in cfg_text
+
+
+# The `files:` filter each task-backed hook had before it called a task. The
+# move changes what a hook runs, not when it runs.
+_LOCAL_HOOK_FILTERS = {
+    "validate-skills": r"^(skills/|\.claude/skills/|scripts/validate-skill\.py)",
+    "validate-evals": r"^(skills/[^/]+/evals/|scripts/validate-evals\.py)",
+    "validate-rules": r"^(\.claude/rules/|scripts/validate-rules\.py)",
+    "version-sync": (
+        r"^(package\.json|pyproject\.toml|\.release-please-manifest\.json"
+        r"|\.claude-plugin/(plugin|marketplace)\.json)"
+    ),
+    "findings-store": r"^docs/audit/findings/",
+    "stdlib-only-tools": r"^(skills/.*/scripts/.*\.py|scripts/check-stdlib-only\.py)$",
+    "rules-anatomy": r"^(\.claude/rules/|skills/nitpicker/scripts/check-rules-anatomy\.py)",
+}
+_LOCAL_HOOK_TASKS = {
+    "validate-skills": "validate",
+    "validate-evals": "validate-evals",
+    "validate-rules": "validate-rules",
+    "version-sync": "version-sync",
+    "findings-store": "audit-consistency",
+    "stdlib-only-tools": "stdlib-only",
+    "rules-anatomy": "rules-anatomy",
+    "agent-instructions": "agent-instructions",
+}
+
+
+def test_local_hooks_call_tasks():
+    """Each local check hook runs the task of the same gate, so the commit hook
+    and `mise run check` cannot run two different commands under one name."""
+    hooks = _local_hooks()
+    for hook_id, task in _LOCAL_HOOK_TASKS.items():
+        assert hooks[hook_id]["entry"] == f"mise run -q {task}", hook_id
+        assert (ROOT / ".mise" / "tasks" / task).is_file(), task
+    for hook_id, files in _LOCAL_HOOK_FILTERS.items():
+        assert hooks[hook_id]["files"] == files, hook_id
+    assert "check-agent-instructions" in hooks["agent-instructions"]["files"]
 
 
 # Only a NAMED GROUP opener, never a lookbehind. `(?<` also begins `(?<=` and
@@ -816,13 +868,17 @@ def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
     Makefile, the PEP 723 hook block and the pre-commit rev behind, because no
     enabled manager reads those. The gate then failed the bot's own PR with no
     way for it to comply. Assert the customManagers actually match the pins.
+
+    `mise.toml` needs no custom manager: Renovate's built-in `mise` manager
+    reads it, so that manager has to stay enabled.
     """
     cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
     assert "custom.regex" in cfg["enabledManagers"], (
         "customManagers do nothing unless custom.regex is an enabled manager"
     )
+    assert "mise" in cfg["enabledManagers"], "the built-in mise manager reads mise.toml"
 
-    expected = {"Makefile": {"pre-commit", "pyright", "ruff"}, "scripts/hooks/*.py": {"ruff"}}
+    expected = {"scripts/hooks/*.py": {"ruff"}}
     seen: dict[str, set[str]] = {}
     for mgr in cfg["customManagers"]:
         glob_pat = mgr["managerFilePatterns"][0]
@@ -873,8 +929,9 @@ def test_the_builtin_pre_commit_manager_stays_disabled():
 def test_renovate_groups_each_tool_across_its_managers():
     """One PR per tool, or every PR is a partial bump.
 
-    ruff on PyPI and astral-sh/ruff-pre-commit are separate packages to
-    Renovate. Ungrouped they arrive as two PRs, and each one on its own fails
+    ruff on PyPI and ruff in mise.toml are separate packages to Renovate: the
+    `mise` manager resolves it to the `astral-sh/ruff` GitHub release. Ungrouped
+    they arrive as two PRs, and each one on its own fails
     test_every_ruff_call_site_names_the_same_version.
     """
     cfg = json.loads((ROOT / "renovate.json").read_text(encoding="utf-8"))
@@ -883,8 +940,8 @@ def test_renovate_groups_each_tool_across_its_managers():
         for r in cfg.get("packageRules", [])
         if "groupName" in r and "matchPackageNames" in r
     }
-    assert {"ruff", "astral-sh/ruff-pre-commit"} <= groups.get("ruff", set()), (
-        "ruff and its pre-commit repo must share a groupName"
+    assert {"ruff", "astral-sh/ruff"} <= groups.get("ruff", set()), (
+        "ruff on PyPI and its mise.toml pin must share a groupName"
     )
     assert {"bandit", "PyCQA/bandit"} <= groups.get("bandit", set()), (
         "bandit and its pre-commit repo must share a groupName"
@@ -892,7 +949,7 @@ def test_renovate_groups_each_tool_across_its_managers():
 
 
 def test_bandit_pin_matches_the_pre_commit_rev_comment():
-    """Same discipline as ruff: `make security`, CI, and the pre-commit hook all
+    """Same discipline as ruff: `mise run security`, CI, and the pre-commit hook all
     read [tool.bandit] from pyproject.toml, so the version must not drift."""
     want = _pyproject_pin("bandit")
     config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
@@ -1040,7 +1097,7 @@ def test_bandit_exclusions_all_resolve():
     for name in excluded:
         assert re.escape(name).replace("/", "/") in hook or name in hook, (
             f"the bandit pre-commit hook does not exclude {name!r}; it would scan a "
-            "different set than `make security` and CI"
+            "different set than `mise run security` and CI"
         )
     assert "_extra" not in hook, "the bandit hook still excludes the removed `_extra`"
 
@@ -1064,7 +1121,7 @@ def test_no_required_check_job_can_be_skipped_into_a_pass():
     which triggers on `pull_request` alone.
 
     `Validate` keeps `workflow_dispatch` legitimately and is exempt from the
-    trigger half: it carries no `if:`, so a dispatched run executes `make check`
+    trigger half: it carries no `if:`, so a dispatched run executes `mise run check`
     for real and can only report what it actually found. The `if:` half binds it
     like every other required job.
     """
@@ -1095,7 +1152,7 @@ def test_no_required_check_job_can_be_skipped_into_a_pass():
 def test_bandit_pre_commit_hook_scans_the_same_roots_as_make_security():
     """pre-commit passes changed files explicitly, bypassing both `-r skills/
     scripts/` and [tool.bandit] exclude_dirs — so the hook must restate them or
-    it gates a different set than `make security` and CI."""
+    it gates a different set than `mise run security` and CI."""
     config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     block = config.split("- id: bandit", 1)[1].split("- repo:", 1)[0]
     assert "files:" in block, "bandit hook must bound itself to the scanned roots"
@@ -1167,11 +1224,6 @@ def test_the_renovate_custom_manager_matches_every_pre_commit_rev():
     )
 
 
-# The one step allowed to run without being `make check`. Widening this set is a
-# deliberate edit to a file CODEOWNERS covers, which is the real control.
-GATE_SETUP_STEPS = frozenset({"Install opengrep"})
-
-
 def _run_steps(workflow: str, job: str = "validate") -> list[tuple[str, str]]:
     """(name, run-body) for each step in `job` that executes something.
 
@@ -1182,54 +1234,11 @@ def _run_steps(workflow: str, job: str = "validate") -> list[tuple[str, str]]:
     that step and waved through. Key order, block scalars, and quoting were the
     same accident waiting to happen. A parser knows all of it.
 
-    Name is "" for an unnamed step, which no setup allowlist contains, so such a
+    Name is "" for an unnamed step, which is not the gate step's name, so such a
     step fails on its own rather than needing a rule of its own.
     """
     steps = yaml.safe_load(workflow)["jobs"][job].get("steps") or []
     return [(step.get("name") or "", step["run"]) for step in steps if "run" in step]
-
-
-# What a declared setup step may invoke. An allowlist, not a denylist: rejecting
-# `make` and `uv` by name let `./scripts/deploy-everything.sh` through a step
-# named `Install opengrep`, because it carries neither token. Enumerating what
-# may run is the only form that does not need extending once per attack.
-_SETUP_COMMANDS = frozenset({"set", "curl", "echo", "sha256sum", "chmod", "sudo", "mv", "opengrep"})
-
-# Wrappers whose argument is itself a command, so the word after one runs too —
-# otherwise `sudo ./deploy.sh` reads as the allowed `sudo` and nothing else.
-_COMMAND_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "time", "nohup", "xargs"})
-
-
-def _command_words(body: str) -> list[str] | None:
-    """Every token in command position, or None if the body will not parse.
-
-    Line by line, because a newline separates commands and shlex treats it as
-    plain whitespace — reading the body as one stream saw only the first command
-    of each line. `punctuation_chars` makes `;`, `&&`, `|` and friends their own
-    tokens, so the word after an operator is recognised as a new command rather
-    than as an argument to the previous one.
-
-    Backslash continuations are joined first. Without that the real install step
-    fails its own allowlist: `curl -sSfL -o /tmp/opengrep \\` puts the URL on the
-    next physical line, which then reads as a command in its own right.
-    """
-    words: list[str] = []
-    for line in body.replace("\\\n", " ").splitlines():
-        try:
-            lexer = shlex.shlex(line, punctuation_chars=True)
-            lexer.whitespace_split = True
-            tokens = list(lexer)
-        except ValueError:
-            return None
-        expect_command = True
-        for token in tokens:
-            if set(token) <= set(";&|()<>"):
-                expect_command = True
-                continue
-            if expect_command:
-                words.append(token)
-                expect_command = token in _COMMAND_WRAPPERS
-    return words
 
 
 def _shell_tokens(body: str) -> list[str] | None:
@@ -1251,96 +1260,95 @@ def _shell_tokens(body: str) -> list[str] | None:
         return None
 
 
-def _gate_violations(validate_job: str, setup_steps: frozenset[str]) -> list[str]:
-    """Every run step that is neither the gate nor a declared tool install.
+_GATE_TOKENS = ["mise", "run", "check"]
+
+
+def _gate_violations(validate_job: str) -> list[str]:
+    """Every step that is neither the gate nor a `uses:` action step.
 
     Classification is by token, not by substring: a step whose *comment* mentions
-    `make check` used to be accepted as the gate and skip the smuggling check
+    the gate used to be accepted as the gate and skip the smuggling check
     entirely, so a second step carrying that name could run anything it liked.
 
-    The gate body must be exactly the two tokens, and there must be exactly one
-    such step. Accepting `make check` merely *among* the tokens let
+    The gate body must be exactly `mise run check`, and there must be exactly one
+    such step. Accepting the words merely *among* the tokens let
     `echo make check && uv run …` pass as the gate, and counting nothing let a
     second identical gate step through — neither is the single invocation the
     job is supposed to be.
+
+    No other step may have a `run:` body. Tools install through the pinned
+    mise-action from `mise.lock`, so the setup-step allowlist that once admitted
+    a checksum-verified `curl` is gone, and with it every way to hide a command
+    inside an allowed setup step.
     """
     problems = []
     gates = 0
-    for name, body in _run_steps(validate_job):
-        tokens = _shell_tokens(body)
+    steps = yaml.safe_load(validate_job)["jobs"]["validate"].get("steps") or []
+    for step in steps:
+        name = step.get("name") or ""
+        if "run" not in step:
+            if "uses" not in step:
+                problems.append(f"step {name!r} neither runs the gate nor uses an action")
+            continue
+        tokens = _shell_tokens(step["run"])
         if tokens is None:
             problems.append(f"step {name!r} has a run body that is not parseable as shell")
             continue
-        if tokens == ["make", "check"]:
+        if tokens == _GATE_TOKENS:
             gates += 1
             if name != "Run the repository gate":
                 problems.append(f"unexpected step running the gate: {name!r}")
             continue
-        if name not in setup_steps:
-            problems.append(
-                f"the Validate job runs {name!r} outside `make check` — a gate belongs "
-                "in the Makefile, not in a second copy here"
-            )
-            continue
-        # Command substitution runs a command without putting it in command
-        # position, so the allowlist never sees it: `echo "$(./deploy.sh)"`
-        # tokenises to a bare `echo`. Rejected outright rather than parsed,
-        # since a setup step has no need of it. `${VAR}` is untouched — the
-        # install step interpolates its pinned version and digest that way.
-        substitutions = [form for form in ("$(", "`") if form in body]
-        if substitutions:
-            problems.append(
-                f"setup step {name!r} uses command substitution {substitutions} — "
-                "it hides a command from the allowlist"
-            )
-            continue
-        words = _command_words(body)
-        if words is None:
-            problems.append(f"step {name!r} has a run body that is not parseable as shell")
-            continue
-        disallowed = sorted({word for word in words if word not in _SETUP_COMMANDS})
-        if disallowed:
-            problems.append(
-                f"setup step {name!r} runs {disallowed} — a declared setup step may only "
-                f"invoke {sorted(_SETUP_COMMANDS)}, so it installs a tool rather than "
-                "executing repository code"
-            )
+        problems.append(
+            f"the Validate job runs {name!r} outside `mise run check` — a gate belongs "
+            "in .mise/tasks/check, not in a second copy here"
+        )
     if gates != 1:
-        problems.append(f"expected exactly one `make check` step, found {gates}")
+        problems.append(f"expected exactly one `mise run check` step, found {gates}")
     return problems
 
 
-def test_ci_runs_the_repository_gate_through_make_check():
-    """The Validate job must invoke `make check`, not restate its targets.
+def test_ci_runs_the_repository_gate_through_mise_run_check():
+    """The Validate job must invoke `mise run check`, not restate its gates.
 
     Replaces the old per-target assertions. Those pinned CI and the Makefile to
     the same shape, but a *new* target added to `make check` was still absent
     from CI until someone noticed — the assertion could only catch drift in
-    steps that already existed. Running the Makefile removes the second copy
-    instead of guarding it.
+    steps that already existed. Running the one gate task removes the second
+    copy instead of guarding it.
     """
-    # No gate may run outside `make check`.
+    # No gate may run outside `mise run check`.
     #
-    # Matching each `make check` target name against the `run:` lines was the
-    # obvious check and is useless: a reintroduced security step runs
-    # `bandit ...`, which contains no "security".
+    # Matching each gate name against the `run:` lines was the obvious check and
+    # is useless: a reintroduced security step runs `bandit ...`, which contains
+    # no "security".
     #
-    # Counting `run:` steps replaced it, and held until a scanner needed
-    # installing — opengrep ships no action to pin, so it is fetched and
-    # checksum-verified in a `run:` block. A count cannot tell that setup step
-    # from a smuggled-in gate, so the property is stated directly instead, in
-    # `_gate_violations`: exactly one step runs `make check` and nothing else,
-    # and every other step is a declared install that executes no repo code.
+    # The property is stated directly instead, in `_gate_violations`: exactly
+    # one step runs `mise run check` and nothing else, and every other step is
+    # a `uses:` action. mise-action installs the pinned tools from mise.lock, so
+    # no setup step needs a `run:` body of its own.
     #
-    # The separate `run: make check` line assertion this replaced is subsumed:
-    # `gates != 1` fails when that step is missing, and it checks the parsed
-    # command rather than the file's text.
+    # The separate `run:` line assertion this replaced is subsumed: `gates != 1`
+    # fails when that step is missing, and it checks the parsed command rather
+    # than the file's text.
     workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    assert _gate_violations(workflow, GATE_SETUP_STEPS) == []
+    assert _gate_violations(workflow) == []
+
+
+def test_validate_job_installs_tools_through_the_pinned_mise_action():
+    """Tools come from mise.lock, checksum-verified, through a SHA-pinned action.
+
+    MISE_LOCKED makes an install that the lock does not cover fail the job
+    instead of resolving a version on the fly.
+    """
+    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
+    assert "jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2" in workflow
+    assert "version: 2026.10.1" in workflow
+    assert 'MISE_LOCKED: "1"' in workflow
 
 
 # The one legitimate gate step, for composing synthetic jobs that need it present.
-_GATE_STEP = {"name": "Run the repository gate", "run": "make check"}
+_GATE_STEP = {"name": "Run the repository gate", "run": "mise run check"}
 
 
 def _job(*steps: dict) -> str:
@@ -1360,8 +1368,11 @@ def test_a_comment_naming_the_gate_does_not_make_a_step_the_gate():
     could carry them in a shell comment, take the gate branch, and skip the
     smuggling check entirely — while running whatever it liked.
     """
-    smuggler = {"name": "Run the repository gate", "run": "# make check\nuv run --extra dev bandit"}
-    assert _gate_violations(_job(_GATE_STEP, smuggler), GATE_SETUP_STEPS) != []
+    smuggler = {
+        "name": "Run the repository gate",
+        "run": "# mise run check\nuv run --extra dev bandit",
+    }
+    assert _gate_violations(_job(_GATE_STEP, smuggler)) != []
 
 
 @pytest.mark.parametrize(
@@ -1381,7 +1392,7 @@ def test_a_hash_inside_a_string_does_not_hide_a_command(line):
     unspaced form.
     """
     step = {"name": "Install opengrep", "run": line}
-    assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
+    assert _gate_violations(_job(_GATE_STEP, step)) != []
 
 
 def test_an_unnamed_run_step_is_its_own_step():
@@ -1395,105 +1406,56 @@ def test_an_unnamed_run_step_is_its_own_step():
     install = {"name": "Install opengrep", "run": "curl -sSfL -o /tmp/og https://x"}
     job = _job(install, {"run": "./scripts/deploy-everything.sh"}, _GATE_STEP)
     assert [name for name, _ in _run_steps(job)] == ["Install opengrep", "", _GATE_STEP["name"]]
-    assert _gate_violations(job, GATE_SETUP_STEPS) != []
+    assert _gate_violations(job) != []
 
 
-def test_the_gate_step_must_be_exactly_make_check():
-    """`echo make check && uv run …` contained the tokens without being the gate.
+def test_the_gate_step_must_be_exactly_mise_run_check():
+    """`echo mise run check && uv run …` contained the tokens without being the gate.
 
-    Adjacency was too weak: any body mentioning the two words in order was
+    Adjacency was too weak: any body mentioning the words in order was
     classified as the gate and skipped the smuggling check.
     """
     extra = {
         "name": "Run the repository gate",
-        "run": "echo make check && uv run --extra dev bandit",
+        "run": "echo mise run check && uv run --extra dev bandit",
     }
-    assert _gate_violations(_job(_GATE_STEP, extra), GATE_SETUP_STEPS) != []
+    assert _gate_violations(_job(_GATE_STEP, extra)) != []
 
 
 def test_exactly_one_gate_step_is_required():
     """Two gate steps, or none, is not the single invocation the job is meant to be."""
-    assert _gate_violations(_job(_GATE_STEP, dict(_GATE_STEP)), GATE_SETUP_STEPS) != []
-    install = {"name": "Install opengrep", "run": "curl https://x"}
-    assert _gate_violations(_job(install), GATE_SETUP_STEPS) != []
+    assert _gate_violations(_job(_GATE_STEP, dict(_GATE_STEP))) != []
+    install = {"name": "Install mise", "uses": "jdx/mise-action@0"}
+    assert _gate_violations(_job(install)) != []
 
 
-@pytest.mark.parametrize(
-    "run",
-    [
-        "./scripts/deploy-everything.sh",
-        "sudo ./scripts/deploy-everything.sh",
-        "curl -sSfL -o /tmp/og https://x && ./scripts/deploy-everything.sh",
-    ],
-    ids=["bare", "behind-sudo", "after-&&"],
-)
-def test_a_declared_setup_step_may_not_run_repository_code(run):
-    """A denylist of `make`/`uv` missed everything else the repo can execute.
+def test_any_second_run_step_is_a_violation():
+    """No setup step may run a shell body: tools install through mise-action.
 
-    A step *named* `Install opengrep` running `./scripts/deploy-everything.sh`
-    carries neither token, so it passed while executing repository code outside
-    the single gate. The allowlist names what may run instead, which is why the
-    sudo and `&&` variants need no rule of their own.
+    The old allowlist admitted one named install step and then had to police
+    what its body invoked; every hole in that policing was a way to run
+    repository code outside the gate. With no `run:` setup step left, the rule
+    is simply that the gate is the only `run:` step.
     """
-    step = {"name": "Install opengrep", "run": run}
-    assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
-
-
-@pytest.mark.parametrize(
-    "run",
-    [
-        'echo "$(./scripts/deploy-everything.sh)"',
-        'echo "`./scripts/deploy-everything.sh`"',
-    ],
-    ids=["dollar-paren", "backticks"],
-)
-def test_command_substitution_cannot_hide_a_command(run):
-    """Substitution runs a command without it ever being in command position.
-
-    `echo "$(./deploy.sh)"` tokenises to a bare `echo`, so the allowlist saw
-    nothing to object to while the script ran. Only the quoted forms bypassed it
-    — unquoted `$(` happens to split into its own token — which is why both are
-    pinned rather than the one that failed.
-    """
-    step = {"name": "Install opengrep", "run": run}
-    assert _gate_violations(_job(_GATE_STEP, step), GATE_SETUP_STEPS) != []
-
-
-def test_the_real_install_step_satisfies_the_command_allowlist():
-    """The allowlist has to admit the actual install step, or it is just a ban.
-
-    Pinned because tightening the allowlist without checking this would fail the
-    workflow it exists to permit — and the failure would look like a smuggled
-    command rather than an over-tight rule.
-    """
-    workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    install = [body for name, body in _run_steps(workflow) if name == "Install opengrep"]
-    assert install, "the Install opengrep step is gone; this test guards the wrong thing now"
-    words = _command_words(install[0])
-    # Not `or []`: that turned a parse failure into an empty set, which satisfies
-    # any allowlist — a malformed body would have passed this assertion instead
-    # of failing it.
-    assert words is not None, "the install step's run body no longer parses as shell"
-    assert set(words) <= _SETUP_COMMANDS
+    install = {"name": "Install opengrep", "run": "curl x | sh"}
+    assert _gate_violations(_job(install, _GATE_STEP)) != []
 
 
 def test_an_unparseable_run_body_fails_closed():
     """Unbalanced quoting cannot be classified, so it is a violation, not a pass."""
     broken = {"name": "Install opengrep", "run": 'echo "unterminated'}
-    assert _gate_violations(_job(_GATE_STEP, broken), GATE_SETUP_STEPS) != []
+    assert _gate_violations(_job(_GATE_STEP, broken)) != []
 
 
-def test_make_check_still_covers_every_gate():
+def test_mise_check_still_covers_every_gate():
     """The collapse is only safe while `check` actually runs everything.
 
-    Pins the target list, so dropping one from `make check` — which would now
+    Pins the task list, so dropping one from `mise run check` — which would now
     silently drop it from CI too — fails here instead of quietly narrowing the
     gate.
     """
-    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    check_rule = re.search(r"^check:(.*)$", makefile, re.M)
-    assert check_rule, "Makefile has no `check:` rule"
-    targets = set(check_rule.group(1).split())
+    read_only, writers = check_phases(ROOT)
+    targets = {*read_only, *writers}
     required = {
         "validate",
         "validate-rules",
@@ -1506,9 +1468,9 @@ def test_make_check_still_covers_every_gate():
         "opengrep",
         "typecheck",
         "test",
-        "pre-commit",
+        "prek",
     }
-    assert required <= targets, f"`make check` no longer runs: {sorted(required - targets)}"
+    assert required <= targets, f"`mise run check` no longer runs: {sorted(required - targets)}"
 
 
 def test_validate_rules_hook_surfaces_validator_failure(monkeypatch, tmp_path, capsys):
@@ -2065,7 +2027,7 @@ def test_audit_findings_ledger_failure_exits_2(monkeypatch, tmp_path, capsys):
 
 
 def test_audit_findings_index_failure_exits_2(monkeypatch, tmp_path, capsys):
-    """INDEX.md drift fails `make check`; a silent regeneration failure would hand
+    """INDEX.md drift fails `mise run check`; a silent regeneration failure would hand
     the agent a red build with no cause."""
     mod = _load("validate-audit-findings-hook")
     repo = _findings_repo(tmp_path)

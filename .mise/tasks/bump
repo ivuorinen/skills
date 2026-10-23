@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Bump the version across every manifest"
+#USAGE arg "<part>" help="patch, minor or major"
+set -euo pipefail
+uv run --quiet scripts/bump-version.py "$usage_part"

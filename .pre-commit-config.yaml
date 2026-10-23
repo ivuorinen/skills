@@ -44,33 +44,24 @@ repos:
       - id: yamllint
         args: [--strict, -c=.yamllint.yaml]
         # benchmarks/corpus/ holds seeded-defect fixtures, not this repo's YAML.
-        # Their content is the expected input of `make bench`; linting them to
+        # Their content is the expected input of `mise run bench`; linting them to
         # this repo's conventions would edit the thing under measurement.
-        exclude: '^benchmarks/corpus/'
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 38bfb07c0c64c304f47eb52090f8288150c77730 # v0.17.1
-    hooks:
-      # Run the linter with auto-fix
-      - id: ruff-check
-        args: [--fix]
-        types: [python]
-      # Run the formatter
-      - id: ruff-format
-        types: [python]
+        # .mise/locks/ is written by `mise lock` and pinned by its sha256 in
+        # mise.lock: reformatting it would break the pin MISE_LOCKED=1 checks.
+        exclude: '^(benchmarks/corpus/|\.mise/locks/)'
 
   - repo: https://github.com/PyCQA/bandit
     rev: 92ae8b82fb422a639f0ed8d99e96cea769594e08 # 1.9.4
     hooks:
       # Static security scan of the shipped skill tools and the internal
       # tooling. Config (scope, skips, per-call `# nosec`) lives in
-      # [tool.bandit] in pyproject.toml so this hook, `make security`, and the
-      # CI step cannot disagree about what passes.
+      # [tool.bandit] in pyproject.toml so this hook, `mise run security`, and
+      # the CI step cannot disagree about what passes.
       - id: bandit
         args: [-c, pyproject.toml]
         # pre-commit passes changed files explicitly, which bypasses both the
         # `-r skills/ scripts/` roots and [tool.bandit] exclude_dirs. Restate
-        # both here, or this hook scans a different set than `make security`
+        # both here, or this hook scans a different set than `mise run security`
         # and the CI step: any .py added outside these roots would be gated by
         # pre-commit alone, and every tests/ edit would fail on B101.
         files: '^(?:skills|scripts)/'
@@ -104,7 +95,7 @@ repos:
       - id: zizmor
         args: [--pedantic, --offline]
         # benchmarks/corpus/gha-expression-injection/ carries the injection this
-        # repo forbids, on purpose: it is the planted positive `make bench`
+        # repo forbids, on purpose: it is the planted positive `mise run bench`
         # scores retrieval against. Nothing under benchmarks/corpus/ ever runs
         # as CI — it is fixture data checked out by the scorer — so the finding
         # here would be a report about the test, not about the pipeline.
@@ -115,10 +106,24 @@ repos:
     hooks:
       - id: gitleaks
 
+  # The local `system` hooks run mise tasks and mise's pinned ruff, so committing
+  # needs `mise` on PATH.
   - repo: local
     hooks:
+      # ruff from mise.toml, the same binary the lint and format tasks run, so
+      # the commit hook carries no `rev:` copy of the pin.
+      - id: ruff-check
+        name: ruff check
+        language: system
+        entry: mise exec -- ruff check --fix
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        language: system
+        entry: mise exec -- ruff format
+        types: [python]
       # release-please derives versions from conventional commits; reject anything else.
-      # commit-msg stage — NOT run by CI's `pre-commit run --all-files`. CI validates
+      # commit-msg stage — NOT run by CI's `prek run --all-files`. CI validates
       # commit convention only via the PR title (Lint PR title job), so that gate is
       # complete only under squash-merge (squash subject = PR title).
       - id: conventional-commit-msg
@@ -141,37 +146,37 @@ repos:
       - id: validate-skills
         name: validate SKILL.md and command files
         language: system
-        entry: uv run --quiet scripts/validate-skill.py
+        entry: mise run -q validate
         pass_filenames: false
         files: ^(skills/|\.claude/skills/|scripts/validate-skill\.py)
       - id: validate-evals
         name: validate skill eval sets
         language: system
-        entry: uv run --quiet scripts/validate-evals.py
+        entry: mise run -q validate-evals
         pass_filenames: false
         files: ^(skills/[^/]+/evals/|scripts/validate-evals\.py)
       - id: validate-rules
         name: validate rules files
         language: system
-        entry: uv run --quiet scripts/validate-rules.py
+        entry: mise run -q validate-rules
         pass_filenames: false
         files: ^(\.claude/rules/|scripts/validate-rules\.py)
       - id: version-sync
         name: check version sync
         language: system
-        entry: uv run --quiet scripts/check-version-sync.py
+        entry: mise run -q version-sync
         pass_filenames: false
         files: '^(package\.json|pyproject\.toml|\.release-please-manifest\.json|\.claude-plugin/(plugin|marketplace)\.json)'
       - id: findings-store
         name: validate findings store
         language: system
-        entry: python3 skills/nitpicker/scripts/findings.py validate
+        entry: mise run -q audit-consistency
         pass_filenames: false
         files: ^docs/audit/findings/
       - id: stdlib-only-tools
         name: shipped skill tools are stdlib-only
         language: system
-        entry: uv run --quiet scripts/check-stdlib-only.py
+        entry: mise run -q stdlib-only
         pass_filenames: false
         files: ^(skills/.*/scripts/.*\.py|scripts/check-stdlib-only\.py)$
       - id: rules-anatomy
@@ -180,7 +185,7 @@ repos:
         # Exits non-zero on High/Critical anatomy issues; Low/Medium are advisory.
         name: rule files have sound anatomy
         language: system
-        entry: python3 skills/nitpicker/scripts/check-rules-anatomy.py .
+        entry: mise run -q rules-anatomy
         pass_filenames: false
         files: ^(\.claude/rules/|skills/nitpicker/scripts/check-rules-anatomy\.py)
       - id: agent-instructions
@@ -191,7 +196,7 @@ repos:
         # and duplication are advisory.
         name: agent instruction files stay within budget
         language: system
-        entry: python3 skills/nitpicker/scripts/check-agent-instructions.py .
+        entry: mise run -q agent-instructions
         pass_filenames: false
         # Every harness surface the checker knows, not only Claude Code's. A
         # filter narrower than `_HARNESSES` lets an edit to a recognized file

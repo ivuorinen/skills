@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Rule files have sound anatomy (stale paths, dead anchors, vague language)"
+set -euo pipefail
+python3 skills/nitpicker/scripts/check-rules-anatomy.py .

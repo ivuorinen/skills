@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Check version consistency across manifests"
+set -euo pipefail
+uv run --quiet scripts/check-version-sync.py

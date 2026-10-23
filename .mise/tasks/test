@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run pytest unit tests"
+set -euo pipefail
+uv run --extra dev pytest tests/ "$@"

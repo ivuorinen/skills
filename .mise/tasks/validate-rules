@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Validate .claude/rules/ files (structure + path freshness)"
+set -euo pipefail
+uv run --quiet scripts/validate-rules.py

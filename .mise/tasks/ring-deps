@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Print the module dependency graph and enforce the ring rule"
+# The ring rule (shipped <- internal <- hooks) is only half enforced by
+# check-stdlib-only, which reads `import` statements. Several modules here are
+# reached instead through spec_from_file_location, because a hyphen-named file
+# cannot be imported at all — those edges exist at runtime and in no import
+# graph. This resolves both kinds and prints them together, so a cross-ring
+# dependency cannot hide in the spelling used to create it.
+set -euo pipefail
+uv run --quiet scripts/check-ring-deps.py --check .

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Agent instruction files stay within the instruction budget"
+set -euo pipefail
+python3 skills/nitpicker/scripts/check-agent-instructions.py .

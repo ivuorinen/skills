@@ -45,7 +45,7 @@ jobs:
     # is added, and a `generic` annotation comment is stripped the next time
     # `uv lock` regenerates the file. So regenerate it here instead.
     #
-    # `make lock-check` fails on that drift, so without this job every release
+    # `mise run lock-check` fails on that drift, so without this job every release
     # PR would arrive red.
     needs: release-please
     # The branch name is asserted, not assumed. This workflow triggers on
@@ -97,11 +97,15 @@ jobs:
           git fetch --depth=1 origin "$RELEASE_BRANCH"
           git switch --force-create "$RELEASE_BRANCH" FETCH_HEAD
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install mise and the pinned tools
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.1
+          # This job holds `contents: write`; a restored tool cache is input it would trust.
+          cache: false
 
       - name: Regenerate uv.lock for the bumped version
-        run: uv lock
+        run: mise run lock
 
       - name: Commit the lockfile if it moved
         # No-op on the common path: uv.lock changes only when the version did.

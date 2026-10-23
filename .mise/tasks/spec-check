@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#MISE description="Cross-check skills against the Agent Skills reference validator (network)"
+# Cross-check our validator against the Agent Skills reference implementation
+# (https://agentskills.io/specification#validation). Every skill in the repo
+# passes it, internal dev skills included. Out of `mise run check` only because
+# it needs network access; scripts/validate-skill.py enforces the same
+# constraints offline.
+#
+# The package is PyPI `skills-ref` but the console script it installs is
+# `agentskills`; the spec page still documents the old `skills-ref` command,
+# which no longer exists and exits 1 with no output — indistinguishable from a
+# validation failure. The npm package of the same name is published by an
+# unrelated author; do not substitute it.
+#
+# Failures print to stderr, successes to stdout, so stderr is merged before the
+# result is judged. A silent pass is not evidence: this task fails the build on
+# any non-zero skill rather than swallowing it.
+set -euo pipefail
+fail=0
+for d in skills/*/ .claude/skills/*/; do
+  uvx --quiet --from skills-ref==0.1.1 agentskills validate "$d" 2>&1 || fail=1
+done
+if [ "$fail" -ne 0 ]; then
+  echo "spec-check: at least one skill failed"
+  exit 1
+fi
+echo "spec-check: all skills valid against the reference validator"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="bandit static security scan of shipped tools and internal scripts"
+# Scope matches [tool.bandit] in pyproject.toml: shipped tools plus internal
+# tooling, tests excluded there. CI runs this through `mise run check` rather
+# than as a step of its own — `.mise/tasks/check` is the single definition of
+# what "checked" means, so there is no second copy to keep in step.
+set -euo pipefail
+uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/

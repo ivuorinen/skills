@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from _loader import load_path
+from mise_check import check_phases
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 REPO_ROOT = SCRIPTS_DIR.parent
@@ -168,7 +169,7 @@ class TestRelock:
         assert "could not run" in capsys.readouterr().out
 
     def test_failed_relock_tells_the_user_to_run_uv_lock(self, tmp_path, monkeypatch, capsys):
-        """Silence here would leave a bumped tree failing `make lock-check` with
+        """Silence here would leave a bumped tree failing `mise run lock-check` with
         no hint about which command fixes it."""
         mod = _load_mod()
         mod.__dict__["REPO_ROOT"] = tmp_path
@@ -179,18 +180,18 @@ class TestRelock:
         assert "Run `uv lock`" in capsys.readouterr().out
 
 
-# ── the gate itself: `make check` must actually run lock-check ────────────────
+# ── the gate itself: `mise run check` must actually run lock-check ────────────
 
 
-def test_make_check_runs_lock_check():
-    """The Validate job runs `make check` as a single invocation, so the Makefile
-    is the only place CI learns about a gate. A lock-check target that exists but
-    is absent from `check` is dead — the drift it catches reaches the tag anyway,
-    which is exactly how 3.0.0 shipped a 2.0.0 lockfile."""
-    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    check_line = next(line for line in makefile.splitlines() if line.startswith("check:"))
-    assert "lock-check" in check_line, f"`check` does not run lock-check: {check_line}"
-    assert "uv lock --check" in makefile, "lock-check must use uv's own staleness test"
+def test_mise_check_runs_lock_check():
+    """The Validate job runs `mise run check` as a single invocation, so the
+    `check` task is the only place CI learns about a gate. A lock-check task that
+    exists but is absent from `check` is dead — the drift it catches reaches the
+    tag anyway, which is exactly how 3.0.0 shipped a 2.0.0 lockfile."""
+    read_only, _ = check_phases(REPO_ROOT)
+    assert "lock-check" in read_only, f"`check` does not run lock-check: {read_only}"
+    task = (REPO_ROOT / ".mise" / "tasks" / "lock-check").read_text(encoding="utf-8")
+    assert "uv lock --check" in task, "lock-check must use uv's own staleness test"
 
 
 def test_release_workflow_syncs_the_lockfile():
@@ -198,7 +199,9 @@ def test_release_workflow_syncs_the_lockfile():
     without this job every release PR arrives failing lock-check."""
     workflow = (REPO_ROOT / ".github/workflows/release-please.yml").read_text(encoding="utf-8")
     assert "sync-lockfile:" in workflow
-    assert "uv lock" in workflow
+    assert "mise run lock" in workflow
+    # The job holds `contents: write`; a restored tool cache is input it would trust.
+    assert "cache: false" in workflow
     # The commit-lint gate rejects a non-conventional subject, which would fail
     # the release PR in a second, more confusing way.
     assert "chore: sync uv.lock" in workflow
@@ -224,7 +227,7 @@ class TestMain:
     def test_main_relocks_after_writing_pyproject(self, tmp_path, monkeypatch):
         """`uv lock` reads the version out of pyproject, so it has to run after the
         manifests are on disk — running it first would re-lock the OLD version and
-        leave `make lock-check` failing on a freshly bumped tree."""
+        leave `mise run lock-check` failing on a freshly bumped tree."""
         self._make_repo(tmp_path)
         (tmp_path / "uv.lock").write_text("# lock\n", encoding="utf-8")
         mod = _load_mod()

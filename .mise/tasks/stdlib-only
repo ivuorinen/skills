@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Shipped skill tools import only the standard library"
+set -euo pipefail
+uv run --quiet scripts/check-stdlib-only.py

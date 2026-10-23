@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Re-record .agentlinter-baseline.json from the current tree"
+set -euo pipefail
+uv run --quiet scripts/check-agentlinter.py --update

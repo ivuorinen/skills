@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Validate the docs/audit/findings/ store (findings.py validate)"
+set -euo pipefail
+python3 skills/nitpicker/scripts/findings.py validate

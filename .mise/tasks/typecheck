@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="pyright over the repo (0 errors required)"
+# Zero floor: any pyright error fails the gate. A count threshold could mask a
+# new error by fixing an old one, so the tolerated set must stay empty.
+#
+# `uv run --extra dev` syncs the .venv pyproject's [tool.pyright] points at;
+# the pyright it then runs is mise's pinned one, from PATH.
+set -euo pipefail
+uv run --extra dev pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"

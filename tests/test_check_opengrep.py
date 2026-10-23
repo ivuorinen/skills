@@ -14,10 +14,12 @@ naming, because both were defects in the first draft:
 import json
 import runpy
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 from _loader import load_path
+from mise_check import check_phases
 
 REPO_ROOT = Path(__file__).parent.parent
 _TOOL = REPO_ROOT / "scripts" / "check-opengrep.py"
@@ -425,21 +427,25 @@ def test_an_untokenizable_file_fails_main(run_main, tmp_path, capsys):
 # --------------------------------------------------------------------------
 
 
-def test_make_check_runs_this_gate():
-    """`make check` is the single definition of what "checked" means, and CI
-    runs exactly that one target — so the gate binds only if it is listed here."""
-    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
-    check_line = next(ln for ln in makefile.splitlines() if ln.startswith("check:"))
-    assert " opengrep" in check_line
+def test_mise_check_runs_this_gate():
+    """`mise run check` is the single definition of what "checked" means, and CI
+    runs exactly that one task — so the gate binds only if it is listed there."""
+    assert "opengrep" in check_phases(REPO_ROOT)[0]
 
 
-def test_ci_installs_opengrep_pinned_and_digest_verified():
-    """Without the install step the gate fails CI; without the pin it is a
-    tag-shaped hole in the authoritative job (.claude/rules/github-actions-security.md)."""
+def test_opengrep_is_pinned_by_mise_and_locked():
+    """Without the install the gate fails CI; without the pin it is a tag-shaped
+    hole in the authoritative job (.claude/rules/github-actions-security.md).
+
+    mise installs the version mise.toml names and verifies it against the
+    checksum in mise.lock, so the workflow keeps no second copy of either."""
+    tools = tomllib.loads((REPO_ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
+    assert tools["opengrep"] == "1.27.1"
+    lock = tomllib.loads((REPO_ROOT / "mise.lock").read_text(encoding="utf-8"))
+    linux = lock["tools"]["opengrep"][0]["platforms.linux-x64"]
+    assert linux["checksum"].startswith("sha256:")
     workflow = (REPO_ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    assert "OPENGREP_VERSION:" in workflow
-    assert "sha256sum -c -" in workflow
-    assert len(_sha_pin(workflow)) == 64
+    assert "OPENGREP_VERSION" not in workflow
 
 
 def test_module_runs_as_a_script(monkeypatch):
@@ -451,15 +457,3 @@ def test_module_runs_as_a_script(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(_TOOL), run_name="__main__")
     assert exc.value.code == 0
-
-
-def _sha_pin(workflow: str) -> str:
-    """The digest the workflow pins, or "" if the line is gone.
-
-    Returns a string rather than raising so the caller's length assertion is what
-    reports a missing pin — a KeyError here would name the parser, not the pin.
-    """
-    for line in workflow.splitlines():
-        if "OPENGREP_SHA256:" in line:
-            return line.split(":", 1)[1].strip()
-    return ""
