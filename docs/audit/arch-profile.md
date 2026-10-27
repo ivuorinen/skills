@@ -9,7 +9,7 @@ must be read separately or neither makes sense:
   `commands/*.md`, `references/tools/*.md`, `.claude/rules/*.md`) dispatched and
   loaded by an agent at runtime, and
 - a **code architecture** — the Python under `skills/*/scripts/`, `scripts/`,
-  `scripts/hooks/` that those instructions invoke.
+  `.mise/tasks/hook/` that those instructions invoke.
 
 Every pattern below is tagged with which of the two it governs.
 
@@ -136,10 +136,10 @@ import graph `mise run ring-deps` prints:
 | --- | --- | --- |
 | Inner | `skills/*/scripts/` | stdlib-only, `#!/usr/bin/env python3` |
 | Middle | `scripts/` | uv, PEP-723 inline metadata |
-| Outer | `scripts/hooks/` | uv, invoked by the harness |
+| Outer | `.mise/tasks/hook/` | uv, invoked by the harness through `mise run` |
 
 - **No inner→outer edge exists.** The shipped ring imports nothing from
-  `scripts/` or `scripts/hooks/`; its only non-stdlib imports are its own
+  `scripts/` or `.mise/tasks/hook/`; its only non-stdlib imports are its own
   siblings (`md_fences`, `pr_common`, `pr_cli`, `findings`, `findings_export`,
   `context_pack`, `skill_catalog`).
 - Outward rings depend inward: `scripts/bench-retrieval.py` imports
@@ -181,7 +181,7 @@ multiple consumers, none of which import each other's owners:
   `check-rules-anatomy.py` and, by path, `scripts/common.py`.
 - `pr_common.py` — targets, HTTP transport, pagination, output envelope, for all
   three providers and both entry points.
-- `scripts/hooks/_hooklib.py` — imported by every hook module and by nothing
+- `.mise/tasks/hook/_hooklib.py` — imported by every hook module and by nothing
   else.
 - `scripts/common.py` — imported by `validate-skill.py` and `list-skills.py`.
 
@@ -264,11 +264,11 @@ These are what `/nitpicker arch` should validate against.
 **Ring rule (code layer):**
 
 1. No module under `skills/*/scripts/` may import from `scripts/` or
-   `scripts/hooks/`, directly or by dynamic path load. The dependency arrow
+   `.mise/tasks/hook/`, directly or by dynamic path load. The dependency arrow
    points inward only.
 2. No module under `skills/*/scripts/` may import a non-stdlib package, carry a
    PEP-723 block, or use a shebang other than `#!/usr/bin/env python3`.
-3. Internal tooling (`scripts/`, `scripts/hooks/`) uses `uv run --quiet` and a
+3. Internal tooling (`scripts/`, `.mise/tasks/hook/`) uses `uv run --quiet` and a
    PEP-723 block; it may reach inward.
 4. Third-party imports are confined to `tests/`.
 

@@ -1,6 +1,7 @@
 ---
 paths:
   - "scripts/**"
+  - ".mise/tasks/hook/**"
   - "skills/*/scripts/**"
   - "tests/**"
 ---
@@ -9,7 +10,7 @@ paths:
 
 Two script classes with different runners — never mix them up:
 
-**Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/` — validation,
+**Internal dev tooling** (`scripts/`, `.mise/tasks/hook/`, `tests/` — validation,
 release, hooks; never shipped to skill consumers): invoke with
 `uv run --quiet <script>`, never `python3 <script>`. New internal scripts
 must begin with `#!/usr/bin/env -S uv run --quiet` and include the

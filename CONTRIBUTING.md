@@ -34,7 +34,9 @@ run in parallel, then the tree-writing ones (`index-check`, `prek`) one at a
 time, and every failure is reported in one run. `mise tasks` also lists tasks
 `check` never runs. A table transcribed into this file has no gate at all — the
 one that used to sit here was missing `ring-deps` and `bench`, both of which
-`check` runs.
+`check` runs. The Claude Code hooks under `.mise/tasks/hook/` are tasks too, but
+hidden ones, since Claude Code runs them rather than a person: `mise tasks
+--hidden` lists them.
 
 `index-check` and `prek` are the slow ones. The CI `Validate` job is the
 authoritative gate — a green `mise run check` locally is the fast path to it,
@@ -54,7 +56,7 @@ Never mix the runners (`.claude/rules/use-uv-runner.md`):
   does not match the module's role, and the pre-commit hooks
   `check-executables-have-shebangs` and `check-shebang-scripts-are-executable`
   keep the exec bit and the shebang together.
-- **Internal dev tooling** — `scripts/`, `scripts/hooks/`, `tests/`. Run with
+- **Internal dev tooling** — `scripts/`, `.mise/tasks/hook/`, `tests/`. Run with
   `uv run --quiet <script>`; new files start with `#!/usr/bin/env -S uv run
   --quiet` and carry a `# /// script` inline metadata block.
 

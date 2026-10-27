@@ -39,10 +39,10 @@ Both incidents in this repo were exactly that shape:
 ## Snapshot with cp, restore with cp, verify with cmp
 
 ```bash
-cp scripts/hooks/thing.py /tmp/snap.orig      # before touching anything
+cp scripts/thing.py /tmp/snap.orig      # before touching anything
 # ...mutate, run the check, observe red...
-cp /tmp/snap.orig scripts/hooks/thing.py      # restore
-if ! cmp -s /tmp/snap.orig scripts/hooks/thing.py; then
+cp /tmp/snap.orig scripts/thing.py      # restore
+if ! cmp -s /tmp/snap.orig scripts/thing.py; then
   echo "RESTORE FAILED" >&2
   exit 1
 fi
@@ -65,7 +65,7 @@ proof that skips this reports the same green whether the fix is there or not.
 
 ## Enforcement
 
-`scripts/hooks/ask-destructive-restore-hook.py` asks for confirmation when a
+`.mise/tasks/hook/ask-destructive-restore-hook.py` asks for confirmation when a
 `git checkout` of paths (with or without `--`) or a `git restore` would discard
 uncommitted tracked changes; pathspec magic, globs and `--pathspec-from-file`
 count as covering every dirty path. It covers one surface only: a Bash or context-mode shell command the

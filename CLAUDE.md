@@ -166,10 +166,10 @@ The PreToolUse guards, which can *block* a tool call, the graphify guards' binar
 pin, the enforcement-surface integrity check (`enforcement-surface-integrity.py`,
 SessionStart plus PostToolUse on the shell and Write/Edit tools) and the Stop
 hooks are described in `.claude/rules/hook-inventory.md`, which
-loads with `.claude/settings.json` and `scripts/hooks/`. `tests/test_settings.py`
+loads with `.claude/settings.json` and `.mise/tasks/hook/`. `tests/test_settings.py`
 fails when a configured PreToolUse hook is unnamed there.
 
-Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
+Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `.mise/tasks/hook/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
 That root picks the tree being validated and the working directory, not the
 code doing the validating. The validators a hook runs, and the findings store

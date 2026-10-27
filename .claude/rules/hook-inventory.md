@@ -195,10 +195,13 @@ a check that cannot run reports as exit 2 instead of passing.
 
 ## The graphify guards
 
-Each graphify guard opens `command -v graphify >/dev/null || exit 0`, so on a
-clone without graphify installed it exits 0 and is a no-op. When graphify is on
-the executable search path (`$PATH`), the guard's own exit code propagates and
-can block the call.
+Both run the `.mise/tasks/hook/graphify-guard` task under `bash`, which takes
+`search` or `read` and denies any other mode. It opens `command -v graphify
+>/dev/null || exit 0`, so on a clone without graphify installed it exits 0 and
+is a no-op. When graphify is on the executable search path (`$PATH`),
+`graphify hook-guard` runs from the project directory — it finds graphify-out/
+relative to its working directory — through `exec`, its exit code propagates
+and can block the call, and the registered command maps no exit.
 
 Between those two it **pins the binary**: it compares `graphify --version`
 against `.claude/skills/graphify/.graphify_version` and exits 2 on a mismatch,

@@ -24,7 +24,7 @@ via `npx skills add ivuorinen/skills` or the Claude Code plugin marketplace.
 - **Shipped skill tools** (`skills/*/scripts/*.py`) are stdlib-only and run
   with plain `python3` — never add non-stdlib imports or uv invocations;
   consumer machines cannot be assumed to have uv.
-- **Internal dev tooling** (`scripts/`, `scripts/hooks/`, `tests/`) runs via
+- **Internal dev tooling** (`scripts/`, `.mise/tasks/hook/`, `tests/`) runs via
   `uv run --quiet <script>`, never `python3` directly. New internal scripts
   start with `#!/usr/bin/env -S uv run --quiet` and a `# /// script` block.
 - Audit findings: one file per open finding under `docs/audit/findings/`;
