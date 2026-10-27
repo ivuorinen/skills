@@ -1614,7 +1614,7 @@ def test_resolve_leaves_no_orphan_when_ledger_append_refuses(tmp_path):
     assert path.exists(), "open finding deleted despite the ledger append failing"
 
 
-# ── INDEX.md freshness: `make check` and CI both fail on a stale index ────────
+# ── INDEX.md freshness: `mise run check` and CI both fail on a stale index ────
 
 
 @pytest.mark.parametrize("mutation", ["new", "resolve"])
@@ -2072,7 +2072,7 @@ def test_list_severity_rejects_out_of_vocab(tmp_path, capsys):
 
 # --- validate_file / validate_ledger_record reject branches (tests-ecd0ec10) ---
 #
-# These are the integrity gate `make check` and CI run. Every reject branch gets
+# These are the integrity gate `mise run check` and CI run. Every reject branch gets
 # a case that fails if the branch is deleted — the suite previously exercised
 # only four of them.
 
@@ -2253,7 +2253,7 @@ def test_resolved_records_returns_empty_on_an_unreadable_ledger(tmp_path):
 
 def test_ledger_summary_skips_junk_lines(tmp_path):
     """INDEX.md is generated from this streaming read; a junk line must be skipped,
-    not crash the regeneration `make check` depends on."""
+    not crash the regeneration `mise run check` depends on."""
     lp = findings.ledger_path(tmp_path)
     lp.parent.mkdir(parents=True, exist_ok=True)
     lp.write_text(f"\nnot json\n[1]\n{json.dumps(GOOD_REC)}\n", encoding="utf-8")

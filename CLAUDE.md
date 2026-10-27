@@ -26,17 +26,17 @@ under `.claude/skills/` and are not shipped to consumers.
 ## Development Commands
 
 ```bash
-make check        # the full gate; run before every commit. `make help` lists its targets
-make validate     # SKILL.md + command-file structure (public + internal)
-make validate-evals # shape of each skill's evals/*.json (evals, trigger-queries, pressure-records)
-make ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
-make test         # run pytest unit tests
-make list         # list the skill and its commands
-make lint         # ruff check on scripts/, tests/, skills/
-make format       # ruff format on scripts/, tests/, skills/
-make security     # bandit scan of skills/ and scripts/ (config in [tool.bandit])
-make opengrep     # opengrep scan (the rules Codacy reports) + stale-suppression check
-make agentlinter  # agentlinter scan (Codacy's other engine) against the committed baseline
+mise run check        # the full gate; run before every commit. `mise tasks` lists every task
+mise run validate     # SKILL.md + command-file structure (public + internal)
+mise run validate-evals # shape of each skill's evals/*.json (evals, trigger-queries, pressure-records)
+mise run ring-deps    # print the module dependency graph; fail on an outward (inner→outer) edge
+mise run test         # run pytest unit tests
+mise run list         # list the skill and its commands
+mise run lint         # ruff check on scripts/, tests/, skills/
+mise run format       # ruff format on scripts/, tests/, skills/
+mise run security     # bandit scan of skills/ and scripts/ (config in [tool.bandit])
+mise run opengrep     # opengrep scan (the rules Codacy reports) + stale-suppression check
+mise run agentlinter  # agentlinter scan (Codacy's other engine) against the committed baseline
 ```
 
 ## Commands
@@ -58,7 +58,7 @@ The authoritative command listing (categorized, with aliases) is `## Commands` i
 Each topic below has a rule under `.claude/rules/` with `paths:` frontmatter, so
 it loads with the files it governs rather than on every turn:
 
-- The Agent Skills spec, `metadata`-only client keys, `make spec-check` and its
+- The Agent Skills spec, `metadata`-only client keys, `mise run spec-check` and its
   install traps — `agent-skills-spec.md`.
 - The findings store's generated index, content-hashed ids, `export`, and
   `--location` fingerprints — `audit-store.md`; `AGENTS.md` holds the store
@@ -70,8 +70,8 @@ it loads with the files it governs rather than on every turn:
 - The MCP (Model Context Protocol) server running stale code after an edit under `skills/*/scripts/` —
   `mcp-stale-server.md`.
 - The PR fetchers behind `cr` — `pr-fetchers.md`.
-- `# nosec` / `# nosemgrep` and `make opengrep` — `suppression-markers.md`.
-- `make agentlinter` and `.agentlinter-baseline.json` — `agentlinter-baseline.md`.
+- `# nosec` / `# nosemgrep` and `mise run opengrep` — `suppression-markers.md`.
+- `mise run agentlinter` and `.agentlinter-baseline.json` — `agentlinter-baseline.md`.
 - The version manifests, `uv.lock` and both bump paths — `version-bumps.md`.
 
 ## Adding a New Command
@@ -79,7 +79,7 @@ it loads with the files it governs rather than on every turn:
 1. Use `/new-command` — it orchestrates the RED → GREEN → REFACTOR → adversarial-review → validate → pr-review cycle for a command file.
 2. Create `skills/nitpicker/commands/<name>.md` (short kebab-case name, 2.0 vocabulary — no `-auditor` suffixes).
 3. Add its row to the `## Commands` table in `skills/nitpicker/SKILL.md`, the Routing Guide in `.claude/skills/skills/SKILL.md`, and the command table in `README.md`. Update `.github/copilot-instructions.md` only if the new command changes its rules (it deliberately carries no command table).
-4. `make check` must pass (the validator enforces table ↔ file sync).
+4. `mise run check` must pass (the validator enforces table ↔ file sync).
 5. Commit with `feat: add /nitpicker <name> command` (minor bump via release-please).
 
 ## Conventions
@@ -166,10 +166,10 @@ The PreToolUse guards, which can *block* a tool call, the graphify guards' binar
 pin, the enforcement-surface integrity check (`enforcement-surface-integrity.py`,
 SessionStart plus PostToolUse on the shell and Write/Edit tools) and the Stop
 hooks are described in `.claude/rules/hook-inventory.md`, which
-loads with `.claude/settings.json` and `scripts/hooks/`. `tests/test_settings.py`
+loads with `.claude/settings.json` and `.mise/tasks/hook/`. `tests/test_settings.py`
 fails when a configured PreToolUse hook is unnamed there.
 
-Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `scripts/hooks/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
+Every hook resolves the repo root as `CLAUDE_PROJECT_DIR` → `REPO_ROOT` → the computed parent of `.mise/tasks/hook/`, in that order. `CLAUDE_PROJECT_DIR` is set by Claude Code; set `REPO_ROOT` only when running a hook manually outside Claude Code against a non-default tree.
 
 That root picks the tree being validated and the working directory, not the
 code doing the validating. The validators a hook runs, and the findings store

@@ -300,6 +300,15 @@ def test_runner_any_shebangless_library_is_exempt_not_just_named_ones(tmp_path: 
     assert find_runner_violations(tmp_path) == []
 
 
+def test_runner_hook_task_is_checked(tmp_path: Path) -> None:
+    """The hooks moved to .mise/tasks/hook/; they keep the internal runner contract."""
+    hooks = tmp_path / ".mise" / "tasks" / "hook"
+    hooks.mkdir(parents=True)
+    (hooks / "x-hook.py").write_text("#!/usr/bin/env python3\nimport json\n", encoding="utf-8")
+    problems = find_runner_violations(tmp_path)
+    assert len(problems) == 1 and ".mise/tasks/hook/x-hook.py" in problems[0], problems
+
+
 def test_runner_nested_internal_script_is_checked(tmp_path: Path) -> None:
     """The rule covers scripts/**/*.py; a two-level glob missed scripts/sub/."""
     sub = tmp_path / "scripts" / "sub"

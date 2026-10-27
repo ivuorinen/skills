@@ -41,7 +41,7 @@ gets whatever was true the day it was typed.
 
 ## Enforcement
 
-Feedback, not a gate. `scripts/hooks/count-in-prose-hook.py` reports a number
+Feedback, not a gate. `.mise/tasks/hook/count-in-prose-hook.py` reports a number
 word or numeral followed by a set noun in written Markdown and docstrings.
 Structural counts stay by the author's judgement, so it never blocks. The rule
 exists because three separate count drifts shipped in a single session, each

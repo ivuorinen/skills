@@ -64,7 +64,8 @@ class TestThisRepo:
             "scripts/bench-recall.py -> scripts/bench-retrieval.py",
             "scripts/validate-skill.py -> skills/nitpicker/scripts/context_pack.py",
             # arch-548ae822: a SourceFileLoader load, missing until then.
-            "scripts/hooks/validate-audit-findings-hook.py -> skills/nitpicker/scripts/findings.py",
+            ".mise/tasks/hook/validate-audit-findings-hook.py"
+            " -> skills/nitpicker/scripts/findings.py",
         }
         for edge in expected:
             assert edge in out
@@ -109,7 +110,7 @@ class TestDynamicImports:
         as `importlib.import_module("_hooklib")` passed it."""
         _tree(
             tmp_path,
-            {"scripts/zz_probe.py": body, "scripts/hooks/_hooklib.py": "x = 1\n"},
+            {"scripts/zz_probe.py": body, ".mise/tasks/hook/_hooklib.py": "x = 1\n"},
         )
         g = rd.build(tmp_path)
         assert g.errors == []
@@ -541,14 +542,15 @@ class TestAudit7d8bf871:
 
     @pytest.mark.parametrize(
         "stmt",
-        ["from scripts.hooks import _hl\n", "import scripts.hooks._hl\n"],
+        ["from scripts.sub import _hl\n", "import scripts.sub._hl\n"],
     )
     def test_a_dotted_import_of_an_outer_ring_module_is_a_violation(self, tmp_path, stmt):
         """The old code kept only the first segment, `scripts`, which names no
         module stem, so the edge vanished."""
-        _tree(tmp_path, {"scripts/outer.py": stmt, "scripts/hooks/_hl.py": "x = 1\n"})
+        _tree(tmp_path, {"skills/x/scripts/outer.py": stmt, "scripts/sub/_hl.py": "x = 1\n"})
         g = rd.build(tmp_path)
-        assert ("scripts/outer.py", "scripts/hooks/_hl.py") in [(e.src, e.dst) for e in g.edges]
+        edges = [(e.src, e.dst) for e in g.edges]
+        assert ("skills/x/scripts/outer.py", "scripts/sub/_hl.py") in edges
         assert len(rd.violations(g)) == 1
 
     def test_a_dotted_import_of_a_package_resolves_to_its_init(self, tmp_path):
@@ -583,19 +585,19 @@ class TestAudit7d8bf871:
             {
                 "skills/x/scripts/sub/a.py": "x = 1\n",
                 "scripts/sub/b.py": "x = 1\n",
-                "scripts/hooks/sub/c.py": "x = 1\n",
+                ".mise/tasks/hook/sub/c.py": "x = 1\n",
             },
         )
         assert rd.build(tmp_path).modules == {
             "skills/x/scripts/sub/a.py": "shipped",
             "scripts/sub/b.py": "internal",
-            "scripts/hooks/sub/c.py": "hooks",
+            ".mise/tasks/hook/sub/c.py": "hooks",
         }
 
 
 # ── arch-548ae822: path loaders other than spec_from_file_location ───────────
 
-_HOOKLIB = {"scripts/hooks/_hooklib.py": "x = 1\n"}
+_HOOKLIB = {".mise/tasks/hook/_hooklib.py": "x = 1\n"}
 
 
 class TestOtherPathLoaders:
@@ -604,23 +606,23 @@ class TestOtherPathLoaders:
         [
             # The agent repro: the hook's own shape, run from a shipped module.
             "import importlib.machinery\nfrom pathlib import Path\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             'loader = importlib.machinery.SourceFileLoader("n", str(_T))\n',
             "from importlib.machinery import SourceFileLoader\nfrom pathlib import Path\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             'SourceFileLoader("n", _T)\n',
             "from importlib.machinery import SourceFileLoader as L\nfrom pathlib import Path\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             'L("n", path=str(_T))\n',
             "import importlib.machinery\nfrom pathlib import Path\n"
             "L = importlib.machinery.SourceFileLoader\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             'L("n", _T)\n',
             "import runpy\nfrom pathlib import Path\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             "runpy.run_path(str(_T))\n",
             "import importlib.util\nfrom pathlib import Path\n"
-            '_T = Path(__file__).parent / "../../../scripts/hooks/_hooklib.py"\n'
+            '_T = Path(__file__).parent / "../../../.mise/tasks/hook/_hooklib.py"\n'
             'importlib.util.spec_from_file_location("n", location=_T)\n',
         ],
     )
@@ -656,7 +658,7 @@ class TestOtherPathLoaders:
         shipped), so it is listed and legal."""
         g = rd.build(_REPO)
         edge = rd.Edge(
-            "scripts/hooks/validate-audit-findings-hook.py",
+            ".mise/tasks/hook/validate-audit-findings-hook.py",
             "skills/nitpicker/scripts/findings.py",
             "path",
         )
@@ -671,8 +673,7 @@ class TestRelativeImports:
     @pytest.mark.parametrize(
         ("files", "ring"),
         [
-            ({"scripts/foo.py": "from .hooks import _hooklib\n", **_HOOKLIB}, "hooks"),
-            ({"scripts/foo.py": "from .hooks._hooklib import x\n", **_HOOKLIB}, "hooks"),
+            ({"scripts/foo.py": "import _hooklib\n", **_HOOKLIB}, "hooks"),
             (
                 {
                     "skills/x/scripts/a.py": "from ....scripts import helper\n",
@@ -682,16 +683,21 @@ class TestRelativeImports:
             ),
             (
                 {
-                    "skills/x/scripts/sub/a.py": "from .....scripts.hooks import _hooklib\n",
-                    **_HOOKLIB,
+                    "skills/x/scripts/sub/a.py": "from .....scripts.helper import x\n",
+                    "scripts/helper.py": "x = 1\n",
                 },
-                "hooks",
+                "internal",
             ),
         ],
     )
     def test_an_outward_relative_import_is_a_violation(self, tmp_path, files, ring):
         """The agent repro: `from .hooks import _hooklib` gave 0 edges and exit
-        0, while `from hooks import _hooklib` failed the gate."""
+        0, while `from hooks import _hooklib` failed the gate.
+
+        The hooks now live under `.mise/tasks/hook/`, which no dotted name can
+        reach, so the relative spellings are pinned on the shipped -> internal
+        edge and the hooks ring keeps its bare-stem case.
+        """
         _tree(tmp_path, files)
         g = rd.build(tmp_path)
         assert g.errors == []

@@ -7,14 +7,14 @@ paths:
 # The Agentlinter Baseline
 
 Codacy's other engine is Agentlinter, which lints `CLAUDE.md`, `AGENTS.md`,
-`.claude/rules/` and the command files. `make agentlinter` reproduces it from a
-checkout, closing the gap `make opengrep` closed for the first engine.
+`.claude/rules/` and the command files. `mise run agentlinter` reproduces it from a
+checkout, closing the gap `mise run opengrep` closed for the first engine.
 `scripts/check-agentlinter.py`'s docstring carries the rest: the pinned version,
 the mandatory `--local`, and why the gate parses `--json` (it exits 0 regardless).
 
 It gates against `.agentlinter-baseline.json`, not on severity: every `critical`
 it reported here was a false positive, so a severity gate would fail forever on
-noise. A new diagnostic fails the build — fix it, or accept it with `make
+noise. A new diagnostic fails the build — fix it, or accept it with `mise run
 agentlinter-update`. An entry that stops firing is reported and fails nothing.
 
 Every baselined rule carries a written justification in that file's `reasons`
@@ -25,6 +25,6 @@ dates each audit.
 
 ## Enforcement
 
-Gated. `make agentlinter` fails on a diagnostic missing from the baseline and on
+Gated. `mise run agentlinter` fails on a diagnostic missing from the baseline and on
 a baselined rule with no `reasons` entry. Whether a justification is true is
 checked in review.

@@ -3,8 +3,8 @@
     "deny": [
       "Edit(./.claude/agents/**)",
       "Write(./.claude/agents/**)",
-      "Edit(./scripts/hooks/**)",
-      "Write(./scripts/hooks/**)",
+      "Edit(./.mise/tasks/hook/**)",
+      "Write(./.mise/tasks/hook/**)",
       "Edit(./.claude/settings.json)",
       "Write(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-skill-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate-skill-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/validate-skill-hook.py\""
           }
         ]
       },
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-json-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate-json-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/validate-json-hook.py\""
           }
         ]
       },
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/check-version-sync-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'check-version-sync-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/check-version-sync-hook.py\""
           }
         ]
       },
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ruff-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'ruff-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/ruff-hook.py\""
           }
         ]
       },
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-audit-findings-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate-audit-findings-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/validate-audit-findings-hook.py\""
           }
         ]
       },
@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-rules-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate-rules-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/validate-rules-hook.py\""
           }
         ]
       },
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/validate-evals-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate-evals-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/validate-evals-hook.py\""
           }
         ]
       },
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/count-in-prose-hook.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'count-in-prose-hook: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/count-in-prose-hook.py\""
           }
         ]
       },
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-bash-revalidate.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'post-bash-revalidate: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/post-bash-revalidate.py\""
           }
         ]
       },
@@ -101,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
           }
         ]
       },
@@ -110,7 +110,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, check cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
           }
         ]
       }
@@ -120,7 +120,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, no baseline taken' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'enforcement surface integrity check: uv missing, no baseline taken' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/enforcement-surface-integrity.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'enforcement surface integrity check failed to run' >&2; rc=2; }; exit $rc"
           }
         ]
       }
@@ -130,7 +130,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/stop-reminder.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'stop-reminder: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/stop-reminder.py\""
           }
         ]
       },
@@ -138,7 +138,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/command-closure-reminder.py\""
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'command-closure-reminder: uv missing, the hook did not run' >&2; exit 1; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/command-closure-reminder.py\""
           }
         ]
       }
@@ -149,7 +149,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing \u2014 deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-agents-path-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'deny-agents guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'uv missing — deny-agents guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/deny-agents-path-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'deny-agents guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]
@@ -159,7 +159,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard search",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/graphify-guard\" search",
             "timeout": 60
           }
         ]
@@ -169,7 +169,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v graphify >/dev/null || exit 0; pinned=\"$(cat \"$CLAUDE_PROJECT_DIR/.claude/skills/graphify/.graphify_version\" 2>/dev/null)\"; found=\"$(graphify --version 2>/dev/null | awk '{print $2}')\"; [ -n \"$pinned\" ] && [ \"$found\" = \"$pinned\" ] || { echo \"graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file.\" >&2; exit 2; }; exec graphify hook-guard read",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/graphify-guard\" read",
             "timeout": 60
           }
         ]
@@ -179,7 +179,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'git --no-verify / push-to-protected-branch guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unsafe-git-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'git guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'git --no-verify / push-to-protected-branch guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/deny-unsafe-git-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'git guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]
@@ -189,7 +189,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate the # ctx-ok escape hatch: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-ctx-ok-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'ctx-ok guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'validate the # ctx-ok escape hatch: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/guard-ctx-ok-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'ctx-ok guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]
@@ -199,7 +199,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'confirm before discarding uncommitted work: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/ask-destructive-restore-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'restore guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'confirm before discarding uncommitted work: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/ask-destructive-restore-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'restore guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]
@@ -209,7 +209,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'stale MCP write guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-stale-mcp-write-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'stale MCP write guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'stale MCP write guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/deny-stale-mcp-write-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'stale MCP write guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]
@@ -219,7 +219,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v uv >/dev/null 2>&1 || { echo 'unguarded-cd guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/scripts/hooks/deny-unguarded-cd-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'unguarded-cd guard failed to run; denying' >&2; rc=2; }; exit $rc",
+            "command": "command -v uv >/dev/null 2>&1 || { echo 'unguarded-cd guard: uv missing, guard cannot run' >&2; exit 2; }; uv run --quiet \"$CLAUDE_PROJECT_DIR/.mise/tasks/hook/deny-unguarded-cd-hook.py\"; rc=$?; [ $rc -eq 0 ] || [ $rc -eq 2 ] || { echo 'unguarded-cd guard failed to run; denying' >&2; rc=2; }; exit $rc",
             "timeout": 60
           }
         ]

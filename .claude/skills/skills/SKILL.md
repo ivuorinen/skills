@@ -69,5 +69,5 @@ If the user says… → run:
 
 ## If Unclear
 
-Run `make list` (or `uv run scripts/list-skills.py`) to print the skill and
+Run `mise run list` (or `uv run scripts/list-skills.py`) to print the skill and
 its commands with descriptions, then ask the user which one fits.

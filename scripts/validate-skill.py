@@ -891,7 +891,7 @@ def main() -> None:
 
     if not targets:
         # Default discovery that finds nothing we authored has validated
-        # nothing, so it fails: if the skills directory moves, `make validate`
+        # nothing, so it fails: if the skills directory moves, `mise run validate`
         # must not go green over an empty set (audit-07dcd473). Named paths
         # that were all vendored are a deliberate skip, and still pass.
         if not discovered:

@@ -1,4 +1,4 @@
-"""Tests for scripts/hooks/validate-audit-findings-hook.py (thin store-validation hook)."""
+"""Tests for .mise/tasks/hook/validate-audit-findings-hook.py (thin store-validation hook)."""
 
 import io
 import json
@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from _loader import load_path
 
-HOOK_PATH = Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit-findings-hook.py"
+HOOK_PATH = (
+    Path(__file__).parent.parent / ".mise" / "tasks" / "hook" / "validate-audit-findings-hook.py"
+)
 FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 
 hook = load_path("audit_hook", HOOK_PATH)
@@ -176,8 +178,8 @@ def test_main_regenerates_index_for_valid_finding(monkeypatch, tmp_path, capsys)
 def test_main_regenerated_index_uses_relative_paths(monkeypatch, tmp_path):
     # Regression (audit-307527a8): the hook must regenerate INDEX with the same
     # repo-relative paths as canonical `findings.py index` — never absolute paths,
-    # which leak the checkout directory and fail make check / CI index-check.
-    """Absolute paths leak the checkout directory and fail make check's index-check."""
+    # which leak the checkout directory and fail mise run check / CI index-check.
+    """Absolute paths leak the checkout directory and fail mise run check's index-check."""
     findings = load_path("findings", FINDINGS_PATH)
 
     root = tmp_path / "docs" / "audit" / "findings"

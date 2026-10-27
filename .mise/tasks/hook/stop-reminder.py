@@ -1,0 +1,106 @@
+#!/usr/bin/env -S uv run --quiet
+# [MISE] description="Stop hook — remind about pending skill changes before handing back control"
+# [MISE] hide=true
+# /// script
+# requires-python = ">=3.11"
+# ///
+"""Stop hook — remind about pending skill changes before Claude hands back control.
+
+Scoped to the union of the git index, the working tree and the untracked set. An
+index-only scope missed `git commit -am`, which stages and commits inside a
+single Bash call, so no stop ever observed a staged state.
+
+The reminder reaches the agent as `additionalContext` (`_hooklib.stop_feedback`),
+which continues the conversation once. The `stop_hook_active` guard below stops
+it re-firing on that forced continuation. That is ONE stop cycle, not one session:
+the variable is false again on the next turn, so a branch holding uncommitted
+skill edits is reminded once per turn until they are committed. That repetition
+is the intended behaviour and not a broken guard — deduping across turns would
+need state that outlives the process, which is a separate decision nobody has
+made.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _hooklib import (
+    HOOK_TIMEOUT,
+    load_event,
+    repo_root,
+    report_skip,
+    stop_feedback,
+)
+
+REPO_ROOT = repo_root()
+
+
+def main() -> None:
+    """Remind about uncommitted skill files before Claude hands back control.
+
+    Reads the index, the working tree and the untracked set: a brand-new
+    SKILL.md or command file appears in neither diff form, yet is the most
+    common pending change. The reminder continues the conversation, which is
+    why the `stop_hook_active` guard is needed to keep it from firing again on
+    its own forced continuation.
+    """
+    # A reminder re-invokes Claude. Without this guard it fires again on the
+    # forced continuation's own stop, until Claude Code's continuation cap ends
+    # it. `stop_hook_active` is true on that second pass — surface the reminder
+    # once, then let Claude stop.
+    if (load_event() or {}).get("stop_hook_active"):
+        return
+
+    # `--name-only -z` lists paths NUL-separated and unquoted (safe for spaces).
+    # Renames report just the new path. `--cached` is the index, the bare `diff` is
+    # the working tree, and `ls-files --others --exclude-standard` is the untracked
+    # set — a brand-new SKILL.md/command file shows up in neither diff form (git
+    # diff never lists untracked) yet is the most common pending-skill change. A
+    # path can appear in more than one, so dedupe while keeping order.
+    paths: list[str] = []
+    for cmd in (
+        ["git", "diff", "--cached", "--name-only", "-z"],
+        ["git", "diff", "--name-only", "-z"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    ):
+        try:
+            # argv is one of the three literal git read commands in the loop above.
+            result = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
+                cmd,
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=HOOK_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            # git absent or hung: no reminder is better than a frozen stop, but a
+            # silent return reads as "nothing pending".
+            report_skip("stop-reminder", f"{type(exc).__name__}: {exc}", "git status")
+        if result.returncode != 0:
+            # git ran and failed — not a repository, a broken index. A bare
+            # return here was the silent "nothing pending" the comment above
+            # warns against (audit-38c90f58); name the failure instead.
+            report_skip(
+                "stop-reminder",
+                f"git exited {result.returncode}: {result.stderr.strip()[:200]}",
+                "git status",
+            )
+        paths += [p for p in result.stdout.split("\0") if p]
+    # Deduped by hash, first-seen order kept: `p not in paths` compared every
+    # path against every one kept so far, seconds per turn end after a mass
+    # change (perf-a458886e).
+    changed = [
+        f
+        for f in dict.fromkeys(paths)
+        if "skills/" in f and (f.endswith("SKILL.md") or ("/commands/" in f and f.endswith(".md")))
+    ]
+    if changed:
+        listing = "\n".join(f"  {f}" for f in changed)
+        stop_feedback(
+            f"Pending skill changes detected:\n{listing}\nRun /validate-skills before releasing."
+        )
+
+
+if __name__ == "__main__":
+    main()

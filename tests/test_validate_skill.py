@@ -604,7 +604,7 @@ def test_main_skips_vendored_skills_and_exits_zero(tmp_path, monkeypatch, capsys
 
 def test_main_reports_an_empty_tree_rather_than_passing_silently(tmp_path, monkeypatch, capsys):
     """audit-07dcd473: default discovery that finds nothing is a failure, not a
-    pass. If the skills directory moves, `make validate` must not go green while
+    pass. If the skills directory moves, `mise run validate` must not go green while
     validating nothing — check-stdlib-only treats its empty glob the same way."""
     with pytest.raises(SystemExit) as exc:
         _main_on(monkeypatch, tmp_path, [])

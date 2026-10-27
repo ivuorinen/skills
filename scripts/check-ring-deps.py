@@ -8,7 +8,7 @@ Three rings, innermost first. The rule is that an arrow never points outward:
 
     skills/*/scripts   (shipped, stdlib-only)   <- may not depend on anything below
     scripts            (internal dev tooling)   <- may depend on shipped
-    scripts/hooks      (harness hooks)          <- may depend on either
+    .mise/tasks/hook   (harness hooks)          <- may depend on either
 
 An ordinary `import` is visible to every tool that reads Python. Some edges here
 are not: a module whose filename contains a hyphen (`check-rules-anatomy.py`,
@@ -86,7 +86,7 @@ from typing import Final
 RINGS: tuple[tuple[str, str], ...] = (
     ("shipped", "skills/*/scripts/**/*.py"),
     ("internal", "scripts/**/*.py"),
-    ("hooks", "scripts/hooks/**/*.py"),
+    ("hooks", ".mise/tasks/hook/**/*.py"),
 )
 
 
@@ -124,8 +124,8 @@ def collect_modules(root: Path) -> Graph:
     for ring, pattern in RINGS:
         for path in sorted(root.glob(pattern)):
             rel = path.relative_to(root).as_posix()
-            # scripts/**/*.py also matches scripts/hooks/; the hooks ring comes
-            # later in RINGS and overwrites, so a file lands in exactly one ring.
+            # The globs are disjoint, so a file lands in exactly one ring; were
+            # one to overlap another, the later ring in RINGS would win.
             g.modules[rel] = ring
             # A hyphen-named file is not importable; it is reachable only by
             # path, which is the whole reason this tool exists.

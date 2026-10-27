@@ -19,7 +19,7 @@ change puts at risk — so it gates on every commit.
 
 What it does NOT measure: whether a lens recognises the defect once it sees it.
 That is `bench-recall.py`'s half — it needs an agent per case and stays out of
-`make check`. Do not read a passing run here as "the security lens works"; read
+`mise run check`. Do not read a passing run here as "the security lens works"; read
 it as "retrieval did not regress".
 
 Metrics, per case and aggregated:

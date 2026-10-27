@@ -26,7 +26,7 @@ port: argv parsing, stdout rendering and exit codes are facts about running as a
 command, and `pr_common` is imported by all three providers and by
 `mcp_server.py` — the other driving adapter — none of which run as this CLI.
 Keeping the two apart is what lets `pr_common` stay the library its docstring
-claims. `make ring-deps` prints the resulting graph.
+claims. `mise run ring-deps` prints the resulting graph.
 
 Two invariants make the shared format worth having, and both are pinned by
 tests. A field a platform cannot supply is present and empty or null rather than
@@ -53,6 +53,6 @@ the full list.
 
 ## Enforcement
 
-Both invariants are pinned by the `tests/test_pr_*.py` suites. `make ring-deps`
+Both invariants are pinned by the `tests/test_pr_*.py` suites. `mise run ring-deps`
 fails on an outward import edge; the port/adapter split inside the shipped ring
 is author discipline.

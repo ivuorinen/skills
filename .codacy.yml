@@ -29,7 +29,7 @@ exclude_paths:
   # Seeded-defect fixtures. Each directory holds exactly one deliberately
   # planted defect — SQL injection, command injection, an expression-injection
   # workflow, a public storage bucket — and `expected.json` names the line.
-  # `make bench` scores whether retrieval surfaces it. Analysing them reports
+  # `mise run bench` scores whether retrieval surfaces it. Analysing them reports
   # the fixtures as findings about this repository's own security, which is
   # what produced the "7 critical" count on PR #131. Nothing here is executed;
   # the scorer only reads it.
@@ -48,7 +48,7 @@ engines:
   #
   # Complexity is already gated here by ruff's C901 at max-complexity = 10, set
   # in pyproject.toml [tool.ruff.lint.mccabe] with its rationale, enforced by
-  # `make lint` in `make check` and in CI. It passes on every function Lizard
+  # `mise run lint` in `mise run check` and in CI. It passes on every function Lizard
   # flags, so the two disagree on how to count rather than on what the code
   # does, and only ruff can fail the build.
   #
@@ -96,7 +96,7 @@ engines:
   # this codebase (0 findings across 202 rules once the audit-rule call sites
   # are annotated), so narrowing it beyond tests/ would lose real coverage.
   #
-  # `make opengrep` now reproduces these findings locally, against
+  # `mise run opengrep` now reproduces these findings locally, against
   # r/python.lang.security.audit — the namespace measured to match what this
   # engine reports here. Until it existed, that ruleset lived only in the Codacy
   # UI, so a finding could not be seen from a checkout. Keep the two in step: a

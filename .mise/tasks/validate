@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Validate all SKILL.md files"
+set -euo pipefail
+uv run --quiet scripts/validate-skill.py
+uv run --quiet scripts/validate-skill.py .claude/skills/*/SKILL.md

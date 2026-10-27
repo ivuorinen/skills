@@ -1,0 +1,11 @@
+{
+  "include": ["."],
+  "venvPath": "../../..",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "pythonPlatform": "All",
+  "typeCheckingMode": "standard",
+  "reportMissingParameterType": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "enableTypeIgnoreComments": false
+}

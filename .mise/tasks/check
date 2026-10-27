@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="The full gate: read-only checks in parallel, then the tree-writing ones"
+set -uo pipefail
+rc=0
+mise run --continue-on-error \
+  validate ::: validate-evals ::: validate-rules ::: ring-deps ::: version-sync \
+  ::: lock-check ::: lint ::: format-check ::: security ::: opengrep \
+  ::: typecheck ::: test ::: bench ::: agentlinter ::: audit-consistency || rc=1
+# Writers last and one at a time: prek's fixers and the INDEX.md regeneration
+# rewrite files the gates above read.
+mise run --jobs 1 --continue-on-error index-check ::: prek || rc=1
+exit "$rc"

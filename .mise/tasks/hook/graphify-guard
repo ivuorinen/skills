@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="graphify hook-guard behind the pinned-version check"
+#MISE hide=true
+#USAGE arg "<mode>" help="search or read"
+# The graphify PreToolUse guards. graphify is optional: with no binary on PATH
+# this exits 0 and is a no-op. With one, its `--version` must match the pin in
+# .claude/skills/graphify/.graphify_version, or a different or substituted
+# binary earlier on PATH would take over the permit/deny decision for every
+# read, glob and shell command (.claude/rules/hook-inventory.md). An empty or
+# missing pin denies rather than passes.
+#
+# .claude/settings.json runs this with bash and the mode as `$1`; `mise run`
+# passes it as `$usage_mode`. `graphify hook-guard` finds graphify-out/ relative
+# to its working directory, so it runs from the project. `exec` hands its exit
+# code back unchanged, so the settings command carries no 0/2 exit mapping.
+set -euo pipefail
+mode="${1:-${usage_mode:-}}"
+case "$mode" in
+  search | read) ;;
+  *)
+    echo "graphify-guard: mode must be search or read" >&2
+    exit 2
+    ;;
+esac
+command -v graphify >/dev/null || exit 0
+root="${CLAUDE_PROJECT_DIR:-$PWD}"
+pinned="$(cat "$root/.claude/skills/graphify/.graphify_version" 2>/dev/null || true)"
+found="$(graphify --version 2>/dev/null | awk '{print $2}' || true)"
+if [ -z "$pinned" ] || [ "$found" != "$pinned" ]; then
+  echo "graphify $found does not match the pinned $pinned. Re-pinning is owner-only: stop and ask the owner, do not edit the pin file." >&2
+  exit 2
+fi
+cd "$root" || exit 2
+exec graphify hook-guard "$mode"

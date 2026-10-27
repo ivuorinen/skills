@@ -157,7 +157,7 @@ def test_a_missing_baseline_fails_rather_than_passing_empty(tmp_path, monkeypatc
 def test_an_unusable_report_skips_locally_and_fails_under_ci(tmp_path, monkeypatch):
     """npx absent, the network down, or a future release changing its output.
 
-    Locally that is a skip so an offline clone can still run `make check`; under
+    Locally that is a skip so an offline clone can still run `mise run check`; under
     CI it fails, because a gate that skips silently is not a gate.
     """
     _baseline(tmp_path, [])
@@ -351,7 +351,7 @@ def test_a_baseline_from_another_pin_is_rejected(tmp_path, monkeypatch, capsys):
     """Accepted entries are judgements about one version's rule set.
 
     Bump PIN without re-recording and the old entries silently vouch for a tool
-    that is no longer running. `make check` catches this for the committed
+    that is no longer running. `mise run check` catches this for the committed
     baseline through its pin test, but the script has to be correct standalone.
     """
     one = {"rule": "clarity/undefined-term", "file": "CLAUDE.md", "message": "m"}
@@ -494,12 +494,12 @@ def test_help_is_on_stdout_at_exit_0(capsys):
 
 
 def test_the_committed_baseline_is_well_formed():
-    """The file the gate reads on every `make check`. A hand-edit that breaks its
+    """The file the gate reads on every `mise run check`. A hand-edit that breaks its
     shape takes the gate down with it, and the gate is where that would show."""
     data = json.loads((REPO_ROOT / _mod.BASELINE).read_text(encoding="utf-8"))
     assert data["pin"] == _mod.PIN, "baseline was recorded by a different agentlinter version"
     assert data["accepted"], (
-        "an empty accepted set accepts nothing — re-run `make agentlinter-update`"
+        "an empty accepted set accepts nothing — re-run `mise run agentlinter-update`"
     )
     for entry in data["accepted"]:
         assert {"rule", "file", "message"} <= entry.keys()

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="List all skills with descriptions"
+set -euo pipefail
+uv run --quiet scripts/list-skills.py

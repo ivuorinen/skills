@@ -94,4 +94,4 @@ When adding a command, update every surface below (the validator enforces 1–2)
 4. The command table in `README.md`.
 5. `.github/copilot-instructions.md` (if it changes any stated rule or count).
 
-Then `make check` must pass; commit with `feat: add /nitpicker <name> command`.
+Then `mise run check` must pass; commit with `feat: add /nitpicker <name> command`.

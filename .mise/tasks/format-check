@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="ruff format --check (CI-safe, no writes)"
+set -euo pipefail
+ruff format --check scripts/ .mise/tasks/hook/ tests/ skills/

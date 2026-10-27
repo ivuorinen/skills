@@ -1,6 +1,6 @@
 ---
 paths:
-  - "scripts/hooks/**"
+  - ".mise/tasks/hook/**"
 ---
 
 # Guards Fail Closed
@@ -36,8 +36,11 @@ truncated or non-object event so the arm above denies; the lenient
 A guard that returned on None allowed the call (errors-4a2d2f34).
 
 The same holds one layer out. Each repo guard's `.claude/settings.json` command
-exits 2 when `uv` is missing, and maps any exit of the guard other than 0 or 2
-to 2, so a guard that cannot start, or dies before its own wrapper runs, denies.
+exits 2 with `uv missing` on stderr when `uv` is not on the PATH, and maps any
+exit of the guard other than 0 or 2 to 2, so a guard that cannot start, or dies
+before its own wrapper runs, denies. The PostToolUse and Stop commands exit 1
+instead when uv is missing: a non-blocking error naming the hook that did not
+run, because exit 2 from a Stop hook would keep the session from stopping.
 
 ## A timeout is an allow
 
@@ -59,7 +62,7 @@ Two bounds close that, and the order between them is the rule:
   least half again above the deadline, so the guard's own deny always lands
   first, with room left for `uv` to start the interpreter.
 
-The graphify guards `exec` an external binary, so they get the explicit
+The graphify guards (`graphify-guard`) `exec` an external binary, so they get the explicit
 `timeout` but no internal deadline; past it they allow, like any hook.
 
 ## Enforcement

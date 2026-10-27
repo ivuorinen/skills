@@ -31,7 +31,7 @@ tools carry no such prefix, so an edit to `process-sarif.py` or
 else: `np_process_sarif` will consolidate a security scan with code that is not
 on disk and say nothing. This is a backstop, not the control: the rule above is.
 
-`scripts/hooks/deny-stale-mcp-write-hook.py` closes the write half before the
+`.mise/tasks/hook/deny-stale-mcp-write-hook.py` closes the write half before the
 call runs. It denies `np_new_finding`, `np_resolve_finding`, `np_write_index`
 and `np_process_sarif` while `git status --porcelain -- skills/nitpicker/scripts`
 is non-empty or cannot be read, and names the CLI command to run instead.

@@ -8,9 +8,10 @@ license-files = ["LICENSE"]
 [project.optional-dependencies]
 # ruff is a test dependency, not just a linter: tests/test_hooks.py exercises
 # ruff-hook.py, which shells out to the real `ruff` binary.
-# ruff is pinned to the same version the .pre-commit-config.yaml rev names, and
-# the Makefile and scripts/hooks/ruff-hook.py pin it too, so none of the four
-# call sites can disagree about what passes. test_hooks.py enforces the match.
+# ruff is pinned to the same version mise.toml names (which the lint and format
+# tasks and the prek ruff hooks run), and .mise/tasks/hook/ruff-hook.py pins it
+# too, so no call site can disagree about what passes. test_hooks.py enforces
+# the match.
 # bandit is pinned to its .pre-commit-config.yaml rev for the same reason.
 # pyyaml parses the workflows in tests/test_hooks.py. It was already importable
 # as a transitive of another dev tool, and the guard that reads the Validate job
@@ -34,11 +35,11 @@ dev = [
 # reported and fails the gate below.
 # Each directory is listed separately: coverage's source scan only recurses into
 # subdirectories that are packages, and none of these carry an __init__.py, so
-# "scripts" alone silently omits scripts/hooks/ — which is exactly how the hook
-# above stayed hidden. A new script directory needs a new entry here.
+# "scripts" alone silently omitted the hooks' directory — which is exactly how
+# the hook above stayed hidden. A new script directory needs a new entry here.
 source = [
   "scripts",
-  "scripts/hooks",
+  ".mise/tasks/hook",
   "skills/nitpicker/scripts",
 ]
 # Decisions, not just statements: without this a half-taken `if` counts as
@@ -70,7 +71,7 @@ ignore = ["SIM108"]
 [tool.ruff.lint.mccabe]
 # The ceiling for new code. Codacy already fails a PR on a newly complex
 # function, but only after it is pushed and only with a metric that names no
-# location; this fails it in `make check` instead.
+# location; this fails it in `mise run check` instead.
 #
 # Functions that predate the gate carry an explicit `# noqa: C901` rather than
 # being exempted by path, so a *new* complex function in an already-complex file
@@ -88,7 +89,8 @@ indent-style = "space"
 
 [tool.bandit]
 # Scope: the code that ships to consumers (skills/*/scripts/) and the internal
-# tooling that executes on a developer's machine (scripts/). tests/ is excluded
+# tooling that executes on a developer's machine (scripts/ and the hooks in
+# .mise/tasks/hook/). tests/ is excluded
 # because nearly every hit is B101 (assert_used) — asserts are the test
 # mechanism, not a defect. The remainder are B404/B105/B108 on the subprocess
 # calls and fixture constants that drive the tools under test. Excluding the
@@ -132,10 +134,11 @@ pythonVersion = "3.11"
 # (e.g. `from findings import ...`); add those dirs so pyright resolves them.
 extraPaths = ["skills/nitpicker/scripts"]
 # Declared rather than inherited, so an editor's language server and the pinned
-# CLI in `make check` resolve the same rules. Left unset, each side falls back to
-# its own default and the editor can report problems CI never sees, or miss ones
-# it does. The Makefile gates on errorCount alone; that floor only means the same
-# thing on both sides if the mode producing the errors is fixed here.
+# CLI in `mise run check` resolve the same rules. Left unset, each side falls
+# back to its own default and the editor can report problems CI never sees, or
+# miss ones it does. The `typecheck` task gates on errorCount alone; that floor
+# only means the same thing on both sides if the mode producing the errors is
+# fixed here.
 typeCheckingMode = "standard"
 # types-93a4d6bd: strict mode is a per-file ratchet. A module joins this list
 # once it reports no strict errors, and a later edit that reintroduces an
@@ -151,6 +154,9 @@ strict = [
   "skills/nitpicker/scripts/skill_catalog.py",
 ]
 pythonPlatform = "All"
+# The hooks under .mise/tasks/hook/ are not listed: pyright auto-excludes
+# dot-directories whatever `include` says, so they are checked by the project in
+# .mise/tasks/hook/pyrightconfig.json, which the typecheck task runs second.
 include = ["scripts", "skills", "tests"]
 exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]
 # types-851598e4: an unannotated parameter is an error in shipped tools and dev

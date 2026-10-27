@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Score context_pack retrieval against the seeded defect corpus"
+# Scores context_pack's retrieval against benchmarks/corpus/, the seeded defect
+# repositories. Fails on a recall or precision regression — the one gate that
+# catches a context-reduction change quietly making a lens blind, which no test
+# and no scanner would report.
+set -euo pipefail
+uv run --quiet scripts/bench-retrieval.py --verbose

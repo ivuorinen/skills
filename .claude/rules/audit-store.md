@@ -51,7 +51,7 @@ a missed change. `location` is deliberately outside the content-hashed id.
 
 Partly gated. The PostToolUse hook `validate-audit-findings-hook.py` validates
 edited open findings and the ledger and regenerates the index;
-`findings.py validate` runs in pre-commit and as `make audit-consistency`, and
-`make index-check` fails an index that regeneration would change. A hand edit
+`findings.py validate` runs in pre-commit and as `mise run audit-consistency`, and
+`mise run index-check` fails an index that regeneration would change. A hand edit
 that leaves the store valid and the index current passes all of them, so the
 no-hand-edit rule in `AGENTS.md` stays agent discipline.

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Fail if uv.lock is stale against pyproject.toml"
+# check-version-sync.py covers the five manifests release-please rewrites; it
+# does not cover uv.lock, which carries its own copy of the project version in
+# the root package entry. 3.0.0 shipped with uv.lock still declaring 2.0.0 and
+# nothing caught it, because release-please has no updater for the lockfile.
+# `uv lock --check` is uv's own staleness test — it fails on that version drift
+# and on dependency drift too, so no second parser is needed here.
+set -euo pipefail
+uv lock --check

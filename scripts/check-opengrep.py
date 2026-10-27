@@ -80,10 +80,11 @@ REPO_ROOT = Path(__file__).parent.parent
 CONFIG = "r/python.lang.security"
 
 # Mirrors [tool.bandit] in pyproject.toml and the `opengrep` block in
-# .codacy.yml: shipped tools plus internal tooling, tests excluded. opengrep
-# skips tests/ through its own .semgrepignore regardless, so widening this
-# without addressing that too would scan less than it appears to.
-SCAN_ROOTS = ("skills", "scripts")
+# .codacy.yml: shipped tools plus internal tooling — the hooks under
+# .mise/tasks/hook/ included — tests excluded. opengrep skips tests/ through its
+# own .semgrepignore regardless, so widening this without addressing that too
+# would scan less than it appears to.
+SCAN_ROOTS = ("skills", "scripts", ".mise/tasks/hook")
 
 TIMEOUT = 600
 
@@ -119,7 +120,7 @@ _SKIP_DIRS = {".venv", "graphify-out", ".git", "__pycache__"}
 
 USAGE = f"""usage: check-opengrep.py [--help]
 
-Runs opengrep over {"/".join(SCAN_ROOTS)} and fails on either an unsuppressed
+Runs opengrep over {", ".join(SCAN_ROOTS)} and fails on either an unsuppressed
 finding or a `# nosemgrep` marker that suppresses nothing.
 
 Ruleset: {CONFIG}
@@ -323,7 +324,7 @@ def _resolve_opengrep() -> tuple[str | None, int]:
     if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
         print(
             "ERROR  opengrep is not installed, and this gate cannot be skipped under CI.\n"
-            "       Install it in the workflow before `make check`.",
+            "       Install it in the workflow before `mise run check`.",
             file=sys.stderr,
         )
         return None, 1
@@ -376,10 +377,10 @@ def main(argv: list[str]) -> int:
         print(f"ERROR  {exc}", file=sys.stderr)
         return 1
 
-    tail = f" ({unjudged} marker(s) outside {'/'.join(SCAN_ROOTS)} not judged)" if unjudged else ""
+    roots = ", ".join(SCAN_ROOTS)
+    tail = f" ({unjudged} marker(s) outside {roots} not judged)" if unjudged else ""
     print(
-        f"OK  opengrep clean over {'/'.join(SCAN_ROOTS)}; "
-        f"{len(suppressed)} suppression(s) all still live{tail}."
+        f"OK  opengrep clean over {roots}; {len(suppressed)} suppression(s) all still live{tail}."
     )
     return 0
 

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Score whether a lens RECOGNISES a seeded defect (needs an agent; not in check)"
+# The other half of `bench`: does a lens RECOGNISE the defect once retrieval has
+# shown it?
+#
+# Deliberately absent from `check` and it must stay absent. It invokes an agent
+# per case, so it needs credentials, takes minutes, and grades differently twice
+# on the same input. A nondeterministic gate on a commit is a gate people learn
+# to re-run until it passes, which is worse than not having one.
+#
+# Run it by hand, or from a scheduled job, when a lens or a command file changes.
+# `--grade <dir>` scores an already-audited tree and is pure — that half is
+# covered by tests/test_bench_recall.py and needs no agent.
+set -euo pipefail
+uv run --quiet scripts/bench-recall.py --run

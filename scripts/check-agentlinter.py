@@ -5,8 +5,8 @@
 """Reproduce Codacy's Agentlinter findings from a checkout, and gate on new ones.
 
 Codacy runs three engines on this repository: opengrep, lizard and **Agentlinter**.
-`make opengrep` closed the first gap — a rule that lived only in the Codacy UI and
-was reproducible only by pushing. This target closes the third. On PR #131 the two
+`mise run opengrep` closed the first gap — a rule that lived only in the Codacy UI and
+was reproducible only by pushing. This task closes the third. On PR #131 the two
 were compared directly: Codacy's `Agentlinter_clarity_*` ids map one-to-one onto
 the local run's `clarity/*` rules and the reported word counts matched exactly, so
 `npx agentlinter --local .` is the same engine Codacy reports from.
@@ -14,7 +14,7 @@ the local run's `clarity/*` rules and the reported word counts matched exactly, 
 Three facts about the tool shape everything below.
 
 **It always exits 0.** Findings, no findings, nothing to scan — all exit 0. So the
-exit code carries no signal and this gate parses `--json` instead. A Makefile
+exit code carries no signal and this gate parses `--json` instead. A task
 recipe that simply ran the binary would pass unconditionally.
 
 **`--local` is mandatory, not a preference.** `npx agentlinter [path]` is
@@ -270,9 +270,9 @@ def _parse(argv: list[str]) -> tuple[Path, bool]:
 def _skip_or_fail(update: bool) -> int:
     """The tool could not produce a report.
 
-    Locally this degrades to a skip so an offline clone can still run `make
+    Locally this degrades to a skip so an offline clone can still run `mise run
     check`; under CI it fails, because a gate that skips silently is not a gate.
-    Same split `make opengrep` makes, for the same reason.
+    Same split `mise run opengrep` makes, for the same reason.
 
     `--update` never skips. Re-recording needs a report by definition, so a skip
     there would exit 0 having written nothing — leaving the contributor believing

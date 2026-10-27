@@ -61,7 +61,7 @@ Read four things off the result before continuing, and stop if any of them says 
 
 If the PR number is not supplied, find it from the current branch (`gh pr view --json number,url,headRefName` on GitHub; `glab mr view` on GitLab; the PR list endpoint filtered by source branch on Bitbucket), then confirm it with the status fetch above. Confirm the PR is correct before proceeding. If ambiguous, ask the user.
 
-**4. Identify the project's canonical check command** by inspecting in order: `Makefile` (`check`/`test`/`lint` targets), `package.json` `scripts`, `pyproject.toml` (configured tools and their default invocations), then `README`/`CONTRIBUTING`. If it cannot be determined, ask the user before continuing.
+**4. Identify the project's canonical check command** by inspecting in order: `Makefile` (`check`/`test`/`lint` targets), mise tasks (`[tasks]` in `mise.toml` or `.mise.toml`, and file tasks under `.mise/tasks/`, `mise-tasks/` or `.config/mise/tasks/`; a `check`/`test`/`lint` task runs as `mise run <task>`), `package.json` `scripts`, `pyproject.toml` (configured tools and their default invocations), then `README`/`CONTRIBUTING`. If it cannot be determined, ask the user before continuing.
 
 **5. Confirm the commit message convention:** `git log --oneline -10`; note the prefix convention in use (e.g. `fix:`, `feat:`, `chore:`).
 

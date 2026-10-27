@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Regenerate uv.lock from pyproject.toml"
+# release-please rewrites the version in pyproject.toml but has no updater for
+# uv.lock; the release workflow's lock-sync job runs this to keep `lock-check`
+# green on the release PR.
+set -euo pipefail
+uv lock

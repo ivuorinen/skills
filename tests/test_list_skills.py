@@ -51,7 +51,7 @@ class TestPrintSection:
         assert body[1].startswith(" " * (2 + len("my-skill") + 2))
 
 
-# ── main(): the `make list` inventory (tests-f3ebae78) ────────────────────────
+# ── main(): the `mise run list` inventory (tests-f3ebae78) ────────────────────
 
 
 def _skill(root: Path, tree: str, name: str, description: str) -> Path:

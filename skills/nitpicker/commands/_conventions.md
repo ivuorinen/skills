@@ -95,7 +95,7 @@ Severity reflects actual risk, never preference.
   confirm the tool still detects something it must: a rule known to fire on a
   construct present in the repo, a planted positive, or `np_context_pack` with
   `self_test: true` for retrieval. Control passed → "clean". Control failed or
-  not run → "unverified", never "clean". `make opengrep` in this repo exists
+  not run → "unverified", never "clean". `mise run opengrep` in this repo exists
   because of exactly this: opengrep skips a file it cannot parse, so a parse
   error means unscanned code reported as no findings.
 
