@@ -48,7 +48,9 @@ FORMER_TARGETS = {
         "agentlinter-update",
     ]
 } | {"pre-commit": "prek", "bump-patch": "bump", "bump-minor": "bump", "bump-major": "bump"}
+# pyright runs on node, and mise's npm backend never installs node for an npm: tool.
 PINS = {
+    "node": "24.22.1",
     "uv": "0.13.1",
     "ruff": "0.17.1",
     "npm:pyright": "1.1.414",

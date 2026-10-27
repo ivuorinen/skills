@@ -2,6 +2,23 @@
 
 lockfile_version = 3
 
+[[tools.node]]
+version = "24.22.1"
+backend = "core:node"
+specifiers = ["24.22.1"]
+
+[tools.node."platforms.linux-x64"]
+checksum = "sha256:eb6728e77c576a35162c122c45ccadf224d89ff00abc8dae46cc2897c6002d7c"
+url = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz"
+
+[tools.node."platforms.macos-arm64"]
+checksum = "sha256:89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7"
+url = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz"
+
+[tools.node."platforms.macos-x64"]
+checksum = "sha256:d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035"
+url = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-x64.tar.gz"
+
 [[tools."npm:pyright"]]
 version = "1.1.414"
 aube = { path = ".mise/locks/npm-pyright/1.1.414", digest = "sha256:69cd62e5613c907964fbb78b05a85eb9d12a503285d716f6529144cc884cf656" }

@@ -7,7 +7,7 @@ of it is aspirational.
 ## Setup
 
 ```bash
-mise install           # the tools mise.toml pins: uv, ruff, pyright, prek, opengrep
+mise install           # the tools mise.toml pins: node, uv, ruff, pyright, prek, opengrep
 uv sync --extra dev    # the dev environment the `uv run --extra dev` tasks use
 prek install           # installs both hook types .pre-commit-config.yaml declares
 ```

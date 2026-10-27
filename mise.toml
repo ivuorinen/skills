@@ -1,4 +1,5 @@
 [tools]
+node = "24.22.1"
 uv = "0.13.1"
 ruff = "0.17.1"
 "npm:pyright" = "1.1.414"
