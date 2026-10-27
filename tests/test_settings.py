@@ -628,7 +628,23 @@ def test_project_mise_config_does_not_reach_a_hook(tmp_path):
     (tmp_path / "mise.local.toml").write_text('[env]\nPROBE = "leak"\n', encoding="utf-8")
     (tmp_path / ".miserc.toml").write_text('env = ["dev"]\n', encoding="utf-8")
     (tmp_path / "mise.dev.toml").write_text('[env]\nPROBE_ENV = "dev"\n', encoding="utf-8")
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    # Under CI `uv` is a mise shim, which needs a version from the cwd's config,
+    # and tmp_path has none. Resolve the real binary from the checkout and link
+    # it from a directory mise does not manage: `mise run` drops its own install
+    # directories from PATH, so prepending the one `mise which` names is undone.
+    which = subprocess.run(
+        ["mise", "which", "uv"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60
+    )
+    uv_path = which.stdout.strip() if which.returncode == 0 else shutil.which("uv")
+    assert uv_path, "no uv binary to run the probe with"
+    uv_dir = tmp_path / "bin"
+    uv_dir.mkdir()
+    (uv_dir / "uv").symlink_to(uv_path)
+    env = {
+        **os.environ,
+        "PATH": f"{uv_dir}{os.pathsep}{os.environ['PATH']}",
+        "CLAUDE_PROJECT_DIR": str(tmp_path),
+    }
     for var in ("MISE_ENV", "MISE_TRUSTED_CONFIG_PATHS", "MISE_IGNORED_CONFIG_PATHS"):
         env.pop(var, None)
 
