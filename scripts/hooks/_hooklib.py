@@ -143,6 +143,44 @@ _WRAPPERS = frozenset(
         "xargs",
     }
 )
+# `mise exec [tool@version …] [options] -- <cmd>` (and its alias `mise x`) runs
+# `<cmd>`, so `mise exec -- git commit --no-verify` skipped the hooks the way
+# `env git commit --no-verify` once did. mise's own global options may come
+# first (`mise -q exec`, `mise -C . x`), so the subcommand is found anywhere in
+# the stage rather than only second; over-matching (`mise run x`) costs a scan
+# of harmless suffixes, never an allow. `mise run <task>` itself is not a
+# wrapper: it runs a task file the guard sees only by name.
+_MISE_EXEC = frozenset({"exec", "x"})
+
+
+def _is_mise_exec(tokens: list[str]) -> bool:
+    """True if the stage is `mise … exec|x …`."""
+    return Path(tokens[0]).name == "mise" and not _MISE_EXEC.isdisjoint(tokens[1:])
+
+
+def _is_wrapper(tokens: list[str]) -> bool:
+    """True if the stage `tokens` runs a command that follows its first word(s)."""
+    return Path(tokens[0]).name in _WRAPPERS or _is_mise_exec(tokens)
+
+
+def _mise_exec_command(tokens: list[str]) -> str | None:
+    """The string `mise exec -c|--command <str>` hands to a shell, or None.
+
+    Read up to the `--` that ends mise's options: past it, `-c` belongs to the
+    command being run (`git commit -c <commit>`).
+    """
+    if not _is_mise_exec(tokens):
+        return None
+    for i, word in enumerate(tokens):
+        if word == "--":
+            break
+        if word in ("-c", "--command") and i + 1 < len(tokens):
+            return tokens[i + 1]
+        if word.startswith("--command="):
+            return word.split("=", 1)[1]
+    return None
+
+
 # Shells: `bash -c '<string>'` runs a whole command line that arrives here as ONE
 # quoted token, so every guard judged the wrapper and never the git call, the
 # protected write or the restore inside it (agent-loopholes-015b8134). `busybox`
@@ -630,7 +668,7 @@ def _wrapper_variants(tokens: list[str], depth: int = 0) -> list[tuple[dict[str,
     `_find_exec_stages`.
     """
     variants = [({}, tokens)]
-    if Path(tokens[0]).name in _WRAPPERS:
+    if _is_wrapper(tokens):
         # The scan runs over the `-S`-expanded form so a payload-carried call is
         # reachable, while the original stage is kept unexpanded: it is what the
         # ctx-ok guard and the unrecognised-verb path must still judge.
@@ -915,10 +953,14 @@ def _command_string(tokens: list[str]) -> str | None:
     operands joined, as eval joins them; and the action of `trap 'cmd' SIG`.
     `eval 'git commit --no-verify -m x'` and `eval rm scripts/hooks/x` passed
     every guard, which judged the word `eval` (agent-loopholes-df530242).
+    `mise exec -c '<str>'` runs `<str>` through a shell the same way.
     """
     invocation = _shell_invocation(tokens)
     if invocation is not None:
         return invocation[1] if invocation[0] == "c" else None
+    mise = _mise_exec_command(tokens)
+    if mise is not None:
+        return mise
     name, args = Path(tokens[0]).name, tokens[1:]
     if name == "eval":
         return " ".join(args)

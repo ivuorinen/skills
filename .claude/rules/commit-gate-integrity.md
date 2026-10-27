@@ -28,15 +28,18 @@ commit-making subcommands (`am`, `merge`, `pull`, `rebase`, `cherry-pick`) — i
 front of it or exported earlier in the same command — and `pre-commit
 uninstall`. A
 command nested in `$(...)`, backticks or a subshell is judged as its own stage,
-and so is a git call behind a wrapper (`env`, `sudo`, `xargs`, …), behind
-`coproc`, inside a command string (`bash -c '…'`, `fish --command`, `eval`,
+and so is a git call behind a wrapper (`env`, `sudo`, `xargs`, `mise exec`/`mise x`,
+…), behind
+`coproc`, inside a command string (`bash -c '…'`, `fish --command`,
+`mise exec -c '…'`, `eval`,
 `trap 'cmd' SIG`, a here-string into a shell) or inside a git alias's body
 (agent-loopholes-df530242, agent-loopholes-911e2929). Text a shell reads from
 stdin (`… | bash`, `source <(…)`, a heredoc) and a command string built by
 expansion (`eval "$CMD"`) cannot be tokenized, so they are refused whenever
 they name git with a write word.
 `tests/test_hooks.py::test_git_guard_denies_the_reopened_bypass_classes` and
-`test_git_guard_unwraps_eval_source_coproc_and_here_strings` hold these shapes.
+`test_git_guard_unwraps_eval_source_coproc_and_here_strings` hold these shapes,
+and `test_git_guard_judges_the_command_behind_mise_exec` the `mise exec` form.
 
 Treat it as a backstop rather than the binding gate. It judges the command's
 **text**, so a request whose git call is not in that text is outside it, and
@@ -44,10 +47,12 @@ those are not theoretical:
 
 - an indirection that runs git from inside something else — a shell function or
   rc alias defined by an earlier call, a script the hook sees only by its own
-  name (`./deploy.sh`), a string assembled at runtime whose text never appears
+  name (`./deploy.sh`) or a task it sees only by name (`mise run <task>`), a
+  string assembled at runtime whose text never appears
   in the command (`eval "$(cat cmd.txt)"`), a variable exported by an earlier
   call
-- a wrapper outside the list `_hooklib._WRAPPERS` names, or a runner that
+- a wrapper outside the list `_hooklib._WRAPPERS` names (`mise exec`/`mise x`
+  are matched apart from it, after any of mise's global options), or a runner that
   takes a command string the guard does not open (`watch`, `su -c`, `ssh`)
 
 `enforcement-surface-integrity.py` reports a change to the hooks or settings

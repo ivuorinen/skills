@@ -3283,6 +3283,50 @@ def test_git_guard_denies_the_reopened_bypass_classes(command, fragment, monkeyp
 @pytest.mark.parametrize(
     "command",
     [
+        "mise exec -- git commit --no-verify -m x",
+        "mise x -- git commit -n -m x",
+        "mise exec --env ci -C . -- git commit --no-verify",
+        "mise exec node@20 -- git commit --no-verify",
+        # mise's own global options ahead of the subcommand (final review)
+        "mise -q exec -- git commit --no-verify -m x",
+        "mise -C . exec -- git commit --no-verify -m x",
+        "mise --cd . x -- git commit -n -m x",
+        "mise -y x -- git commit --no-verify -m x",
+        "mise --env ci exec -- git commit --no-verify -m x",
+        # the command string `-c`/`--command` hands to a shell
+        "mise exec -c 'git commit --no-verify -m x'",
+        "mise exec --command 'git commit --no-verify -m x'",
+        "mise exec --command='git commit --no-verify -m x'",
+        'mise x -c "git commit -n -m x"',
+        # no `--` and no `-c`: the command follows the tool specs directly
+        "mise x git commit --no-verify -m x",
+    ],
+)
+def test_git_guard_judges_the_command_behind_mise_exec(command, monkeypatch, capsys):
+    """`mise exec … -- <cmd>` runs `<cmd>`, so the guard judges `<cmd>`.
+
+    It allowed `mise exec -- git commit --no-verify` with exit 0 while plain
+    `git commit --no-verify` was denied: one wrapper word made the hooks
+    skippable, the same class `env` once opened.
+    """
+    mod = _load("deny-unsafe-git-hook")
+    with pytest.raises(SystemExit) as exc:
+        _run(mod, _bash(command), monkeypatch)
+    assert exc.value.code == 2
+    assert "skips the pre-commit" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "command", ["mise x -- git status", "mise -q x git status", "mise run check"]
+)
+def test_git_guard_allows_a_harmless_mise_call(command, monkeypatch, capsys):
+    """A read behind `mise x`, and a task run, pass the guard as they did."""
+    _assert_git_allowed(_load("deny-unsafe-git-hook"), command, monkeypatch, capsys)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         # `env` alone is a read command, not a wrapper around one — stripping it
         # unconditionally would drop the stage and stop the ctx-ok guard seeing it.
         "env",
@@ -7300,6 +7344,8 @@ def test_agents_guard_is_not_quadratic_in_a_wrapper_led_stage():
         "env -i FOO=1 nice -n 5 rm scripts//hooks/./ruff-hook.py",
         "env '/bin//rm' scripts/hooks/ruff-hook.py",
         "sudo sed -i s/a/b/ 'scripts/hooks/ruff-hook.py'",
+        "mise -q exec -- rm scripts/hooks/ruff-hook.py",
+        "mise exec -c 'rm scripts/hooks/ruff-hook.py'",
     ],
 )
 def test_agents_guard_still_denies_wrapped_protected_writes(command):
