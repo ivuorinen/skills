@@ -5,5 +5,11 @@
 #
 # `uv run --extra dev` syncs the .venv pyproject's [tool.pyright] points at;
 # the pyright it then runs is mise's pinned one, from PATH.
+#
+# pyright auto-excludes dot-directories, so the main project never sees the
+# hooks under .mise/tasks/hook/. A second pass runs the project rooted there
+# (.mise/tasks/hook/pyrightconfig.json), inside which no path starts with a dot.
 set -euo pipefail
-uv run --extra dev pyright --outputjson | python3 -c "import json,sys; n=json.load(sys.stdin)['summary']['errorCount']; print(f'pyright: {n} error(s)'); sys.exit(n != 0)"
+count='import json,sys; n=json.load(sys.stdin)["summary"]["errorCount"]; print(f"pyright{sys.argv[1]}: {n} error(s)"); sys.exit(n != 0)'
+uv run --extra dev pyright --outputjson | python3 -c "$count" ""
+uv run --extra dev pyright -p .mise/tasks/hook --outputjson | python3 -c "$count" " (hooks)"

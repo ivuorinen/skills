@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="ruff format on scripts/, tests/, skills/"
+#MISE description="ruff format on scripts/, .mise/tasks/hook/, tests/, skills/"
 # ruff comes from mise.toml, the pin pyproject.toml's dev extra and the ruff
 # hook's PEP 723 block also name. This task WRITES, so a stale pin here
 # reformats the tree one way while the gate judges it another.
 set -euo pipefail
-ruff format scripts/ tests/ skills/
+ruff format scripts/ .mise/tasks/hook/ tests/ skills/

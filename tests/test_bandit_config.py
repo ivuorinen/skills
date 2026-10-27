@@ -57,7 +57,7 @@ def _discovered(targets: list[str]) -> list[str]:
 
 
 # Both spellings a runner might use: the repo root, or each directory named.
-_TARGET_FORMS = [["."], ["skills/", "scripts/", "tests/"]]
+_TARGET_FORMS = [["."], ["skills/", "scripts/", ".mise/tasks/hook/", "tests/"]]
 
 
 @pytest.mark.filterwarnings("ignore:The verify_requirements argument:DeprecationWarning")
@@ -89,7 +89,7 @@ def test_the_shipped_tools_are_still_scanned(targets):
     assert any("skills/nitpicker/scripts/" in f for f in scanned), (
         "no shipped tool is being scanned — an over-broad exclusion in .bandit"
     )
-    assert any("scripts/hooks/" in f for f in scanned), "the hooks are not being scanned"
+    assert any(".mise/tasks/hook/" in f for f in scanned), "the hooks are not being scanned"
 
 
 def test_ini_uses_the_exclude_key_not_exclude_dirs():

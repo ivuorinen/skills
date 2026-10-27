@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — validate skill eval sets after Write or Edit"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -8,7 +10,7 @@ Resolves finding audit-4589bff5. Every other governed surface in this repo has
 an in-session validator plus a commit-time gate; eval sets had only the gate.
 `validate-json-hook.py` fires on any edited `.json` but checks syntax alone, so
 a file that parses yet carries a missing `assertions` array, a duplicate `id`,
-or a split holding one label passed cleanly until `make check` or the commit
+or a split holding one label passed cleanly until `mise run check` or the commit
 hook ran.
 """
 
@@ -66,7 +68,7 @@ def main() -> None:
     if not validator.exists():
         # Not a failure to block on — the commit-time gate still covers it —
         # but a skip that says nothing reads as a pass.
-        report_skip(_HOOK, "scripts/validate-evals.py not found", "make validate-evals")
+        report_skip(_HOOK, "scripts/validate-evals.py not found", "mise run validate-evals")
 
     try:
         # argv is the resolved validator path plus the skill directory derived
@@ -81,7 +83,7 @@ def main() -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         # Reporting beats raising: a hook that raises replaces its diagnosable
         # message with a traceback.
-        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "make validate-evals")
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "mise run validate-evals")
 
     if result.returncode != 0:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.

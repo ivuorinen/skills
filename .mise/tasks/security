@@ -5,4 +5,4 @@
 # than as a step of its own — `.mise/tasks/check` is the single definition of
 # what "checked" means, so there is no second copy to keep in step.
 set -euo pipefail
-uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/
+uv run --extra dev bandit -c pyproject.toml -q -r skills/ scripts/ .mise/tasks/hook/

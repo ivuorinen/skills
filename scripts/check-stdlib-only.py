@@ -10,7 +10,8 @@ Two checks:
 2. The script-runner contract: shipped entry points — a module with a top-level
    `if __name__ == "__main__":` guard — begin with `#!/usr/bin/env python3`;
    shipped library modules (no guard) carry **no** shebang; neither carries a
-   `# /// script` block. Internal tooling (`scripts/**/*.py`)
+   `# /// script` block. Internal tooling (`scripts/**/*.py` and the hooks under
+   `.mise/tasks/hook/`)
    that is a runnable script (has a shebang or a `# /// script` block) begins
    with `#!/usr/bin/env -S uv run --quiet`. Shebang-less library modules (e.g.
    `common.py`, `_hooklib.py`) are exempt. This is the only implementation of
@@ -430,7 +431,8 @@ def find_runner_violations(repo_root: Path, collected: Collected | None = None) 
                 f"  {rel}: shipped tool must carry no '# /// script' block "
                 "(uv is not available on consumer machines)"
             )
-    for script in sorted(repo_root.glob("scripts/**/*.py")):
+    internal = [*repo_root.glob("scripts/**/*.py"), *repo_root.glob(".mise/tasks/hook/**/*.py")]
+    for script in sorted(internal):
         rel = script.relative_to(repo_root)
         try:
             text = script.read_text(encoding="utf-8")

@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="Stop hook — remind when a loaded command still has open process steps"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

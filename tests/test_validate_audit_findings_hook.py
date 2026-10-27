@@ -1,4 +1,4 @@
-"""Tests for scripts/hooks/validate-audit-findings-hook.py (thin store-validation hook)."""
+"""Tests for .mise/tasks/hook/validate-audit-findings-hook.py (thin store-validation hook)."""
 
 import io
 import json
@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from _loader import load_path
 
-HOOK_PATH = Path(__file__).parent.parent / "scripts" / "hooks" / "validate-audit-findings-hook.py"
+HOOK_PATH = (
+    Path(__file__).parent.parent / ".mise" / "tasks" / "hook" / "validate-audit-findings-hook.py"
+)
 FINDINGS_PATH = Path(__file__).parent.parent / "skills" / "nitpicker" / "scripts" / "findings.py"
 
 hook = load_path("audit_hook", HOOK_PATH)

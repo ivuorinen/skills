@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — flag a spelled-out count of a growing set in prose"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

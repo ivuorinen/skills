@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PreToolUse hook — block the git-write mandates the rules declare unenforced"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

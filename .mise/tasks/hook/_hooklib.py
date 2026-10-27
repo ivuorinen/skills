@@ -1,4 +1,4 @@
-"""Shared preamble for the PreToolUse / PostToolUse / Stop hooks in scripts/hooks/.
+"""Shared preamble for the PreToolUse / PostToolUse / Stop hooks in .mise/tasks/hook/.
 
 Library module — imported by the hook scripts, never run directly, so no
 shebang and no `# /// script` block. Pure stdlib. Mirrors the sibling-import
@@ -305,11 +305,11 @@ def stop_feedback(text: str) -> None:
 # CLAUDE_PROJECT_DIR naming another checkout that carries `_hooklib.py` choose
 # which validators ran, and was reported as py/command-line-injection
 # (audit-1e48d360). A path built from `__file__` no environment can move.
-SHIPPED_ROOT = Path(__file__).resolve().parents[2]
+SHIPPED_ROOT = Path(__file__).resolve().parents[3]
 
 
 def repo_root() -> Path:
-    """Repo root: CLAUDE_PROJECT_DIR, else REPO_ROOT, else parents[2] of this dir.
+    """Repo root: CLAUDE_PROJECT_DIR, else REPO_ROOT, else parents[3] of this file.
 
     An empty value counts as absent — `dict.get` would return a present-but-empty
     `CLAUDE_PROJECT_DIR=""`, and `Path("")` is `Path(".")`, silently moving every
@@ -322,9 +322,9 @@ def repo_root() -> Path:
     """
     for var in ("CLAUDE_PROJECT_DIR", "REPO_ROOT"):
         val = os.environ.get(var)
-        if val and (Path(val) / "scripts" / "hooks" / "_hooklib.py").exists():
+        if val and (Path(val) / ".mise" / "tasks" / "hook" / "_hooklib.py").exists():
             return Path(val)
-    return Path(__file__).parents[2]
+    return Path(__file__).parents[3]
 
 
 def load_event() -> dict | None:

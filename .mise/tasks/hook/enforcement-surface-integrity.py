@@ -1,10 +1,12 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="SessionStart + PostToolUse hook — report a change to the enforcement surface"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
 """SessionStart + PostToolUse hook — report a change to the enforcement surface.
 
-Every guard for `scripts/hooks/**`, `.claude/settings.json`,
+Every guard for `.mise/tasks/hook/**`, `.claude/settings.json`,
 `.claude/settings.local.json`, the graphify pin and the git dir's `.git/hooks`
 is a PreToolUse text parser,
 and each spelling it does not know rewrites the surface with no signal at all:
@@ -46,7 +48,7 @@ REPO_ROOT = repo_root()
 # The paths the protected-write guard (deny-agents-path-hook.py) and the
 # permissions deny list protect: its `PROTECTED_WRITE`.
 SURFACE = (
-    "scripts/hooks",
+    ".mise/tasks/hook",
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/skills/graphify/.graphify_version",

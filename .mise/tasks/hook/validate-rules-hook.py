@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — validate .claude/rules/ files after Write or Edit"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

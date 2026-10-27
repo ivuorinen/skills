@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — warn when an edited manifest desyncs the version"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

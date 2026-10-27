@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — revalidate the governed trees after a shell tool call"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -41,7 +43,7 @@ REPO_ROOT = repo_root()
 GOVERNED = (
     "skills/",
     # The enforcement surface itself. permissions.deny stops Edit/Write on
-    # scripts/hooks/ and .claude/settings.json but never reaches Bash, and no
+    # .mise/tasks/hook/ and .claude/settings.json but never reaches Bash, and no
     # PreToolUse guard matches them either — deny-agents-path-hook.py covers
     # .claude/agents/ only. Without these two entries a `sed -i` disabling a
     # guard, or unregistering every hook at once, ran the gates zero times.
@@ -136,7 +138,7 @@ def main() -> None:  # noqa: C901
         # git absent, or a tree slow enough that status timed out. A PostToolUse
         # hook that blocks has no user-visible recovery, so bound it and skip —
         # out loud, since a silent skip reads as every gate passing.
-        report_skip("post-bash-revalidate", f"{type(exc).__name__}: {exc}", "make check")
+        report_skip("post-bash-revalidate", f"{type(exc).__name__}: {exc}", "mise run check")
     if status.returncode != 0:
         return  # not a git tree — nothing to scope against
     if not any(_governed(entry) for entry in status.stdout.splitlines()):
@@ -203,7 +205,7 @@ def main() -> None:  # noqa: C901
         # No failure to block on, but a gate that did not run is not a pass:
         # exit 1 is shown without blocking, which is the skip contract every
         # other hook keeps (observability-879596c7).
-        report_skip("post-bash-revalidate", "; ".join(skips), "make check")
+        report_skip("post-bash-revalidate", "; ".join(skips), "mise run check")
 
 
 if __name__ == "__main__":

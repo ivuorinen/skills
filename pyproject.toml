@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 # ruff is a test dependency, not just a linter: tests/test_hooks.py exercises
 # ruff-hook.py, which shells out to the real `ruff` binary.
 # ruff is pinned to the same version mise.toml names (which the lint and format
-# tasks and the prek ruff hooks run), and scripts/hooks/ruff-hook.py pins it
+# tasks and the prek ruff hooks run), and .mise/tasks/hook/ruff-hook.py pins it
 # too, so no call site can disagree about what passes. test_hooks.py enforces
 # the match.
 # bandit is pinned to its .pre-commit-config.yaml rev for the same reason.
@@ -35,11 +35,11 @@ dev = [
 # reported and fails the gate below.
 # Each directory is listed separately: coverage's source scan only recurses into
 # subdirectories that are packages, and none of these carry an __init__.py, so
-# "scripts" alone silently omits scripts/hooks/ — which is exactly how the hook
-# above stayed hidden. A new script directory needs a new entry here.
+# "scripts" alone silently omitted the hooks' directory — which is exactly how
+# the hook above stayed hidden. A new script directory needs a new entry here.
 source = [
   "scripts",
-  "scripts/hooks",
+  ".mise/tasks/hook",
   "skills/nitpicker/scripts",
 ]
 # Decisions, not just statements: without this a half-taken `if` counts as
@@ -89,7 +89,8 @@ indent-style = "space"
 
 [tool.bandit]
 # Scope: the code that ships to consumers (skills/*/scripts/) and the internal
-# tooling that executes on a developer's machine (scripts/). tests/ is excluded
+# tooling that executes on a developer's machine (scripts/ and the hooks in
+# .mise/tasks/hook/). tests/ is excluded
 # because nearly every hit is B101 (assert_used) — asserts are the test
 # mechanism, not a defect. The remainder are B404/B105/B108 on the subprocess
 # calls and fixture constants that drive the tools under test. Excluding the
@@ -153,6 +154,9 @@ strict = [
   "skills/nitpicker/scripts/skill_catalog.py",
 ]
 pythonPlatform = "All"
+# The hooks under .mise/tasks/hook/ are not listed: pyright auto-excludes
+# dot-directories whatever `include` says, so they are checked by the project in
+# .mise/tasks/hook/pyrightconfig.json, which the typecheck task runs second.
 include = ["scripts", "skills", "tests"]
 exclude = ["**/__pycache__", "**/node_modules", ".venv", "graphify-out"]
 # types-851598e4: an unannotated parameter is an error in shipped tools and dev

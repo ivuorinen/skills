@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — validate edited files in the docs/audit/findings/ store"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -27,7 +29,7 @@ from _hooklib import (
 
 REPO_ROOT = repo_root()
 _HOOK = "validate-audit-findings-hook"
-_BY_HAND = "make check"
+_BY_HAND = "mise run check"
 # The shipped tool this hook executes, from its own checkout (audit-1e48d360).
 FINDINGS = SHIPPED_ROOT / "skills" / "nitpicker" / "scripts" / "findings.py"
 
@@ -80,7 +82,7 @@ def main() -> None:  # noqa: C901
     """Validate an edited findings file and regenerate INDEX.md.
 
     The index is regenerated on every store edit, not only on a finding edit,
-    so it cannot drift from the files it summarises. `make check` fails on a
+    so it cannot drift from the files it summarises. `mise run check` fails on a
     stale INDEX.md, so drift found here is drift not found in CI.
     """
     path = event_path()
@@ -137,7 +139,7 @@ def main() -> None:  # noqa: C901
 
     # No --root: cwd=REPO_ROOT lets findings.py resolve its DEFAULT_ROOT
     # (docs/audit/findings) and emit repo-relative paths, matching the canonical
-    # `findings.py index` used by make check and CI. An absolute --root would
+    # `findings.py index` used by mise run check and CI. An absolute --root would
     # write absolute paths into INDEX.md and fail index-check.
     try:
         # argv is `py` (interpreter + shipped tool path) plus a literal word.

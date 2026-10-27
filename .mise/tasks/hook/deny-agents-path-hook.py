@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PreToolUse hook — block Bash commands that reach the protected trees"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -14,9 +16,9 @@ different shapes:
   names `Read` for that tree — 561e285 removed it so agent definitions can be
   audited in-session through the Read tool (docs-8bf4642c corrected this
   docstring, which still claimed a Read deny).
-- `scripts/hooks/**`, `.claude/settings.json`, `.claude/settings.local.json` and
+- `.mise/tasks/hook/**`, `.claude/settings.json`, `.claude/settings.local.json` and
   the graphify pin (`PROTECTED_WRITE`): only a WRITE is blocked (see
-  `_writes_protected`). Denying `cat scripts/hooks/ruff-hook.py` would
+  `_writes_protected`). Denying `cat .mise/tasks/hook/ruff-hook.py` would
   contradict the permission model and break ordinary work.
 """
 
@@ -103,7 +105,7 @@ _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
 
 # ── protected-write paths ─────────────────────────────────────────────────────
 #
-# permissions.deny also names Edit and Write on `scripts/hooks/**` and
+# permissions.deny also names Edit and Write on `.mise/tasks/hook/**` and
 # `.claude/settings.json` — the enforcement surface itself — and Bash walks past
 # those exactly as it does for the agents tree. Reading them is allowed, so this
 # half matches a MUTATION only.
@@ -129,7 +131,7 @@ _AGENT_FILES = tuple(sorted(p.name for p in (_REPO_ROOT / DENIED).glob("*.md")))
 # the main checkout's git dir, outside this root, and a `core.hooksPath` set
 # before the session points git somewhere this list does not name.
 PROTECTED_WRITE = (
-    "scripts/hooks",
+    ".mise/tasks/hook",
     ".claude/settings.json",
     ".claude/settings.local.json",
     ".claude/skills/graphify/.graphify_version",
@@ -640,7 +642,7 @@ def _names_protected(code: str) -> bool:
 
 
 def _writes_protected(command: str) -> bool:
-    """True if the command writes to scripts/hooks/ or .claude/settings.json."""
+    """True if the command writes to .mise/tasks/hook/ or .claude/settings.json."""
     c = _canonicalize(command)
     if _redirects_into_protected(c):
         return True

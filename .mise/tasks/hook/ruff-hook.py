@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — ruff check --fix and ruff format an edited Python file"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["ruff==0.17.1"]  # keep in sync with the pyproject.toml dev pin

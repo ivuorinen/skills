@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PreToolUse hook — deny a shell script that writes after a cd that can fail"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="Stop hook — remind about pending skill changes before handing back control"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PostToolUse hook — validate SKILL.md after Write or Edit"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///
@@ -47,7 +49,7 @@ def main() -> None:
 
     validator = SHIPPED_ROOT / "scripts" / "validate-skill.py"
     if not validator.exists():
-        report_skip(_HOOK, "scripts/validate-skill.py not found", "make validate")
+        report_skip(_HOOK, "scripts/validate-skill.py not found", "mise run validate")
 
     try:
         result = subprocess.run(
@@ -58,7 +60,7 @@ def main() -> None:
             timeout=HOOK_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "make validate")
+        report_skip(_HOOK, f"{type(exc).__name__}: {exc}", "mise run validate")
     if result.returncode != 0:
         # PostToolUse surfaces only exit 2 + stderr back to the agent.
         print((result.stdout + result.stderr).rstrip(), file=sys.stderr, flush=True)

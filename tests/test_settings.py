@@ -5,8 +5,11 @@ decides whether they run at all. pre-commit's check-json accepts `{"hooks": {}}`
 as valid, so a deleted registration was previously invisible.
 """
 
+import ast
 import json
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -14,7 +17,19 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SETTINGS = REPO_ROOT / ".claude" / "settings.json"
-HOOKS_DIR = REPO_ROOT / "scripts" / "hooks"
+HOOKS_DIR = REPO_ROOT / ".mise" / "tasks" / "hook"
+HOOK_REL = ".mise/tasks/hook"
+# Every registered Python hook runs by path through uv, from the project
+# directory, and never through mise: no mise config — project or user, any
+# `[env]`, `[tools]`, `[tasks]` override, version file or `.miserc.toml` — is
+# read on the way to a hook. Running them through mise either let the
+# agent-writable project config in, or (from `/`) dropped the uv a contributor
+# installed with `mise install` and every guard denied every call.
+HOOK_PREFIX = f'uv run --quiet "$CLAUDE_PROJECT_DIR/{HOOK_REL}/'
+# graphify-guard is a bash task; it runs under bash directly, from the project
+# directory, where `graphify hook-guard` looks for graphify-out/.
+GRAPHIFY_GUARD = f'bash "$CLAUDE_PROJECT_DIR/{HOOK_REL}/graphify-guard"'
+_IN_CI = os.environ.get("CI", "").lower() in ("1", "true", "yes")
 
 WRITE_EDIT_HOOKS = [
     "validate-skill-hook.py",
@@ -42,8 +57,8 @@ WRITE_EDIT_HOOKS = [
 EXPECTED_DENY = [
     "Edit(./.claude/agents/**)",
     "Write(./.claude/agents/**)",
-    "Edit(./scripts/hooks/**)",
-    "Write(./scripts/hooks/**)",
+    "Edit(./.mise/tasks/hook/**)",
+    "Write(./.mise/tasks/hook/**)",
     "Edit(./.claude/settings.json)",
     "Write(./.claude/settings.json)",
     "Edit(./.claude/settings.local.json)",
@@ -64,7 +79,7 @@ EXPECTED_DENY = [
 # (agent-loopholes-8c3cdf74).
 PROTECTED_PATHS = {
     "./.claude/agents/**": {"Edit", "Write"},
-    "./scripts/hooks/**": {"Edit", "Write"},
+    "./.mise/tasks/hook/**": {"Edit", "Write"},
     "./.claude/settings.json": {"Edit", "Write"},
     "./.claude/settings.local.json": {"Edit", "Write"},
     "./.claude/skills/graphify/.graphify_version": {"Edit", "Write"},
@@ -104,10 +119,9 @@ def test_graphify_pin_mismatch_sends_the_agent_to_the_owner():
     """The mismatch message used to name the pin file and nothing else, which
     pointed a blocked agent at the one edit that silently re-trusts any installed
     binary (agent-loopholes-8c3cdf74)."""
-    guards = [c for c in _registered_commands() if "graphify hook-guard" in c]
-    assert guards, "no graphify hook-guard registered"
-    for cmd in guards:
-        assert "ask the owner" in cmd, cmd
+    guards = [c for c in _registered_commands() if f'{HOOK_REL}/graphify-guard"' in c]
+    assert sorted(c.rsplit('"', 1)[1].strip() for c in guards) == ["read", "search"]
+    assert "ask the owner" in (HOOKS_DIR / "graphify-guard").read_text(encoding="utf-8")
 
 
 def _commands(event: str, matcher: str | None = None) -> str:
@@ -246,7 +260,9 @@ def test_pretooluse_hooks_registered(matcher):
     Asserts the matcher and the guard invocation, not the full command string:
     the wrapper around it (existence guards, flags) is allowed to change.
     """
-    assert "graphify hook-guard" in _commands("PreToolUse", matcher)
+    assert f'{HOOK_REL}/graphify-guard"' in _commands("PreToolUse", matcher)
+    task = (HOOKS_DIR / "graphify-guard").read_text(encoding="utf-8")
+    assert 'exec graphify hook-guard "$mode"' in task
 
 
 def _registered_commands() -> list[str]:
@@ -324,15 +340,14 @@ def test_every_pretooluse_hook_is_documented_in_the_hook_inventory():
     for entry in _settings()["hooks"]["PreToolUse"]:
         for hook in entry.get("hooks", []):
             cmd = hook.get("command", "")
-            if "$CLAUDE_PROJECT_DIR/" in cmd:
-                name = Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name
-            elif "graphify hook-guard" in cmd:
-                # The subcommand, not the bare prefix. Both graphify guards share
-                # `graphify hook-guard`, so collapsing them to it let the inventory
-                # drop either bullet and still pass on the strength of the other.
-                name = f"graphify hook-guard {cmd.split('graphify hook-guard')[1].split()[0]}"
-            else:  # pragma: no cover - a spelling neither branch handles
+            if "$CLAUDE_PROJECT_DIR/" not in cmd:  # pragma: no cover - not a repo hook
                 pytest.fail(f"cannot name this PreToolUse hook for the docs check: {cmd!r}")
+            name = Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name
+            if name == "graphify-guard":
+                # The mode, not the bare task. Both graphify guards run the one
+                # task, so collapsing them to it let the inventory drop either
+                # bullet and still pass on the strength of the other.
+                name = f"graphify-guard {cmd.rsplit(chr(34), 1)[1].split()[0]}"
             if name not in documented:
                 undocumented.append(name)
     missing = sorted(set(undocumented) - PENDING_CLAUDE_MD)
@@ -385,12 +400,18 @@ def test_stale_write_guard_leaves_read_tools_alone():
 
 
 def _repo_guard_commands() -> list[tuple[str, str]]:
-    """(script name, registered command) for every PreToolUse guard this repo ships."""
+    """(script name, registered command) for every PreToolUse guard this repo ships.
+
+    The Python guards only: graphify-guard hands the decision to an external
+    binary and keeps the exits it returns, so it has no exit mapping or deadline
+    of its own to pin here.
+    """
     return [
-        (Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name, cmd)
+        (name, cmd)
         for entry in _settings()["hooks"]["PreToolUse"]
         for h in entry.get("hooks", [])
-        if "$CLAUDE_PROJECT_DIR/scripts/hooks/" in (cmd := h.get("command", ""))
+        if f"$CLAUDE_PROJECT_DIR/{HOOK_REL}/" in (cmd := h.get("command", ""))
+        and (name := Path(cmd.split("$CLAUDE_PROJECT_DIR/")[1].split('"')[0]).name).endswith(".py")
     ]
 
 
@@ -453,3 +474,287 @@ def test_every_repo_guard_denies_before_its_hook_timeout(name, command):
     source = (HOOKS_DIR / name).read_text(encoding="utf-8")
     main_block = source.split('if __name__ == "__main__":', 1)[-1]
     assert "with guard_deadline(" in main_block, f"{name} runs without a deadline"
+
+
+def _hook_entries() -> list[tuple[str, str]]:
+    """(event, command) for every registered command that runs a repo hook."""
+    return [
+        (event, cmd)
+        for event, entries in _settings()["hooks"].items()
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if "$CLAUDE_PROJECT_DIR/" in (cmd := h.get("command", ""))
+    ]
+
+
+@pytest.mark.parametrize(("event", "command"), _hook_entries())
+def test_every_hook_runs_by_path_without_mise(event, command):
+    """A hook runs by path through uv (or bash), and no command invokes mise.
+
+    Through mise, a project `[tasks]` entry can replace a hook and a project
+    `[env]` (CLAUDE_PROJECT_DIR included), `[tools]`, version file or
+    `.miserc.toml` env reaches it — every one of those files agent-writable.
+    """
+    assert HOOK_PREFIX in command or GRAPHIFY_GUARD in command, f"{event}: {command}"
+    assert not re.search(r"(^|[\s;&|(])mise\s", command), f"{event}: {command}"
+    assert "scripts/hooks" not in command
+
+
+def _assign(path: Path, name: str) -> tuple[str, ...]:
+    """The tuple literal a module assigns to `name` at top level."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == name for t in node.targets
+        ):
+            value = ast.literal_eval(node.value)
+            assert isinstance(value, tuple), f"{path.name}: {name} is not a tuple literal"
+            return value
+    raise AssertionError(f"{path.name} assigns no {name}")
+
+
+def test_the_hook_dir_is_on_every_protection_list():
+    """The protection moves with the files, in every list that holds it.
+
+    Each list guards a different write path — the shell guard, the integrity
+    check, the file-tool deny, review — so one left on the old path leaves that
+    path open on the new directory.
+    """
+    protected = _assign(HOOKS_DIR / "deny-agents-path-hook.py", "PROTECTED_WRITE")
+    surface = _assign(HOOKS_DIR / "enforcement-surface-integrity.py", "SURFACE")
+    codeowners = (REPO_ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
+    inventory = (REPO_ROOT / ".claude" / "rules" / "hook-inventory.md").read_text(encoding="utf-8")
+    assert HOOK_REL in protected
+    assert HOOK_REL in surface
+    assert {f"Edit(./{HOOK_REL}/**)", f"Write(./{HOOK_REL}/**)"} <= set(_deny())
+    assert re.search(rf"^/{re.escape(HOOK_REL)}/\s+@ivuorinen$", codeowners, re.M)
+    assert f"`{HOOK_REL}/`" in inventory
+    for name, entries in (("PROTECTED_WRITE", protected), ("SURFACE", surface)):
+        assert "scripts/hooks" not in entries, name
+    assert not any("scripts/hooks" in rule for rule in _deny())
+    assert "scripts/hooks" not in codeowners
+
+
+def test_every_hook_file_is_a_described_task():
+    """mise lists only executable files, and `mise tasks` shows the description.
+
+    `_hooklib.py` is a library the hooks import, not a task, so it stays
+    non-executable and mise skips it.
+    """
+    hooks = sorted(HOOKS_DIR.glob("*.py"))
+    assert hooks
+    for path in hooks:
+        if path.name in NOT_A_HOOK:
+            assert not os.access(path, os.X_OK), path.name
+            continue
+        assert os.access(path, os.X_OK), path.name
+        text = path.read_text(encoding="utf-8")
+        assert re.search(r'^# \[MISE\] description="[^"]+"$', text, re.M), path.name
+
+
+def test_every_hook_task_is_hidden_from_mise_tasks():
+    """Claude Code runs the hooks, so `mise tasks` lists only what a person runs.
+
+    `mise tasks --hidden` still lists them, and `mise run hook:<name>` still works.
+    """
+    tasks = sorted(p for p in HOOKS_DIR.iterdir() if p.is_file() and os.access(p, os.X_OK))
+    assert len(tasks) > 1
+    for path in tasks:
+        text = path.read_text(encoding="utf-8")
+        assert re.search(r"^#( \[MISE\]|MISE) hide=true$", text, re.M), path.name
+
+
+@pytest.mark.parametrize(
+    ("event", "command"), [(e, c) for e, c in _hook_entries() if GRAPHIFY_GUARD not in c]
+)
+def test_every_hook_command_fails_closed_without_uv(event, command, tmp_path):
+    """With uv absent, a guard denies and every other hook says what did not run.
+
+    PATH is an empty directory, so only the shell builtins (`command -v`, `echo`)
+    resolve. PreToolUse and the integrity check exit 2, the only exit that blocks
+    or reaches the agent. PostToolUse and Stop hooks exit 1: a non-blocking error
+    shown to the user, the way a missing validator already reports, because exit 2
+    from a Stop hook would keep the session from stopping. graphify-guard needs
+    no uv; with graphify absent it is a no-op by design (hook-inventory.md).
+    """
+    bash = shutil.which("bash")
+    assert bash
+    result = subprocess.run(
+        [bash, "-c", command],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={"PATH": str(tmp_path), "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
+    )
+    guard = event in ("PreToolUse", "SessionStart") or INTEGRITY in command
+    assert result.returncode == (2 if guard else 1), f"{event}: {result.stderr}"
+    assert "uv missing" in result.stderr
+
+
+def _hook_prefix_command(task: str) -> str:
+    """The registered prefix, aimed at `task` in the hook directory."""
+    return f'{HOOK_PREFIX}{task}"'
+
+
+@pytest.mark.skipif(
+    shutil.which("mise") is None and not _IN_CI,
+    reason="mise is not installed; under CI a missing mise fails instead",
+)
+def test_project_mise_config_does_not_reach_a_hook(tmp_path):
+    """Planted project config — `[env]`, an env chosen by `.miserc.toml` — stays out.
+
+    The control run, through mise with the project trusted, shows the planted
+    values are live, so the hook run's clean output comes from the registered
+    form and not from a fixture mise never read. The probe looks like a real
+    hook: a uv shebang, a `[MISE]` header and the `{{` an f-string brace escape
+    leaves, which made an earlier mise-based form refuse every hook.
+    """
+    hook_dir = tmp_path / ".mise" / "tasks" / "hook"
+    hook_dir.mkdir(parents=True)
+    probe = hook_dir / "probe.py"
+    probe.write_text(
+        "#!/usr/bin/env -S uv run --quiet\n"
+        '# [MISE] description="probe"\n'
+        "# /// script\n"
+        '# requires-python = ">=3.11"\n'
+        "# ///\n"
+        "import os\n\n"
+        "print(f\"probe={os.environ.get('PROBE', '')} env={os.environ.get('PROBE_ENV', '')}\")"
+        '  # f"{operand}^{{commit}}"\n',
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+    (tmp_path / "mise.local.toml").write_text('[env]\nPROBE = "leak"\n', encoding="utf-8")
+    (tmp_path / ".miserc.toml").write_text('env = ["dev"]\n', encoding="utf-8")
+    (tmp_path / "mise.dev.toml").write_text('[env]\nPROBE_ENV = "dev"\n', encoding="utf-8")
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+    for var in ("MISE_ENV", "MISE_TRUSTED_CONFIG_PATHS", "MISE_IGNORED_CONFIG_PATHS"):
+        env.pop(var, None)
+
+    def run(command: str, extra: dict[str, str]) -> str:
+        result = subprocess.run(
+            ["bash", "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=tmp_path,
+            env={**env, **extra},
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    control = run(f'mise run -q "{probe}"', {"MISE_TRUSTED_CONFIG_PATHS": str(tmp_path)})
+    assert "probe=leak" in control
+    assert "env=dev" in control
+    assert run(_hook_prefix_command("probe.py"), {}).strip() == "probe= env="
+
+
+_BASH_GUARDS = [
+    (name, cmd)
+    for name, cmd in _repo_guard_commands()
+    if name
+    in (
+        "deny-agents-path-hook.py",
+        "deny-unsafe-git-hook.py",
+        "guard-ctx-ok-hook.py",
+        "ask-destructive-restore-hook.py",
+    )
+]
+
+
+@pytest.mark.parametrize(("name", "command"), _BASH_GUARDS)
+def test_every_bash_guard_command_runs_its_real_hook(name, command):
+    """The registered command, real uv and real hook, allows a harmless call.
+
+    The exit-mapping tests stand a fake `uv` in for the hook, so a command that
+    could not start the real hook — every guard denying every call, which an
+    earlier mise-based form did — passed all of them. This runs the command.
+    """
+    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}})
+    result = subprocess.run(
+        ["bash", "-c", command],
+        input=event,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
+    )
+    assert result.returncode == 0, f"{name}: {result.stderr}"
+
+
+def test_graphify_guard_rejects_an_unknown_mode():
+    """A mode other than `search` or `read` denies rather than reaching graphify."""
+    result = subprocess.run(
+        ["bash", str(HOOKS_DIR / "graphify-guard"), "bogus"],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=REPO_ROOT,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO_ROOT)},
+    )
+    assert result.returncode == 2
+    assert "mode must be search or read" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["search", "read"])
+def test_graphify_guard_runs_hook_guard_from_the_project(mode, tmp_path):
+    """`graphify hook-guard` reads graphify-out/ relative to its cwd, so it runs there.
+
+    Started from anywhere else it found no graph and exited 0 in silence: the
+    guard was a no-op while looking like it ran. A stand-in `graphify` records
+    where it ran and with which mode; the pin matches it.
+    """
+    project, bin_dir = tmp_path / "project", tmp_path / "bin"
+    (project / ".claude" / "skills" / "graphify").mkdir(parents=True)
+    (project / ".claude" / "skills" / "graphify" / ".graphify_version").write_text(
+        "9.9.9\n", encoding="utf-8"
+    )
+    bin_dir.mkdir()
+    fake = bin_dir / "graphify"
+    fake.write_text(
+        '#!/bin/sh\n[ "$1" = --version ] && { echo "graphify 9.9.9"; exit 0; }\n'
+        'echo "cwd=$PWD args=$*"\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    command = next(c for e, c in _hook_entries() if GRAPHIFY_GUARD in c and c.endswith(mode))
+    result = subprocess.run(
+        ["bash", "-c", command.replace("$CLAUDE_PROJECT_DIR", str(REPO_ROOT), 1)],
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd="/",
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "CLAUDE_PROJECT_DIR": str(project),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f"cwd={project} args=hook-guard {mode}"
+
+
+@pytest.mark.skipif(
+    shutil.which("pyright") is None and not _IN_CI,
+    reason="pyright is not on PATH (mise provides it); under CI a missing pyright fails",
+)
+def test_pyright_checks_every_hook():
+    """pyright auto-excludes dot-directories, so the main project never saw a hook.
+
+    The hooks get a project of their own, rooted in their directory, and the
+    typecheck task runs it as a second pass.
+    """
+    result = subprocess.run(
+        ["pyright", "-p", str(HOOKS_DIR), "--outputjson"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=REPO_ROOT,
+    )
+    summary = json.loads(result.stdout)["summary"]
+    assert summary["filesAnalyzed"] == len(list(HOOKS_DIR.glob("*.py")))
+    task = (REPO_ROOT / ".mise" / "tasks" / "typecheck").read_text(encoding="utf-8")
+    assert f"-p {HOOK_REL}" in task

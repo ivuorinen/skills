@@ -1,7 +1,7 @@
 ---
 paths:
   - ".claude/settings.json"
-  - "scripts/hooks/**"
+  - ".mise/tasks/hook/**"
   - "tests/test_settings.py"
   - "tests/test_hooks.py"
 ---
@@ -43,7 +43,7 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   command name that appears in ordinary commands constantly, so matching it
   would block routine work. Treat `.github/CODEOWNERS` plus branch protection as
   the binding control, not this hook. The same hook also blocks a shell
-  **write** to any `PROTECTED_WRITE` path — `scripts/hooks/`,
+  **write** to any `PROTECTED_WRITE` path — `.mise/tasks/hook/`,
   `.claude/settings.json`, `.claude/settings.local.json`,
   `.claude/skills/graphify/.graphify_version`, and the git dir's `.git/hooks`
   holding the installed pre-commit scripts (agent-loopholes-3736b057; a linked
@@ -143,8 +143,8 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   parser (agent-loopholes-0f3351b2, agent-loopholes-911e2929,
   agent-loopholes-df530242). See `.claude/rules/snapshot-before-mutating.md`:
   snapshot with `cp` instead.
-- matcher `Bash` — `graphify hook-guard search`
-- matcher `Read|Glob` — `graphify hook-guard read`
+- matcher `Bash` — `graphify-guard search`, which runs `graphify hook-guard search`
+- matcher `Read|Glob` — `graphify-guard read`, which runs `graphify hook-guard read`
 - matcher `mcp__(plugin_…_)?nitpicker__np_(new_finding|resolve_finding|write_index|process_sarif)`
   — `deny-stale-mcp-write-hook.py`, which denies a findings-store or SARIF MCP
   write while `git status -- skills/nitpicker/scripts` is non-empty or
@@ -181,7 +181,7 @@ reads it with `_hooklib.load_event_strict` (errors-4a2d2f34).
 
 `enforcement-surface-integrity.py` is the detective control behind the text
 guards (agent-hooks-c8ad2907). At SessionStart it records a SHA-256 of every
-file under `scripts/hooks/`, `.claude/settings.json`,
+file under `.mise/tasks/hook/`, `.claude/settings.json`,
 `.claude/settings.local.json`, the graphify pin and the git dir's
 `.git/hooks`; after every Bash,
 context-mode shell or Write/Edit call it hashes them again and, on any file

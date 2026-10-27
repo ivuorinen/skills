@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PreToolUse hook — refuse a store MCP write while shipped scripts are edited"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

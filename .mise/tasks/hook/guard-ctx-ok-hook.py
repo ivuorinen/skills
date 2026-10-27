@@ -1,4 +1,6 @@
 #!/usr/bin/env -S uv run --quiet
+# [MISE] description="PreToolUse hook — validate the `# ctx-ok` escape hatch"
+# [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
 # ///

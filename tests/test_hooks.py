@@ -1,4 +1,4 @@
-"""Tests for the PostToolUse / Stop hooks in scripts/hooks/.
+"""Tests for the PostToolUse / Stop hooks in .mise/tasks/hook/.
 
 Focus: the protocol contract (failures reach the agent only via exit 2 + stderr)
 and the gating branches (empty stdin, non-dict payload, irrelevant paths) that
@@ -25,8 +25,9 @@ import pytest
 import yaml
 from mise_check import check_phases
 
-HOOKS_DIR = Path(__file__).parent.parent / "scripts" / "hooks"
-SCRIPTS_DIR = HOOKS_DIR.parent
+ROOT_DIR = Path(__file__).parent.parent
+HOOKS_DIR = ROOT_DIR / ".mise" / "tasks" / "hook"
+SCRIPTS_DIR = ROOT_DIR / "scripts"
 HOOK_NAMES = [
     "validate-json-hook",
     "validate-skill-hook",
@@ -286,9 +287,9 @@ def _hooklib():
 
 
 def _fake_checkout(root):
-    """A tree repo_root() will accept — it probes for scripts/hooks/_hooklib.py."""
-    (root / "scripts" / "hooks").mkdir(parents=True)
-    (root / "scripts" / "hooks" / "_hooklib.py").touch()
+    """A tree repo_root() will accept — it probes for .mise/tasks/hook/_hooklib.py."""
+    (root / ".mise" / "tasks" / "hook").mkdir(parents=True)
+    (root / ".mise" / "tasks" / "hook" / "_hooklib.py").touch()
     return root
 
 
@@ -309,14 +310,14 @@ def test_repo_root_ignores_env_dir_that_is_not_this_checkout(monkeypatch, tmp_pa
     """
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     monkeypatch.delenv("REPO_ROOT", raising=False)
-    assert _hooklib().repo_root() == HOOKS_DIR.parent.parent
+    assert _hooklib().repo_root() == ROOT_DIR
 
 
 def test_repo_root_both_empty_falls_back_to_parents(monkeypatch):
-    """With neither variable usable, the computed parent of scripts/hooks/ is the root."""
+    """With neither variable usable, the computed parent of .mise/tasks/hook/ is the root."""
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
     monkeypatch.setenv("REPO_ROOT", "")
-    assert _hooklib().repo_root() == HOOKS_DIR.parent.parent
+    assert _hooklib().repo_root() == ROOT_DIR
 
 
 # ── stop-reminder: gate on git porcelain output ───────────────────────────────
@@ -658,7 +659,7 @@ def test_every_ruff_call_site_names_the_same_version():
     """
     want = _pyproject_pin("ruff")
     sites = {
-        "scripts/hooks/ruff-hook.py": (rf'"ruff=={re.escape(want)}"', 0),
+        ".mise/tasks/hook/ruff-hook.py": (rf'"ruff=={re.escape(want)}"', 0),
         "mise.toml": (rf'^ruff = "{re.escape(want)}"$', re.M),
     }
     for rel, (pattern, flags) in sites.items():
@@ -800,7 +801,7 @@ def _renovate_pattern_selects(pattern: str, filename: str) -> bool:
     [
         (".pre-commit-config.yaml", True),  # literal glob — what this repo uses
         ("*.yaml", True),
-        ("scripts/hooks/*.py", False),  # a glob for other files
+        (".mise/tasks/hook/*.py", False),  # a glob for other files
         ("/^\\.pre-commit-config\\.yaml$/", True),  # slash-wrapped regex
         ("/^\\.PRE-COMMIT-CONFIG\\.YAML$/i", True),  # ...with a flag
         ("/^\\.PRE-COMMIT-CONFIG\\.YAML$/", False),  # same regex, no flag: no match
@@ -878,7 +879,7 @@ def test_renovate_can_see_every_tool_pin_the_sync_tests_enforce():
     )
     assert "mise" in cfg["enabledManagers"], "the built-in mise manager reads mise.toml"
 
-    expected = {"scripts/hooks/*.py": {"ruff"}}
+    expected = {".mise/tasks/hook/*.py": {"ruff"}}
     seen: dict[str, set[str]] = {}
     for mgr in cfg["customManagers"]:
         glob_pat = mgr["managerFilePatterns"][0]
@@ -989,9 +990,9 @@ _REQUIRED_CHECKS = frozenset(
         # The defect: a SOURCE operand is a read. The guard's own denial message
         # says "Reading these paths is allowed"; `cat` of the same file always
         # was, so the asymmetry lived in the verb, not in the policy.
-        "cp scripts/hooks/_hooklib.py /tmp/x",
-        "cp scripts/hooks/ruff-hook.py /tmp/scratch/",
-        "cp -r scripts/hooks /tmp/backup",
+        "cp .mise/tasks/hook/_hooklib.py /tmp/x",
+        "cp .mise/tasks/hook/ruff-hook.py /tmp/scratch/",
+        "cp -r .mise/tasks/hook /tmp/backup",
         "cp -r scripts /tmp/backup",
     ],
 )
@@ -1014,20 +1015,20 @@ def test_copying_out_of_the_protected_tree_is_a_read_not_a_write(command, monkey
     "command",
     [
         # the destination is last
-        "cp /tmp/x scripts/hooks/ruff-hook.py",
-        "cp /tmp/x /tmp/y scripts/hooks/",
-        "mv /tmp/x scripts/hooks/ruff-hook.py",
-        "install /tmp/x scripts/hooks/new.py",
+        "cp /tmp/x .mise/tasks/hook/ruff-hook.py",
+        "cp /tmp/x /tmp/y .mise/tasks/hook/",
+        "mv /tmp/x .mise/tasks/hook/ruff-hook.py",
+        "install /tmp/x .mise/tasks/hook/new.py",
         # ...unless an option names it, which inverts the position. Seeing one
         # falls back to scanning every operand rather than modelling the
         # inversion.
-        "cp -t scripts/hooks /tmp/x",
-        "cp --target-directory=scripts/hooks /tmp/x",
+        "cp -t .mise/tasks/hook /tmp/x",
+        "cp --target-directory=.mise/tasks/hook /tmp/x",
         "cp /tmp/x .claude/settings.json",
         # verbs that are not copy-shaped write every operand they name
-        "rm scripts/hooks/ruff-hook.py",
-        "chmod +x scripts/hooks/ruff-hook.py",
-        "truncate -s 0 scripts/hooks/ruff-hook.py",
+        "rm .mise/tasks/hook/ruff-hook.py",
+        "chmod +x .mise/tasks/hook/ruff-hook.py",
+        "truncate -s 0 .mise/tasks/hook/ruff-hook.py",
     ],
 )
 def test_writing_into_the_protected_tree_is_still_blocked(command, monkeypatch, capsys):
@@ -1059,7 +1060,7 @@ def test_stop_reminder_does_not_reclaim_that_the_guard_stops_per_turn_repeats():
     the regression worth catching is the specific wrong sentence coming back.
     Whitespace is normalised because the claim wraps differently at any margin.
     """
-    text = (ROOT / "scripts/hooks/stop-reminder.py").read_text(encoding="utf-8")
+    text = (ROOT / ".mise/tasks/hook/stop-reminder.py").read_text(encoding="utf-8")
     doc = " ".join(text.split('"""')[1].split())
     assert "keeps a long-lived branch full of uncommitted skill edits from blocking" not in doc
     assert "once per turn" in doc, "the docstring must say the reminder does repeat"
@@ -1628,11 +1629,11 @@ def _script_repo(tmp_path: Path) -> Path:
     """A minimal REPO_ROOT the hooks will accept.
 
     `_hooklib.repo_root()` only honours $REPO_ROOT when the directory really
-    contains scripts/hooks/_hooklib.py, so a bare tmp dir is silently ignored.
+    contains .mise/tasks/hook/_hooklib.py, so a bare tmp dir is silently ignored.
     Callers must also drop $CLAUDE_PROJECT_DIR: it is checked first and points at
     the real checkout inside a Claude Code session, which silently wins.
     """
-    hooks = tmp_path / "scripts" / "hooks"
+    hooks = tmp_path / ".mise" / "tasks" / "hook"
     hooks.mkdir(parents=True)
     shutil.copy(HOOKS_DIR / "_hooklib.py", hooks / "_hooklib.py")
     for rel in (
@@ -2203,7 +2204,7 @@ def _gate_calls(calls: list[list[str]]) -> list[list[str]]:
 
 
 def test_governed_covers_the_enforcement_surface(monkeypatch, tmp_path):
-    """permissions.deny stops Edit/Write on scripts/hooks/ and settings.json but
+    """permissions.deny stops Edit/Write on .mise/tasks/hook/ and settings.json but
     never reaches Bash, and no PreToolUse guard matches them. Without these
     entries a `sed -i` disabling a guard ran the gates zero times."""
     governed = _load("post-bash-revalidate").GOVERNED
@@ -2224,7 +2225,7 @@ def test_revalidate_skips_a_gate_whose_binary_is_absent(monkeypatch, tmp_path, c
     )
     err = _reports_skip(mod, "", monkeypatch, capsys)
     assert [c for c in _gate_calls(calls) if c[0] == "uv"] == []
-    assert "uv not on PATH" in err and "make check" in err
+    assert "uv not on PATH" in err and "mise run check" in err
 
 
 def test_revalidate_records_a_timed_out_gate_as_a_failure(monkeypatch, tmp_path, capsys):
@@ -2415,23 +2416,23 @@ def _guard_blocks(command: str) -> bool:
 @pytest.mark.parametrize(
     "command",
     [
-        "sed -i 's/PROTECTED/x/' scripts/hooks/deny-unsafe-git-hook.py",
-        "sed --in-place s/a/b/ scripts/hooks/ruff-hook.py",
+        "sed -i 's/PROTECTED/x/' .mise/tasks/hook/deny-unsafe-git-hook.py",
+        "sed --in-place s/a/b/ .mise/tasks/hook/ruff-hook.py",
         "echo '{}' > .claude/settings.json",
-        "echo x >> scripts/hooks/ruff-hook.py",
-        "cp /tmp/evil.py scripts/hooks/ruff-hook.py",
-        "mv /tmp/evil.py scripts/hooks/_hooklib.py",
-        "rm scripts/hooks/deny-unsafe-git-hook.py",
+        "echo x >> .mise/tasks/hook/ruff-hook.py",
+        "cp /tmp/evil.py .mise/tasks/hook/ruff-hook.py",
+        "mv /tmp/evil.py .mise/tasks/hook/_hooklib.py",
+        "rm .mise/tasks/hook/deny-unsafe-git-hook.py",
         "truncate -s 0 .claude/settings.json",
-        "cd scripts/hooks && sed -i s/a/b/ ruff-hook.py",
-        "git checkout -- scripts/hooks/ruff-hook.py",
+        "cd .mise/tasks/hook && sed -i s/a/b/ ruff-hook.py",
+        "git checkout -- .mise/tasks/hook/ruff-hook.py",
         "git restore .claude/settings.json",
-        "perl -i -pe s/a/b/ scripts/hooks/stop-reminder.py",
-        "tee scripts/hooks/ruff-hook.py < /tmp/evil.py",
-        "dd of=scripts/hooks/ruff-hook.py if=/tmp/evil.py",
-        "chmod 000 scripts/hooks/deny-agents-path-hook.py",
+        "perl -i -pe s/a/b/ .mise/tasks/hook/stop-reminder.py",
+        "tee .mise/tasks/hook/ruff-hook.py < /tmp/evil.py",
+        "dd of=.mise/tasks/hook/ruff-hook.py if=/tmp/evil.py",
+        "chmod 000 .mise/tasks/hook/deny-agents-path-hook.py",
         # `./` prefix is stripped before the prefix comparison.
-        "rm ./scripts/hooks/ruff-hook.py",
+        "rm ./.mise/tasks/hook/ruff-hook.py",
     ],
 )
 def test_guard_blocks_a_write_to_the_enforcement_surface(command):
@@ -2445,12 +2446,12 @@ def test_guard_blocks_a_write_to_the_enforcement_surface(command):
     [
         # Read is NOT denied for these paths — blocking reads would contradict
         # the permission model and break ordinary work.
-        "cat scripts/hooks/ruff-hook.py",
-        "grep -rn timeout scripts/hooks/",
+        "cat .mise/tasks/hook/ruff-hook.py",
+        "grep -rn timeout .mise/tasks/hook/",
         "head -20 .claude/settings.json",
         "python3 -m pytest tests/test_hooks.py",
-        "ruff check scripts/hooks/ruff-hook.py",
-        "sed -n '1,5p' scripts/hooks/ruff-hook.py",
+        "ruff check .mise/tasks/hook/ruff-hook.py",
+        "sed -n '1,5p' .mise/tasks/hook/ruff-hook.py",
         # Mutations that land somewhere else entirely.
         "rm -rf /tmp/scratch",
         "git commit -m 'fix: something'",
@@ -2476,7 +2477,7 @@ def test_guard_allows_reads_and_unrelated_writes(command):
 def test_guard_blocks_a_glob_spelled_write(tmp_path):
     """A metacharacter that obscures the literal path is expanded through the same
     machinery the agents half uses, so it resolves rather than reading literally."""
-    assert _guard_blocks("rm scripts/ho*ks/ruff-hook.py")
+    assert _guard_blocks("rm .mise/tasks/ho*k/ruff-hook.py")
 
 
 def test_guard_denial_message_names_the_surface(monkeypatch, capsys):
@@ -2484,7 +2485,7 @@ def test_guard_denial_message_names_the_surface(monkeypatch, capsys):
     same command back in a different spelling.
     """
     mod = _load("deny-agents-path-hook")
-    event = {"tool_input": {"command": "sed -i s/a/b/ scripts/hooks/ruff-hook.py"}}
+    event = {"tool_input": {"command": "sed -i s/a/b/ .mise/tasks/hook/ruff-hook.py"}}
     with pytest.raises(SystemExit) as exc:
         _run(mod, json.dumps(event), monkeypatch)
     assert exc.value.code == 2
@@ -2508,7 +2509,7 @@ def test_guard_denial_message_names_the_surface(monkeypatch, capsys):
     ],
 )
 def test_guard_blocks_an_unscoped_worktree_rewrite(command):
-    """These rewrite tracked files under scripts/hooks/ while naming no path, so
+    """These rewrite tracked files under .mise/tasks/hook/ while naming no path, so
     no operand check sees a protected token and the guard would otherwise pass
     them. `git reset --hard` is the plain case."""
     assert _guard_blocks(command), command
@@ -2530,7 +2531,7 @@ def test_guard_allows_scoped_and_recoverable_git(command):
     """Over-blocking git makes the guard something to route around. `--soft` and a
     bare reset move refs only; branch switching is ordinary work already covered
     by ask-destructive-restore-hook; clean touches untracked files only, and every
-    file under scripts/hooks/ is tracked; stash is recoverable by `stash pop`."""
+    file under .mise/tasks/hook/ is tracked; stash is recoverable by `stash pop`."""
     assert not _guard_blocks(command), command
 
 
@@ -2545,8 +2546,8 @@ def test_guard_blocks_an_absolute_path_under_a_symlinked_checkout(monkeypatch, t
     raise, which read as "not protected" — and the glob arm cannot recover it,
     because a plain absolute path carries no metacharacter."""
     real = tmp_path / "real"
-    (real / "scripts" / "hooks").mkdir(parents=True)
-    target = real / "scripts" / "hooks" / "ruff-hook.py"
+    (real / ".mise" / "tasks" / "hook").mkdir(parents=True)
+    target = real / ".mise" / "tasks" / "hook" / "ruff-hook.py"
     target.write_text("x = 1\n", encoding="utf-8")
     link = tmp_path / "link"
     link.symlink_to(real, target_is_directory=True)
@@ -2554,7 +2555,7 @@ def test_guard_blocks_an_absolute_path_under_a_symlinked_checkout(monkeypatch, t
     mod = _load("deny-agents-path-hook")
     monkeypatch.setattr(mod, "_REPO_ROOT", link)
 
-    via_link = link / "scripts" / "hooks" / "ruff-hook.py"
+    via_link = link / ".mise" / "tasks" / "hook" / "ruff-hook.py"
     assert mod._writes_protected(f"sed -i s/a/b/ {via_link}")
     assert mod._writes_protected(f"sed -i s/a/b/ {target}"), (
         "the real underlying path bypassed the guard under a symlinked checkout"
@@ -2565,7 +2566,7 @@ def test_guard_ignores_an_absolute_path_outside_the_repo(monkeypatch, tmp_path):
     """Resolving both sides must not start capturing paths outside the root."""
     mod = _load("deny-agents-path-hook")
     monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
-    outside = tmp_path.parent / "elsewhere" / "scripts" / "hooks" / "x.py"
+    outside = tmp_path.parent / "elsewhere" / ".mise" / "tasks" / "hook" / "x.py"
     assert not mod._writes_protected(f"sed -i s/a/b/ {outside}")
 
 
@@ -2830,7 +2831,7 @@ def test_revalidate_runs_as_a_script(monkeypatch, tmp_path, capsys):
     import subprocess as _subprocess
 
     # _script_repo, not a bare tmp_path: repo_root() only honours $REPO_ROOT for a
-    # directory that really contains scripts/hooks/_hooklib.py, so a tmp dir
+    # directory that really contains .mise/tasks/hook/_hooklib.py, so a tmp dir
     # holding just the gate files is rejected and the real checkout wins.
     repo = _script_repo(tmp_path)
     for script, _cmd in _load("post-bash-revalidate").GATES:
@@ -3358,8 +3359,8 @@ def test_git_guard_does_not_overblock_the_new_shapes(command, monkeypatch, capsy
         # The stage scan is shared, so closing it in _hooklib closes it for every
         # guard built on it — not only for the git guard the findings were filed
         # against. Each of these was ALLOWED before.
-        ("deny-agents-path-hook", "echo $(sed -i s/a/b/ scripts/hooks/ruff-hook.py)"),
-        ("deny-agents-path-hook", "(cp /tmp/x scripts/hooks/ruff-hook.py)"),
+        ("deny-agents-path-hook", "echo $(sed -i s/a/b/ .mise/tasks/hook/ruff-hook.py)"),
+        ("deny-agents-path-hook", "(cp /tmp/x .mise/tasks/hook/ruff-hook.py)"),
         ("deny-agents-path-hook", "echo `cp /tmp/x .claude/settings.json`"),
         ("guard-ctx-ok-hook", "echo $(cat README.md)  # ctx-ok"),
         ("guard-ctx-ok-hook", "echo `grep -r secret .`  # ctx-ok"),
@@ -4314,7 +4315,7 @@ def test_validate_evals_hook_passes_the_skill_dir_not_the_json(monkeypatch, tmp_
         ("deny-unsafe-git-hook", "git commit -m wip $'--no-verify'"),
         ("deny-unsafe-git-hook", "git commit -m wip $'\\x2d\\055no-verify'"),
         ("deny-unsafe-git-hook", "git push origin feat#1 main"),
-        ("deny-agents-path-hook", "sed -i s/a/b/ x#y scripts/hooks/ruff-hook.py"),
+        ("deny-agents-path-hook", "sed -i s/a/b/ x#y .mise/tasks/hook/ruff-hook.py"),
         ("guard-ctx-ok-hook", "echo a#b; cat secret.txt # ctx-ok"),
     ],
 )
@@ -4361,13 +4362,13 @@ def test_shell_stages_decodes_what_bash_decodes():
 @pytest.mark.parametrize(
     "command",
     [
-        "env rm -f scripts/hooks/ruff-hook.py",
-        "nice cp /tmp/x scripts/hooks/ruff-hook.py",
+        "env rm -f .mise/tasks/hook/ruff-hook.py",
+        "nice cp /tmp/x .mise/tasks/hook/ruff-hook.py",
         "command rm .claude/settings.json",
-        "nice -n 10 sed -i s/a/b/ scripts/hooks/ruff-hook.py",
+        "nice -n 10 sed -i s/a/b/ .mise/tasks/hook/ruff-hook.py",
         "timeout 5 truncate -s 0 .claude/settings.json",
-        "sudo -u root rm scripts/hooks/_hooklib.py",
-        "env FOO=1 nice rm scripts/hooks/_hooklib.py",
+        "sudo -u root rm .mise/tasks/hook/_hooklib.py",
+        "env FOO=1 nice rm .mise/tasks/hook/_hooklib.py",
     ],
 )
 def test_guard_blocks_a_write_behind_a_wrapper(command):
@@ -4378,7 +4379,7 @@ def test_guard_blocks_a_write_behind_a_wrapper(command):
 
 @pytest.mark.parametrize(
     "command",
-    ["env rm -f /tmp/x", "nice cat scripts/hooks/ruff-hook.py", "timeout 5 make test"],
+    ["env rm -f /tmp/x", "nice cat .mise/tasks/hook/ruff-hook.py", "timeout 5 make test"],
 )
 def test_guard_allows_wrapped_reads_and_unrelated_writes(command):
     """Controls: unwrapping the wrapper must not turn a read into a write."""
@@ -4405,7 +4406,7 @@ _BATCH = [
     [
         ("deny-unsafe-git-hook", _ctx(language="shell", code="git commit --no-verify -m x")),
         ("deny-unsafe-git-hook", _ctx("ctx_batch_execute", commands=_BATCH, queries=["x"])),
-        ("deny-agents-path-hook", _ctx(language="shell", code="rm scripts/hooks/ruff-hook.py")),
+        ("deny-agents-path-hook", _ctx(language="shell", code="rm .mise/tasks/hook/ruff-hook.py")),
         (
             "deny-agents-path-hook",
             _ctx(
@@ -4414,12 +4415,12 @@ _BATCH = [
         ),
         (
             "deny-agents-path-hook",
-            _ctx(language="shell", code="sed -i s/a/b/ ruff-hook.py", cwd="scripts/hooks"),
+            _ctx(language="shell", code="sed -i s/a/b/ ruff-hook.py", cwd=".mise/tasks/hook"),
         ),
         ("deny-agents-path-hook", _ctx(language="python", code="open('.claude/agents/x.md')")),
         (
             "deny-agents-path-hook",
-            _ctx(language="python", code="open('scripts/hooks/ruff-hook.py', 'w')"),
+            _ctx(language="python", code="open('.mise/tasks/hook/ruff-hook.py', 'w')"),
         ),
         (
             "deny-unsafe-git-hook",
@@ -4453,7 +4454,7 @@ def test_restore_guard_judges_a_context_mode_call(monkeypatch, tmp_path, capsys)
         ("deny-unsafe-git-hook", _ctx(language="shell", code="git status && git log -1")),
         ("deny-unsafe-git-hook", _ctx(language="python", code="subprocess.run(['git', 'log'])")),
         ("deny-agents-path-hook", _ctx(language="python", code="print(open('README.md').read())")),
-        ("deny-agents-path-hook", _ctx(language="shell", code="cat scripts/hooks/ruff-hook.py")),
+        ("deny-agents-path-hook", _ctx(language="shell", code="cat .mise/tasks/hook/ruff-hook.py")),
         ("deny-agents-path-hook", _ctx("ctx_batch_execute", commands="not a list")),
         ("deny-agents-path-hook", json.dumps({"tool_input": "not an object"})),
     ],
@@ -4496,7 +4497,7 @@ def test_deny_agents_treats_an_unresolvable_glob_hit_as_a_match(monkeypatch, tmp
     """The probe exited 1 before the fix, and Claude Code lets a call through on
     any exit but 2: `ln` is unguarded, so a loop plus a glob disabled both halves."""
     loop = _symlink_loop(tmp_path, monkeypatch)
-    command = f"cd {loop} && ls * ; sed -i s/a/b/ scripts/hooks/_hooklib.py"
+    command = f"cd {loop} && ls * ; sed -i s/a/b/ .mise/tasks/hook/_hooklib.py"
     with pytest.raises(SystemExit) as exc:
         _run(_load("deny-agents-path-hook"), _bash(command), monkeypatch)
     assert exc.value.code == 2
@@ -4543,7 +4544,12 @@ _PY_WITH_COUNT = '"""Module.\n\nThe five Write|Edit validators never see a Bash 
 @pytest.mark.parametrize(
     ("rel", "on_disk", "tool_input", "flagged"),
     [
-        ("scripts/hooks/x.md", "", {"new_string": "The five Write|Edit validators run."}, "five"),
+        (
+            ".mise/tasks/hook/x.md",
+            "",
+            {"new_string": "The five Write|Edit validators run."},
+            "five",
+        ),
         ("CLAUDE.md", "", {"content": "All thirteen read tools carry the hint."}, "thirteen"),
         ("README.md", "", {"new_string": "It ships 30+ commands today."}, "30+ commands"),
         ("docs/a.md", "", {"edits": [{"new_string": "Six gates run in CI."}]}, "Six gates"),
@@ -5014,10 +5020,10 @@ def test_restore_guard_counts_an_operand_as_a_path_when_git_cannot_answer(monkey
     [
         (
             "!! docs/audit/findings/.lock\n!! scripts/__pycache__/\n"
-            "!! scripts/hooks/__pycache__/\n!! skills/nitpicker/scripts/__pycache__/\n"
+            "!! .mise/tasks/hook/__pycache__/\n!! skills/nitpicker/scripts/__pycache__/\n"
         ),
         "!! docs/audit/findings/tests/open/tests-abcd1234.md.tmp\n",
-        " M scripts/hooks/__pycache__/x.cpython-314.pyc\n",
+        " M .mise/tasks/hook/__pycache__/x.cpython-314.pyc\n",
     ],
 )
 def test_revalidate_ignores_the_entries_every_clean_checkout_carries(
@@ -5339,7 +5345,7 @@ def test_hooks_execute_the_validators_shipped_beside_them(
     name, rel, validator, monkeypatch, tmp_path
 ):
     """REPO_ROOT follows CLAUDE_PROJECT_DIR, so with it pointing at another checkout
-    that carries `scripts/hooks/_hooklib.py`, four hooks ran that checkout's
+    that carries `.mise/tasks/hook/_hooklib.py`, four hooks ran that checkout's
     validators while the rules hook ran its own. The decoy validator here is what
     they used to execute; the tree under validation stays the subprocess `cwd`."""
     other = tmp_path / "other-checkout"
@@ -5873,11 +5879,11 @@ def test_git_guard_allows_an_ordinary_shell_c(command, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "command",
     [
-        "bash -c 'rm scripts/hooks/ruff-hook.py'",
-        'sh -c "sed -i s/a/b/ scripts/hooks/_hooklib.py"',
+        "bash -c 'rm .mise/tasks/hook/ruff-hook.py'",
+        'sh -c "sed -i s/a/b/ .mise/tasks/hook/_hooklib.py"',
         "env bash -c 'mv /tmp/x .claude/settings.json'",
-        "bash -c \"bash -c 'rm scripts/hooks/ruff-hook.py'\"",
-        "echo 'rm scripts/hooks/ruff-hook.py' | bash",
+        "bash -c \"bash -c 'rm .mise/tasks/hook/ruff-hook.py'\"",
+        "echo 'rm .mise/tasks/hook/ruff-hook.py' | bash",
     ],
 )
 def test_agents_guard_judges_what_a_shell_c_string_writes(command, monkeypatch, capsys):
@@ -5891,7 +5897,7 @@ def test_agents_guard_judges_what_a_shell_c_string_writes(command, monkeypatch, 
 
 @pytest.mark.parametrize(
     "command",
-    ["bash -c 'cat scripts/hooks/ruff-hook.py'", "sh -c 'rm /tmp/x/build.log'"],
+    ["bash -c 'cat .mise/tasks/hook/ruff-hook.py'", "sh -c 'rm /tmp/x/build.log'"],
 )
 def test_agents_guard_allows_a_shell_c_read(command, monkeypatch, capsys):
     """Controls: reading the enforcement surface through `-c` stays a read."""
@@ -5948,14 +5954,14 @@ def test_shell_invocation_reads_each_shell_grammar(tokens, expected):
     "command",
     [
         "cd .claude && echo '{}' > settings.local.json",
-        "cd scripts && sed -i 's/a/b/' hooks/_hooklib.py",
-        "git -C scripts checkout HEAD~3 -- hooks",
-        "git --no-pager -C scripts checkout -- hooks",
-        "git -C scripts -C hooks checkout HEAD~3 -- ruff-hook.py",
-        "git --work-tree=scripts restore hooks/ruff-hook.py",
-        "cd scripts && cd hooks && rm x.py",
+        "cd .mise/tasks && sed -i 's/a/b/' hook/_hooklib.py",
+        "git -C .mise/tasks checkout HEAD~3 -- hook",
+        "git --no-pager -C .mise/tasks checkout -- hook",
+        "git -C .mise/tasks -C hook checkout HEAD~3 -- ruff-hook.py",
+        "git --work-tree=.mise/tasks restore hook/ruff-hook.py",
+        "cd .mise/tasks && cd hook && rm x.py",
         "pushd .claude; touch settings.json",
-        "cd -P scripts && rm hooks/ruff-hook.py",
+        "cd -P .mise/tasks && rm hook/ruff-hook.py",
         "cd .?laude && tee settings.json < /tmp/x",
     ],
 )
@@ -6002,17 +6008,17 @@ def test_guard_allows_a_relative_write_outside_the_surface(command, monkeypatch,
 @pytest.mark.parametrize(
     "command",
     [
-        "mv scripts /tmp/s && mv /tmp/s scripts",
-        "mv scripts /tmp/s && sed -i 's/sys.exit(2)/sys.exit(0)/' "
-        "/tmp/s/hooks/deny-unsafe-git-hook.py && mv /tmp/s scripts",
+        "mv .mise /tmp/s && mv /tmp/s .mise",
+        "mv .mise /tmp/s && sed -i 's/sys.exit(2)/sys.exit(0)/' "
+        "/tmp/s/tasks/hook/deny-unsafe-git-hook.py && mv /tmp/s .mise",
         "rm -rf .claude",
-        "rm -rf ./scripts/",
-        "git rm -r scripts",
-        "cp -r /tmp/evil scripts",
+        "rm -rf ./.mise/",
+        "git rm -r .mise",
+        "cp -r /tmp/evil .mise/tasks",
         "chmod -R 000 .claude/skills",
         "cd .claude && rm -rf skills",
         # `mv` removes its source: moving a hook out deletes it.
-        "mv scripts/hooks/a.py /tmp/b.py",
+        "mv .mise/tasks/hook/a.py /tmp/b.py",
     ],
 )
 def test_guard_blocks_a_write_to_an_ancestor_of_the_surface(command):
@@ -6030,7 +6036,7 @@ def test_guard_blocks_a_write_to_an_ancestor_of_the_surface(command):
         "rm -rf scripts/tmp-output",
         "cd scripts && rm tmp.log",
         "git -C scripts checkout -- validate-skill.py",
-        "ln -s scripts/hooks/_hooklib.py /tmp/lib.py",
+        "ln -s .mise/tasks/hook/_hooklib.py /tmp/lib.py",
         "mv .claude/worktrees/agent-1/a /tmp/a",
     ],
 )
@@ -6292,22 +6298,22 @@ def test_vendored_graphify_uploads_to_gemini_only_on_confirmation():
 @pytest.mark.parametrize(
     "command",
     [
-        "F=scripts/hooks/x.py; echo x > $F",
-        "F=scripts/hooks/x.py; sed -i s/a/b/ $F",
+        "F=.mise/tasks/hook/x.py; echo x > $F",
+        "F=.mise/tasks/hook/x.py; sed -i s/a/b/ $F",
         "F=.claude/settings.local.json; echo '{}' > \"$F\"",
         "export F=.claude/settings.json; tee $F < /tmp/x",
-        "D=scripts; F=$D/hooks/ruff-hook.py; rm ${F}",
-        "F=/tmp/x; F=scripts/hooks/x.py; rm $F",
-        "for f in scripts/hooks/ruff-hook.py; do :; done; rm $f",
+        "D=.mise/tasks; F=$D/hook/ruff-hook.py; rm ${F}",
+        "F=/tmp/x; F=.mise/tasks/hook/x.py; rm $F",
+        "for f in .mise/tasks/hook/ruff-hook.py; do :; done; rm $f",
         "for f in ; do :; done; rm $f",
         "read f; rm $f",
-        "f=$(echo scripts/hooks/x.py); rm $f",
-        "f=`echo scripts/hooks/x.py`; rm $f",
-        "t=$(mktemp -p scripts/hooks); rm $t",
-        "echo x > $(echo scripts/hooks/x.py)",
+        "f=$(echo .mise/tasks/hook/x.py); rm $f",
+        "f=`echo .mise/tasks/hook/x.py`; rm $f",
+        "t=$(mktemp -p .mise/tasks/hook); rm $t",
+        "echo x > $(echo .mise/tasks/hook/x.py)",
         "echo x > `echo f`",
-        "rm scripts/$X",
-        "rm $X/hooks/ruff-hook.py",
+        "rm .mise/tasks/$X",
+        "rm $X/hook/ruff-hook.py",
         "cp /tmp/x $HOME/.claude/settings.json",
         "A=x$A; rm $A",
     ],
@@ -6380,8 +6386,8 @@ def test_git_guard_judges_a_command_behind_a_reserved_word(command, monkeypatch,
 @pytest.mark.parametrize(
     "command",
     [
-        "if true; then rm scripts/hooks/ruff-hook.py; fi",
-        "for f in scripts/hooks/ruff-hook.py; do rm $f; done",
+        "if true; then rm .mise/tasks/hook/ruff-hook.py; fi",
+        "for f in .mise/tasks/hook/ruff-hook.py; do rm $f; done",
         "while true; do echo x > .claude/settings.local.json; done",
     ],
 )
@@ -6414,14 +6420,14 @@ def test_strip_reserved_keeps_an_operand_spelled_like_a_keyword():
 @pytest.mark.parametrize(
     "command",
     [
-        "echo x >| scripts/hooks/ruff-hook.py",
-        "echo x >|scripts/hooks/ruff-hook.py",
-        "echo x 1>| scripts/hooks/ruff-hook.py",
-        "echo x >& scripts/hooks/ruff-hook.py",
-        "echo x &> scripts/hooks/ruff-hook.py",
-        "echo x &>> scripts/hooks/ruff-hook.py",
-        "echo x 2> scripts/hooks/ruff-hook.py",
-        "exec 3<> scripts/hooks/ruff-hook.py",
+        "echo x >| .mise/tasks/hook/ruff-hook.py",
+        "echo x >|.mise/tasks/hook/ruff-hook.py",
+        "echo x 1>| .mise/tasks/hook/ruff-hook.py",
+        "echo x >& .mise/tasks/hook/ruff-hook.py",
+        "echo x &> .mise/tasks/hook/ruff-hook.py",
+        "echo x &>> .mise/tasks/hook/ruff-hook.py",
+        "echo x 2> .mise/tasks/hook/ruff-hook.py",
+        "exec 3<> .mise/tasks/hook/ruff-hook.py",
         "echo '{}' >| .claude/settings.local.json",
         "echo 0.0 >& .claude/skills/graphify/.graphify_version",
     ],
@@ -6441,7 +6447,7 @@ def test_agents_guard_judges_every_redirection_operator(command):
         "ls 2>&- 1>&-",
         "echo x >| /tmp/out.txt",
         "echo x &> /dev/null",
-        "cat scripts/hooks/ruff-hook.py >| /tmp/copy.py",
+        "cat .mise/tasks/hook/ruff-hook.py >| /tmp/copy.py",
     ],
 )
 def test_agents_guard_allows_redirections_that_write_no_surface(command):
@@ -6512,13 +6518,13 @@ def _home_above_repo(monkeypatch) -> str:
 @pytest.mark.parametrize(
     "template",
     [
-        "rm {r}/scripts/hooks/ruff-hook.py",
+        "rm {r}/.mise/tasks/hook/ruff-hook.py",
         "echo '{{}}' > {r}/.claude/settings.local.json",
-        "cd {r}/scripts/hooks && rm ruff-hook.py",
+        "cd {r}/.mise/tasks/hook && rm ruff-hook.py",
         "cd {r}/.claude && touch settings.json",
-        "git -C {r}/scripts checkout HEAD~3 -- hooks",
-        "rm ~+/scripts/hooks/ruff-hook.py",
-        "cd ~+/scripts/hooks && rm ruff-hook.py",
+        "git -C {r}/.mise/tasks checkout HEAD~3 -- hook",
+        "rm ~+/.mise/tasks/hook/ruff-hook.py",
+        "cd ~+/.mise/tasks/hook && rm ruff-hook.py",
         "rm ~-/ruff-hook.py",
         "cd ~no-such-user-0f3351b2 && rm ruff-hook.py",
         "git -C ~no-such-user-0f3351b2 checkout -- ruff-hook.py",
@@ -6540,7 +6546,7 @@ def test_agents_guard_expands_a_named_users_tilde():
     mod = _load("deny-agents-path-hook")
     user = pwd.getpwuid(os.getuid())
     rel = os.path.relpath(mod._REPO_ROOT.resolve(), user.pw_dir)
-    assert mod._writes_protected(f"rm ~{user.pw_name}/{rel}/scripts/hooks/ruff-hook.py")
+    assert mod._writes_protected(f"rm ~{user.pw_name}/{rel}/.mise/tasks/hook/ruff-hook.py")
 
 
 @pytest.mark.parametrize(
@@ -6548,9 +6554,9 @@ def test_agents_guard_expands_a_named_users_tilde():
     [
         "rm ~/notes.txt",
         "cd ~/tmp && rm x",
-        "cat {r}/scripts/hooks/ruff-hook.py > /tmp/copy.py",
+        "cat {r}/.mise/tasks/hook/ruff-hook.py > /tmp/copy.py",
         "git -C {r} status",
-        "cp {r}/scripts/hooks/ruff-hook.py ~/backup.py",
+        "cp {r}/.mise/tasks/hook/ruff-hook.py ~/backup.py",
     ],
 )
 def test_agents_guard_allows_a_tilde_path_off_the_surface(template, monkeypatch):
@@ -6587,23 +6593,23 @@ def test_restore_guard_expands_a_tilde_target(target, asks, monkeypatch, tmp_pat
 @pytest.mark.parametrize(
     "command",
     [
-        "cd -- scripts/hooks && rm ruff-hook.py",
-        "cd -P -- scripts/hooks && rm ruff-hook.py",
+        "cd -- .mise/tasks/hook && rm ruff-hook.py",
+        "cd -P -- .mise/tasks/hook && rm ruff-hook.py",
         "pushd -- .claude; touch settings.json",
-        "CDPATH=scripts cd hooks && rm ruff-hook.py",
-        "export CDPATH=/nope:scripts; cd hooks && rm ruff-hook.py",
+        "CDPATH=.mise/tasks cd hook && rm ruff-hook.py",
+        "export CDPATH=/nope:.mise/tasks; cd hook && rm ruff-hook.py",
         "CDPATH=.claude/skills cd graphify && rm .graphify_version",
         "CDPATH=$X cd hooks && rm ruff-hook.py",
         "CDPATH=~no-such-user-5cdfb163 cd hooks && rm ruff-hook.py",
-        "D=scripts/hooks; cd $D && rm ruff-hook.py",
-        'D=scripts; cd "${D}/hooks" && rm ruff-hook.py',
+        "D=.mise/tasks/hook; cd $D && rm ruff-hook.py",
+        'D=.mise/tasks; cd "${D}/hook" && rm ruff-hook.py',
         # self-referential: the expansion never settles, so the landing is unknown
         "D=x$D; cd $D && rm ruff-hook.py",
-        "cd $HOME/checkout/scripts/hooks && rm ruff-hook.py",
-        "cd $(git rev-parse --show-toplevel)/scripts/hooks && rm ruff-hook.py",
-        "D=scripts; git -C $D checkout -- hooks",
-        "git -C $HOME/checkout/scripts checkout -- hooks",
-        "git --work-tree=$X/scripts restore hooks/ruff-hook.py",
+        "cd $HOME/checkout/.mise/tasks/hook && rm ruff-hook.py",
+        "cd $(git rev-parse --show-toplevel)/.mise/tasks/hook && rm ruff-hook.py",
+        "D=.mise/tasks; git -C $D checkout -- hook",
+        "git -C $HOME/checkout/.mise/tasks checkout -- hook",
+        "git --work-tree=$X/.mise/tasks restore hook/ruff-hook.py",
     ],
 )
 def test_agents_guard_resolves_a_cd_target_like_the_shell(command, monkeypatch):
@@ -6617,8 +6623,8 @@ def test_agents_guard_resolves_a_cd_target_like_the_shell(command, monkeypatch):
 
 def test_agents_guard_reads_cdpath_from_the_environment(monkeypatch):
     """A CDPATH inherited by the hook moves a relative `cd` just the same."""
-    monkeypatch.setenv("CDPATH", "scripts")
-    assert _guard_blocks("cd hooks && rm ruff-hook.py")
+    monkeypatch.setenv("CDPATH", ".mise/tasks")
+    assert _guard_blocks("cd hook && rm ruff-hook.py")
 
 
 @pytest.mark.parametrize(
@@ -6631,7 +6637,7 @@ def test_agents_guard_reads_cdpath_from_the_environment(monkeypatch):
         'tmp=$(mktemp -d); cd "$tmp" && rm -rf y',
         "cd\nrm build.log",
         "D=/tmp/w; git -C $D checkout -- hooks",
-        "cd -- scripts/hooks && cat ruff-hook.py > /tmp/copy.py",
+        "cd -- .mise/tasks/hook && cat ruff-hook.py > /tmp/copy.py",
     ],
 )
 def test_agents_guard_allows_a_cd_that_lands_off_the_surface(command, monkeypatch):
@@ -6644,46 +6650,46 @@ def test_agents_guard_allows_a_cd_that_lands_off_the_surface(command, monkeypatc
 # ── agent-loopholes-6bb5ff99: one write model, shared by both write guards ──
 
 _SHARED_WRITES = [
-    "unlink scripts/hooks/ruff-hook.py",
-    "rsync /tmp/evil.py scripts/hooks/ruff-hook.py",
-    "rsync --remove-source-files scripts/hooks/ruff-hook.py /tmp/",
-    "scp /tmp/evil.py scripts/hooks/ruff-hook.py",
-    "find scripts/hooks -name ruff-hook.py -delete",
+    "unlink .mise/tasks/hook/ruff-hook.py",
+    "rsync /tmp/evil.py .mise/tasks/hook/ruff-hook.py",
+    "rsync --remove-source-files .mise/tasks/hook/ruff-hook.py /tmp/",
+    "scp /tmp/evil.py .mise/tasks/hook/ruff-hook.py",
+    "find .mise/tasks/hook -name ruff-hook.py -delete",
     "find . -name ruff-hook.py -delete",
     "find . -name '*.py' -exec rm {} +",
     "find -name settings.json -execdir shred {} +",
-    "find scripts -fprint scripts/hooks/ruff-hook.py",
-    "tar -xf /tmp/evil.tar -C scripts/hooks",
+    "find scripts -fprint .mise/tasks/hook/ruff-hook.py",
+    "tar -xf /tmp/evil.tar -C .mise/tasks/hook",
     "tar -xf /tmp/evil.tar",
     "tar xf /tmp/evil.tar",
     "tar --extract --file=/tmp/evil.tar --directory=.claude",
     "tar -xPf /tmp/evil.tar -C /tmp/x",
-    "tar -cf scripts/hooks/ruff-hook.py /tmp/evil",
-    "tar cvf scripts/hooks/ruff-hook.py /tmp/evil",
+    "tar -cf .mise/tasks/hook/ruff-hook.py /tmp/evil",
+    "tar cvf .mise/tasks/hook/ruff-hook.py /tmp/evil",
     "bsdtar -x -f /tmp/evil.tar",
     "unzip /tmp/evil.zip",
-    "unzip -o /tmp/evil.zip -d scripts",
+    "unzip -o /tmp/evil.zip -d .mise/tasks",
     "cpio -idm",
-    "find /tmp/x | cpio -pd scripts/hooks",
-    "awk -i inplace '{print}' scripts/hooks/ruff-hook.py",
-    "awk -iinplace 1 scripts/hooks/ruff-hook.py",
-    "gawk --include=inplace 1 scripts/hooks/ruff-hook.py",
+    "find /tmp/x | cpio -pd .mise/tasks/hook",
+    "awk -i inplace '{print}' .mise/tasks/hook/ruff-hook.py",
+    "awk -iinplace 1 .mise/tasks/hook/ruff-hook.py",
+    "gawk --include=inplace 1 .mise/tasks/hook/ruff-hook.py",
     "gawk --include /usr/share/awk/inplace.awk 1 .claude/settings.json",
-    "git checkout-index -f scripts/hooks/ruff-hook.py",
+    "git checkout-index -f .mise/tasks/hook/ruff-hook.py",
     "git checkout-index -a -f",
-    "git checkout-index --prefix=scripts/hooks/ README.md",
+    "git checkout-index --prefix=.mise/tasks/hook/ README.md",
     "git read-tree -u -m HEAD~3",
-    "gzip scripts/hooks/ruff-hook.py",
+    "gzip .mise/tasks/hook/ruff-hook.py",
     "xz -k .claude/settings.json",
     "chattr +i .claude/settings.local.json",
-    "curl -o scripts/hooks/ruff-hook.py https://example.com/x",
+    "curl -o .mise/tasks/hook/ruff-hook.py https://example.com/x",
     "curl -so.claude/settings.local.json https://example.com/x",
-    "cd scripts/hooks && curl -O https://example.com/ruff-hook.py",
-    "cd scripts/hooks && wget https://example.com/ruff-hook.py?x=1",
-    "wget -P scripts/hooks https://example.com/ruff-hook.py",
+    "cd .mise/tasks/hook && curl -O https://example.com/ruff-hook.py",
+    "cd .mise/tasks/hook && wget https://example.com/ruff-hook.py?x=1",
+    "wget -P .mise/tasks/hook https://example.com/ruff-hook.py",
     "wget --output-document=.claude/settings.local.json https://example.com/x",
-    "sort -o scripts/hooks/ruff-hook.py /tmp/x",
-    "mkdir scripts/hooks/new",
+    "sort -o .mise/tasks/hook/ruff-hook.py /tmp/x",
+    "mkdir .mise/tasks/hook/new",
     # a find whose tests are not a plain conjunction of name tests is not read
     "find . -name '*.pyc' -o -name ruff-hook.py -delete",
     "find . -type f -delete",
@@ -6718,21 +6724,21 @@ def test_agents_guard_judges_every_modelled_write(command):
         "find . -name '*.pyc' -delete",
         "find . -iname '*.PYC' -name '*.pyc' -exec rm {} +",
         "find . -type f -exec grep -l x {} +",
-        "find scripts/hooks -name '*.py'",
+        "find .mise/tasks/hook -name '*.py'",
         "tar -xf /tmp/x.tar -C /tmp/out",
         "tar -tf /tmp/x.tar",
-        "tar -cf /tmp/x.tar scripts/hooks",
+        "tar -cf /tmp/x.tar .mise/tasks/hook",
         "unzip -l /tmp/x.zip",
         "unzip /tmp/x.zip -d /tmp/out",
         "cpio -o",
-        "rsync -a scripts/hooks/ /tmp/backup/",
+        "rsync -a .mise/tasks/hook/ /tmp/backup/",
         "curl -o /tmp/x https://example.com/ruff-hook.py",
         "curl https://example.com/ruff-hook.py",
         "wget -O /tmp/x https://example.com/x",
-        "sort scripts/hooks/ruff-hook.py",
-        "awk '{print}' scripts/hooks/ruff-hook.py",
-        "awk -i other.awk 1 scripts/hooks/ruff-hook.py",
-        "gzip -c scripts/hooks/ruff-hook.py",
+        "sort .mise/tasks/hook/ruff-hook.py",
+        "awk '{print}' .mise/tasks/hook/ruff-hook.py",
+        "awk -i other.awk 1 .mise/tasks/hook/ruff-hook.py",
+        "gzip -c .mise/tasks/hook/ruff-hook.py",
         "xz --list .claude/settings.json",
         "git update-index --refresh",
         "git checkout-index -f README.md",
@@ -6824,10 +6830,10 @@ def test_write_targets_edge_spellings(tokens, expected):
         "patch -p1 -i /tmp/evil.diff",
         "patch --input=/tmp/evil.diff --strip=1",
         "cat /tmp/evil.diff | patch -p1",
-        "patch -d scripts -p1 -i /tmp/evil.diff",
+        "patch -d .mise/tasks -p1 -i /tmp/evil.diff",
         "patch --directory=.claude -p0 -i /tmp/evil.diff",
-        "patch -o scripts/hooks/ruff-hook.py /tmp/orig.py /tmp/evil.diff",
-        "patch scripts/hooks/ruff-hook.py /tmp/evil.diff",
+        "patch -o .mise/tasks/hook/ruff-hook.py /tmp/orig.py /tmp/evil.diff",
+        "patch .mise/tasks/hook/ruff-hook.py /tmp/evil.diff",
         "cd /tmp/x && patch -p1 -i /tmp/evil.diff",
     ],
 )
@@ -6877,14 +6883,14 @@ def _with_persistent_aliases(monkeypatch, mod, **aliases: str):
     ("aliases", "command"),
     [
         ({"nah": "!git reset --hard && git clean -df"}, "git nah"),
-        ({"wipe": "checkout --"}, "git wipe scripts/hooks/ruff-hook.py"),
-        ({"x": "!rm"}, "git x scripts/hooks/ruff-hook.py"),
+        ({"wipe": "checkout --"}, "git wipe .mise/tasks/hook/ruff-hook.py"),
+        ({"x": "!rm"}, "git x .mise/tasks/hook/ruff-hook.py"),
         ({}, "git -c alias.z='reset --hard' z"),
-        ({}, "git -c alias.w='checkout -- scripts/hooks' w"),
+        ({}, "git -c alias.w='checkout -- .mise/tasks/hook' w"),
         ({}, "BODY='reset --hard' git --config-env=alias.z=BODY z"),
         ({}, "BODY='reset --hard' git --config-env alias.z=BODY z"),
         ({}, "git -c alias.a=b -c alias.b='reset --hard' a"),
-        ({}, "git -c alias.z='!sed -i s/a/b/ scripts/hooks/ruff-hook.py' z"),
+        ({}, "git -c alias.z='!sed -i s/a/b/ .mise/tasks/hook/ruff-hook.py' z"),
     ],
 )
 def test_agents_guard_judges_what_a_git_alias_runs(aliases, command, monkeypatch):
@@ -7031,12 +7037,12 @@ def test_git_guard_allows_an_ordinary_eval_source_or_here_string(command, monkey
 @pytest.mark.parametrize(
     "command",
     [
-        "eval rm scripts/hooks/ruff-hook.py",
-        "bash <<< 'rm scripts/hooks/ruff-hook.py'",
-        "coproc rm scripts/hooks/ruff-hook.py",
-        "trap 'rm scripts/hooks/ruff-hook.py' EXIT",
-        "source <(echo rm scripts/hooks/ruff-hook.py)",
-        'F=scripts/hooks/ruff-hook.py; eval "rm $F"',
+        "eval rm .mise/tasks/hook/ruff-hook.py",
+        "bash <<< 'rm .mise/tasks/hook/ruff-hook.py'",
+        "coproc rm .mise/tasks/hook/ruff-hook.py",
+        "trap 'rm .mise/tasks/hook/ruff-hook.py' EXIT",
+        "source <(echo rm .mise/tasks/hook/ruff-hook.py)",
+        'F=.mise/tasks/hook/ruff-hook.py; eval "rm $F"',
     ],
 )
 def test_agents_guard_unwraps_eval_source_coproc_and_here_strings(command, monkeypatch, capsys):
@@ -7048,7 +7054,7 @@ def test_agents_guard_unwraps_eval_source_coproc_and_here_strings(command, monke
 
 
 @pytest.mark.parametrize(
-    "command", ["eval cat scripts/hooks/ruff-hook.py", "bash <<< 'cat .claude/settings.json'"]
+    "command", ["eval cat .mise/tasks/hook/ruff-hook.py", "bash <<< 'cat .claude/settings.json'"]
 )
 def test_agents_guard_allows_a_read_behind_eval_or_a_here_string(command, monkeypatch, capsys):
     """Controls: a read stays a read once unwrapped."""
@@ -7122,9 +7128,9 @@ def _surface(monkeypatch, tmp_path):
     """The integrity hook over a fake checkout, with its baseline kept in tmp_path."""
     mod = _load("enforcement-surface-integrity")
     root = tmp_path / "repo"
-    (root / "scripts" / "hooks" / "__pycache__").mkdir(parents=True)
-    (root / "scripts" / "hooks" / "guard.py").write_text("v1\n", encoding="utf-8")
-    (root / "scripts" / "hooks" / "__pycache__" / "guard.pyc").write_bytes(b"\0")
+    (root / ".mise" / "tasks" / "hook" / "__pycache__").mkdir(parents=True)
+    (root / ".mise" / "tasks" / "hook" / "guard.py").write_text("v1\n", encoding="utf-8")
+    (root / ".mise" / "tasks" / "hook" / "__pycache__" / "guard.pyc").write_bytes(b"\0")
     (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(mod, "REPO_ROOT", root)
@@ -7151,9 +7157,9 @@ def _post_tool(mod, monkeypatch, capsys) -> str:
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
-        (lambda r: (r / "scripts/hooks/guard.py").write_text("v2\n"), "guard.py (changed)"),
-        (lambda r: (r / "scripts/hooks/guard.py").unlink(), "guard.py (removed)"),
-        (lambda r: (r / "scripts/hooks/new.py").write_text("x"), "new.py (added)"),
+        (lambda r: (r / ".mise/tasks/hook/guard.py").write_text("v2\n"), "guard.py (changed)"),
+        (lambda r: (r / ".mise/tasks/hook/guard.py").unlink(), "guard.py (removed)"),
+        (lambda r: (r / ".mise/tasks/hook/new.py").write_text("x"), "new.py (added)"),
         (
             lambda r: (r / ".claude/settings.local.json").write_text('{"disableAllHooks": true}'),
             ".claude/settings.local.json (added)",
@@ -7181,7 +7187,7 @@ def test_surface_integrity_ignores_bytecode_caches(monkeypatch, tmp_path, capsys
     """Control: Python rewrites `__pycache__` on every import; that is no change."""
     mod, root = _surface(monkeypatch, tmp_path)
     _run(mod, _event("SessionStart", source="startup"), monkeypatch)
-    (root / "scripts/hooks/__pycache__/guard.pyc").write_bytes(b"changed")
+    (root / ".mise/tasks/hook/__pycache__/guard.pyc").write_bytes(b"changed")
     assert _post_tool(mod, monkeypatch, capsys) == ""
 
 
@@ -7192,7 +7198,7 @@ def test_surface_integrity_keeps_the_baseline_through_resume_and_compact(
     fresh start or `/clear` takes a new one."""
     mod, root = _surface(monkeypatch, tmp_path)
     _run(mod, _event("SessionStart", source="startup"), monkeypatch)
-    (root / "scripts/hooks/guard.py").write_text("v2\n")
+    (root / ".mise/tasks/hook/guard.py").write_text("v2\n")
     for source in ("compact", "resume"):
         _run(mod, _event("SessionStart", source=source), monkeypatch)
         assert "guard.py (changed)" in _post_tool(mod, monkeypatch, capsys)
@@ -7236,7 +7242,7 @@ def test_surface_integrity_runs_as_a_script_and_reports_internal_failure(
     probe = runpy.run_path(script, run_name="probe")
     state = probe["_state_file"]({"session_id": "s1"})
     state_dir.mkdir()
-    state.write_text('{"scripts/hooks/_hooklib.py": "stale"}', encoding="utf-8")
+    state.write_text('{".mise/tasks/hook/_hooklib.py": "stale"}', encoding="utf-8")
     monkeypatch.setattr(sys, "stdin", io.StringIO(_event("PostToolUse")))
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(script, run_name="__main__")
@@ -7340,12 +7346,12 @@ def test_agents_guard_is_not_quadratic_in_a_wrapper_led_stage():
 @pytest.mark.parametrize(
     "command",
     [
-        "env rm -f scripts/hooks/ruff-hook.py",
-        "env -i FOO=1 nice -n 5 rm scripts//hooks/./ruff-hook.py",
-        "env '/bin//rm' scripts/hooks/ruff-hook.py",
-        "sudo sed -i s/a/b/ 'scripts/hooks/ruff-hook.py'",
-        "mise -q exec -- rm scripts/hooks/ruff-hook.py",
-        "mise exec -c 'rm scripts/hooks/ruff-hook.py'",
+        "env rm -f .mise/tasks/hook/ruff-hook.py",
+        "env -i FOO=1 nice -n 5 rm .mise//tasks/./hook/ruff-hook.py",
+        "env '/bin//rm' .mise/tasks/hook/ruff-hook.py",
+        "sudo sed -i s/a/b/ '.mise/tasks/hook/ruff-hook.py'",
+        "mise -q exec -- rm .mise/tasks/hook/ruff-hook.py",
+        "mise exec -c 'rm .mise/tasks/hook/ruff-hook.py'",
     ],
 )
 def test_agents_guard_still_denies_wrapped_protected_writes(command):
@@ -7728,19 +7734,20 @@ def test_stop_reminder_dedupes_without_list_membership(monkeypatch, capsys):
 @pytest.mark.parametrize(
     "command",
     [
-        "find /tmp -maxdepth 0 -exec rm -rf scripts/hooks ';'",
-        "find . -name nomatch -exec rm -rf scripts/hooks +",
-        "find /tmp -maxdepth 0 -execdir cp /tmp/evil.py scripts/hooks/ruff-hook.py \\;",
+        "find /tmp -maxdepth 0 -exec rm -rf .mise/tasks/hook ';'",
+        "find . -name nomatch -exec rm -rf .mise/tasks/hook +",
+        "find /tmp -maxdepth 0 -execdir cp /tmp/evil.py .mise/tasks/hook/ruff-hook.py \\;",
         "find /tmp -maxdepth 0 -ok mv /tmp/x .claude/settings.json ';'",
-        "find /tmp -maxdepth 0 -exec sh -c 'rm -rf scripts/hooks' ';'",
-        "find /tmp -maxdepth 0 -exec git checkout HEAD~3 -- scripts/hooks ';'",
-        "find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';'",
-        "find /opt/x -maxdepth 0 -okdir rm scripts/hooks/ruff-hook.py \\;",
-        "find /opt/x -maxdepth 0 -exec env rm -rf scripts/hooks ';'",
-        "find /opt/x -maxdepth 0 -exec find /opt/x -maxdepth 0 -exec rm -rf scripts/hooks ';' ';'",
-        "find /opt/x -maxdepth 0 -exec echo ok ';' -exec rm -rf scripts/hooks ';'",
-        "cd scripts && find /opt/x -maxdepth 0 -exec rm -rf hooks ';'",
-        "find scripts/hooks -name ruff-hook.py -exec git checkout HEAD~3 -- {} ';'",
+        "find /tmp -maxdepth 0 -exec sh -c 'rm -rf .mise/tasks/hook' ';'",
+        "find /tmp -maxdepth 0 -exec git checkout HEAD~3 -- .mise/tasks/hook ';'",
+        "find /opt/x -maxdepth 0 -exec rm -rf .mise/tasks/hook ';'",
+        "find /opt/x -maxdepth 0 -okdir rm .mise/tasks/hook/ruff-hook.py \\;",
+        "find /opt/x -maxdepth 0 -exec env rm -rf .mise/tasks/hook ';'",
+        "find /opt/x -maxdepth 0 -exec find /opt/x -maxdepth 0 "
+        "-exec rm -rf .mise/tasks/hook ';' ';'",
+        "find /opt/x -maxdepth 0 -exec echo ok ';' -exec rm -rf .mise/tasks/hook ';'",
+        "cd .mise/tasks && find /opt/x -maxdepth 0 -exec rm -rf hook ';'",
+        "find .mise/tasks/hook -name ruff-hook.py -exec git checkout HEAD~3 -- {} ';'",
         # a name test that misses the surface bounds `{}`, not a path built from it
         "find . -name nomatch -exec rm -rf {}/.. ';'",
         "find . -name nomatch -exec sh -c 'rm -rf -- \"$0\"' {} ';'",
@@ -7749,7 +7756,7 @@ def test_stop_reminder_dedupes_without_list_membership(monkeypatch, capsys):
 def test_agents_guard_judges_the_command_find_exec_runs(command, monkeypatch):
     """CodeRabbit PR #151 review: the body of `-exec`/`-execdir`/`-ok`/`-okdir`
     reached the guard only as operands of `find`, judged by the start points and
-    cleared by a name test, so `find /tmp -maxdepth 0 -exec rm -rf scripts/hooks
+    cleared by a name test, so `find /tmp -maxdepth 0 -exec rm -rf .mise/tasks/hook
     ';'` deleted the hooks. Each body is now a stage, and a body that reaches
     past `{}` keeps its find's start points from being cleared."""
     mod = _load("deny-agents-path-hook")
@@ -7761,7 +7768,7 @@ def test_agents_guard_judges_the_command_find_exec_runs(command, monkeypatch):
 @pytest.mark.parametrize(
     "command",
     [
-        "rm -rf scripts/hooks",
+        "rm -rf .mise/tasks/hook",
     ],
 )
 def test_agents_guard_find_exec_control_still_denies(command, monkeypatch):
@@ -7775,11 +7782,11 @@ def test_agents_guard_find_exec_control_still_denies(command, monkeypatch):
 @pytest.mark.parametrize(
     "command",
     [
-        "find scripts/hooks -name '*.py' -exec cat {} ';'",
+        "find .mise/tasks/hook -name '*.py' -exec cat {} ';'",
         "find . -name '*.pyc' -delete",
         "find /opt/x -name '*.log' -exec rm {} +",
         "find /opt/x -name x -exec cp {} /opt/y ';'",
-        "find scripts/hooks -exec grep -l TODO {} +",
+        "find .mise/tasks/hook -exec grep -l TODO {} +",
     ],
 )
 def test_agents_guard_allows_find_exec_that_misses_the_surface(command, monkeypatch):

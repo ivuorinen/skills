@@ -17,8 +17,9 @@
 # must not weaken its own reviewer.
 /.claude/agents/                @ivuorinen
 
-# Hook and permission configuration.
+# Hook and permission configuration, and the hooks it runs.
 /.claude/settings.json          @ivuorinen
+/.mise/tasks/hook/              @ivuorinen
 
 # Licensing and third-party provenance.
 /LICENSE                        @ivuorinen

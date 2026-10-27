@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-#MISE description="ruff check on scripts/, tests/, skills/"
+#MISE description="ruff check on scripts/, .mise/tasks/hook/, tests/, skills/"
 set -euo pipefail
-ruff check scripts/ tests/ skills/
+ruff check scripts/ .mise/tasks/hook/ tests/ skills/
