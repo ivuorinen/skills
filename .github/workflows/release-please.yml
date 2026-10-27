@@ -66,6 +66,10 @@ jobs:
       # Read once, through the environment rather than interpolated into a
       # command, so the value is data to every step that uses it.
       RELEASE_BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      # Install only what mise.lock records, verified against its checksums, as
+      # the Validate job does. This job holds `contents: write`, so an unlocked
+      # tool resolved on the fly is input it would trust.
+      MISE_LOCKED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
