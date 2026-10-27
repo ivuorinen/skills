@@ -14,7 +14,7 @@ the mandatory `--local`, and why the gate parses `--json` (it exits 0 regardless
 
 It gates against `.agentlinter-baseline.json`, not on severity: every `critical`
 it reported here was a false positive, so a severity gate would fail forever on
-noise. A new diagnostic fails the build — fix it, or accept it with `make
+noise. A new diagnostic fails the build — fix it, or accept it with `mise run
 agentlinter-update`. An entry that stops firing is reported and fails nothing.
 
 Every baselined rule carries a written justification in that file's `reasons`

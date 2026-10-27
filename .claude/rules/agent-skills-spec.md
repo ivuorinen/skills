@@ -26,7 +26,7 @@ because metadata values are strings. Claude Code reads that key from the top
 level only, so under `metadata` it is inert and those skills become
 model-invocable. That trade was accepted deliberately, buying portability.
 
-Each skill's eval sets live in `<skill-dir>/evals/`, gated by `make
+Each skill's eval sets live in `<skill-dir>/evals/`, gated by `mise run
 validate-evals`; `.claude/rules/skill-official-best-practices.md` describes
 them.
 

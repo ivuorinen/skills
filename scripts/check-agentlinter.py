@@ -270,7 +270,7 @@ def _parse(argv: list[str]) -> tuple[Path, bool]:
 def _skip_or_fail(update: bool) -> int:
     """The tool could not produce a report.
 
-    Locally this degrades to a skip so an offline clone can still run `make
+    Locally this degrades to a skip so an offline clone can still run `mise run
     check`; under CI it fails, because a gate that skips silently is not a gate.
     Same split `mise run opengrep` makes, for the same reason.
 
