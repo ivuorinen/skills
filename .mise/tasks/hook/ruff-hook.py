@@ -3,7 +3,7 @@
 # [MISE] hide=true
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["ruff==0.17.1"]  # keep in sync with the pyproject.toml dev pin
+# dependencies = ["ruff==0.17.3"]  # keep in sync with the pyproject.toml dev pin
 # ///
 """PostToolUse hook — run ruff check --fix and ruff format on edited Python files."""
 
