@@ -26,24 +26,27 @@ backend = "npm:pyright"
 specifiers = ["1.1.414"]
 
 [[tools.opengrep]]
-version = "1.27.1"
+version = "1.33.0"
 backend = "aqua:opengrep/opengrep"
-specifiers = ["1.27.1"]
+specifiers = ["1.33.0"]
 
 [tools.opengrep."platforms.linux-x64"]
-checksum = "sha256:58053da76672bbeb5b0a5441021c58338707052e10f81d777140ca879bd491ce"
-url = "https://github.com/opengrep/opengrep/releases/download/v1.27.1/opengrep_manylinux_x86"
-url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/514844159"
+checksum = "sha256:2545812755572e1355ea60f96288f82a26eebed7fc8b512430d49d5667214c24"
+checksum_source = "mise-versions"
+url = "https://github.com/opengrep/opengrep/releases/download/v1.33.0/opengrep_manylinux_x86"
+url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/681599243"
 
 [tools.opengrep."platforms.macos-arm64"]
-checksum = "sha256:e0cf2287c00f9e559b5ad28f5731924fc5ec7778f35363d2e15f94e15880a6de"
-url = "https://github.com/opengrep/opengrep/releases/download/v1.27.1/opengrep_osx_arm64"
-url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/514844169"
+checksum = "sha256:87d38a3ca198694a651e723b503e3ff8b0547429b4b9dfa2946f75fc43bb1962"
+checksum_source = "mise-versions"
+url = "https://github.com/opengrep/opengrep/releases/download/v1.33.0/opengrep_osx_arm64"
+url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/681599263"
 
 [tools.opengrep."platforms.macos-x64"]
-checksum = "sha256:0e96abde66eda9dcfe8b81b2c616d71deadae0ec62fe026b9e199498ce1aac10"
-url = "https://github.com/opengrep/opengrep/releases/download/v1.27.1/opengrep_osx_x86"
-url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/514844167"
+checksum = "sha256:838b74a056be35adfd1067ed7567e0d946b73066ba1b6be8fe5fe966b2142a7e"
+checksum_source = "mise-versions"
+url = "https://github.com/opengrep/opengrep/releases/download/v1.33.0/opengrep_osx_x86"
+url_api = "https://api.github.com/repos/opengrep/opengrep/releases/assets/681599253"
 
 [[tools.prek]]
 version = "0.5.5"
