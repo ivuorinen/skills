@@ -49,14 +49,12 @@ FORMER_TARGETS = {
     ]
 } | {"pre-commit": "prek", "bump-patch": "bump", "bump-minor": "bump", "bump-major": "bump"}
 # pyright runs on node, and mise's npm backend never installs node for an npm: tool.
-PINS = {
-    "node": "24.22.1",
-    "uv": "0.13.1",
-    "ruff": "0.17.1",
-    "npm:pyright": "1.1.414",
-    "prek": "0.5.5",
-    "opengrep": "1.27.1",
-}
+# Names only: the versions live in mise.toml, where Renovate's mise manager moves
+# them, and a copy here failed every tool bump (#174, #175, #177, #178).
+TOOLS = {"node", "uv", "ruff", "npm:pyright", "prek", "opengrep"}
+# An exact release, never a range, `latest` or a bare major: CI installs with
+# MISE_LOCKED=1 whatever this resolves to.
+EXACT_VERSION = re.compile(r"\d+(\.\d+)+")
 PLATFORMS = {"linux-x64", "macos-arm64", "macos-x64"}
 
 _IN_CI = os.environ.get("CI", "").lower() in ("1", "true", "yes")
@@ -132,9 +130,15 @@ def test_check_exits_0_when_every_gate_passes(tmp_path):
 
 
 def test_mise_toml_pins_exactly_the_spec_tools():
-    """Tools only: `[env]`, `[settings]` or `[tasks]` would make the file need `mise trust`."""
+    """Tools only: `[env]`, `[settings]` or `[tasks]` would make the file need `mise trust`.
+
+    Each tool is pinned to an exact release; which release is Renovate's to move.
+    """
     cfg = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))
-    assert cfg == {"tools": PINS}
+    assert set(cfg) == {"tools"}
+    assert set(cfg["tools"]) == TOOLS
+    for name, version in cfg["tools"].items():
+        assert isinstance(version, str) and EXACT_VERSION.fullmatch(version), f"{name}={version!r}"
 
 
 def test_mise_lock_carries_a_checksum_for_every_binary_tool_on_every_platform():
@@ -143,11 +147,15 @@ def test_mise_lock_carries_a_checksum_for_every_binary_tool_on_every_platform():
     Lockfile format 3 keys each platform as `"platforms.<platform>"`. An npm
     tool has no per-platform asset; its lock is a digest-pinned directory under
     `.mise/locks/`, which has to be committed beside `mise.lock`.
+
+    Each entry must carry the version mise.toml pins: the lock is generated from
+    it, so a disagreement means `mise lock` was not re-run after a bump.
     """
+    pins = tomllib.loads((ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
     lock = tomllib.loads((ROOT / "mise.lock").read_text(encoding="utf-8"))
-    for name, version in PINS.items():
+    for name, version in pins.items():
         entries = lock["tools"][name]
-        assert [e["version"] for e in entries] == [version]
+        assert [e["version"] for e in entries] == [version], name
         entry = entries[0]
         if name.startswith("npm:"):
             assert entry["aube"]["digest"].startswith("sha256:"), name

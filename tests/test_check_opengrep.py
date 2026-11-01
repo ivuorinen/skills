@@ -438,12 +438,14 @@ def test_opengrep_is_pinned_by_mise_and_locked():
     hole in the authoritative job (.claude/rules/github-actions-security.md).
 
     mise installs the version mise.toml names and verifies it against the
-    checksum in mise.lock, so the workflow keeps no second copy of either."""
+    checksum in mise.lock, so the workflow keeps no second copy of either — and
+    neither does this test: it asserts the lock agrees with the pin, never the
+    number, which Renovate moves (#175 failed on a copy)."""
     tools = tomllib.loads((REPO_ROOT / "mise.toml").read_text(encoding="utf-8"))["tools"]
-    assert tools["opengrep"] == "1.27.1"
     lock = tomllib.loads((REPO_ROOT / "mise.lock").read_text(encoding="utf-8"))
-    linux = lock["tools"]["opengrep"][0]["platforms.linux-x64"]
-    assert linux["checksum"].startswith("sha256:")
+    entry = lock["tools"]["opengrep"][0]
+    assert entry["version"] == tools["opengrep"]
+    assert entry["platforms.linux-x64"]["checksum"].startswith("sha256:")
     workflow = (REPO_ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
     assert "OPENGREP_VERSION" not in workflow
 
