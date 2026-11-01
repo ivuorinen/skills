@@ -2,15 +2,10 @@
   "permissions": {
     "deny": [
       "Edit(./.claude/agents/**)",
-      "Write(./.claude/agents/**)",
       "Edit(./.mise/tasks/hook/**)",
-      "Write(./.mise/tasks/hook/**)",
       "Edit(./.claude/settings.json)",
-      "Write(./.claude/settings.json)",
       "Edit(./.claude/settings.local.json)",
-      "Write(./.claude/settings.local.json)",
-      "Edit(./.claude/skills/graphify/.graphify_version)",
-      "Write(./.claude/skills/graphify/.graphify_version)"
+      "Edit(./.claude/skills/graphify/.graphify_version)"
     ]
   },
   "hooks": {

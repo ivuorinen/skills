@@ -49,26 +49,23 @@ WRITE_EDIT_HOOKS = [
 # tool call before it runs. Narrowing or removing an entry must be a deliberate
 # edit to this constant, visible in review.
 #
-# Write is named explicitly for every protected path rather than assumed to ride
-# along with Edit. Whether an `Edit(...)` rule also binds the Write tool is
-# undocumented, so relying on it would leave the strongest in-session control
-# resting on client behaviour no gate here can see. Naming both is redundant if
-# Edit does cover Write, and load-bearing if it does not.
+# Edit rules only. Claude Code checks file permissions against `Edit(path)` and
+# `Read(path)` rules alone: an `Edit` rule binds every built-in tool that edits
+# files, and a `Write(path)` rule is accepted but never matches
+# (code.claude.com/docs/en/permissions, "Write(path), NotebookEdit(path), and
+# Glob(path) rules never match"). The list once named `Write` beside each `Edit`
+# as a hedge; those entries protected nothing, and this exact pin fails if one
+# is added back.
 EXPECTED_DENY = [
     "Edit(./.claude/agents/**)",
-    "Write(./.claude/agents/**)",
     "Edit(./.mise/tasks/hook/**)",
-    "Write(./.mise/tasks/hook/**)",
     "Edit(./.claude/settings.json)",
-    "Write(./.claude/settings.json)",
     "Edit(./.claude/settings.local.json)",
-    "Write(./.claude/settings.local.json)",
     "Edit(./.claude/skills/graphify/.graphify_version)",
-    "Write(./.claude/skills/graphify/.graphify_version)",
 ]
 
 # Every path the deny list exists to protect, and the tools it names for each.
-# The agents tree is denied for Edit and Write only: the owner allows reading
+# The agents tree is denied for Edit only: the owner allows reading
 # agent definitions so their language can be audited in-session. Changing them
 # stays owner-only.
 #
@@ -78,11 +75,11 @@ EXPECTED_DENY = [
 # Bash/Read/Glob guards trust, so rewriting it re-trusts whatever is installed
 # (agent-loopholes-8c3cdf74).
 PROTECTED_PATHS = {
-    "./.claude/agents/**": {"Edit", "Write"},
-    "./.mise/tasks/hook/**": {"Edit", "Write"},
-    "./.claude/settings.json": {"Edit", "Write"},
-    "./.claude/settings.local.json": {"Edit", "Write"},
-    "./.claude/skills/graphify/.graphify_version": {"Edit", "Write"},
+    "./.claude/agents/**": {"Edit"},
+    "./.mise/tasks/hook/**": {"Edit"},
+    "./.claude/settings.json": {"Edit"},
+    "./.claude/settings.local.json": {"Edit"},
+    "./.claude/skills/graphify/.graphify_version": {"Edit"},
 }
 
 
@@ -526,7 +523,7 @@ def test_the_hook_dir_is_on_every_protection_list():
     inventory = (REPO_ROOT / ".claude" / "rules" / "hook-inventory.md").read_text(encoding="utf-8")
     assert HOOK_REL in protected
     assert HOOK_REL in surface
-    assert {f"Edit(./{HOOK_REL}/**)", f"Write(./{HOOK_REL}/**)"} <= set(_deny())
+    assert f"Edit(./{HOOK_REL}/**)" in _deny()
     assert re.search(rf"^/{re.escape(HOOK_REL)}/\s+@ivuorinen$", codeowners, re.M)
     assert f"`{HOOK_REL}/`" in inventory
     for name, entries in (("PROTECTED_WRITE", protected), ("SURFACE", surface)):
