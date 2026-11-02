@@ -37,7 +37,9 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   nothing and were removed. The same docs apply `Read` and `Edit` deny rules to
   the Bash file commands Claude Code recognizes (`cat`, `head`, `sed`, `tee`)
   and to redirection targets, but not to an interpreter or to a command that
-  reaches a file without naming it — the gap this hook covers.
+  reaches a file without naming it. This hook narrows that gap without closing
+  it: it matches command text, so it blocks an interpreter call that names the
+  tree and passes any command that reaches it without naming it.
   `tests/test_settings.py` pins the exact list. So
   `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
   It raises the cost of reaching that tree; it does not close it. The guard
