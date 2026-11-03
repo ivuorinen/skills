@@ -27,13 +27,19 @@ entries in the file. `.claude/settings.json` holds the authoritative list;
   matched per shell word, with the command's own variable assignments
   expanded first; a word still carrying an unresolved substitution falls back
   to a whole-command match (agent-hooks-bbb2edb0). The
-  permissions deny block binds file tools only, not Bash, and it names `Edit`
-  **and** `Write` rules for that tree — no `Read` rule. `Read` was removed
+  permissions deny block names an `Edit` rule for that tree and no `Read`
+  rule. `Read` was removed
   deliberately in 561e285 so agent definitions can be audited in-session, which
   makes the do-not-read policy in `AGENTS.md` agent discipline for file tools,
-  not a settings denial. Claude Code's permissions docs state that `Edit`
-  rules apply to every built-in tool that edits files, so the `Write` entries
-  are redundant belt and braces, kept because they cost nothing.
+  not a settings denial. Claude Code's permissions docs state that an `Edit`
+  rule covers every built-in tool that edits files and that a `Write(path)`
+  rule never matches, so the `Write` entries the list once carried protected
+  nothing and were removed. The same docs apply `Read` and `Edit` deny rules to
+  the Bash file commands Claude Code recognizes (`cat`, `head`, `sed`, `tee`)
+  and to redirection targets, but not to an interpreter or to a command that
+  reaches a file without naming it. This hook narrows that gap without closing
+  it: it matches command text, so it blocks an interpreter call that names the
+  tree and passes any command that reaches it without naming it.
   `tests/test_settings.py` pins the exact list. So
   `find . -name release-readiness-reviewer.md -exec cat {} +` is blocked too.
   It raises the cost of reaching that tree; it does not close it. The guard

@@ -1341,10 +1341,16 @@ def test_validate_job_installs_tools_through_the_pinned_mise_action():
 
     MISE_LOCKED makes an install that the lock does not cover fail the job
     instead of resolving a version on the fly.
+
+    The shape is asserted, never the values: Renovate moves the action SHA and
+    the mise version in the workflow, and a copy of either here failed every one
+    of those PRs (#172, #173).
     """
     workflow = (ROOT / ".github/workflows/validate-skills.yml").read_text(encoding="utf-8")
-    assert "jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2" in workflow
-    assert "version: 2026.10.1" in workflow
+    assert re.search(r"uses: jdx/mise-action@[0-9a-f]{40} # v\d+\.\d+\.\d+$", workflow, re.M)
+    steps = yaml.safe_load(workflow)["jobs"]["validate"]["steps"]
+    mise = next(s for s in steps if s.get("uses", "").startswith("jdx/mise-action@"))
+    assert re.fullmatch(r"\d+\.\d+\.\d+", str(mise["with"]["version"]))
     assert 'MISE_LOCKED: "1"' in workflow
 
 
