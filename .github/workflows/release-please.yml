@@ -104,7 +104,7 @@ jobs:
       - name: Install mise and the pinned tools
         uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
-          version: 2026.10.25
+          version: 2026.11.0
           # This job holds `contents: write`; a restored tool cache is input it would trust.
           cache: false
 
