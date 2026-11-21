@@ -1,7 +1,7 @@
 [tools]
 node = "26.13.1"
 uv = "0.13.8"
-ruff = "0.17.4"
+ruff = "0.17.5"
 "npm:pyright" = "1.1.414"
 prek = "0.5.10"
 opengrep = "1.33.1"
