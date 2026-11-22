@@ -51,7 +51,7 @@ jobs:
         # and Renovate's mise manager can move the pins.
         uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
-          version: 2026.11.7
+          version: 2026.11.10
 
       - name: Run the repository gate
         # ONE invocation, deliberately: .mise/tasks/check is the single
