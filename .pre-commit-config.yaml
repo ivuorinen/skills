@@ -87,7 +87,7 @@ repos:
         args: [--schemafile, schemas/marketplace.schema.json]
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: 06a39750ec31860bb44f2acf67182c40016cd1e7 # v1.32.0
+    rev: c7d31dc612dffdd4d3b2f2b88b9660d3ab057ee8 # v1.33.1
     hooks:
       # Enforce .claude/rules/github-actions-security.md: SHA-pinned actions,
       # least-privilege tokens, injection safety. --offline keeps it
